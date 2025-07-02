@@ -10570,7 +10570,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
         let signature_help_state = editor.signature_help_state.popover().cloned();
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[signature.current_signature].label,
+            signature.signatures[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -10742,7 +10742,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[signature.current_signature].label,
+            signature.signatures[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
         editor.signature_help_state = SignatureHelpState::default();
@@ -10784,7 +10784,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[signature.current_signature].label,
+            signature.signatures[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -10846,7 +10846,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         assert!(signature_help_state.is_some());
         let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature.signature[signature.current_signature].label,
+            signature.signatures[signature.current_signature].label,
             "fn sample(param1: u8, param2: u8)"
         );
     });
@@ -11137,13 +11137,13 @@ async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
     // Verify we have multiple signatures and the right one is selected
     cx.editor(|editor, _, _| {
         let popover = editor.signature_help_state.popover().cloned().unwrap();
-        assert_eq!(popover.signature.len(), 3);
+        assert_eq!(popover.signatures.len(), 3);
         // active_signature was 1, so that should be the current
         assert_eq!(popover.current_signature, 1);
-        assert_eq!(popover.signature[0].label, "fn overloaded(x: i32)");
-        assert_eq!(popover.signature[1].label, "fn overloaded(x: i32, y: i32)");
+        assert_eq!(popover.signatures[0].label, "fn overloaded(x: i32)");
+        assert_eq!(popover.signatures[1].label, "fn overloaded(x: i32, y: i32)");
         assert_eq!(
-            popover.signature[2].label,
+            popover.signatures[2].label,
             "fn overloaded(x: i32, y: i32, z: i32)"
         );
     });

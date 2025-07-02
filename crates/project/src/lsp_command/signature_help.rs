@@ -1,6 +1,8 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
-use gpui::{FontWeight, HighlightStyle};
+use gpui::{App, AppContext, Entity, FontWeight, HighlightStyle, SharedString};
+use language::LanguageRegistry;
+use markdown::Markdown;
 use rpc::proto::{self, documentation};
 
 #[derive(Debug)]
@@ -12,8 +14,8 @@ pub struct SignatureHelp {
 
 #[derive(Debug, Clone)]
 pub struct SignatureHelpData {
-    pub label: String,
-    pub documentation: Option<String>,
+    pub label: SharedString,
+    pub documentation: Option<Entity<Markdown>>,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
     pub active_parameter: Option<usize>,
     pub parameters: Vec<ParameterInfo>,
@@ -22,11 +24,15 @@ pub struct SignatureHelpData {
 #[derive(Debug, Clone)]
 pub struct ParameterInfo {
     pub label_range: Option<Range<usize>>,
-    pub documentation: Option<String>,
+    pub documentation: Option<Entity<Markdown>>,
 }
 
 impl SignatureHelp {
-    pub fn new(help: lsp::SignatureHelp) -> Option<Self> {
+    pub fn new(
+        help: lsp::SignatureHelp,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> Option<Self> {
         if help.signatures.is_empty() {
             return None;
         }
@@ -43,28 +49,29 @@ impl SignatureHelp {
             if let Some(parameters) = &signature.parameters {
                 for (index, parameter) in parameters.iter().enumerate() {
                     let label_range = match &parameter.label {
-                        lsp::ParameterLabel::LabelOffsets(offset) => {
-                            let range = offset[0] as usize..offset[1] as usize;
+                        lsp::ParameterLabel::LabelOffsets(parameter_label_offsets) => {
+                            let range = *parameter_label_offsets.get(0)? as usize
+                                ..*parameter_label_offsets.get(1)? as usize;
                             if index == active_parameter {
                                 highlights.push((
                                     range.clone(),
                                     HighlightStyle {
                                         font_weight: Some(FontWeight::EXTRA_BOLD),
-                                        ..Default::default()
+                                        ..HighlightStyle::default()
                                     },
                                 ));
                             }
                             Some(range)
                         }
-                        lsp::ParameterLabel::Simple(string) => {
-                            if let Some(start) = signature.label.find(string) {
-                                let range = start..start + string.len();
+                        lsp::ParameterLabel::Simple(parameter_label) => {
+                            if let Some(start) = signature.label.find(parameter_label) {
+                                let range = start..start + parameter_label.len();
                                 if index == active_parameter {
                                     highlights.push((
                                         range.clone(),
                                         HighlightStyle {
                                             font_weight: Some(FontWeight::EXTRA_BOLD),
-                                            ..Default::default()
+                                            ..HighlightStyle::default()
                                         },
                                     ));
                                 }
@@ -75,10 +82,10 @@ impl SignatureHelp {
                         }
                     };
 
-                    let documentation = parameter.documentation.as_ref().map(|doc| match doc {
-                        lsp::Documentation::String(string) => string.clone(),
-                        lsp::Documentation::MarkupContent(markup) => markup.value.clone(),
-                    });
+                    let documentation = parameter
+                        .documentation
+                        .as_ref()
+                        .map(|doc| documentation_to_markdown(doc, language_registry.clone(), cx));
 
                     parameter_infos.push(ParameterInfo {
                         label_range,
@@ -87,11 +94,11 @@ impl SignatureHelp {
                 }
             }
 
-            let label = signature.label.clone();
-            let documentation = signature.documentation.clone().map(|doc| match doc {
-                lsp::Documentation::String(string) => string,
-                lsp::Documentation::MarkupContent(markup) => markup.value,
-            });
+            let label = SharedString::from(signature.label.clone());
+            let documentation = signature
+                .documentation
+                .as_ref()
+                .map(|doc| documentation_to_markdown(doc, language_registry.clone(), cx));
 
             signatures.push(SignatureHelpData {
                 label,
@@ -106,6 +113,31 @@ impl SignatureHelp {
             active_signature,
             original_data: help,
         })
+    }
+}
+
+fn documentation_to_markdown(
+    documentation: &lsp::Documentation,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    cx: &mut App,
+) -> Entity<Markdown> {
+    match documentation {
+        lsp::Documentation::String(string) => {
+            cx.new(|cx| Markdown::new_text(SharedString::from(string), cx))
+        }
+        lsp::Documentation::MarkupContent(markup) => match markup.kind {
+            lsp::MarkupKind::PlainText => {
+                cx.new(|cx| Markdown::new_text(SharedString::from(&markup.value), cx))
+            }
+            lsp::MarkupKind::Markdown => cx.new(|cx| {
+                Markdown::new(
+                    SharedString::from(&markup.value),
+                    language_registry,
+                    None,
+                    cx,
+                )
+            }),
+        },
     }
 }
 
@@ -223,7 +255,7 @@ fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp
 
 #[cfg(test)]
 mod tests {
-    use gpui::{FontWeight, HighlightStyle};
+    use gpui::{FontWeight, HighlightStyle, SharedString, TestAppContext};
     use lsp::{Documentation, MarkupContent, MarkupKind};
 
     use crate::lsp_command::signature_help::SignatureHelp;
@@ -235,8 +267,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_1() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_1(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
@@ -258,7 +290,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -267,18 +299,21 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test(foo: u8, bar: &str)".to_string(),
+                SharedString::new("fn test(foo: u8, bar: &str)"),
                 vec![(8..15, current_parameter())]
             )
         );
         assert_eq!(
-            signature.documentation,
-            Some("This is a test documentation".to_string())
+            signature
+                .documentation
+                .unwrap()
+                .update(cx, |documentation, _| documentation.source().to_owned()),
+            "This is a test documentation",
         )
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_2() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_2(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
@@ -301,7 +336,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -310,18 +345,21 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test(foo: u8, bar: &str)".to_string(),
+                SharedString::new("fn test(foo: u8, bar: &str)"),
                 vec![(17..26, current_parameter())]
             )
         );
         assert_eq!(
-            signature.documentation,
-            Some("This is a test documentation".to_string())
+            signature
+                .documentation
+                .unwrap()
+                .update(cx, |documentation, _| documentation.source().to_owned()),
+            "This is a test documentation",
         )
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_3() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_3(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![
                 lsp::SignatureInformation {
@@ -358,7 +396,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -367,14 +405,14 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test1(foo: u8, bar: &str)".to_string(),
+                SharedString::new("fn test1(foo: u8, bar: &str)"),
                 vec![(9..16, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_4() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_4(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![
                 lsp::SignatureInformation {
@@ -411,7 +449,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -420,14 +458,14 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test2(hoge: String, fuga: bool)".to_string(),
+                SharedString::new("fn test2(hoge: String, fuga: bool)"),
                 vec![(9..21, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_5() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_5(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![
                 lsp::SignatureInformation {
@@ -464,7 +502,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -473,14 +511,14 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test2(hoge: String, fuga: bool)".to_string(),
+                SharedString::new("fn test2(hoge: String, fuga: bool)"),
                 vec![(23..33, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_6() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_6(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![
                 lsp::SignatureInformation {
@@ -517,7 +555,7 @@ mod tests {
             active_signature: Some(1),
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -526,14 +564,14 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test2(hoge: String, fuga: bool)".to_string(),
+                SharedString::new("fn test2(hoge: String, fuga: bool)"),
                 vec![(9..21, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_7() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_7(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![
                 lsp::SignatureInformation {
@@ -585,7 +623,7 @@ mod tests {
             active_signature: Some(2),
             active_parameter: Some(1),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -594,25 +632,25 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test3(one: usize, two: u32)".to_string(),
+                SharedString::new("fn test3(one: usize, two: u32)"),
                 vec![(21..29, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_8() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_8(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![],
             active_signature: None,
             active_parameter: None,
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_none());
     }
 
-    #[test]
-    fn test_create_signature_help_markdown_string_9() {
+    #[gpui::test]
+    fn test_create_signature_help_markdown_string_9(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
@@ -632,7 +670,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_markdown = SignatureHelp::new(signature_help);
+        let maybe_markdown = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_markdown.is_some());
 
         let markdown = maybe_markdown.unwrap();
@@ -641,14 +679,14 @@ mod tests {
         assert_eq!(
             markdown,
             (
-                "fn test(foo: u8, bar: &str)".to_string(),
+                SharedString::new("fn test(foo: u8, bar: &str)"),
                 vec![(8..15, current_parameter())]
             )
         );
     }
 
-    #[test]
-    fn test_parameter_documentation() {
+    #[gpui::test]
+    fn test_parameter_documentation(cx: &mut TestAppContext) {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
@@ -670,7 +708,7 @@ mod tests {
             active_signature: Some(0),
             active_parameter: Some(0),
         };
-        let maybe_signature_help = SignatureHelp::new(signature_help);
+        let maybe_signature_help = cx.update(|cx| SignatureHelp::new(signature_help, None, cx));
         assert!(maybe_signature_help.is_some());
 
         let signature_help = maybe_signature_help.unwrap();
@@ -679,12 +717,20 @@ mod tests {
         // Check that parameter documentation is extracted
         assert_eq!(signature.parameters.len(), 2);
         assert_eq!(
-            signature.parameters[0].documentation,
-            Some("The foo parameter".to_string())
+            signature.parameters[0]
+                .documentation
+                .as_ref()
+                .unwrap()
+                .update(cx, |documentation, _| documentation.source().to_owned()),
+            "The foo parameter",
         );
         assert_eq!(
-            signature.parameters[1].documentation,
-            Some("The bar parameter".to_string())
+            signature.parameters[1]
+                .documentation
+                .as_ref()
+                .unwrap()
+                .update(cx, |documentation, _| documentation.source().to_owned()),
+            "The bar parameter",
         );
 
         // Check that the active parameter is correct

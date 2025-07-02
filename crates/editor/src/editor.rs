@@ -12259,7 +12259,7 @@ impl Editor {
     ) {
         if let Some(popover) = self.signature_help_state.popover_mut() {
             if popover.current_signature == 0 {
-                popover.current_signature = popover.signature.len() - 1;
+                popover.current_signature = popover.signatures.len() - 1;
             } else {
                 popover.current_signature -= 1;
             }
@@ -12274,7 +12274,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(popover) = self.signature_help_state.popover_mut() {
-            if popover.current_signature + 1 == popover.signature.len() {
+            if popover.current_signature + 1 == popover.signatures.len() {
                 popover.current_signature = 0;
             } else {
                 popover.current_signature += 1;

@@ -696,61 +696,6 @@ impl LanguageRegistry {
             .cloned()
     }
 
-    /// Returns a cached language if it's already loaded, otherwise None.
-    /// This is a synchronous method that doesn't trigger language loading.
-    pub fn get_cached_language(self: &Arc<Self>, name: &str) -> Option<Arc<Language>> {
-        let state = self.state.read();
-        let name = UniCase::new(name);
-        state
-            .languages
-            .iter()
-            .find(|l| UniCase::new(&l.config.name) == name)
-            .cloned()
-    }
-
-    /// Returns a cached language by name or extension if it's already loaded, otherwise None.
-    /// This is a synchronous method that doesn't trigger language loading.
-    pub fn get_cached_language_by_name_or_extension(
-        self: &Arc<Self>,
-        string: &str,
-    ) -> Option<Arc<Language>> {
-        let state = self.state.read();
-        let string = UniCase::new(string);
-        state
-            .languages
-            .iter()
-            .find(|l| {
-                UniCase::new(&l.config.name) == string
-                    || l.config
-                        .matcher
-                        .path_suffixes
-                        .iter()
-                        .any(|suffix| UniCase::new(suffix) == string)
-            })
-            .cloned()
-    }
-
-    /// Returns a cached language for a file path if it's already loaded, otherwise None.
-    /// This is a synchronous method that doesn't trigger language loading.
-    pub fn get_cached_language_for_path(self: &Arc<Self>, path: &Path) -> Option<Arc<Language>> {
-        let state = self.state.read();
-
-        // Check both file extension and full file name
-        let extension = path.extension().and_then(OsStr::to_str);
-        let file_name = path.file_name().and_then(OsStr::to_str);
-
-        state
-            .languages
-            .iter()
-            .find(|language| {
-                language.config.matcher.path_suffixes.iter().any(|suffix| {
-                    extension.map_or(false, |ext| suffix == ext)
-                        || file_name.map_or(false, |name| name.ends_with(suffix))
-                })
-            })
-            .cloned()
-    }
-
     pub fn language_for_file(
         self: &Arc<Self>,
         file: &Arc<dyn File>,

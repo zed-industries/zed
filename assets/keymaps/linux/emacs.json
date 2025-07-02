@@ -98,7 +98,7 @@
     }
   },
   {
-    "context": "Editor && showing_signature_help",
+    "context": "Editor && showing_signature_help && !showing_completions",
     "bindings": {
       "ctrl-p": "editor::SignatureHelpPrevious",
       "ctrl-n": "editor::SignatureHelpNext"

@@ -2,8 +2,8 @@ use crate::actions::ShowSignatureHelp;
 use crate::hover_popover::open_markdown_url;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
-    App, AppContext, Context, Div, Entity, HighlightStyle, MouseButton, ScrollHandle, Size,
-    Stateful, StyledText, Task, TextStyle, Window, combine_highlights,
+    App, Context, Div, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, Stateful,
+    StyledText, Task, TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
 use markdown::{Markdown, MarkdownElement};
@@ -41,15 +41,14 @@ impl Editor {
             .map(|auto_signature_help| !auto_signature_help)
             .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
         match self.auto_signature_help {
-            Some(auto_signature_help) if auto_signature_help => {
+            Some(true) => {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
-            Some(_) => {
+            Some(false) => {
                 self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
             }
             None => {}
         }
-        cx.notify();
     }
 
     pub(super) fn hide_signature_help(
@@ -58,7 +57,7 @@ impl Editor {
         signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
         if self.signature_help_state.is_shown() {
-            self.signature_help_state.kill_task();
+            self.signature_help_state.task = None;
             self.signature_help_state.hide(signature_help_hidden_by);
             cx.notify();
             true
@@ -177,7 +176,6 @@ impl Editor {
             lsp_store.signature_help(&buffer, buffer_position, cx)
         });
         let language = self.language_at(position, cx);
-        let languages = lsp_store.read(cx).languages.clone();
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, async move |editor, cx| {
@@ -193,7 +191,7 @@ impl Editor {
 
                         if let Some(language) = language {
                             for signature in &mut signature_help.signatures {
-                                let text = Rope::from(signature.label.clone());
+                                let text = Rope::from(signature.label.to_string());
                                 let highlights = language
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
@@ -206,51 +204,28 @@ impl Editor {
                             }
                         }
                         let settings = ThemeSettings::get_global(cx);
-                        let text_style = TextStyle {
+                        let style = TextStyle {
                             color: cx.theme().colors().text,
                             font_family: settings.buffer_font.family.clone(),
                             font_fallbacks: settings.buffer_font.fallbacks.clone(),
                             font_size: settings.buffer_font_size(cx).into(),
                             font_weight: settings.buffer_font.weight,
                             line_height: relative(settings.buffer_line_height.value()),
-                            ..Default::default()
+                            ..TextStyle::default()
                         };
                         let scroll_handle = ScrollHandle::new();
                         let signatures = signature_help
                             .signatures
                             .into_iter()
-                            .map(|s| {
-                                let parameter_doc = s
+                            .map(|s| SignatureHelp {
+                                label: s.label,
+                                documentation: s.documentation,
+                                highlights: s.highlights,
+                                active_parameter: s.active_parameter,
+                                parameter_documentation: s
                                     .active_parameter
                                     .and_then(|idx| s.parameters.get(idx))
-                                    .and_then(|param| param.documentation.clone())
-                                    .map(|documentation| {
-                                        cx.new(|cx| {
-                                            Markdown::new_simple(
-                                                documentation.into(),
-                                                Some(languages.clone()),
-                                                None,
-                                                cx,
-                                            )
-                                        })
-                                    });
-
-                                SignatureHelp {
-                                    label: s.label.into(),
-                                    documentation: s.documentation.map(|documentation| {
-                                        cx.new(|cx| {
-                                            Markdown::new_simple(
-                                                documentation.into(),
-                                                Some(languages.clone()),
-                                                None,
-                                                cx,
-                                            )
-                                        })
-                                    }),
-                                    highlights: s.highlights,
-                                    active_parameter: s.active_parameter,
-                                    parameter_documentation: parameter_doc,
-                                }
+                                    .and_then(|param| param.documentation.clone()),
                             })
                             .collect::<Vec<_>>();
 
@@ -266,11 +241,11 @@ impl Editor {
                             .min(signatures.len().saturating_sub(1));
 
                         let signature_help_popover = SignatureHelpPopover {
-                            style: text_style,
-                            signature: signatures,
+                            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                            style,
+                            signatures,
                             current_signature,
-                            scroll_handle: scroll_handle.clone(),
-                            scrollbar_state: ScrollbarState::new(scroll_handle),
+                            scroll_handle,
                         };
                         editor
                             .signature_help_state
@@ -290,13 +265,9 @@ pub struct SignatureHelpState {
 }
 
 impl SignatureHelpState {
-    pub fn set_task(&mut self, task: Task<()>) {
+    fn set_task(&mut self, task: Task<()>) {
         self.task = Some(task);
         self.hidden_by = None;
-    }
-
-    pub fn kill_task(&mut self) {
-        self.task = None;
     }
 
     #[cfg(test)]
@@ -308,19 +279,19 @@ impl SignatureHelpState {
         self.popover.as_mut()
     }
 
-    pub fn set_popover(&mut self, popover: SignatureHelpPopover) {
+    fn set_popover(&mut self, popover: SignatureHelpPopover) {
         self.popover = Some(popover);
         self.hidden_by = None;
     }
 
-    pub fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
+    fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
         if self.hidden_by.is_none() {
             self.popover = None;
             self.hidden_by = Some(hidden_by);
         }
     }
 
-    pub fn hidden_by_selection(&self) -> bool {
+    fn hidden_by_selection(&self) -> bool {
         self.hidden_by == Some(SignatureHelpHiddenBy::Selection)
     }
 
@@ -331,7 +302,7 @@ impl SignatureHelpState {
     pub fn has_multiple_signatures(&self) -> bool {
         self.popover
             .as_ref()
-            .is_some_and(|popover| popover.signature.len() > 1)
+            .is_some_and(|popover| popover.signatures.len() > 1)
     }
 }
 
@@ -354,7 +325,7 @@ pub struct SignatureHelp {
 #[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub style: TextStyle,
-    pub signature: Vec<SignatureHelp>,
+    pub signatures: Vec<SignatureHelp>,
     pub current_signature: usize,
     scroll_handle: ScrollHandle,
     scrollbar_state: ScrollbarState,
@@ -367,7 +338,7 @@ impl SignatureHelpPopover {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        let Some(signature) = self.signature.get(self.current_signature) else {
+        let Some(signature) = self.signatures.get(self.current_signature) else {
             return div().into_any_element();
         };
 
@@ -419,7 +390,7 @@ impl SignatureHelpPopover {
                     }),
             )
             .child(self.render_vertical_scrollbar(cx));
-        let controls = if self.signature.len() > 1 {
+        let controls = if self.signatures.len() > 1 {
             let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)
                 .shape(IconButtonShape::Square)
                 .style(ButtonStyle::Subtle)
@@ -450,7 +421,7 @@ impl SignatureHelpPopover {
             let page = Label::new(format!(
                 "{}/{}",
                 self.current_signature + 1,
-                self.signature.len()
+                self.signatures.len()
             ))
             .size(LabelSize::Small);
 
