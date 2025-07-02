@@ -193,22 +193,11 @@ impl State {
         cx.spawn(async move |this, cx| {
             async move {
                 if let Some(api_key) = api_key {
-                    log::info!("Fetching Requesty models from: {}", api_url);
-                    match requesty::list_models(http_client.as_ref(), &api_url, &api_key).await {
-                        Ok(models) => {
-                            log::info!("Successfully fetched {} Requesty models", models.len());
-                            this.update(cx, |this, cx| {
-                                this.available_models = models;
-                                cx.notify();
-                            })?;
-                        }
-                        Err(err) => {
-                            log::error!("Failed to fetch Requesty models: {}", err);
-                            return Err(err);
-                        }
-                    }
-                } else {
-                    log::warn!("No API key available for Requesty model fetching");
+                    let models = requesty::list_models(http_client.as_ref(), &api_url, &api_key).await?;
+                    this.update(cx, |this, cx| {
+                        this.available_models = models;
+                        cx.notify();
+                    })?;
                 }
                 anyhow::Ok(())
             }

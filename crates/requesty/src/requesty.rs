@@ -601,17 +601,34 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str, api_key: &str) 
         let response: ListModelsResponse =
             serde_json::from_str(&body).context("Unable to parse Requesty models response")?;
 
-        let models = response
-            .data
+        let mut model_entries = response.data;
+
+        // Sort by created date, newest first (highest timestamp first)
+        model_entries.sort_by(|a, b| {
+            let a_created = a.created.unwrap_or(0);
+            let b_created = b.created.unwrap_or(0);
+            b_created.cmp(&a_created) // Reverse order for newest first
+        });
+
+        let models: Vec<Model> = model_entries
             .into_iter()
             .map(|entry| {
-                // Extract display name from ID (e.g., "openai/gpt-4" -> "GPT-4")
+                // Extract and format display name from ID (e.g., "openai/gpt-4" -> "Gpt-4")
                 let display_name = entry.id
                     .split('/')
                     .last()
                     .unwrap_or(&entry.id)
-                    .replace('-', " ")
-                    .to_uppercase();
+                    .split('-')
+                    .map(|part| {
+                        // Capitalize first letter, keep rest lowercase
+                        let mut chars = part.chars();
+                        match chars.next() {
+                            None => String::new(),
+                            Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("-");
 
                 Model {
                     name: entry.id,
