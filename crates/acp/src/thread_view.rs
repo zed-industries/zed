@@ -328,8 +328,9 @@ impl AcpThreadView {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
+                    // todo! danilo please help
                     .child(MarkdownElement::new(
-                        tool_call.display_name.clone(),
+                        tool_call.label.clone(),
                         default_markdown_style(window, cx),
                     ))
                     .child(div().w_full())

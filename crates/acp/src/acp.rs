@@ -123,7 +123,7 @@ pub enum AgentThreadEntryContent {
 #[derive(Debug)]
 pub struct ToolCall {
     id: ToolCallId,
-    display_name: Entity<Markdown>,
+    label: Entity<Markdown>,
     status: ToolCallStatus,
 }
 
@@ -271,7 +271,7 @@ impl AcpThread {
 
     pub fn request_tool_call(
         &mut self,
-        display_name: String,
+        label: String,
         confirmation: acp::ToolCallConfirmation,
         cx: &mut Context<Self>,
     ) -> ToolCallRequest {
@@ -282,22 +282,22 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(display_name, status, cx);
+        let id = self.insert_tool_call(label, status, cx);
         ToolCallRequest { id, outcome: rx }
     }
 
-    pub fn push_tool_call(&mut self, display_name: String, cx: &mut Context<Self>) -> ToolCallId {
+    pub fn push_tool_call(&mut self, label: String, cx: &mut Context<Self>) -> ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
             content: None,
         };
 
-        self.insert_tool_call(display_name, status, cx)
+        self.insert_tool_call(label, status, cx)
     }
 
     fn insert_tool_call(
         &mut self,
-        display_name: String,
+        label: String,
         status: ToolCallStatus,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
@@ -307,13 +307,8 @@ impl AcpThread {
             AgentThreadEntryContent::ToolCall(ToolCall {
                 // todo! clean up id creation
                 id: ToolCallId(ThreadEntryId(self.entries.len() as u64)),
-                display_name: cx.new(|cx| {
-                    Markdown::new(
-                        display_name.into(),
-                        Some(language_registry.clone()),
-                        None,
-                        cx,
-                    )
+                label: cx.new(|cx| {
+                    Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
                 }),
                 status,
             }),
@@ -525,7 +520,7 @@ mod tests {
             .unwrap();
         thread.read_with(cx, |thread, cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
-                display_name,
+                label,
                 status: ToolCallStatus::Allowed { .. },
                 ..
             }) = &thread.entries()[1].content
@@ -533,7 +528,7 @@ mod tests {
                 panic!();
             };
 
-            display_name.read_with(cx, |md, _cx| {
+            label.read_with(cx, |md, _cx| {
                 assert_eq!(md.source(), "ReadFile");
             });
 
@@ -566,7 +561,7 @@ mod tests {
         let tool_call_id = thread.read_with(cx, |thread, cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
                 id,
-                display_name,
+                label,
                 status:
                     ToolCallStatus::WaitingForConfirmation {
                         confirmation: acp::ToolCallConfirmation::Execute { root_command, .. },
@@ -579,7 +574,7 @@ mod tests {
 
             assert_eq!(root_command, "echo");
 
-            display_name.read_with(cx, |md, _cx| {
+            label.read_with(cx, |md, _cx| {
                 assert_eq!(md.source(), "Shell");
             });
 
