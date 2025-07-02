@@ -93,7 +93,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, wparam, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
@@ -1152,15 +1152,18 @@ fn handle_set_cursor(
 
 fn handle_system_settings_changed(
     handle: HWND,
+    wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!(
+        "System settings changed: wparam: {}, lparam: {}",
+        wparam.0, lparam.0
+    );
     let mut lock = state_ptr.state.borrow_mut();
     let display = lock.display;
-    // system settings
-    lock.system_settings.update(display);
-    // mouse double click
-    lock.click_state.system_update();
+    lock.system_settings.update(display, wparam.0);
+    lock.click_state.system_update(wparam.0);
     // window border offset
     lock.border_offset.update(handle).log_err();
     drop(lock);
