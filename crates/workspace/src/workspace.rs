@@ -10392,6 +10392,110 @@ mod tests {
             .collect()
     }
 
+    #[gpui::test]
+    async fn test_new_project_window(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Store initial window bounds to verify offset
+        let initial_bounds =
+            workspace.update_in(cx, |_, window, _| window.window_bounds().get_bounds());
+
+        // Dispatch NewWindowForWorkspace action
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.new_project_window(&NewWindowForWorkspace, window, cx);
+        });
+
+        // Allow async task to complete
+        cx.executor().run_until_parked();
+
+        // Verify a new window was created
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 2, "Should have created a new window");
+
+        // Get the new window (the one that isn't our original workspace)
+        let workspace_window = cx.window_handle().downcast::<Workspace>().unwrap();
+        let new_window = windows
+            .into_iter()
+            .filter_map(|w| w.downcast::<Workspace>())
+            .find(|w| w != &workspace_window)
+            .expect("Should find the new window");
+
+        // Verify the new window has the same project
+        new_window
+            .update(cx, |workspace, _window, cx| {
+                assert_eq!(
+                    workspace.project.read(cx).remote_id(),
+                    project.read(cx).remote_id(),
+                    "New workspace should share the same project"
+                );
+            })
+            .unwrap();
+
+        // Verify window offset
+        let new_bounds = new_window
+            .update(cx, |_workspace, window, _| {
+                window.window_bounds().get_bounds()
+            })
+            .unwrap();
+
+        assert_eq!(
+            new_bounds.origin.x,
+            initial_bounds.origin.x + px(50.0),
+            "New window should be offset 50px horizontally"
+        );
+        assert_eq!(
+            new_bounds.origin.y,
+            initial_bounds.origin.y + px(50.0),
+            "New window should be offset 50px vertically"
+        );
+        assert_eq!(
+            new_bounds.size, initial_bounds.size,
+            "New window should have same size as original"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_project_window_multiple(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Create multiple new windows
+        for _ in 0..3 {
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.new_project_window(&NewWindowForWorkspace, window, cx);
+            });
+        }
+
+        cx.executor().run_until_parked();
+
+        // Should have 4 windows total (original + 3 new)
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 4, "Should have created 3 new windows");
+
+        // Verify all windows share the same project
+        for window in windows {
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                workspace_window
+                    .update(cx, |workspace, _window, cx| {
+                        assert!(
+                            std::ptr::eq(workspace.project.read(cx), project.read(cx)),
+                            "All workspaces should share the same project"
+                        );
+                    })
+                    .unwrap();
+            }
+        }
+    }
+
     pub fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
