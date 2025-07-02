@@ -298,7 +298,7 @@ impl ListState {
         }
 
         let current_offset = self.logical_scroll_top();
-        let state = &*self.0.borrow();
+        let state = &mut *self.0.borrow_mut();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(current_offset.item_ix), Bias::Right, &());
 
@@ -310,7 +310,7 @@ impl ListState {
             cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
         }
 
-        self.scroll_to(ListOffset {
+        state.logical_scroll_top = Some(ListOffset {
             item_ix: cursor.start().count,
             offset_in_item: new_pixel_offset - cursor.start().height,
         });
