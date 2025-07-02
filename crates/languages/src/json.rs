@@ -139,7 +139,7 @@ pub struct JsonLspAdapter {
 }
 
 impl JsonLspAdapter {
-    const PACKAGE_NAME: &str = "vscode-langservers-extracted";
+    const PACKAGE_NAME: &str = "@zed-industries/vscode-langservers-extracted";
 
     pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
         Self {
