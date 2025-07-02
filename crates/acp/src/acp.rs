@@ -136,9 +136,7 @@ pub enum ToolCallStatus {
         confirmation: acp::ToolCallConfirmation,
         respond_tx: oneshot::Sender<acp::ToolCallConfirmationOutcome>,
     },
-    // todo! Running?
     Allowed {
-        // todo! should this be variants in crate::ToolCallStatus instead?
         status: acp::ToolCallStatus,
         content: Option<ToolCallContent>,
     },
