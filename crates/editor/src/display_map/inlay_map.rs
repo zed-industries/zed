@@ -1153,6 +1153,8 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[inline(always)]
 fn utf8_char_boundary(text: &str, byte_index: usize) -> usize {
     let mut byte_index = byte_index.min(text.len().saturating_sub(1));
+    #[cfg(debug_assertions)]
+    let start_byte_index = byte_index;
 
     loop {
         if let Some(byte) = text.as_bytes().get(byte_index) {
@@ -1176,6 +1178,18 @@ fn utf8_char_boundary(text: &str, byte_index: usize) -> usize {
         // Eventually we'll get down to index 0, which in a &str is guaranteed
         // to not be a continuation byte.
         byte_index -= 1;
+
+        #[cfg(debug_assertions)]
+        {
+            // UTF-8 can have at most 3 continuation bytes, so we should never
+            // look back more than 4 bytes total (including the starting byte).
+            // If we do, the &str was invalid UTF-8, which should never happen!
+            debug_assert!(
+                start_byte_index.abs_diff(byte_index) < 4,
+                "Looked back {} bytes without finding a UTF-8 boundary - the given string must be malformed",
+                start_byte_index.abs_diff(byte_index).saturating_add(1)
+            );
+        }
     }
 }
 
