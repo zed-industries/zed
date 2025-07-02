@@ -1368,6 +1368,7 @@ fn dump_all_gpui_actions() {
         name: &'static str,
         human_name: String,
         aliases: &'static [&'static str],
+        documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .into_iter()
@@ -1375,6 +1376,7 @@ fn dump_all_gpui_actions() {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
             aliases: action.deprecated_aliases,
+            documentation: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
 
