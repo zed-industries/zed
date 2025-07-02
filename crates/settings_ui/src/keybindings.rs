@@ -1029,6 +1029,7 @@ impl Render for KeybindInput {
             )
             .child(
                 h_flex()
+                    .gap_0p5()
                     .flex_none()
                     .child(
                         IconButton::new("backspace-btn", IconName::Delete)
