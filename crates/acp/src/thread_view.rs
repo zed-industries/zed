@@ -241,12 +241,6 @@ impl AcpThreadView {
                         .into_any(),
                 }
             }
-            AgentThreadEntryContent::ReadFile { path, content: _ } => {
-                // todo!
-                div()
-                    .child(format!("<Reading file {}>", path.display()))
-                    .into_any()
-            }
             AgentThreadEntryContent::ToolCall(tool_call) => match tool_call {
                 ToolCall::WaitingForConfirmation {
                     id,

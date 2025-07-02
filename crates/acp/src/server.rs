@@ -1,4 +1,4 @@
-use crate::{AcpThread, AgentThreadEntryContent, ThreadEntryId, ThreadId, ToolCallId};
+use crate::{AcpThread, ThreadEntryId, ThreadId, ToolCallId};
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -107,7 +107,7 @@ impl acp::Client for AcpClientDelegate {
             })??
             .await?;
 
-        buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, _cx| {
             let start = language::Point::new(request.line_offset.unwrap_or(0), 0);
             let end = match request.line_limit {
                 None => buffer.max_point(),
@@ -115,15 +115,6 @@ impl acp::Client for AcpClientDelegate {
             };
 
             let content: String = buffer.text_for_range(start..end).collect();
-            self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                thread.push_entry(
-                    AgentThreadEntryContent::ReadFile {
-                        path: request.path.clone(),
-                        content: content.clone(),
-                    },
-                    cx,
-                );
-            });
 
             acp::ReadTextFileResponse {
                 content,
@@ -203,7 +194,7 @@ impl acp::Client for AcpClientDelegate {
             })?
             .context("Failed to update thread")?;
 
-        if dbg!(rx.await)? {
+        if rx.await? {
             Ok(acp::RequestToolCallResponse::Allowed {
                 id: entry_id.into(),
             })
