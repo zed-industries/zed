@@ -302,14 +302,14 @@ mod test {
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_next_word_start(cx: &mut gpui::TestAppContext) {
+    async fn test_word_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         // «
         // ˇ
         // »
         cx.set_state(
             indoc! {"
-            The quˇick brown
+            Th«e quiˇ»ck brown
             fox jumps over
             the lazy dog."},
             Mode::HelixNormal,
@@ -334,6 +334,32 @@ mod test {
             the lazy dog."},
             Mode::HelixNormal,
         );
+
+        cx.simulate_keystrokes("2 b");
+
+        cx.assert_state(
+            indoc! {"
+            The «ˇquick »brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("down e up");
+
+        cx.assert_state(
+            indoc! {"
+            The quicˇk brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state("aa\n  «ˇbb»", Mode::HelixNormal);
+
+        cx.simulate_keystroke("b");
+
+        cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
     }
 
     // #[gpui::test]
@@ -447,5 +473,22 @@ mod test {
                 the laz»y dog."},
             Mode::HelixNormal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_newline_char(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("aa«\nˇ»bb cc", Mode::HelixNormal);
+
+        cx.simulate_keystroke("w");
+
+        cx.assert_state("aa\n«bb ˇ»cc", Mode::HelixNormal);
+
+        cx.set_state("aa«\nˇ»", Mode::HelixNormal);
+
+        cx.simulate_keystroke("b");
+
+        cx.assert_state("«ˇaa»\n", Mode::HelixNormal);
     }
 }

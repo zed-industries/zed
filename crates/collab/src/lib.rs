@@ -285,7 +285,7 @@ impl AppState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
         let mut db_options = db::ConnectOptions::new(config.database_url.clone());
         db_options.max_connections(config.database_max_connections);
-        let mut db = Database::new(db_options, Executor::Production).await?;
+        let mut db = Database::new(db_options).await?;
         db.initialize_notification_kinds().await?;
 
         let llm_db = if let Some((llm_database_url, llm_database_max_connections)) = config

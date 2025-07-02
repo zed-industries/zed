@@ -820,13 +820,11 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .map(|menu| {
-                                if self.clipboard.as_ref().is_some() {
-                                    menu.action("Paste", Box::new(Paste))
-                                } else {
-                                    menu.disabled_action("Paste", Box::new(Paste))
-                                }
-                            })
+                            .action_disabled_when(
+                                self.clipboard.as_ref().is_none(),
+                                "Paste",
+                                Box::new(Paste),
+                            )
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
                             .action(

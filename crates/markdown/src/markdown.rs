@@ -421,7 +421,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -1672,7 +1672,7 @@ struct RenderedText {
     links: Rc<[RenderedLink]>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,

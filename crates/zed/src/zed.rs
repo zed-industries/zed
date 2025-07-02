@@ -1429,6 +1429,8 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
         "New Window",
         workspace::NewWindow,
     )]);
+    // todo: nicer api here?
+    settings_ui::keybindings::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
 pub fn load_default_keymap(cx: &mut App) {
@@ -4309,6 +4311,7 @@ mod tests {
                 "icon_theme_selector",
                 "jj",
                 "journal",
+                "keymap_editor",
                 "language_selector",
                 "lsp_tool",
                 "markdown",

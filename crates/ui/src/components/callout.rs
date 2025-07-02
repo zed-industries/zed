@@ -1,4 +1,4 @@
-use gpui::AnyElement;
+use gpui::{AnyElement, Hsla};
 
 use crate::prelude::*;
 
@@ -24,7 +24,9 @@ pub struct Callout {
     description: Option<SharedString>,
     primary_action: Option<AnyElement>,
     secondary_action: Option<AnyElement>,
+    tertiary_action: Option<AnyElement>,
     line_height: Option<Pixels>,
+    bg_color: Option<Hsla>,
 }
 
 impl Callout {
@@ -36,7 +38,9 @@ impl Callout {
             description: None,
             primary_action: None,
             secondary_action: None,
+            tertiary_action: None,
             line_height: None,
+            bg_color: None,
         }
     }
 
@@ -71,9 +75,21 @@ impl Callout {
         self
     }
 
+    /// Sets an optional tertiary call-to-action button.
+    pub fn tertiary_action(mut self, action: impl IntoElement) -> Self {
+        self.tertiary_action = Some(action.into_any_element());
+        self
+    }
+
     /// Sets a custom line height for the callout content.
     pub fn line_height(mut self, line_height: Pixels) -> Self {
         self.line_height = Some(line_height);
+        self
+    }
+
+    /// Sets a custom background color for the callout content.
+    pub fn bg_color(mut self, color: Hsla) -> Self {
+        self.bg_color = Some(color);
         self
     }
 }
@@ -81,54 +97,59 @@ impl Callout {
 impl RenderOnce for Callout {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let line_height = self.line_height.unwrap_or(window.line_height());
+        let bg_color = self
+            .bg_color
+            .unwrap_or(cx.theme().colors().panel_background);
+        let has_actions = self.primary_action.is_some()
+            || self.secondary_action.is_some()
+            || self.tertiary_action.is_some();
 
         h_flex()
-            .w_full()
             .p_2()
             .gap_2()
             .items_start()
-            .bg(cx.theme().colors().panel_background)
+            .bg(bg_color)
             .overflow_x_hidden()
             .when_some(self.icon, |this, icon| {
                 this.child(h_flex().h(line_height).justify_center().child(icon))
             })
             .child(
                 v_flex()
+                    .min_w_0()
                     .w_full()
                     .child(
                         h_flex()
                             .h(line_height)
                             .w_full()
                             .gap_1()
-                            .flex_wrap()
                             .justify_between()
                             .when_some(self.title, |this, title| {
                                 this.child(h_flex().child(Label::new(title).size(LabelSize::Small)))
                             })
-                            .when(
-                                self.primary_action.is_some() || self.secondary_action.is_some(),
-                                |this| {
-                                    this.child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .when_some(self.secondary_action, |this, action| {
-                                                this.child(action)
-                                            })
-                                            .when_some(self.primary_action, |this, action| {
-                                                this.child(action)
-                                            }),
-                                    )
-                                },
-                            ),
+                            .when(has_actions, |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_0p5()
+                                        .when_some(self.tertiary_action, |this, action| {
+                                            this.child(action)
+                                        })
+                                        .when_some(self.secondary_action, |this, action| {
+                                            this.child(action)
+                                        })
+                                        .when_some(self.primary_action, |this, action| {
+                                            this.child(action)
+                                        }),
+                                )
+                            }),
                     )
                     .when_some(self.description, |this, description| {
                         this.child(
                             div()
                                 .w_full()
                                 .flex_1()
-                                .child(description)
                                 .text_ui_sm(cx)
-                                .text_color(cx.theme().colors().text_muted),
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(description),
                         )
                     }),
             )
