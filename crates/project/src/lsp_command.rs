@@ -1846,12 +1846,15 @@ impl LspCommand for GetSignatureHelp {
     async fn response_from_lsp(
         self,
         message: Option<lsp::SignatureHelp>,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(message.and_then(SignatureHelp::new))
+        let Some(message) = message else {
+            return Ok(None);
+        };
+        cx.update(|cx| SignatureHelp::new(message, Some(lsp_store.read(cx).languages.clone()), cx))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1902,14 +1905,18 @@ impl LspCommand for GetSignatureHelp {
     async fn response_from_proto(
         self,
         response: proto::GetSignatureHelpResponse,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(response
-            .signature_help
-            .map(proto_to_lsp_signature)
-            .and_then(SignatureHelp::new))
+        cx.update(|cx| {
+            response
+                .signature_help
+                .map(proto_to_lsp_signature)
+                .and_then(|signature| {
+                    SignatureHelp::new(signature, Some(lsp_store.read(cx).languages.clone()), cx)
+                })
+        })
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
