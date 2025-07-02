@@ -12,11 +12,13 @@ use crate::prelude::*;
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
+    AiGrid,
+    AtomLogo,
+    DebuggerGrid,
+    Grid,
+    SublimeLogo,
     ZedLogo,
     ZedXCopilot,
-    Grid,
-    AiGrid,
-    DebuggerGrid,
 }
 
 impl VectorName {

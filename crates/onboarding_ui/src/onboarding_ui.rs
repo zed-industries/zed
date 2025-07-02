@@ -812,7 +812,7 @@ impl OnboardingUI {
                         h_flex().gap_2().children(
                             vec![
                                 ("Zed", VectorName::ZedLogo, 4),
-                                ("Atom", VectorName::ZedLogo, 5),
+                                ("Atom", VectorName::AtomLogo, 5),
                                 ("JetBrains", VectorName::ZedLogo, 6),
                                 ("Sublime", VectorName::ZedLogo, 7),
                                 ("VSCode", VectorName::ZedLogo, 8),
@@ -826,7 +826,7 @@ impl OnboardingUI {
                                 let is_selected = current_keymap == label;
 
                                 v_flex()
-                                    .w(px(60.))
+                                    .w(px(72.))
                                     .gap_1()
                                     .items_center()
                                     .justify_center()
@@ -834,7 +834,7 @@ impl OnboardingUI {
                                     .child(
                                         h_flex()
                                             .id(("keymap", index))
-                                            .size(px(40.))
+                                            .size(px(48.))
                                             .rounded(px(8.))
                                             .items_center()
                                             .justify_center()
