@@ -2,7 +2,7 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
+use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -721,38 +721,6 @@ pub fn chars_before(
         })
 }
 
-pub(crate) fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
-    let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-    let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
-    let text = &map.buffer_snapshot;
-    let next_char_kind = text.chars_at(ix).next().map(|c| classifier.kind(c));
-    let prev_char_kind = text
-        .reversed_chars_at(ix)
-        .next()
-        .map(|c| classifier.kind(c));
-    prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
-}
-
-pub(crate) fn surrounding_word(
-    map: &DisplaySnapshot,
-    position: DisplayPoint,
-) -> Range<DisplayPoint> {
-    let position = map
-        .clip_point(position, Bias::Left)
-        .to_offset(map, Bias::Left);
-    let (range, _) = map.buffer_snapshot.surrounding_word(position, false);
-    let start = range
-        .start
-        .to_point(&map.buffer_snapshot)
-        .to_display_point(map);
-    let end = range
-        .end
-        .to_point(&map.buffer_snapshot)
-        .to_display_point(map);
-    start..end
-}
-
 /// Returns a list of lines (represented as a [`DisplayPoint`] range) contained
 /// within a passed range.
 ///
@@ -1089,30 +1057,6 @@ mod tests {
                 false
             }
         });
-    }
-
-    #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::App) {
-        init_test(cx);
-
-        fn assert(marked_text: &str, cx: &mut gpui::App) {
-            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                surrounding_word(&snapshot, display_points[1]),
-                display_points[0]..display_points[2],
-                "{}",
-                marked_text
-            );
-        }
-
-        assert("ˇˇloremˇ  ipsum", cx);
-        assert("ˇloˇremˇ  ipsum", cx);
-        assert("ˇloremˇˇ  ipsum", cx);
-        assert("loremˇ ˇ  ˇipsum", cx);
-        assert("lorem\nˇˇˇ\nipsum", cx);
-        assert("lorem\nˇˇipsumˇ", cx);
-        assert("loremˇ,ˇˇ ipsum", cx);
-        assert("ˇloremˇˇ, ipsum", cx);
     }
 
     #[gpui::test]

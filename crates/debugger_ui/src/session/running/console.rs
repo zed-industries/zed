@@ -9,8 +9,8 @@ use dap::OutputEvent;
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render, Subscription, Task,
-    TextStyle, WeakEntity,
+    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
+    Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
@@ -21,7 +21,9 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
-use ui::{Divider, prelude::*};
+use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
+
+actions!(console, [WatchExpression]);
 
 pub struct Console {
     console: Entity<Editor>,
@@ -112,7 +114,7 @@ impl Console {
     }
 
     fn is_running(&self, cx: &Context<Self>) -> bool {
-        self.session.read(cx).is_running()
+        self.session.read(cx).is_started()
     }
 
     fn handle_stack_frame_list_events(
@@ -329,6 +331,40 @@ impl Console {
         });
     }
 
+    pub fn watch_expression(
+        &mut self,
+        _: &WatchExpression,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let expression = self.query_bar.update(cx, |editor, cx| {
+            let expression = editor.text(cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
+
+            expression
+        });
+
+        self.session.update(cx, |session, cx| {
+            session
+                .evaluate(
+                    expression.clone(),
+                    Some(dap::EvaluateArgumentsContext::Repl),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
+                    None,
+                    cx,
+                )
+                .detach();
+
+            if let Some(stack_frame_id) = self.stack_frame_list.read(cx).opened_stack_frame_id() {
+                session
+                    .add_watcher(expression.into(), stack_frame_id, cx)
+                    .detach();
+            }
+        });
+    }
+
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
@@ -350,6 +386,43 @@ impl Console {
                 )
                 .detach();
         });
+    }
+
+    fn render_submit_menu(
+        &self,
+        id: impl Into<ElementId>,
+        keybinding_target: Option<FocusHandle>,
+        cx: &App,
+    ) -> impl IntoElement {
+        PopoverMenu::new(id.into())
+            .trigger(
+                ui::ButtonLike::new_rounded_right("console-confirm-split-button-right")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ui::ButtonSize::None)
+                    .child(
+                        div()
+                            .px_1()
+                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                    ),
+            )
+            .when(
+                self.stack_frame_list
+                    .read(cx)
+                    .opened_stack_frame_id()
+                    .is_some(),
+                |this| {
+                    this.menu(move |window, cx| {
+                        Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                            context_menu
+                                .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                                    el.context(keybinding_target.clone())
+                                })
+                                .action("Watch expression", WatchExpression.boxed_clone())
+                        }))
+                    })
+                },
+            )
+            .anchor(Corner::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -408,15 +481,52 @@ impl Console {
 
 impl Render for Console {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let query_focus_handle = self.query_bar.focus_handle(cx);
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
+            .on_action(cx.listener(Self::watch_expression))
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_running(cx), |this| {
-                this.child(Divider::horizontal())
-                    .child(self.render_query_bar(cx))
+                this.child(Divider::horizontal()).child(
+                    h_flex()
+                        .gap_1()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(self.render_query_bar(cx))
+                        .child(SplitButton::new(
+                            ui::ButtonLike::new_rounded_all(ElementId::Name(
+                                "split-button-left-confirm-button".into(),
+                            ))
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(Box::new(Confirm), cx)
+                            })
+                            .tooltip({
+                                let query_focus_handle = query_focus_handle.clone();
+
+                                move |window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Evaluate",
+                                        &Confirm,
+                                        &query_focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .size(ui::ButtonSize::Compact)
+                            .child(Label::new("Evaluate")),
+                            self.render_submit_menu(
+                                ElementId::Name("split-button-right-confirm-button".into()),
+                                Some(query_focus_handle.clone()),
+                                cx,
+                            )
+                            .into_any_element(),
+                        )),
+                )
             })
             .border_2()
     }
@@ -472,14 +582,31 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
     fn is_completion_trigger(
         &self,
-        _buffer: &Entity<Buffer>,
-        _position: language::Anchor,
-        _text: &str,
+        buffer: &Entity<Buffer>,
+        position: language::Anchor,
+        text: &str,
         _trigger_in_words: bool,
-        _menu_is_open: bool,
-        _cx: &mut Context<Editor>,
+        menu_is_open: bool,
+        cx: &mut Context<Editor>,
     ) -> bool {
-        true
+        let snapshot = buffer.read(cx).snapshot();
+        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
+            return false;
+        }
+
+        self.0
+            .read_with(cx, |console, cx| {
+                console
+                    .session
+                    .read(cx)
+                    .capabilities()
+                    .completion_trigger_characters
+                    .as_ref()
+                    .map(|triggers| triggers.contains(&text.to_string()))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(true)
     }
 }
 
@@ -519,8 +646,23 @@ impl ConsoleQueryBarCompletionProvider {
             (variables, string_matches)
         });
 
-        let query = buffer.read(cx).text();
-
+        let snapshot = buffer.read(cx).text_snapshot();
+        let query = snapshot.text();
+        let replace_range = {
+            let buffer_offset = buffer_position.to_offset(&snapshot);
+            let reversed_chars = snapshot.reversed_chars_for_range(0..buffer_offset);
+            let mut word_len = 0;
+            for ch in reversed_chars {
+                if ch.is_alphanumeric() || ch == '_' {
+                    word_len += 1;
+                } else {
+                    break;
+                }
+            }
+            let word_start_offset = buffer_offset - word_len;
+            let start_anchor = snapshot.anchor_at(word_start_offset, Bias::Left);
+            start_anchor..buffer_position
+        };
         cx.spawn(async move |_, cx| {
             const LIMIT: usize = 10;
             let matches = fuzzy::match_strings(
@@ -540,7 +682,7 @@ impl ConsoleQueryBarCompletionProvider {
                     let variable_value = variables.get(&string_match.string)?;
 
                     Some(project::Completion {
-                        replace_range: buffer_position..buffer_position,
+                        replace_range: replace_range.clone(),
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),

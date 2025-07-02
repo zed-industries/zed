@@ -364,9 +364,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -445,12 +445,14 @@ pub async fn stream_completion(
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "Failed to connect to OpenAI API: {}",
+                "API request to {} failed: {}",
+                api_url,
                 response.error.message,
             )),
 
             _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
+                "API request to {} failed with status {}: {}",
+                api_url,
                 response.status(),
                 body,
             ),

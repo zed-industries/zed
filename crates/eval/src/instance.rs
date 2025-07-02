@@ -1030,6 +1030,7 @@ pub fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
+            Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => {}
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Stop**: {:?}\n\n", reason));
@@ -1053,6 +1054,15 @@ pub fn response_events_to_markdown(
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::StatusUpdate { .. },
             ) => {}
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                json_parse_error, ..
+            }) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!(
+                    "**Error**: parse error in tool use JSON: {}\n\n",
+                    json_parse_error
+                ));
+            }
             Err(error) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Error**: {}\n\n", error));
@@ -1126,9 +1136,21 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
+
+                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    json_parse_error,
+                    ..
+                }) => {
+                    flush_text(&mut current_text, &mut content);
+                    content.push(MessageContent::Text(format!(
+                        "ERROR: parse error in tool use JSON: {}",
+                        json_parse_error
+                    )));
+                }
 
                 Err(error) => {
                     flush_text(&mut current_text, &mut content);

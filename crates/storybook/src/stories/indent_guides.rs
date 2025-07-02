@@ -1,13 +1,10 @@
-use std::fmt::format;
+use std::ops::Range;
 
-use gpui::{
-    DefaultColor, DefaultThemeAppearance, Hsla, Render, colors, div, prelude::*, uniform_list,
-};
+use gpui::{Entity, Render, div, uniform_list};
+use gpui::{prelude::*, *};
+use ui::{AbsoluteLength, Color, DefiniteLength, Label, LabelCommon, px, v_flex};
+
 use story::Story;
-use strum::IntoEnumIterator;
-use ui::{
-    AbsoluteLength, ActiveTheme, Color, DefiniteLength, Label, LabelCommon, h_flex, px, v_flex,
-};
 
 const LENGTH: usize = 100;
 
@@ -16,7 +13,7 @@ pub struct IndentGuidesStory {
 }
 
 impl IndentGuidesStory {
-    pub fn model(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
+    pub fn model(_window: &mut Window, cx: &mut App) -> Entity<Self> {
         let mut depths = Vec::new();
         depths.push(0);
         depths.push(1);
@@ -33,16 +30,15 @@ impl IndentGuidesStory {
 }
 
 impl Render for IndentGuidesStory {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         Story::container(cx)
-            .child(Story::title("Indent guides"))
+            .child(Story::title("Indent guides", cx))
             .child(
                 v_flex().size_full().child(
                     uniform_list(
-                        cx.entity().clone(),
                         "some-list",
                         self.depths.len(),
-                        |this, range, cx| {
+                        cx.processor(move |this, range: Range<usize>, _window, _cx| {
                             this.depths
                                 .iter()
                                 .enumerate()
@@ -56,7 +52,7 @@ impl Render for IndentGuidesStory {
                                         .child(Label::new(format!("Item {}", i)).color(Color::Info))
                                 })
                                 .collect()
-                        },
+                        }),
                     )
                     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
                     .with_decoration(ui::indent_guides(
@@ -64,10 +60,10 @@ impl Render for IndentGuidesStory {
                         px(16.),
                         ui::IndentGuideColors {
                             default: Color::Info.color(cx),
-                            hovered: Color::Accent.color(cx),
+                            hover: Color::Accent.color(cx),
                             active: Color::Accent.color(cx),
                         },
-                        |this, range, cx| {
+                        |this, range, _cx, _context| {
                             this.depths
                                 .iter()
                                 .skip(range.start)

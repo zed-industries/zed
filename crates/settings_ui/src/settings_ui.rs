@@ -8,8 +8,7 @@ use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
 use fs::Fs;
 use gpui::{
-    App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions,
-    impl_actions,
+    Action, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -21,25 +20,30 @@ use workspace::{Workspace, with_active_or_new_workspace};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
+pub mod keybindings;
+pub mod ui_components;
+
 pub struct SettingsUiFeatureFlag;
 
 impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ImportVsCodeSettings {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ImportCursorSettings {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
@@ -122,6 +126,8 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+
+    keybindings::init(cx);
 }
 
 async fn handle_import_vscode_settings(

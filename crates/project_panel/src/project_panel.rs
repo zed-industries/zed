@@ -12,7 +12,7 @@ use editor::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
-    scroll::{Autoscroll, ScrollbarAutoHide},
+    scroll::ScrollbarAutoHide,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
@@ -23,7 +23,7 @@ use gpui::{
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, impl_actions, point, px, size, transparent_white, uniform_list,
+    div, point, px, size, transparent_white, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -181,21 +181,21 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -820,13 +820,11 @@ impl ProjectPanel {
                             .action("Copy", Box::new(Copy))
                             .action("Duplicate", Box::new(Duplicate))
                             // TODO: Paste should always be visible, cbut disabled when clipboard is empty
-                            .map(|menu| {
-                                if self.clipboard.as_ref().is_some() {
-                                    menu.action("Paste", Box::new(Paste))
-                                } else {
-                                    menu.disabled_action("Paste", Box::new(Paste))
-                                }
-                            })
+                            .action_disabled_when(
+                                self.clipboard.as_ref().is_none(),
+                                "Paste",
+                                Box::new(Paste),
+                            )
                             .separator()
                             .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
                             .action(
@@ -1589,7 +1587,7 @@ impl ProjectPanel {
                     });
                     self.filename_editor.update(cx, |editor, cx| {
                         editor.set_text(file_name, window, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
                             s.select_ranges([selection])
                         });
                         window.focus(&editor.focus_handle(cx));

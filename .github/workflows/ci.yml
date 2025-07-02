@@ -29,6 +29,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
       run_license: ${{ steps.filter.outputs.run_license }}
+      run_docs: ${{ steps.filter.outputs.run_docs }}
+      run_nix: ${{ steps.filter.outputs.run_nix }}
     runs-on:
       - ubuntu-latest
     steps:
@@ -58,10 +60,21 @@ jobs:
           else
             echo "run_tests=false" >> $GITHUB_OUTPUT
           fi
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^docs/') ]]; then
+            echo "run_docs=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_docs=false" >> $GITHUB_OUTPUT
+          fi
           if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^Cargo.lock') ]]; then
             echo "run_license=true" >> $GITHUB_OUTPUT
           else
             echo "run_license=false" >> $GITHUB_OUTPUT
+          fi
+          NIX_REGEX='^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)'
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep "$NIX_REGEX") ]]; then
+            echo "run_nix=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nix=false" >> $GITHUB_OUTPUT
           fi
 
   migration_checks:
@@ -198,7 +211,9 @@ jobs:
     timeout-minutes: 60
     name: Check docs
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      (needs.job_spec.outputs.run_tests == 'true' || needs.job_spec.outputs.run_docs == 'true')
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -452,8 +467,10 @@ jobs:
           RET_CODE=0
           # Always check style
           [[ "${{ needs.style.result }}"      != 'success' ]] && { RET_CODE=1; echo "style tests failed"; }
-          [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
 
+          if [[ "${{ needs.job_spec.outputs.run_docs }}" == "true" ]]; then
+            [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
+          fi
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
             [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
@@ -736,7 +753,10 @@ jobs:
   nix-build:
     name: Build with Nix
     uses: ./.github/workflows/nix.yml
-    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    needs: [job_spec]
+    if: github.repository_owner == 'zed-industries' &&
+      (contains(github.event.pull_request.labels.*.name, 'run-nix') ||
+      needs.job_spec.outputs.run_nix == 'true')
     secrets: inherit
     with:
       flake-output: debug

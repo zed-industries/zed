@@ -10,6 +10,7 @@ use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::fs::File;
@@ -47,7 +48,10 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, JsonSchema,
+)]
+#[serde(transparent)]
 pub struct DebugAdapterName(pub SharedString);
 
 impl Deref for DebugAdapterName {
@@ -344,6 +348,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -434,6 +439,7 @@ impl DebugAdapter for FakeAdapter {
         _: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
+        _: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {

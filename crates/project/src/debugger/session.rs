@@ -26,7 +26,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
@@ -124,6 +124,14 @@ impl From<dap::Thread> for Thread {
             _has_stopped: false,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Watcher {
+    pub expression: SharedString,
+    pub value: SharedString,
+    pub variables_reference: u64,
+    pub presentation_hint: Option<VariablePresentationHint>,
 }
 
 pub enum Mode {
@@ -412,6 +420,15 @@ impl RunningMode {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        // From spec (on initialization sequence):
+        // client sends a setExceptionBreakpoints request if one or more exceptionBreakpointFilters have been defined (or if supportsConfigurationDoneRequest is not true)
+        //
+        // Thus we should send setExceptionBreakpoints even if `exceptionFilters` variable is empty (as long as there were some options in the first place).
+        let should_send_exception_breakpoints = capabilities
+            .exception_breakpoint_filters
+            .as_ref()
+            .map_or(false, |filters| !filters.is_empty())
+            || !configuration_done_supported;
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
             .unwrap_or_default();
@@ -453,9 +470,12 @@ impl RunningMode {
                     }
                 })?;
 
-                this.send_exception_breakpoints(exception_filters, supports_exception_filters)
-                    .await
-                    .ok();
+                if should_send_exception_breakpoints {
+                    this.send_exception_breakpoints(exception_filters, supports_exception_filters)
+                        .await
+                        .ok();
+                }
+
                 let ret = if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
@@ -630,6 +650,7 @@ pub struct Session {
     output: Box<circular_buffer::CircularBuffer<MAX_TRACKED_OUTPUT_EVENTS, dap::OutputEvent>>,
     threads: IndexMap<ThreadId, Thread>,
     thread_states: ThreadStates,
+    watchers: HashMap<SharedString, Watcher>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
@@ -721,6 +742,7 @@ pub enum SessionEvent {
     Stopped(Option<ThreadId>),
     StackTrace,
     Variables,
+    Watchers,
     Threads,
     InvalidateInlineValue,
     CapabilitiesLoaded,
@@ -780,7 +802,7 @@ impl Session {
                 BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             })
             .detach();
-            cx.on_app_quit(Self::on_app_quit).detach();
+            // cx.on_app_quit(Self::on_app_quit).detach();
 
             let this = Self {
                 mode: Mode::Building,
@@ -788,6 +810,7 @@ impl Session {
                 child_session_ids: HashSet::default(),
                 parent_session,
                 capabilities: Capabilities::default(),
+                watchers: HashMap::default(),
                 variables: Default::default(),
                 stack_frames: Default::default(),
                 thread_states: ThreadStates::default(),
@@ -934,6 +957,37 @@ impl Session {
         self.parent_session.as_ref()
     }
 
+    pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(client) = self.adapter_client() else {
+            return Task::ready(());
+        };
+
+        let supports_terminate = self
+            .capabilities
+            .support_terminate_debuggee
+            .unwrap_or(false);
+
+        cx.background_spawn(async move {
+            if supports_terminate {
+                client
+                    .request::<dap::requests::Terminate>(dap::TerminateArguments {
+                        restart: Some(false),
+                    })
+                    .await
+                    .ok();
+            } else {
+                client
+                    .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
+                        restart: Some(false),
+                        terminate_debuggee: Some(true),
+                        suspend_debuggee: Some(false),
+                    })
+                    .await
+                    .ok();
+            }
+        })
+    }
+
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
@@ -993,10 +1047,6 @@ impl Session {
 
     pub fn is_building(&self) -> bool {
         matches!(self.mode, Mode::Building)
-    }
-
-    pub fn is_running(&self) -> bool {
-        matches!(self.mode, Mode::Running(_))
     }
 
     pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
@@ -1323,7 +1373,6 @@ impl Session {
 
         if event.all_threads_stopped.unwrap_or_default() || event.thread_id.is_none() {
             self.thread_states.stop_all_threads();
-
             self.invalidate_command_type::<StackTraceCommand>();
         }
 
@@ -1442,6 +1491,28 @@ impl Session {
             }
             Events::Capabilities(event) => {
                 self.capabilities = self.capabilities.merge(event.capabilities);
+
+                // The adapter might've enabled new exception breakpoints (or disabled existing ones).
+                let recent_filters = self
+                    .capabilities
+                    .exception_breakpoint_filters
+                    .iter()
+                    .flatten()
+                    .map(|filter| (filter.filter.clone(), filter.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                for filter in recent_filters.values() {
+                    let default = filter.default.unwrap_or_default();
+                    self.exception_breakpoints
+                        .entry(filter.filter.clone())
+                        .or_insert_with(|| (filter.clone(), default));
+                }
+                self.exception_breakpoints
+                    .retain(|k, _| recent_filters.contains_key(k));
+                if self.is_started() {
+                    self.send_exception_breakpoints(cx);
+                }
+
+                // Remove the ones that no longer exist.
                 cx.notify();
             }
             Events::Memory(_) => {}
@@ -1808,17 +1879,11 @@ impl Session {
         }
     }
 
-    fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let debug_adapter = self.adapter_client();
-
-        cx.background_spawn(async move {
-            if let Some(client) = debug_adapter {
-                client.shutdown().await.log_err();
-            }
-        })
-    }
-
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        if self.is_session_terminated {
+            return Task::ready(());
+        }
+
         self.is_session_terminated = true;
         self.thread_states.exit_all_threads();
         cx.notify();
@@ -1849,14 +1914,8 @@ impl Session {
 
         cx.emit(SessionStateEvent::Shutdown);
 
-        let debug_client = self.adapter_client();
-
-        cx.background_spawn(async move {
-            let _ = task.await;
-
-            if let Some(client) = debug_client {
-                client.shutdown().await.log_err();
-            }
+        cx.spawn(async move |_, _| {
+            task.await;
         })
     }
 
@@ -2142,7 +2201,12 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
+    pub fn variables_by_stack_frame_id(
+        &self,
+        stack_frame_id: StackFrameId,
+        globals: bool,
+        locals: bool,
+    ) -> Vec<dap::Variable> {
         let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
             return Vec::new();
         };
@@ -2150,10 +2214,61 @@ impl Session {
         stack_frame
             .scopes
             .iter()
+            .filter(|scope| {
+                (scope.name.to_lowercase().contains("local") && locals)
+                    || (scope.name.to_lowercase().contains("global") && globals)
+            })
             .filter_map(|scope| self.variables.get(&scope.variables_reference))
             .flatten()
             .cloned()
             .collect()
+    }
+
+    pub fn watchers(&self) -> &HashMap<SharedString, Watcher> {
+        &self.watchers
+    }
+
+    pub fn add_watcher(
+        &mut self,
+        expression: SharedString,
+        frame_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let request = self.mode.request_dap(EvaluateCommand {
+            expression: expression.to_string(),
+            context: Some(EvaluateArgumentsContext::Watch),
+            frame_id: Some(frame_id),
+            source: None,
+        });
+
+        cx.spawn(async move |this, cx| {
+            let response = request.await?;
+
+            this.update(cx, |session, cx| {
+                session.watchers.insert(
+                    expression.clone(),
+                    Watcher {
+                        expression,
+                        value: response.result.into(),
+                        variables_reference: response.variables_reference,
+                        presentation_hint: response.presentation_hint,
+                    },
+                );
+                cx.emit(SessionEvent::Watchers);
+            })
+        })
+    }
+
+    pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
+        let watches = self.watchers.clone();
+        for (_, watch) in watches.into_iter() {
+            self.add_watcher(watch.expression.clone(), frame_id, cx)
+                .detach();
+        }
+    }
+
+    pub fn remove_watcher(&mut self, expression: SharedString) {
+        self.watchers.remove(&expression);
     }
 
     pub fn variables(
@@ -2192,6 +2307,7 @@ impl Session {
 
     pub fn set_variable_value(
         &mut self,
+        stack_frame_id: u64,
         variables_reference: u64,
         name: String,
         value: String,
@@ -2207,12 +2323,13 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
-                    cx.notify();
+                    this.refresh_watchers(stack_frame_id, cx);
+                    cx.emit(SessionEvent::Variables);
                     Some(response)
                 },
                 cx,
             )
-            .detach()
+            .detach();
         }
     }
 
@@ -2275,7 +2392,6 @@ impl Session {
                         this.push_output(event, cx);
                     }
                 };
-                this.invalidate_command_type::<ScopesCommand>();
                 cx.notify();
             })
             .ok();

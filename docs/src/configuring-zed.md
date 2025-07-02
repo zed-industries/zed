@@ -1944,17 +1944,17 @@ Example:
 
 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
 
-```jsonc
+```json
 {
-  "multi_cursor_modifier": "alt",
+  "multi_cursor_modifier": "alt"
 }
 ```
 
 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
 
-```jsonc
+```json
 {
-  "multi_cursor_modifier": "cmd_or_ctrl", // alias: "cmd", "ctrl"
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
 

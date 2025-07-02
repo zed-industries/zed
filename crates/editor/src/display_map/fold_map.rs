@@ -1,3 +1,5 @@
+use crate::{InlayId, display_map::inlay_map::InlayChunk};
+
 use super::{
     Highlights,
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
@@ -275,13 +277,16 @@ impl FoldMapWriter<'_> {
 
     pub(crate) fn update_fold_widths(
         &mut self,
-        new_widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        new_widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
         let inlay_snapshot = self.0.snapshot.inlay_snapshot.clone();
         let buffer = &inlay_snapshot.buffer;
 
         for (id, new_width) in new_widths {
+            let ChunkRendererId::Fold(id) = id else {
+                continue;
+            };
             if let Some(metadata) = self.0.snapshot.fold_metadata_by_id.get(&id).cloned() {
                 if Some(new_width) != metadata.width {
                     let buffer_start = metadata.range.start.to_offset(buffer);
@@ -527,7 +532,7 @@ impl FoldMap {
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
                                     renderer: ChunkRenderer {
-                                        id: fold.id,
+                                        id: ChunkRendererId::Fold(fold.id),
                                         render: Arc::new(move |cx| {
                                             (fold.placeholder.render)(
                                                 fold_id,
@@ -1060,7 +1065,7 @@ impl sum_tree::Summary for TransformSummary {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Ord, PartialOrd, Hash)]
-pub struct FoldId(usize);
+pub struct FoldId(pub(super) usize);
 
 impl From<FoldId> for ElementId {
     fn from(val: FoldId) -> Self {
@@ -1265,11 +1270,17 @@ pub struct Chunk<'a> {
     pub renderer: Option<ChunkRenderer>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChunkRendererId {
+    Fold(FoldId),
+    Inlay(InlayId),
+}
+
 /// A recipe for how the chunk should be presented.
 #[derive(Clone)]
 pub struct ChunkRenderer {
-    /// The id of the fold associated with this chunk.
-    pub id: FoldId,
+    /// The id of the renderer associated with this chunk.
+    pub id: ChunkRendererId,
     /// Creates a custom element to represent this chunk.
     pub render: Arc<dyn Send + Sync + Fn(&mut ChunkRendererContext) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of the text.
@@ -1311,7 +1322,7 @@ impl DerefMut for ChunkRendererContext<'_, '_> {
 pub struct FoldChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, InlayOffset)>,
     inlay_chunks: InlayChunks<'a>,
-    inlay_chunk: Option<(InlayOffset, language::Chunk<'a>)>,
+    inlay_chunk: Option<(InlayOffset, InlayChunk<'a>)>,
     inlay_offset: InlayOffset,
     output_offset: FoldOffset,
     max_output_offset: FoldOffset,
@@ -1403,7 +1414,8 @@ impl<'a> Iterator for FoldChunks<'a> {
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((buffer_chunk_start, mut chunk)) = self.inlay_chunk.clone() {
+        if let Some((buffer_chunk_start, mut inlay_chunk)) = self.inlay_chunk.clone() {
+            let chunk = &mut inlay_chunk.chunk;
             let buffer_chunk_end = buffer_chunk_start + InlayOffset(chunk.text.len());
             let transform_end = self.transform_cursor.end(&()).1;
             let chunk_end = buffer_chunk_end.min(transform_end);
@@ -1428,7 +1440,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 underline: chunk.underline,
-                renderer: None,
+                renderer: inlay_chunk.renderer,
             });
         }
 

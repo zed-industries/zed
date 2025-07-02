@@ -516,12 +516,7 @@ pub fn main() {
         );
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
-        language_models::init(
-            app_state.user_store.clone(),
-            app_state.client.clone(),
-            app_state.fs.clone(),
-            cx,
-        );
+        language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -531,7 +526,7 @@ pub fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        agent::init(
+        agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),
@@ -587,6 +582,7 @@ pub fn main() {
         jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        svg_preview::init(cx);
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
@@ -1308,7 +1304,7 @@ fn dump_all_gpui_actions() {
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.aliases,
+            aliases: action.deprecated_aliases,
         })
         .collect::<Vec<ActionDef>>();
 

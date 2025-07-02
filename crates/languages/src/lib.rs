@@ -18,12 +18,15 @@ mod c;
 mod css;
 mod go;
 mod json;
+mod package_json;
 mod python;
 mod rust;
 mod tailwind;
 mod typescript;
 mod vtsls;
 mod yaml;
+
+pub(crate) use package_json::{PackageJson, PackageJsonData};
 
 #[derive(RustEmbed)]
 #[folder = "src/"]

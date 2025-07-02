@@ -85,10 +85,10 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
-      "f": ["vim::PushFindForward", { "before": false }],
-      "t": ["vim::PushFindForward", { "before": true }],
-      "shift-f": ["vim::PushFindBackward", { "after": false }],
-      "shift-t": ["vim::PushFindBackward", { "after": true }],
+      "f": ["vim::PushFindForward", { "before": false, "multiline": false }],
+      "t": ["vim::PushFindForward", { "before": true, "multiline": false }],
+      "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": false }],
+      "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": false }],
       "m": "vim::PushMark",
       "'": ["vim::PushJump", { "line": true }],
       "`": ["vim::PushJump", { "line": false }],
@@ -210,7 +210,8 @@
       "ctrl-w space": "editor::OpenExcerptsSplit",
       "ctrl-w g space": "editor::OpenExcerptsSplit",
       "ctrl-6": "pane::AlternateFile",
-      "ctrl-^": "pane::AlternateFile"
+      "ctrl-^": "pane::AlternateFile",
+      ".": "vim::Repeat"
     }
   },
   {
@@ -219,7 +220,6 @@
       "ctrl-[": "editor::Cancel",
       "escape": "editor::Cancel",
       ":": "command_palette::Toggle",
-      ".": "vim::Repeat",
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
@@ -368,6 +368,10 @@
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
+      "left": "vim::WrappingLeft",
+      "right": "vim::WrappingRight",
+      "h": "vim::WrappingLeft",
+      "l": "vim::WrappingRight",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "y": "editor::Copy",
@@ -385,6 +389,10 @@
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
       "ctrl-r": "vim::Redo",
+      "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
+      "t": ["vim::PushFindForward", { "before": true, "multiline": true }],
+      "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
+      "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "r": "vim::PushReplace",
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -842,6 +850,25 @@
     }
   },
   {
+    "context": "Editor && mode == auto_height && VimControl",
+    "bindings": {
+      // TODO: Implement search
+      "/": null,
+      "?": null,
+      "#": null,
+      "*": null,
+      "n": null,
+      "shift-n": null
+    }
+  },
+  {
+    "context": "GitCommit > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "ctrl-c": "menu::Cancel",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
     "context": "Editor && edit_prediction",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
@@ -852,14 +879,7 @@
   {
     "context": "MessageEditor > Editor && VimControl",
     "bindings": {
-      "enter": "agent::Chat",
-      // TODO: Implement search
-      "/": null,
-      "?": null,
-      "#": null,
-      "*": null,
-      "n": null,
-      "shift-n": null
+      "enter": "agent::Chat"
     }
   },
   {
