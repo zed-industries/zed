@@ -5,6 +5,9 @@ Param(
     [Parameter()][string]$Name
 )
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. "$scriptDir/lib/blob-store.ps1"
+
 # https://stackoverflow.com/questions/57949031/powershell-script-stops-if-program-fails-like-bash-set-o-errexit
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -81,6 +84,17 @@ function BuildZedAndItsFriends {
         }
     }
     Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
+}
+
+function ZipZedAndItsFriendsDebug {
+    $items = @(
+        ".\target\release\zed.pdb",
+        ".\target\release\cli.pdb",
+        ".\target\release\auto_update_helper.pdb",
+        ".\target\release\explorer_command_injector.pdb"
+    )
+
+    Compress-Archive -Path $items -DestinationPath ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip" -Force
 }
 
 function MakeAppx {
@@ -222,10 +236,13 @@ PrepareForBundle
 BuildZedAndItsFriends
 MakeAppx
 SignZedAndItsFriends
+ZipZedAndItsFriendsDebug
 CollectFiles
 BuildInstaller
 
-# TODO: upload_to_blob_store
+$debugArchive = ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
+$debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
+UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
 
 if ($buildSuccess) {
     Write-Output "Build successful"
