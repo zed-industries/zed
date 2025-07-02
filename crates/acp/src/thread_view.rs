@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp, ToolCallConfirmation};
@@ -32,6 +33,7 @@ pub struct AcpThreadView {
     message_editor: Entity<Editor>,
     list_state: ListState,
     send_task: Option<Task<Result<()>>>,
+    root: Arc<Path>,
 }
 
 enum ThreadState {
@@ -47,6 +49,7 @@ enum ThreadState {
 
 impl AcpThreadView {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // todo!(): This should probably be contextual, like the terminal
         let Some(root_dir) = project
             .read(cx)
             .visible_worktrees(cx)
@@ -62,7 +65,7 @@ impl AcpThreadView {
         let child = util::command::new_smol_command("node")
             .arg(cli_path)
             .arg("--acp")
-            .current_dir(root_dir)
+            .current_dir(&root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -146,6 +149,7 @@ impl AcpThreadView {
             message_editor,
             send_task: None,
             list_state: list_state,
+            root: root_dir,
         }
     }
 

@@ -199,6 +199,9 @@ impl Markdown {
         self.pending_parse.is_some()
     }
 
+    // Chunks: `Mark|down.md` You need to reparse every back tick, everytime
+    // `[foo.rs](foo.rs)` [`foo.rs`](foo.rs)  `ba|r.rs`
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -439,11 +442,25 @@ impl ParsedMarkdown {
     }
 }
 
+// pub trait TextClickHandler {
+//     fn pattern(&self) ->
+//     fn hovered(&mut self, text: &str) -> bool;
+//     fn clicked(&mut self, text: &str);
+// }
+// const WORD_REGEX: &str =
+//     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+
+pub struct UrlHandler {
+    pub on_hover: Box<dyn Fn(&str, &mut Window, &mut App) -> bool>,
+    pub on_click: Box<dyn Fn(&str, &mut Window, &mut App)>,
+}
+
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_link_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    url_handler: Option<UrlHandler>,
 }
 
 impl MarkdownElement {
@@ -456,7 +473,8 @@ impl MarkdownElement {
                 copy_button_on_hover: false,
                 border: false,
             },
-            on_url_click: None,
+            on_link_click: None,
+            url_handler: None,
         }
     }
 
@@ -490,7 +508,12 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_link_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn handle_urls(mut self, handler: UrlHandler) -> Self {
+        self.url_handler = Some(handler);
         self
     }
 
@@ -580,7 +603,7 @@ impl MarkdownElement {
             window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
-        let on_open_url = self.on_url_click.take();
+        let on_open_url = self.on_link_click.take();
 
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
@@ -591,6 +614,8 @@ impl MarkdownElement {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
                         } else {
+                            // if
+
                             let source_index =
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
@@ -1798,8 +1823,10 @@ impl RenderedText {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{Modifiers, MouseButton, TestAppContext, size};
 
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
@@ -1880,6 +1907,64 @@ mod tests {
             "hello\n\ncool world"
         );
     }
+
+    #[gpui::test]
+    fn test_url_handling(cx: &mut TestAppContext) {
+        let markdown = r#"hello `world`
+        Check out `https://zed.dev` for a great editor!
+        Also available locally: crates/ README.md,
+        "#;
+
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+
+        let paths_hovered = Rc::new(RefCell::new(Vec::new()));
+        let paths_clicked = Rc::new(RefCell::new(Vec::new()));
+
+        let handler = {
+            let paths_hovered = paths_hovered.clone();
+            let paths_clicked = paths_clicked.clone();
+
+            UrlHandler {
+                on_hover: Box::new(move |path, _window, _app| {
+                    paths_hovered.borrow_mut().push(path.to_string());
+                    true
+                }),
+                on_click: Box::new(move |path, _window, _app| {
+                    paths_clicked.borrow_mut().push(path.to_string());
+                }),
+            }
+        };
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).handle_urls(handler)
+            },
+        );
+
+        cx.simulate_mouse_move(
+            point(px(0.0), px(0.0)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+
+        assert_eq!(paths_hovered.borrow().len(), 1)
+    }
+
+    // To have a markdown document with paths and links in it
+    // We want to run a function
+    // and we want to get those paths and links out?
 
     #[track_caller]
     fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
