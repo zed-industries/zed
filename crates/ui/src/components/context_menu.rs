@@ -762,17 +762,6 @@ impl ContextMenu {
         self
     }
 
-    fn should_render_menu_item(&self, ix: usize, item: &ContextMenuItem) -> bool {
-        match item {
-            ContextMenuItem::Separator => {
-                ix > 0
-                    && ix < self.items.len() - 1
-                    && !matches!(self.items.get(ix - 1), Some(ContextMenuItem::Separator))
-            }
-            _ => true,
-        }
-    }
-
     fn render_menu_item(
         &self,
         ix: usize,
@@ -1147,15 +1136,32 @@ impl Render for ContextMenu {
                                 el
                             })
                             .child(
-                                List::new().children(self.items.iter().enumerate().filter_map(
-                                    |(ix, item)| {
-                                        if self.should_render_menu_item(ix, item) {
-                                            Some(self.render_menu_item(ix, item, window, cx))
-                                        } else {
-                                            None
-                                        }
-                                    },
-                                )),
+                                List::new().children(
+                                    self.items
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|&(ix, item)| {
+                                            if let ContextMenuItem::Separator = item {
+                                                let previous_is_separator = matches!(
+                                                    self.items[ix.saturating_sub(1)],
+                                                    ContextMenuItem::Separator
+                                                );
+
+                                                let trailing_separator =
+                                                    self.items[ix..].iter().all(|item| {
+                                                        matches!(item, ContextMenuItem::Separator)
+                                                    });
+
+                                                return !(previous_is_separator
+                                                    || trailing_separator);
+                                            }
+
+                                            true
+                                        })
+                                        .map(|(ix, item)| {
+                                            self.render_menu_item(ix, item, window, cx)
+                                        }),
+                                ),
                             ),
                     ),
             )
