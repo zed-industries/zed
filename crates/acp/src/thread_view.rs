@@ -74,7 +74,7 @@ impl AcpThreadView {
 
             let mut editor = Editor::new(
                 editor::EditorMode::AutoHeight {
-                    min_lines: 5,
+                    min_lines: 4,
                     max_lines: None,
                 },
                 buffer,
@@ -368,34 +368,35 @@ impl Render for AcpThreadView {
                     .flex_1()
                     .justify_end()
                     .child(Label::new(format!("Failed to load {e}")).into_any_element()),
-                ThreadState::Ready { .. } => v_flex().flex_1().pb_4().child(
-                    list(self.list_state.clone())
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                        .flex_grow(),
-                ),
-            })
-            .when(self.send_task.is_some(), |this| {
-                this.child(
-                    div().p_2().child(
-                        Label::new("Generating...")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
+                ThreadState::Ready { .. } => v_flex()
+                    .flex_1()
+                    .gap_2()
+                    .pb_2()
+                    .child(
+                        list(self.list_state.clone())
+                            .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                            .flex_grow(),
+                    )
+                    .child(
+                        div()
+                            .px_3()
+                            .child(
+                                Label::new("Generating...")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .when(self.send_task.is_none(), |this| this.invisible()),
                     ),
-                )
             })
             .child(
-                div()
+                v_flex()
                     .bg(cx.theme().colors().editor_background)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .p_2()
-                    .child(self.message_editor.clone()),
-            )
-            .child(
-                h_flex()
-                    .p_2()
-                    .justify_end()
-                    .child(if self.send_task.is_some() {
+                    .gap_2()
+                    .child(self.message_editor.clone())
+                    .child(h_flex().justify_end().child(if self.send_task.is_some() {
                         IconButton::new("stop-generation", IconName::StopFilled)
                             .icon_color(Color::Error)
                             .style(ButtonStyle::Tinted(ui::TintColor::Error))
@@ -428,7 +429,7 @@ impl Render for AcpThreadView {
                             .when(is_editor_empty, |button| {
                                 button.tooltip(Tooltip::text("Type a message to submit"))
                             })
-                    }),
+                    })),
             )
     }
 }
