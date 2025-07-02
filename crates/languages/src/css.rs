@@ -17,7 +17,7 @@ use std::{
 use util::{ResultExt, maybe};
 
 const SERVER_PATH: &str =
-    "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
+    "node_modules/@zed-industries/vscode-langservers-extracted/bin/vscode-css-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
