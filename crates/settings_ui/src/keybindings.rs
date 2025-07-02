@@ -408,25 +408,25 @@ impl KeymapEditor {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(index) = self.selected_index else {
-            return;
-        };
-        let keybind = self.keybindings[self.matches[index].candidate_id].clone();
-
-        self.edit_keybinding(keybind, window, cx);
+        self.edit_selected_keybinding(window, cx);
     }
 
-    fn edit_keybinding(
-        &mut self,
-        keybind: ProcessedKeybinding,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
+        self.selected_index
+            .and_then(|match_index| self.matches.get(match_index))
+            .map(|r#match| r#match.candidate_id)
+            .and_then(|keybind_index| self.keybindings.get(keybind_index))
+    }
+
+    fn edit_selected_keybinding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(keybind) = self.selected_binding() else {
+            return;
+        };
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let modal = KeybindingEditorModal::new(keybind, fs, window, cx);
+                    let modal = KeybindingEditorModal::new(keybind.clone(), fs, window, cx);
                     window.focus(&modal.focus_handle(cx));
                     modal
                 });
@@ -560,23 +560,66 @@ impl Render for KeymapEditor {
                                     row.border_color(cx.theme().colors().panel_focused_border)
                                 });
 
-                            let this = cx.entity();
                             right_click_menu(("keymap-table-row-menu", row_index))
-                                .trigger(move |is_menu_open: bool, _window, cx| {
-                                    if is_menu_open {
-                                        this.update(cx, |this, cx| {
-                                            if this.selected_index != Some(row_index) {
-                                                this.selected_index = Some(row_index);
-                                                cx.notify();
-                                            }
-                                        });
+                                .trigger({
+                                    let this = cx.weak_entity();
+                                    move |is_menu_open: bool, _window, cx| {
+                                        if is_menu_open {
+                                            this.update(cx, |this, cx| {
+                                                if this.selected_index != Some(row_index) {
+                                                    this.selected_index = Some(row_index);
+                                                    cx.notify();
+                                                }
+                                            })
+                                            .ok();
+                                        }
+                                        row
                                     }
-                                    row
                                 })
-                                .menu(|window, cx| {
-                                    ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                        menu.header("Context Menu")
-                                    })
+                                .menu({
+                                    let this = cx.weak_entity();
+                                    move |window, cx| {
+                                        ContextMenu::build(window, cx, |menu, window, cx| {
+                                            let Some(this_entity) = this.upgrade() else {
+                                                return menu;
+                                            };
+                                            let selected_binding_context = this
+                                                .read_with(cx, |this, cx| {
+                                                    this.selected_binding()
+                                                        .map(|binding| binding.context.as_ref())
+                                                        .filter(|context| !context.is_empty())
+                                                        .map(|context| context.to_string())
+                                                })
+                                                .ok()
+                                                .flatten();
+                                            menu.entry(
+                                                "Edit",
+                                                None,
+                                                window.handler_for(
+                                                    &this_entity,
+                                                    |this, window, cx| {
+                                                        this.edit_selected_keybinding(window, cx);
+                                                    },
+                                                ),
+                                            )
+                                            .when_some(
+                                                selected_binding_context,
+                                                |menu, context| {
+                                                    menu.entry(
+                                                        "Copy context",
+                                                        None,
+                                                        move |window, cx| {
+                                                            cx.write_to_clipboard(
+                                                                gpui::ClipboardItem::new_string(
+                                                                    context.clone(),
+                                                                ),
+                                                            );
+                                                        },
+                                                    )
+                                                },
+                                            )
+                                        })
+                                    }
                                 })
                                 .into_any_element()
                         }),
