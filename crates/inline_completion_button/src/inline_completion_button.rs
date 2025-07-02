@@ -13,14 +13,14 @@ use gpui::{
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     pulsating_between,
 };
-use http_client::HttpClient;
+
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use language_models::AllLanguageModelSettings;
-use ollama::get_models;
+
 use paths;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -58,10 +58,6 @@ pub struct InlineCompletionButton {
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-    http_client: Arc<dyn HttpClient>,
-    connection_status: Arc<std::sync::Mutex<Option<bool>>>,
-    connection_checking: Arc<std::sync::Mutex<bool>>,
-    this_entity: WeakEntity<Self>,
 }
 
 enum SupermavenButtonStatus {
@@ -412,10 +408,6 @@ impl InlineCompletionButton {
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let http_client = cx.http_client();
-        let connection_status = Arc::new(std::sync::Mutex::new(None));
-        let connection_checking = Arc::new(std::sync::Mutex::new(false));
-
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -423,12 +415,10 @@ impl InlineCompletionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
-        let this_entity = cx.entity().downgrade();
-
         Self {
             editor_subscription: None,
             editor_enabled: None,
-            editor_show_predictions: true,
+            editor_show_predictions: false,
             editor_focus_handle: None,
             language: None,
             file: None,
@@ -436,10 +426,6 @@ impl InlineCompletionButton {
             popover_menu_handle,
             fs,
             user_store,
-            http_client,
-            connection_status,
-            connection_checking,
-            this_entity,
         }
     }
 
@@ -858,87 +844,32 @@ impl InlineCompletionButton {
         })
     }
 
-    /// Builds a comprehensive context menu for Ollama with the following features:
-    /// - Connection status display with real-time checking
+    /// Builds a simplified context menu for Ollama with essential features:
     /// - API URL configuration that opens settings at the correct location
     /// - Model selection from available models
     /// - Common language settings (buffer/language/global toggles, privacy settings)
-    /// - Refresh connection functionality
-    /// - Links to Ollama resources (Web UI, model library, installation)
     ///
-    /// This method was enhanced to address the following issues:
-    /// 1. Connection status now refreshes automatically when menu is opened
-    /// 2. API URL configuration navigates to the correct setting location
+    /// The menu focuses on core functionality without connection status or external links.
     fn build_ollama_context_menu(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
-        let http_client = self.http_client.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
             let settings = AllLanguageModelSettings::get_global(cx);
             let ollama_settings = &settings.ollama;
 
             // Clone needed values to avoid borrowing issues
-            let api_url = ollama_settings.api_url.clone();
             let available_models = ollama_settings.available_models.clone();
 
-            // Check connection status and trigger immediate refresh when menu opens
-            let (status_text, status_icon, status_color) = self.get_connection_display_info(cx);
-
-            let menu = menu.header("Ollama Status").custom_entry(
-                move |_window, _cx| {
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            Icon::new(status_icon)
-                                .size(IconSize::Small)
-                                .color(status_color),
-                        )
-                        .child(
-                            Label::new(status_text)
-                                .size(LabelSize::Small)
-                                .color(status_color),
-                        )
-                        .into_any_element()
-                },
-                |_window, _cx| {
-                    // Status display only
-                },
-            );
-
             // API URL configuration
-            let menu = menu
-                .entry("Configure API URL", None, {
-                    let fs = fs.clone();
-                    move |window, cx| {
-                        Self::open_ollama_settings(fs.clone(), window, cx);
-                    }
-                })
-                .custom_entry(
-                    {
-                        let display_url = api_url.clone();
-                        move |_window, _cx| {
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Icon::new(IconName::Link)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Label::new(display_url.clone())
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .into_any_element()
-                        }
-                    },
-                    |_window, _cx| {
-                        // URL display only
-                    },
-                );
+            let menu = menu.entry("Configure API URL", None, {
+                let fs = fs.clone();
+                move |window, cx| {
+                    Self::open_ollama_settings(fs.clone(), window, cx);
+                }
+            });
 
             // Model selection section
             let menu = if !available_models.is_empty() {
@@ -974,141 +905,8 @@ impl InlineCompletionButton {
             };
 
             // Use the common language settings menu
-            let menu = self.build_language_settings_menu(menu, window, cx);
-
-            // Separator and Ollama-specific actions
-            let menu = menu
-                .separator()
-                .entry("Refresh Connection", None, {
-                    let http_client = http_client.clone();
-                    let api_url = api_url.clone();
-                    let connection_status = self.connection_status.clone();
-                    move |_window, cx| {
-                        // Clear current status and start fresh check
-                        *connection_status.lock().unwrap() = None;
-
-                        // Start immediate background check
-                        let connection_status_clone = connection_status.clone();
-                        let http_client_clone = http_client.clone();
-                        let api_url_clone = api_url.clone();
-                        cx.background_executor()
-                            .spawn(async move {
-                                let is_connected =
-                                    InlineCompletionButton::check_ollama_connection_async(
-                                        http_client_clone,
-                                        &api_url_clone,
-                                    )
-                                    .await;
-                                *connection_status_clone.lock().unwrap() = Some(is_connected);
-                            })
-                            .detach();
-                    }
-                })
-                .entry("Open Ollama Web UI", None, {
-                    let web_ui_url = api_url.clone();
-                    move |_window, cx| {
-                        cx.open_url(&web_ui_url);
-                    }
-                })
-                .entry("Download More Models", None, |_window, cx| {
-                    cx.open_url("https://ollama.com/library");
-                });
-
-            if self.get_connection_status() != Some(true) {
-                menu.entry("Check Ollama Installation", None, |_window, cx| {
-                    cx.open_url("https://ollama.com/download");
-                })
-            } else {
-                menu
-            }
+            self.build_language_settings_menu(menu, window, cx)
         })
-    }
-
-    fn get_connection_status(&self) -> Option<bool> {
-        *self.connection_status.lock().unwrap()
-    }
-
-    fn is_checking_connection(&self) -> bool {
-        *self.connection_checking.lock().unwrap()
-    }
-
-    fn get_connection_display_info(&self, cx: &App) -> (&'static str, IconName, Color) {
-        let settings = AllLanguageModelSettings::get_global(cx);
-        let api_url = settings.ollama.api_url.clone();
-
-        if api_url.trim().is_empty() {
-            return ("No URL", IconName::Close, Color::Error);
-        }
-
-        // Start background refresh of status
-        self.start_background_refresh(cx);
-
-        // Show cached status immediately
-        match self.get_connection_status() {
-            Some(true) => ("Connected", IconName::Check, Color::Success),
-            Some(false) => ("Disconnected", IconName::Close, Color::Error),
-            None => {
-                // No cached status yet, assume disconnected until proven otherwise
-                ("Disconnected", IconName::Close, Color::Error)
-            }
-        }
-    }
-
-    fn start_background_refresh(&self, cx: &App) {
-        // Don't start multiple concurrent checks
-        if self.is_checking_connection() {
-            return;
-        }
-
-        let settings = AllLanguageModelSettings::get_global(cx);
-        let api_url = settings.ollama.api_url.clone();
-
-        if api_url.trim().is_empty() {
-            *self.connection_status.lock().unwrap() = Some(false);
-            return;
-        }
-
-        let http_client = self.http_client.clone();
-        let connection_status = self.connection_status.clone();
-        let connection_checking = self.connection_checking.clone();
-
-        // Mark as checking
-        *connection_checking.lock().unwrap() = true;
-
-        cx.background_executor()
-            .spawn(async move {
-                let is_connected = Self::check_ollama_connection_async(http_client, &api_url).await;
-                *connection_status.lock().unwrap() = Some(is_connected);
-                *connection_checking.lock().unwrap() = false;
-                log::info!("Ollama connection status updated: {}", is_connected);
-            })
-            .detach();
-    }
-
-    async fn check_ollama_connection_async(
-        http_client: Arc<dyn HttpClient>,
-        api_url: &str,
-    ) -> bool {
-        log::info!("Attempting to connect to Ollama at: {}", api_url);
-        match get_models(
-            http_client.as_ref(),
-            api_url,
-            Some(std::time::Duration::from_secs(5)),
-        )
-        .await
-        {
-            Ok(models) => {
-                log::info!(
-                    "Successfully connected to Ollama, found {} models",
-                    models.len()
-                );
-                true
-            }
-            Err(e) => {
-                log::warn!("Failed to connect to Ollama: {}", e);
-                false
-            }
-        }
     }
 
     /// Opens Zed settings and navigates directly to the Ollama API URL configuration.
@@ -1206,7 +1004,8 @@ impl InlineCompletionButton {
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
         update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _cx| {
-            // Move the selected model to the front of the list to make it the "current" one
+            // Move the selected model to the front of the list to make it the active model
+            // The Ollama provider uses the first model in the available_models list
             if let Some(ollama_settings) = &mut settings.ollama {
                 if let Some(models) = &mut ollama_settings.available_models {
                     if let Some(index) = models.iter().position(|m| m.name == model_name) {
@@ -1542,112 +1341,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_ollama_connection_checking(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test connection status checking with default settings
-            // Note: Connection status will be None initially until async check completes
-            let is_connected = button.read(cx).get_connection_status();
-            assert_eq!(is_connected, None); // Should be None initially (no check done yet)
-
-            // Verify connection status logic
-            let settings = AllLanguageModelSettings::get_global(cx);
-            let ollama_settings = &settings.ollama;
-
-            assert!(ollama_settings.available_models.is_empty());
-            assert!(!ollama_settings.api_url.is_empty()); // Should have default localhost URL
-
-            // Test refresh connection status method
-            // Test connection status checking logic
-            let is_connected = button.read(cx).get_connection_status();
-            assert_eq!(is_connected, None); // Should be None initially
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_connection_status_refresh(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test initial connection status
-            let initial_status = button.read(cx).get_connection_status();
-            assert_eq!(initial_status, None); // Should be None initially
-
-            // Test that background refresh can be triggered
-            button.read(cx).start_background_refresh(cx);
-            let status_after_check = button.read(cx).get_connection_status();
-            assert_eq!(status_after_check, None); // Should still be None (async check in progress)
-
-            // Verify connection status can be manually updated
-            *button.read(cx).connection_status.lock().unwrap() = Some(true);
-            let updated_status = button.read(cx).get_connection_status();
-            assert_eq!(updated_status, Some(true)); // Should now be Some(true)
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_connection_checking_state(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test initial checking state
-            let is_checking = button.read(cx).is_checking_connection();
-            assert!(!is_checking); // Should not be checking initially
-
-            // Test that checking state can be updated
-            *button.read(cx).connection_checking.lock().unwrap() = true;
-            let is_checking_after = button.read(cx).is_checking_connection();
-            assert!(is_checking_after); // Should now be checking
-        });
-    }
-
-    #[gpui::test]
     async fn test_ollama_api_url_navigation_regex(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -1741,117 +1434,6 @@ mod tests {
 
             // Verify the switch_ollama_model function exists and can be called
             // (We don't actually call it to avoid file system operations in tests)
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_refresh_connection_functionality(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test that refresh connection function can be called
-            let settings = AllLanguageModelSettings::get_global(cx);
-            let api_url = settings.ollama.api_url.clone();
-            let http_client = button.read(cx).http_client.clone();
-
-            // Test that the menu can show connection status
-            let _http_client = http_client;
-            let _api_url = api_url;
-
-            // Verify button still works after refresh attempt
-            button.read(cx);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_async_connection_checking(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test the async connection checking function directly
-            let http_client = button.read(cx).http_client.clone();
-
-            // Test with invalid URL (should return false)
-            cx.background_executor()
-                .spawn(async move {
-                    let result = InlineCompletionButton::check_ollama_connection_async(
-                        http_client,
-                        "http://invalid-url:99999",
-                    )
-                    .await;
-                    assert!(!result); // Should be false for invalid URL
-                })
-                .detach();
-
-            // Verify button functionality
-            button.read(cx);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_menu_refresh_functionality(cx: &mut TestAppContext) {
-        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
-
-        cx.update(|cx| {
-            let store = SettingsStore::test(cx);
-            cx.set_global(store);
-            AllLanguageModelSettings::register(cx);
-            language_model::LanguageModelRegistry::test(cx);
-
-            let clock = Arc::new(FakeSystemClock::new());
-            let http = FakeHttpClient::with_404_response();
-            let client = Client::new(clock, http.clone(), cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            let popover_menu_handle = PopoverMenuHandle::default();
-
-            let button = cx.new(|cx| {
-                InlineCompletionButton::new(fs.clone(), user_store, popover_menu_handle, cx)
-            });
-
-            // Test that the refresh connection functionality exists
-            let settings = AllLanguageModelSettings::get_global(cx);
-            let ollama_settings = &settings.ollama;
-
-            // Verify that the refresh connection method works with the current settings
-            let _api_url = &ollama_settings.api_url;
-            let _connection_status = button.read(cx).connection_status.clone();
-
-            // Test that background refresh can be triggered
-            button.read(cx).start_background_refresh(cx);
-
-            // Verify connection status is properly handled
-            let status = button.read(cx).get_connection_status();
-            assert_eq!(status, None); // Should be None initially with fake HTTP client
         });
     }
 }
