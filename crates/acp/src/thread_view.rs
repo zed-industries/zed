@@ -324,7 +324,7 @@ impl AcpThreadView {
                     .w_full()
                     .gap_1p5()
                     .child(
-                        Icon::new(IconName::Cog)
+                        Icon::new(tool_call.icon.into())
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )

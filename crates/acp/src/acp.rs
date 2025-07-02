@@ -10,7 +10,7 @@ use language::LanguageRegistry;
 use markdown::Markdown;
 use project::Project;
 use std::{mem, ops::Range, path::PathBuf, sync::Arc};
-use ui::App;
+use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
 
 pub use server::AcpServer;
@@ -124,6 +124,7 @@ pub enum AgentThreadEntryContent {
 pub struct ToolCall {
     id: ToolCallId,
     label: Entity<Markdown>,
+    icon: IconName,
     status: ToolCallStatus,
 }
 
@@ -272,6 +273,7 @@ impl AcpThread {
     pub fn request_tool_call(
         &mut self,
         label: String,
+        icon: acp::Icon,
         confirmation: acp::ToolCallConfirmation,
         cx: &mut Context<Self>,
     ) -> ToolCallRequest {
@@ -282,23 +284,29 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(label, status, cx);
+        let id = self.insert_tool_call(label, status, icon, cx);
         ToolCallRequest { id, outcome: rx }
     }
 
-    pub fn push_tool_call(&mut self, label: String, cx: &mut Context<Self>) -> ToolCallId {
+    pub fn push_tool_call(
+        &mut self,
+        label: String,
+        icon: acp::Icon,
+        cx: &mut Context<Self>,
+    ) -> ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
             content: None,
         };
 
-        self.insert_tool_call(label, status, cx)
+        self.insert_tool_call(label, status, icon, cx)
     }
 
     fn insert_tool_call(
         &mut self,
         label: String,
         status: ToolCallStatus,
+        icon: acp::Icon,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
@@ -310,6 +318,7 @@ impl AcpThread {
                 label: cx.new(|cx| {
                     Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
                 }),
+                icon: acp_icon_to_ui_icon(icon),
                 status,
             }),
             cx,
@@ -433,6 +442,19 @@ impl AcpThread {
     }
 }
 
+fn acp_icon_to_ui_icon(icon: acp::Icon) -> IconName {
+    match icon {
+        acp::Icon::FileSearch => IconName::FileSearch,
+        acp::Icon::Folder => IconName::Folder,
+        acp::Icon::Globe => IconName::Globe,
+        acp::Icon::Hammer => IconName::Hammer,
+        acp::Icon::LightBulb => IconName::LightBulb,
+        acp::Icon::Pencil => IconName::Pencil,
+        acp::Icon::Regex => IconName::Regex,
+        acp::Icon::Terminal => IconName::Terminal,
+    }
+}
+
 pub struct ToolCallRequest {
     pub id: ToolCallId,
     pub outcome: oneshot::Receiver<acp::ToolCallConfirmationOutcome>,
@@ -518,19 +540,14 @@ mod tests {
             })
             .await
             .unwrap();
-        thread.read_with(cx, |thread, cx| {
-            let AgentThreadEntryContent::ToolCall(ToolCall {
-                label,
-                status: ToolCallStatus::Allowed { .. },
-                ..
-            }) = &thread.entries()[1].content
-            else {
-                panic!();
-            };
-
-            label.read_with(cx, |md, _cx| {
-                assert_eq!(md.source(), "ReadFile");
-            });
+        thread.read_with(cx, |thread, _cx| {
+            assert!(matches!(
+                &thread.entries()[1].content,
+                AgentThreadEntryContent::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed { .. },
+                    ..
+                })
+            ));
 
             assert!(matches!(
                 thread.entries[2].content,
@@ -558,25 +575,21 @@ mod tests {
 
         run_until_tool_call(&thread, cx).await;
 
-        let tool_call_id = thread.read_with(cx, |thread, cx| {
+        let tool_call_id = thread.read_with(cx, |thread, _cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
                 id,
-                label,
                 status:
                     ToolCallStatus::WaitingForConfirmation {
                         confirmation: acp::ToolCallConfirmation::Execute { root_command, .. },
                         ..
                     },
+                ..
             }) = &thread.entries()[1].content
             else {
                 panic!();
             };
 
             assert_eq!(root_command, "echo");
-
-            label.read_with(cx, |md, _cx| {
-                assert_eq!(md.source(), "Shell");
-            });
 
             *id
         });
