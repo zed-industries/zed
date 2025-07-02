@@ -2657,18 +2657,18 @@ impl EditorElement {
 
     fn layout_wrap_guides(
         &self,
-        em_width: Pixels,
         em_advance: Pixels,
         scroll_position: gpui::Point<f32>,
+        content_origin: gpui::Point<Pixels>,
         scrollbar_layout: Option<&EditorScrollbars>,
         vertical_scrollbar_width: Pixels,
-        text_hitbox: &Hitbox,
         hitbox: &Hitbox,
         window: &Window,
         cx: &App,
     ) -> SmallVec<[(Pixels, bool); 2]> {
         let scroll_left = scroll_position.x * em_advance;
-        let horizontal_offset = text_hitbox.origin.x + em_width / 2. - scroll_left;
+        let content_origin = content_origin.x;
+        let horizontal_offset = content_origin - scroll_left;
         let vertical_scrollbar_width = scrollbar_layout
             .and_then(|layout| layout.visible.then_some(vertical_scrollbar_width))
             .unwrap_or_default();
@@ -2680,7 +2680,7 @@ impl EditorElement {
             .flat_map(|(guide, active)| {
                 let wrap_position = self.column_pixels(guide, window);
                 let wrap_guide_x = wrap_position + horizontal_offset;
-                let display_wrap_guide = wrap_guide_x >= text_hitbox.origin.x
+                let display_wrap_guide = wrap_guide_x >= content_origin
                     && wrap_guide_x <= hitbox.bounds.right() - vertical_scrollbar_width;
 
                 display_wrap_guide.then_some((wrap_guide_x, active))
@@ -8793,12 +8793,11 @@ impl Element for EditorElement {
                     });
 
                     let wrap_guides = self.layout_wrap_guides(
-                        em_width,
                         em_advance,
                         scroll_position,
+                        content_origin,
                         scrollbars_layout.as_ref(),
                         vertical_scrollbar_width,
-                        &text_hitbox,
                         &hitbox,
                         window,
                         cx,
