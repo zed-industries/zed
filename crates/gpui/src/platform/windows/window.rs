@@ -996,10 +996,25 @@ impl ClickState {
         self.current_count
     }
 
-    pub fn system_update(&mut self) {
-        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
-        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
-        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    pub fn system_update(&mut self, wparam: usize) {
+        match wparam {
+            // SPI_SETDOUBLECLKWIDTH
+            29 => {
+                self.double_click_spatial_tolerance_width =
+                    unsafe { GetSystemMetrics(SM_CXDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLKHEIGHT
+            30 => {
+                self.double_click_spatial_tolerance_height =
+                    unsafe { GetSystemMetrics(SM_CYDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLICKTIME
+            32 => {
+                self.double_click_interval =
+                    Duration::from_millis(unsafe { GetDoubleClickTime() } as u64)
+            }
+            _ => {}
+        }
     }
 
     #[inline]
