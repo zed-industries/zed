@@ -178,29 +178,58 @@ impl acp::Client for AcpClientDelegate {
         todo!()
     }
 
-    async fn request_tool_call(
+    async fn request_tool_call_confirmation(
         &self,
-        request: acp::RequestToolCallParams,
-    ) -> Result<acp::RequestToolCallResponse> {
+        request: acp::RequestToolCallConfirmationParams,
+    ) -> Result<acp::RequestToolCallConfirmationResponse> {
         let (tx, rx) = oneshot::channel();
 
         let cx = &mut self.cx.clone();
         let entry_id = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
+                    // todo! Should we pass through richer data than a description?
+                    let description = match request.confirmation {
+                        acp::ToolCallConfirmation::Edit {
+                            file_name,
+                            file_diff,
+                        } => {
+                            // todo! Nicer syntax/presentation based on file extension? Better way to communicate diff?
+                            format!("Edit file `{file_name}` with diff:\n```\n{file_diff}\n```")
+                        }
+                        acp::ToolCallConfirmation::Execute {
+                            command,
+                            root_command: _,
+                        } => {
+                            format!("Execute command `{command}`")
+                        }
+                        acp::ToolCallConfirmation::Mcp {
+                            server_name,
+                            tool_name: _,
+                            tool_display_name,
+                        } => {
+                            format!("MCP: {server_name} - {tool_display_name}")
+                        }
+                        acp::ToolCallConfirmation::Info { prompt, urls } => {
+                            format!("Info: {prompt}\n{urls:?}")
+                        }
+                    };
                     // todo! tools that don't require confirmation
-                    thread.push_tool_call(request.tool_name, request.description, tx, cx)
+                    thread.push_tool_call(request.title, description, tx, cx)
                 })
             })?
             .context("Failed to update thread")?;
 
-        if rx.await? {
-            Ok(acp::RequestToolCallResponse::Allowed {
-                id: entry_id.into(),
-            })
+        let outcome = if rx.await? {
+            // todo! Handle other outcomes
+            acp::ToolCallConfirmationOutcome::Allow
         } else {
-            Ok(acp::RequestToolCallResponse::Rejected)
-        }
+            acp::ToolCallConfirmationOutcome::Reject
+        };
+        Ok(acp::RequestToolCallConfirmationResponse {
+            id: entry_id.into(),
+            outcome,
+        })
     }
 
     async fn update_tool_call(
@@ -300,7 +329,7 @@ impl From<ThreadId> for acp::ThreadId {
 
 impl From<acp::ToolCallId> for ToolCallId {
     fn from(tool_call_id: acp::ToolCallId) -> Self {
-        Self(ThreadEntryId(tool_call_id.0.into()))
+        Self(ThreadEntryId(tool_call_id.0))
     }
 }
 
