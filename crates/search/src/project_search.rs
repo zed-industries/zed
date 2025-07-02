@@ -50,7 +50,7 @@ actions!(
     [
         /// Search in a new project search tab
         SearchInNew,
-        /// Toggle focus on the project search panel
+        /// Toggle focus between the search bar and the search results
         ToggleFocus,
         /// Move to the next input field
         NextField,
