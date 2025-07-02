@@ -79,9 +79,9 @@ impl JsDebugAdapter {
                 let command = configuration.get("command")?.as_str()?.to_owned();
                 let mut args = shlex::split(&command)?.into_iter();
                 let program = args.next()?;
-                configuration.insert("program".to_owned(), program.into());
+                configuration.insert("runtimeExecutable".to_owned(), program.into());
                 configuration.insert(
-                    "args".to_owned(),
+                    "runtimeArgs".to_owned(),
                     args.map(Value::from).collect::<Vec<_>>().into(),
                 );
                 configuration.insert("console".to_owned(), "externalTerminal".into());
