@@ -122,6 +122,7 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
+    "crates/requesty",
     "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
@@ -335,6 +336,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+requesty = { path = "crates/requesty" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }

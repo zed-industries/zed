@@ -8969,6 +8969,7 @@ dependencies = [
  "project",
  "proto",
  "release_channel",
+ "requesty",
  "schemars",
  "serde",
  "serde_json",
@@ -13289,6 +13290,19 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "workspace-hack",
+]
+
+[[package]]
+name = "requesty"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
