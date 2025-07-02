@@ -1,7 +1,4 @@
-use gpui::{
-    AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    point, px,
-};
+use gpui::{AnyElement, App, IntoElement, ParentElement, RenderOnce, Styled, Window, div};
 use theme::ActiveTheme;
 
 use crate::{ElevationIndex, h_flex};
