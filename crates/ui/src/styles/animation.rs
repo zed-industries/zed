@@ -119,78 +119,119 @@ impl Component for Animation {
                         vec![
                             single_example(
                                 "From Bottom",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("animate-in-from-bottom")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .left(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::red())
-                                            .animate_in(AnimationDirection::FromBottom, false),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("in-from-bottom")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .left(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::red())
+                                                    .animate_in(
+                                                        AnimationDirection::FromBottom,
+                                                        false,
+                                                    ),
+                                            ),
                                     )
+                                    .child(Button::new("animate-in-from-bottom", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Top",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("animate-in-from-top")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .left(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::blue())
-                                            .animate_in(AnimationDirection::FromTop, false),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("in-from-top")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .left(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::blue())
+                                                    .animate_in(AnimationDirection::FromTop, false),
+                                            ),
                                     )
+                                    .child(Button::new("animate-in-from-top", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Left",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("animate-in-from-left")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .top(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::green())
-                                            .animate_in(AnimationDirection::FromLeft, false),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("in-from-left")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .top(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::green())
+                                                    .animate_in(
+                                                        AnimationDirection::FromLeft,
+                                                        false,
+                                                    ),
+                                            ),
                                     )
+                                    .child(Button::new("animate-in-from-left", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Right",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("animate-in-from-right")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .top(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::yellow())
-                                            .animate_in(AnimationDirection::FromRight, false),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("in-from-right")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .top(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::yellow())
+                                                    .animate_in(
+                                                        AnimationDirection::FromRight,
+                                                        false,
+                                                    ),
+                                            ),
                                     )
+                                    .child(Button::new("animate-in-from-right", "Animate"))
                                     .into_any_element(),
                             ),
                         ],
@@ -201,78 +242,116 @@ impl Component for Animation {
                         vec![
                             single_example(
                                 "From Bottom",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("fade-animate-in-from-bottom")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .left(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::red())
-                                            .animate_in(AnimationDirection::FromBottom, true),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("fade-in-from-bottom")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .left(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::red())
+                                                    .animate_in(
+                                                        AnimationDirection::FromBottom,
+                                                        true,
+                                                    ),
+                                            ),
                                     )
+                                    .child(Button::new("animate-fade-in-from-bottom", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Top",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("fade-animate-in-from-top")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .left(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::blue())
-                                            .animate_in(AnimationDirection::FromTop, true),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("fade-in-from-top")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .left(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::blue())
+                                                    .animate_in(AnimationDirection::FromTop, true),
+                                            ),
                                     )
+                                    .child(Button::new("animate-fade-in-from-top", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Left",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("fade-animate-in-from-left")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .top(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::green())
-                                            .animate_in(AnimationDirection::FromLeft, true),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("fade-in-from-left")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .top(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::green())
+                                                    .animate_in(AnimationDirection::FromLeft, true),
+                                            ),
                                     )
+                                    .child(Button::new("animate-fade-in-from-left", "Animate"))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "From Right",
-                                ContentGroup::new()
-                                    .relative()
+                                div()
+                                    .v_flex()
+                                    .gap_2()
                                     .items_center()
                                     .justify_center()
-                                    .size(px(container_size))
                                     .child(
-                                        div()
-                                            .id("fade-animate-in-from-right")
-                                            .absolute()
-                                            .size(px(element_size))
-                                            .top(px(offset))
-                                            .rounded_md()
-                                            .bg(gpui::yellow())
-                                            .animate_in(AnimationDirection::FromRight, true),
+                                        ContentGroup::new()
+                                            .relative()
+                                            .items_center()
+                                            .justify_center()
+                                            .size(px(container_size))
+                                            .child(
+                                                div()
+                                                    .id("fade-in-from-right")
+                                                    .absolute()
+                                                    .size(px(element_size))
+                                                    .top(px(offset))
+                                                    .rounded_md()
+                                                    .bg(gpui::yellow())
+                                                    .animate_in(
+                                                        AnimationDirection::FromRight,
+                                                        true,
+                                                    ),
+                                            ),
                                     )
+                                    .child(Button::new("animate-fade-in-from-right", "Animate"))
                                     .into_any_element(),
                             ),
                         ],
