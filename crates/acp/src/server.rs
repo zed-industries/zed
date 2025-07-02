@@ -7,13 +7,14 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
 use smol::process::Child;
-use std::{io::Write as _, path::Path, sync::Arc};
+use std::{io::Write as _, path::Path, process::ExitStatus, sync::Arc};
 use util::ResultExt;
 
 pub struct AcpServer {
     connection: Arc<acp::AgentConnection>,
     threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>>,
     project: Entity<Project>,
+    exit_status: Arc<Mutex<Option<ExitStatus>>>,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
@@ -248,22 +249,26 @@ impl AcpServer {
             stdout,
         );
 
-        let io_task = cx.background_spawn(async move {
-            io_fut.await.log_err();
-            process.status().await.log_err();
+        let exit_status: Arc<Mutex<Option<ExitStatus>>> = Default::default();
+        let io_task = cx.background_spawn({
+            let exit_status = exit_status.clone();
+            async move {
+                io_fut.await.log_err();
+                let result = process.status().await.log_err();
+                *exit_status.lock() = result;
+            }
         });
 
         Arc::new(Self {
             project,
             connection: Arc::new(connection),
             threads,
+            exit_status,
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         })
     }
-}
 
-impl AcpServer {
     pub async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<AcpThread>> {
         let response = self.connection.request(acp::CreateThreadParams).await?;
         let thread_id: ThreadId = response.thread_id.into();
@@ -294,6 +299,10 @@ impl AcpServer {
             })
             .await?;
         Ok(())
+    }
+
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.exit_status.lock().clone()
     }
 }
 

@@ -92,7 +92,7 @@ impl AcpThreadView {
         let project = project.clone();
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let agent = AcpServer::stdio(child, project, cx);
-            let result = agent.create_thread(cx).await;
+            let result = agent.clone().create_thread(cx).await;
 
             this.update(cx, |this, cx| {
                 match result {
@@ -117,7 +117,19 @@ impl AcpThreadView {
                             _subscription: subscription,
                         };
                     }
-                    Err(e) => this.thread_state = ThreadState::LoadError(e.to_string().into()),
+                    Err(e) => {
+                        if let Some(exit_status) = agent.exit_status() {
+                            this.thread_state = ThreadState::LoadError(
+                                format!(
+                                    "Gemini exited with status {}",
+                                    exit_status.code().unwrap_or(-127)
+                                )
+                                .into(),
+                            )
+                        } else {
+                            this.thread_state = ThreadState::LoadError(e.to_string().into())
+                        }
+                    }
                 };
                 cx.notify();
             })
@@ -743,7 +755,7 @@ impl Render for AcpThreadView {
                     .p_2()
                     .flex_1()
                     .justify_end()
-                    .child(Label::new(format!("Failed to load {e}")).into_any_element()),
+                    .child(Label::new(format!("Failed to load: {e}")).into_any_element()),
                 ThreadState::Ready { thread, .. } => v_flex()
                     .flex_1()
                     .gap_2()
