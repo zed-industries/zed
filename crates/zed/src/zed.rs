@@ -4311,6 +4311,7 @@ mod tests {
                 "icon_theme_selector",
                 "jj",
                 "journal",
+                "keymap_editor",
                 "language_selector",
                 "lsp_tool",
                 "markdown",

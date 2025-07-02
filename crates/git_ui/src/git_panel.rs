@@ -122,40 +122,29 @@ fn git_panel_context_menu(
     ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
-            .map(|menu| {
-                if state.has_unstaged_changes {
-                    menu.action("Stage All", StageAll.boxed_clone())
-                } else {
-                    menu.disabled_action("Stage All", StageAll.boxed_clone())
-                }
-            })
-            .map(|menu| {
-                if state.has_staged_changes {
-                    menu.action("Unstage All", UnstageAll.boxed_clone())
-                } else {
-                    menu.disabled_action("Unstage All", UnstageAll.boxed_clone())
-                }
-            })
+            .action_disabled_when(
+                !state.has_unstaged_changes,
+                "Stage All",
+                StageAll.boxed_clone(),
+            )
+            .action_disabled_when(
+                !state.has_staged_changes,
+                "Unstage All",
+                UnstageAll.boxed_clone(),
+            )
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
-            .map(|menu| {
-                if state.has_tracked_changes {
-                    menu.action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-                } else {
-                    menu.disabled_action(
-                        "Discard Tracked Changes",
-                        RestoreTrackedFiles.boxed_clone(),
-                    )
-                }
-            })
-            .map(|menu| {
-                if state.has_new_changes {
-                    menu.action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-                } else {
-                    menu.disabled_action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-                }
-            })
+            .action_disabled_when(
+                !state.has_tracked_changes,
+                "Discard Tracked Changes",
+                RestoreTrackedFiles.boxed_clone(),
+            )
+            .action_disabled_when(
+                !state.has_new_changes,
+                "Trash Untracked Files",
+                TrashUntrackedFiles.boxed_clone(),
+            )
     })
 }
 
