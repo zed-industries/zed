@@ -1155,39 +1155,30 @@ fn next_utf8_char_boundary(text: &str, initial_index: usize) -> usize {
     let bytes = text.as_bytes();
     let mut search_index = initial_index;
 
-    loop {
-        if let Some(&byte) = bytes.get(search_index) {
-            if is_utf8_char_boundary(byte) {
-                return search_index;
-            }
-        } else {
-            // We ran off the end of the string, so try to find a boundary by going in reverse.
-            break;
+    while let Some(&byte) = bytes.get(search_index) {
+        if is_utf8_char_boundary(byte) {
+            return search_index;
         }
 
         search_index += 1;
     }
 
-    // Search in reverse this time.
+    // We ran off the end of the string, so try to find a boundary by going in reverse.
     search_index = initial_index
         .saturating_sub(1)
         .min(text.len().saturating_sub(1));
 
-    loop {
-        if let Some(&byte) = bytes.get(search_index) {
-            if is_utf8_char_boundary(byte) {
-                return search_index;
-            }
-        } else {
-            // The only way .get() could return None when we're decrementing backwards from an index
-            // that is guaranteed to start out as less than or equal to the length is if len was 0.
-            panic!(
-                "next_utf8_char_boundary was called on an empty string, which should never happen."
-            );
+    while let Some(&byte) = bytes.get(search_index) {
+        if is_utf8_char_boundary(byte) {
+            return search_index;
         }
 
         search_index -= 1;
     }
+
+    // The only way .get() could return None when we're decrementing backwards from an index
+    // that is guaranteed to start out as less than or equal to the length is if len was 0.
+    panic!("next_utf8_char_boundary was called on an empty string, which should never happen.");
 }
 
 // Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
