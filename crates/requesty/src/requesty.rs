@@ -389,29 +389,31 @@ pub struct Choice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListModelsResponse {
     pub data: Vec<ModelEntry>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
-    pub name: String,
-    pub created: usize,
-    pub description: String,
+    pub object: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub supported_parameters: Vec<String>,
+    pub created: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture: Option<ModelArchitecture>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-pub struct ModelArchitecture {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub input_modalities: Vec<String>,
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_computer_use: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_caching: Option<bool>,
 }
 
 pub async fn complete(
@@ -598,41 +600,29 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
         let models = response
             .data
             .into_iter()
-            .map(|entry| Model {
-                name: entry.id,
-                // Requesty returns display names in the format "provider_name: model_name".
-                // When displayed in the UI, these names can get truncated from the right.
-                // Since users typically already know the provider, we extract just the model name
-                // portion (after the colon) to create a more concise and user-friendly label
-                // for the model dropdown in the agent panel.
-                display_name: Some(
-                    entry
-                        .name
-                        .split(':')
-                        .next_back()
-                        .unwrap_or(&entry.name)
-                        .trim()
-                        .to_string(),
-                ),
-                max_tokens: entry.context_length.unwrap_or(2000000),
-                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
-                supports_images: Some(
-                    entry
-                        .architecture
-                        .as_ref()
-                        .map(|arch| arch.input_modalities.contains(&"image".to_string()))
-                        .unwrap_or(false),
-                ),
-                mode: if entry
-                    .supported_parameters
-                    .contains(&"reasoning".to_string())
-                {
-                    ModelMode::Thinking {
-                        budget_tokens: Some(4_096),
-                    }
-                } else {
-                    ModelMode::Default
-                },
+            .map(|entry| {
+                // Extract display name from ID (e.g., "openai/gpt-4" -> "GPT-4")
+                let display_name = entry.id
+                    .split('/')
+                    .last()
+                    .unwrap_or(&entry.id)
+                    .replace('-', " ")
+                    .to_uppercase();
+
+                Model {
+                    name: entry.id,
+                    display_name: Some(display_name),
+                    max_tokens: entry.context_window.unwrap_or(128000),
+                    supports_tools: Some(true), // Assume tools are supported for most models
+                    supports_images: entry.supports_vision,
+                    mode: if entry.supports_reasoning.unwrap_or(false) {
+                        ModelMode::Thinking {
+                            budget_tokens: Some(4_096),
+                        }
+                    } else {
+                        ModelMode::Default
+                    },
+                }
             })
             .collect();
 

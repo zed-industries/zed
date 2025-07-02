@@ -638,7 +638,7 @@ impl RequestyEventMapper {
                     }
                     "tool_calls" => {
                         events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                            match serde_json::Value::from_str(&tool_call.arguments) {
+                            match serde_json::from_str(&tool_call.arguments) {
                                 Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {
                                         id: tool_call.id.clone().into(),
@@ -706,7 +706,7 @@ pub fn count_requesty_tokens(
 async fn list_models_with_key(
     http_client: &dyn HttpClient,
     api_url: &str,
-    api_key: &str,
+    _api_key: &str,
 ) -> Result<Vec<requesty::Model>> {
     // Use the correct models endpoint with API key
     let models_url = format!("{}/models", api_url.trim_end_matches('/'));
