@@ -7,8 +7,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
-    WeakEntity, Window, list,
+    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
+    Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -19,7 +19,7 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -530,6 +530,26 @@ impl MarkdownPreviewView {
     ) -> bool {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
+
+    fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(-viewport_height);
+        cx.notify();
+    }
+
+    fn scroll_page_down(&mut self, _: &MovePageDown, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(viewport_height);
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -580,6 +600,8 @@ impl Render for MarkdownPreviewView {
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

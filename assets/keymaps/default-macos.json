@@ -1169,6 +1169,13 @@
     }
   },
   {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "pageup": "markdown::MovePageUp",
+      "pagedown": "markdown::MovePageDown"
+    }
+  },
+  {
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
