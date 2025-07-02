@@ -17,8 +17,8 @@ use settings::KeybindSource;
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ContextMenu, KeyBinding, ParentElement as _, Render,
-    SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
@@ -145,7 +145,7 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names...", cx);
+            editor.set_placeholder_text("Filter action names…", cx);
             editor
         });
 
@@ -586,7 +586,7 @@ impl Render for KeymapEditor {
             .bg(theme.colors().editor_background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
-            .mt_4()
+            .pt_4()
             .px_4()
             .gap_4()
             .child(
