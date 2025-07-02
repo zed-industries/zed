@@ -659,7 +659,8 @@
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
-      "f5": "debugger::Rerun"
+      "f5": "debugger::Rerun",
+      "cmd-w": "workspace::CloseActiveDock"
     }
   },
   {

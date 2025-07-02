@@ -224,6 +224,7 @@ pub struct ActivatePane(pub usize);
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
+    #[serde(default = "default_1")]
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -231,10 +232,15 @@ pub struct MoveItemToPane {
     pub clone: bool,
 }
 
+fn default_1() -> usize {
+    1
+}
+
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
+    #[serde(default = "default_right")]
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -242,10 +248,15 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+fn default_right() -> SplitDirection {
+    SplitDirection::Right
+}
+
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
@@ -253,6 +264,7 @@ pub struct SaveAll {
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
@@ -260,6 +272,7 @@ pub struct Save {
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
@@ -267,6 +280,7 @@ pub struct CloseAllItemsAndPanes {
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
@@ -2806,12 +2820,14 @@ impl Workspace {
         })
     }
 
-    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(dock) = self.active_dock(window, cx) {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
+            return true;
         }
+        false
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5450,7 +5466,9 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
-                    workspace.close_active_dock(window, cx);
+                    if !workspace.close_active_dock(window, cx) {
+                        cx.propagate();
+                    }
                 },
             ))
             .on_action(
