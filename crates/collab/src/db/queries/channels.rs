@@ -501,7 +501,7 @@ impl Database {
 
     /// Returns all channels for the user with the given ID.
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
-        self.weak_transaction(
+        self.transaction(
             |tx| async move { self.get_user_channels(user_id, None, true, &tx).await },
         )
         .await
