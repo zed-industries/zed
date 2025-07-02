@@ -3,10 +3,12 @@ mod thread_view;
 
 use agentic_coding_protocol::{self as acp, Role};
 use anyhow::{Context as _, Result};
+use buffer_diff::BufferDiff;
 use chrono::{DateTime, Utc};
+use editor::MultiBuffer;
 use futures::channel::oneshot;
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
-use language::LanguageRegistry;
+use language::{Buffer, LanguageRegistry};
 use markdown::Markdown;
 use project::Project;
 use std::{mem, ops::Range, path::PathBuf, sync::Arc};
@@ -138,9 +140,22 @@ pub enum ToolCallStatus {
     Allowed {
         // todo! should this be variants in crate::ToolCallStatus instead?
         status: acp::ToolCallStatus,
-        content: Option<Entity<Markdown>>,
+        content: Option<ToolCallContent>,
     },
     Rejected,
+}
+
+#[derive(Debug)]
+pub enum ToolCallContent {
+    Markdown {
+        markdown: Entity<Markdown>,
+    },
+    Diff {
+        path: PathBuf,
+        diff: Entity<BufferDiff>,
+        buffer: Entity<MultiBuffer>,
+        _task: Task<Result<()>>,
+    },
 }
 
 /// A `ThreadEntryId` that is known to be a ToolCall
@@ -375,14 +390,68 @@ impl AcpThread {
         match &mut entry.content {
             AgentThreadEntryContent::ToolCall(call) => match &mut call.status {
                 ToolCallStatus::Allowed { content, status } => {
-                    *content = new_content.map(|new_content| {
-                        let acp::ToolCallContent::Markdown { markdown } = new_content;
+                    *content = new_content.map(|new_content| match new_content {
+                        acp::ToolCallContent::Markdown { markdown } => ToolCallContent::Markdown {
+                            markdown: cx.new(|cx| {
+                                Markdown::new(
+                                    markdown.into(),
+                                    Some(language_registry.clone()),
+                                    None,
+                                    cx,
+                                )
+                            }),
+                        },
+                        acp::ToolCallContent::Diff {
+                            path,
+                            old_text,
+                            new_text,
+                        } => {
+                            let buffer = cx.new(|cx| Buffer::local(new_text, cx));
+                            let text_snapshot = buffer.read(cx).text_snapshot();
+                            let buffer_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
 
-                        cx.new(|cx| {
-                            Markdown::new(markdown.into(), Some(language_registry), None, cx)
-                        })
+                            let multibuffer = cx.new(|cx| {
+                                let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+                                multibuffer.add_diff(buffer_diff.clone(), cx);
+                                multibuffer
+                            });
+
+                            ToolCallContent::Diff {
+                                path: path.clone(),
+                                diff: buffer_diff.clone(),
+                                buffer: multibuffer,
+                                _task: cx.spawn(async move |_this, cx| {
+                                    let diff_snapshot = BufferDiff::update_diff(
+                                        buffer_diff.clone(),
+                                        text_snapshot.clone(),
+                                        old_text.map(|o| o.into()),
+                                        true,
+                                        true,
+                                        None,
+                                        Some(language_registry.clone()),
+                                        cx,
+                                    )
+                                    .await?;
+
+                                    buffer_diff.update(cx, |diff, cx| {
+                                        diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
+                                    })?;
+
+                                    if let Some(language) = language_registry
+                                        .language_for_file_path(&path)
+                                        .await
+                                        .log_err()
+                                    {
+                                        buffer.update(cx, |buffer, cx| {
+                                            buffer.set_language(Some(language), cx)
+                                        })?;
+                                    }
+
+                                    anyhow::Ok(())
+                                }),
+                            }
+                        }
                     });
-
                     *status = new_status;
                 }
                 ToolCallStatus::WaitingForConfirmation { .. } => {
@@ -610,14 +679,18 @@ mod tests {
 
         thread.read_with(cx, |thread, cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
-                status: ToolCallStatus::Allowed { content, .. },
+                status:
+                    ToolCallStatus::Allowed {
+                        content: Some(ToolCallContent::Markdown { markdown }),
+                        ..
+                    },
                 ..
             }) = &thread.entries()[1].content
             else {
                 panic!();
             };
 
-            content.as_ref().unwrap().read_with(cx, |md, _cx| {
+            markdown.read_with(cx, |md, _cx| {
                 assert!(
                     md.source().contains("Hello, world!"),
                     r#"Expected '{}' to contain "Hello, world!""#,

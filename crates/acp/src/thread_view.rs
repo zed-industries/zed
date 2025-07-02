@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp, ToolCallConfirmation};
 use anyhow::Result;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
     SharedString, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
@@ -12,6 +12,7 @@ use gpui::{
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
+use language::language_settings::SoftWrap;
 use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings as _;
@@ -23,15 +24,21 @@ use zed_actions::agent::Chat;
 
 use crate::{
     AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
-    ToolCall, ToolCallId, ToolCallStatus,
+    ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
 };
 
 pub struct AcpThreadView {
     thread_state: ThreadState,
-    // todo! use full message editor from agent2
+    // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
+    thread_entry_views: Vec<Option<ThreadEntryView>>,
     message_editor: Entity<Editor>,
     list_state: ListState,
     send_task: Option<Task<Result<()>>>,
+}
+
+#[derive(Debug)]
+enum ThreadEntryView {
+    Diff { editor: Entity<Editor> },
 }
 
 enum ThreadState {
@@ -78,13 +85,14 @@ impl AcpThreadView {
                     else {
                         return Empty.into_any();
                     };
-                    this.render_entry(entry, window, cx)
+                    this.render_entry(item, entry, window, cx)
                 }
             }),
         );
 
         Self {
             thread_state: Self::initial_state(project, window, cx),
+            thread_entry_views: Vec::new(),
             message_editor,
             send_task: None,
             list_state: list_state,
@@ -126,21 +134,11 @@ impl AcpThreadView {
             let agent = AcpServer::stdio(child, project, cx);
             let result = agent.clone().create_thread(cx).await;
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
-                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
-                            let count = this.list_state.item_count();
-                            match event {
-                                AcpThreadEvent::NewEntry => {
-                                    this.list_state.splice(count..count, 1);
-                                }
-                                AcpThreadEvent::EntryUpdated(index) => {
-                                    this.list_state.splice(*index..*index + 1, 1);
-                                }
-                            }
-                            cx.notify();
-                        });
+                        let subscription =
+                            cx.subscribe_in(&thread, window, Self::handle_thread_event);
                         this.list_state
                             .splice(0..0, thread.read(cx).entries().len());
 
@@ -212,6 +210,108 @@ impl AcpThreadView {
         });
     }
 
+    fn handle_thread_event(
+        &mut self,
+        thread: &Entity<AcpThread>,
+        event: &AcpThreadEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.list_state.item_count();
+        match event {
+            AcpThreadEvent::NewEntry => {
+                self.sync_thread_entry_view(thread.read(cx).entries.len() - 1, window, cx);
+                self.list_state.splice(count..count, 1);
+            }
+            AcpThreadEvent::EntryUpdated(index) => {
+                let index = *index;
+                self.sync_thread_entry_view(index, window, cx);
+                self.list_state.splice(index..index + 1, 1);
+            }
+        }
+        cx.notify();
+    }
+
+    fn sync_thread_entry_view(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = self.entry_diff_buffer(entry_ix, cx) else {
+            return;
+        };
+
+        if let Some(Some(ThreadEntryView::Diff { .. })) = self.thread_entry_views.get(entry_ix) {
+            return;
+        }
+        // todo! should we do this on the fly from render?
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sized_by_content: true,
+                },
+                buffer.clone(),
+                None,
+                window,
+                cx,
+            );
+            editor.set_show_gutter(false, cx);
+            editor.disable_inline_diagnostics();
+            editor.disable_expand_excerpt_buttons(cx);
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_read_only(true);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_expand_all_diff_hunks(cx);
+            editor.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(
+                    TextSize::Small
+                        .rems(cx)
+                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .into(),
+                ),
+                ..Default::default()
+            });
+            editor
+        });
+
+        if entry_ix >= self.thread_entry_views.len() {
+            self.thread_entry_views
+                .resize_with(entry_ix + 1, Default::default);
+        }
+
+        self.thread_entry_views[entry_ix] = Some(ThreadEntryView::Diff {
+            editor: editor.clone(),
+        });
+    }
+
+    fn entry_diff_buffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
+        let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
+
+        if let AgentThreadEntryContent::ToolCall(ToolCall {
+            status:
+                crate::ToolCallStatus::Allowed {
+                    content: Some(ToolCallContent::Diff { buffer, .. }),
+                    ..
+                },
+            ..
+        }) = &entry.content
+        {
+            Some(buffer.clone())
+        } else {
+            None
+        }
+    }
+
     fn authorize_tool_call(
         &mut self,
         id: ToolCallId,
@@ -229,6 +329,7 @@ impl AcpThreadView {
 
     fn render_entry(
         &self,
+        index: usize,
         entry: &ThreadEntry,
         window: &mut Window,
         cx: &Context<Self>,
@@ -277,12 +378,18 @@ impl AcpThreadView {
             AgentThreadEntryContent::ToolCall(tool_call) => div()
                 .px_2()
                 .py_4()
-                .child(self.render_tool_call(tool_call, window, cx))
+                .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
         }
     }
 
-    fn render_tool_call(&self, tool_call: &ToolCall, window: &Window, cx: &Context<Self>) -> Div {
+    fn render_tool_call(
+        &self,
+        entry_ix: usize,
+        tool_call: &ToolCall,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
         let status_icon = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { .. } => Empty.into_element().into_any(),
             ToolCallStatus::Allowed {
@@ -318,16 +425,28 @@ impl AcpThreadView {
             ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
                 Some(self.render_tool_call_confirmation(tool_call.id, confirmation, cx))
             }
-            ToolCallStatus::Allowed { content, .. } => content.clone().map(|content| {
+            ToolCallStatus::Allowed { content, .. } => content.as_ref().map(|content| {
                 div()
                     .border_color(cx.theme().colors().border)
                     .border_t_1()
                     .px_2()
                     .py_1p5()
-                    .child(MarkdownElement::new(
-                        content,
-                        default_markdown_style(window, cx),
-                    ))
+                    .child(match content {
+                        ToolCallContent::Markdown { markdown } => MarkdownElement::new(
+                            markdown.clone(),
+                            default_markdown_style(window, cx),
+                        )
+                        .into_any_element(),
+                        ToolCallContent::Diff { .. } => {
+                            if let Some(Some(ThreadEntryView::Diff { editor })) =
+                                self.thread_entry_views.get(entry_ix)
+                            {
+                                editor.clone().into_any_element()
+                            } else {
+                                Empty.into_any()
+                            }
+                        }
+                    })
                     .into_any_element()
             }),
             ToolCallStatus::Rejected => None,

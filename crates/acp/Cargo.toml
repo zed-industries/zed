@@ -20,6 +20,7 @@ agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
 editor.workspace = true
