@@ -1,0 +1,6 @@
+include = ["**/Cargo.toml", "rust-toolchain.toml"]
+
+[formatting]
+align_comments = false
+array_auto_collapse = false
+indent_string = "    "
