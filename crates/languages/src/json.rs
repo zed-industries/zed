@@ -8,7 +8,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextProvider, LanguageRegistry, LanguageToolchainStore, LocalFile as _, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -65,13 +66,14 @@ impl ContextProvider for JsonTaskProvider {
                 .ok()?
                 .await
                 .ok()?;
+            let path = cx.update(|cx| file.abs_path(cx)).ok()?.as_path().into();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
                     HashMap<String, serde_json_lenient::Value>,
                 >(&contents.text)
                 .ok()?;
-                let package_json = PackageJsonData::new(file.path.clone(), package_json);
+                let package_json = PackageJsonData::new(path, package_json);
                 let command = package_json.package_manager.unwrap_or("npm").to_owned();
                 package_json
                     .scripts
