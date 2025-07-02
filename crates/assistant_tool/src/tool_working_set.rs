@@ -223,7 +223,7 @@ mod tests {
             assert_eq!(tool.source(), expected_source);
         }
 
-        let tool_registry = cx.update(|cx| ToolRegistry::default_global(cx));
+        let tool_registry = cx.update(ToolRegistry::default_global);
         tool_registry.register_tool(TestTool::new("tool1", ToolSource::Native));
         tool_registry.register_tool(TestTool::new("tool2", ToolSource::Native));
 
