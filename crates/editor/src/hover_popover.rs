@@ -1883,4 +1883,238 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_hover_on_inlay_hint_types(cx: &mut gpui::TestAppContext) {
+        use crate::{DisplayPoint, PointForPosition};
+        use std::sync::Arc;
+        use std::sync::atomic::{self, AtomicUsize};
+
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_value_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
+                show_background: false,
+                toggle_on_modifiers_press: None,
+            });
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(lsp::OneOf::Right(
+                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                        ..Default::default()
+                    }),
+                )),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {r#"
+            fn main() {
+                let foo = "foo".to_string();
+                let bar: String = "bar".to_string();ˇ
+            }
+        "#});
+
+        // Set up inlay hint handler
+        let buffer_text = cx.buffer_text();
+        let hint_position = cx.to_lsp(buffer_text.find("foo =").unwrap() + 3);
+        cx.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+            move |_, _params, _| async move {
+                Ok(Some(vec![lsp::InlayHint {
+                    position: hint_position,
+                    label: lsp::InlayHintLabel::String(": String".to_string()),
+                    kind: Some(lsp::InlayHintKind::TYPE),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(false),
+                    padding_right: Some(false),
+                    data: None,
+                }]))
+            },
+        )
+        .next()
+        .await;
+
+        cx.background_executor.run_until_parked();
+
+        // Verify inlay hint is displayed
+        cx.update_editor(|editor, _, cx| {
+            let expected_layers = vec![": String".to_string()];
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+        });
+
+        // Set up hover handler that should be called for both inlay hint and explicit type
+        let hover_count = Arc::new(AtomicUsize::new(0));
+        let hover_count_clone = hover_count.clone();
+        let _hover_requests =
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, params, _| {
+                let count = hover_count_clone.clone();
+                async move {
+                    let current = count.fetch_add(1, atomic::Ordering::SeqCst);
+                    println!(
+                        "Hover request {} at position: {:?}",
+                        current + 1,
+                        params.text_document_position_params.position
+                    );
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value:
+                                "```rust\nstruct String\n```\n\nA UTF-8 encoded, growable string."
+                                    .to_string(),
+                        }),
+                        range: None,
+                    }))
+                }
+            });
+
+        // Test hovering over the inlay hint type
+        // Get the position where the inlay hint is displayed
+        let inlay_range = cx
+            .ranges(indoc! {r#"
+                fn main() {
+                    let foo« »= "foo".to_string();
+                    let bar: String = "bar".to_string();
+                }
+            "#})
+            .first()
+            .cloned()
+            .unwrap();
+
+        // Create a PointForPosition that simulates hovering over the inlay hint
+        let point_for_position = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            // Position over the "S" in "String" of the inlay hint ": String"
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column() + 2, // Skip past ": " to hover over "String"
+            );
+            PointForPosition {
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
+            }
+        });
+
+        // Update hovered link to trigger hover logic for inlay hints
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            update_inlay_link_and_hover_points(
+                &snapshot,
+                point_for_position,
+                editor,
+                false, // secondary_held
+                false, // shift_held
+                window,
+                cx,
+            );
+        });
+
+        // Wait for potential hover popover
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.background_executor.run_until_parked();
+
+        // Check if hover request was made for inlay hint
+        let inlay_hover_request_count = hover_count.load(atomic::Ordering::SeqCst);
+        println!(
+            "Hover requests after inlay hint hover: {}",
+            inlay_hover_request_count
+        );
+
+        // Check if hover popover is shown for inlay hint
+        let has_inlay_hover = cx.editor(|editor, _, _| {
+            println!(
+                "Inlay hint hover - info_popovers: {}",
+                editor.hover_state.info_popovers.len()
+            );
+            println!(
+                "Inlay hint hover - info_task: {:?}",
+                editor.hover_state.info_task.is_some()
+            );
+            editor.hover_state.info_popovers.len() > 0
+        });
+
+        // Clear hover state
+        cx.update_editor(|editor, _, cx| {
+            hide_hover(editor, cx);
+        });
+
+        // Test hovering over the explicit type
+        // Find the position of "String" in the explicit type annotation
+        let explicit_string_point = cx.display_point(indoc! {r#"
+            fn main() {
+                let foo = "foo".to_string();
+                let bar: Sˇtring = "bar".to_string();
+            }
+        "#});
+
+        // Use hover_at to trigger hover on explicit type
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let anchor = snapshot
+                .buffer_snapshot
+                .anchor_before(explicit_string_point.to_offset(&snapshot, Bias::Left));
+            hover_at(editor, Some(anchor), window, cx);
+        });
+
+        // Wait for hover request
+        cx.background_executor
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
+        cx.background_executor.run_until_parked();
+
+        // Check if hover popover is shown for explicit type
+        let has_explicit_hover = cx.editor(|editor, _, _| {
+            println!(
+                "Explicit type hover - info_popovers: {}",
+                editor.hover_state.info_popovers.len()
+            );
+            println!(
+                "Explicit type hover - info_task: {:?}",
+                editor.hover_state.info_task.is_some()
+            );
+            editor.hover_state.info_popovers.len() > 0
+        });
+
+        // Check total hover requests
+        let total_requests = hover_count.load(atomic::Ordering::SeqCst);
+        println!("Total hover requests: {}", total_requests);
+
+        // The test should fail here - inlay hints don't show hover popovers but explicit types do
+        println!("Has inlay hover: {}", has_inlay_hover);
+        println!("Has explicit hover: {}", has_explicit_hover);
+
+        // This test demonstrates issue #33715: hovering over type information in inlay hints
+        // does not show hover popovers, while hovering over explicit types does.
+
+        // Expected behavior: Both should show hover popovers
+        // Actual behavior: Only explicit types show hover popovers
+
+        assert!(
+            has_explicit_hover,
+            "Hover popover should be shown when hovering over explicit type"
+        );
+
+        // This assertion should fail, demonstrating the bug
+        assert!(
+            has_inlay_hover,
+            "Hover popover should be shown when hovering over inlay hint type (Issue #33715). \
+             Inlay hint hover requests: {}, Explicit type hover requests: {}",
+            inlay_hover_request_count,
+            total_requests - inlay_hover_request_count
+        );
+    }
 }
