@@ -238,13 +238,13 @@ impl acp::Client for AcpClientDelegate {
 }
 
 impl AcpServer {
-    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut AsyncApp) -> Arc<Self> {
+    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut App) -> Arc<Self> {
         let stdin = process.stdin.take().expect("process didn't have stdin");
         let stdout = process.stdout.take().expect("process didn't have stdout");
 
         let threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>> = Default::default();
         let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(project.clone(), threads.clone(), cx.clone()),
+            AcpClientDelegate::new(project.clone(), threads.clone(), cx.to_async()),
             stdin,
             stdout,
         );
@@ -267,6 +267,22 @@ impl AcpServer {
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         })
+    }
+
+    pub async fn initialize(&self) -> Result<acp::InitializeResponse> {
+        self.connection
+            .request(acp::InitializeParams)
+            .await
+            .map_err(to_anyhow)
+    }
+
+    pub async fn authenticate(&self) -> Result<()> {
+        self.connection
+            .request(acp::AuthenticateParams)
+            .await
+            .map_err(to_anyhow)?;
+
+        Ok(())
     }
 
     pub async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<AcpThread>> {

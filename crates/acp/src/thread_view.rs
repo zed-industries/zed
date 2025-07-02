@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp, ToolCallConfirmation};
@@ -12,20 +13,14 @@ use gpui::{
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
-<<<<<<< HEAD
 use language::language_settings::SoftWrap;
-use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
-||||||| parent of 47b80cc740 (Show errors from ACP when requests error)
-use markdown::{HeadingLevelStyles, MarkdownElement, MarkdownStyle};
-=======
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
->>>>>>> 47b80cc740 (Show errors from ACP when requests error)
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{Button, Tooltip};
-use util::ResultExt;
+use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
 use crate::{
@@ -34,6 +29,7 @@ use crate::{
 };
 
 pub struct AcpThreadView {
+    agent: Arc<AcpServer>,
     thread_state: ThreadState,
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
     thread_entry_views: Vec<Option<ThreadEntryView>>,
@@ -41,6 +37,7 @@ pub struct AcpThreadView {
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     send_task: Option<Task<Result<()>>>,
+    auth_task: Option<Task<()>>,
 }
 
 #[derive(Debug)]
@@ -57,6 +54,7 @@ enum ThreadState {
         _subscription: Subscription,
     },
     LoadError(SharedString),
+    Unauthenticated,
 }
 
 impl AcpThreadView {
@@ -107,21 +105,12 @@ impl AcpThreadView {
         }
     }
 
-    fn initial_state(
-        project: Entity<Project>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ThreadState {
-        let Some(root_dir) = project
+        let root_dir = project
             .read(cx)
             .visible_worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).abs_path())
-        else {
-            return ThreadState::LoadError(
-                "Gemini threads must be created within a project".into(),
-            );
-        };
+            .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
@@ -137,45 +126,44 @@ impl AcpThreadView {
             .spawn()
             .unwrap();
 
-        let project = project.clone();
+        let agent = AcpServer::stdio(child, project, cx);
+
+        Self {
+            thread_state: Self::initial_state(agent.clone(), window, cx),
+            agent,
+            message_editor,
+            send_task: None,
+            list_state: list_state,
+            last_error: None,
+            auth_task: None,
+        }
+    }
+
+    fn initial_state(
+        agent: Arc<AcpServer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ThreadState {
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let agent = AcpServer::stdio(child, project, cx);
-            let result = agent.clone().create_thread(cx).await;
+            let result = match agent.initialize().await {
+                Err(e) => Err(e),
+                Ok(response) => {
+                    if !response.is_authenticated {
+                        this.update(cx, |this, _| {
+                            this.thread_state = ThreadState::Unauthenticated;
+                        })
+                        .ok();
+                        return;
+                    }
+                    agent.clone().create_thread(cx).await
+                }
+            };
 
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
-<<<<<<< HEAD
                         let subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
-||||||| parent of 47b80cc740 (Show errors from ACP when requests error)
-                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
-                            let count = this.list_state.item_count();
-                            match event {
-                                AcpThreadEvent::NewEntry => {
-                                    this.list_state.splice(count..count, 1);
-                                }
-                                AcpThreadEvent::EntryUpdated(index) => {
-                                    this.list_state.splice(*index..*index + 1, 1);
-                                }
-                            }
-                            cx.notify();
-                        });
-=======
-                        dbg!(&thread);
-                        let subscription = cx.subscribe(&thread, |this, _, event, cx| {
-                            let count = this.list_state.item_count();
-                            match event {
-                                AcpThreadEvent::NewEntry => {
-                                    this.list_state.splice(count..count, 1);
-                                }
-                                AcpThreadEvent::EntryUpdated(index) => {
-                                    this.list_state.splice(*index..*index + 1, 1);
-                                }
-                            }
-                            cx.notify();
-                        });
->>>>>>> 47b80cc740 (Show errors from ACP when requests error)
                         this.list_state
                             .splice(0..0, thread.read(cx).entries().len());
 
@@ -210,7 +198,9 @@ impl AcpThreadView {
     fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
-            ThreadState::Loading { .. } | ThreadState::LoadError(..) => None,
+            ThreadState::Loading { .. }
+            | ThreadState::LoadError(..)
+            | ThreadState::Unauthenticated => None,
         }
     }
 
@@ -219,6 +209,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => thread.read(cx).title(),
             ThreadState::Loading { .. } => "Loading...".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
+            ThreadState::Unauthenticated => "Not authenticated".into(),
         }
     }
 
@@ -355,6 +346,27 @@ impl AcpThreadView {
         } else {
             None
         }
+    }
+
+    fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent = self.agent.clone();
+
+        self.auth_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = agent.authenticate().await;
+
+            this.update_in(cx, |this, window, cx| {
+                if let Err(err) = result {
+                    this.last_error =
+                        Some(cx.new(|cx| {
+                            Markdown::new(format!("Error: {err}").into(), None, None, cx)
+                        }))
+                } else {
+                    this.thread_state = Self::initial_state(agent, window, cx)
+                }
+                this.auth_task.take()
+            })
+            .ok();
+        }));
     }
 
     fn authorize_tool_call(
@@ -920,6 +932,14 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::chat))
             .h_full()
             .child(match &self.thread_state {
+                ThreadState::Unauthenticated => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .justify_end()
+                    .child(Label::new("Not authenticated"))
+                    .child(Button::new("sign-in", "Sign in via Gemini CLI").on_click(
+                        cx.listener(|this, _, window, cx| this.authenticate(window, cx)),
+                    )),
                 ThreadState::Loading { .. } => v_flex()
                     .p_2()
                     .flex_1()
