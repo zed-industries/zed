@@ -37,6 +37,7 @@ pub struct WindowsWindowState {
     pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
+    pub appearance: WindowAppearance,
     pub scale_factor: f32,
     pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
@@ -99,6 +100,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
+        let appearance = system_appearance().unwrap_or_default();
         let restore_from_minimized = None;
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
@@ -118,6 +120,7 @@ impl WindowsWindowState {
             logical_size,
             fullscreen_restore_bounds,
             border_offset,
+            appearance,
             scale_factor,
             restore_from_minimized,
             min_size,
