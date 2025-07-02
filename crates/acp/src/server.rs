@@ -202,6 +202,27 @@ impl acp::Client for AcpClientDelegate {
             Ok(acp::RequestToolCallResponse::Rejected)
         }
     }
+
+    async fn update_tool_call(
+        &self,
+        request: acp::UpdateToolCallParams,
+    ) -> Result<acp::UpdateToolCallResponse> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
+                thread.update_tool_call(
+                    request.tool_call_id.into(),
+                    request.status,
+                    request.content,
+                    cx,
+                )
+            })
+        })?
+        .context("Failed to update thread")??;
+
+        Ok(acp::UpdateToolCallResponse)
+    }
 }
 
 impl AcpServer {

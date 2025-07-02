@@ -2,7 +2,7 @@ mod server;
 mod thread_view;
 
 use agentic_coding_protocol::{self as acp, Role};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::channel::oneshot;
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
@@ -134,7 +134,11 @@ pub enum ToolCallStatus {
         respond_tx: oneshot::Sender<bool>,
     },
     // todo! Running?
-    Allowed,
+    Allowed {
+        // todo! should this be variants in crate::ToolCallStatus instead?
+        status: acp::ToolCallStatus,
+        content: Option<Entity<Markdown>>,
+    },
     Rejected,
 }
 
@@ -310,7 +314,10 @@ impl AcpThread {
         };
 
         let new_status = if allowed {
-            ToolCallStatus::Allowed
+            ToolCallStatus::Allowed {
+                status: acp::ToolCallStatus::Running,
+                content: None,
+            }
         } else {
             ToolCallStatus::Rejected
         };
@@ -324,6 +331,43 @@ impl AcpThread {
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(id.as_u64() as usize));
+    }
+
+    pub fn update_tool_call(
+        &mut self,
+        id: ToolCallId,
+        new_status: acp::ToolCallStatus,
+        new_content: Option<acp::ToolCallContent>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let language_registry = self.project.read(cx).languages().clone();
+        let entry = self.entry_mut(id.0).context("Entry not found")?;
+
+        match &mut entry.content {
+            AgentThreadEntryContent::ToolCall(call) => match &mut call.status {
+                ToolCallStatus::Allowed { content, status } => {
+                    *content = new_content.map(|new_content| {
+                        let acp::ToolCallContent::Markdown { markdown } = new_content;
+
+                        cx.new(|cx| {
+                            Markdown::new(markdown.into(), Some(language_registry), None, cx)
+                        })
+                    });
+
+                    *status = new_status;
+                }
+                ToolCallStatus::WaitingForConfirmation { .. } => {
+                    anyhow::bail!("Tool call hasn't been authorized yet")
+                }
+                ToolCallStatus::Rejected => {
+                    anyhow::bail!("Tool call was rejected and therefore can't be updated")
+                }
+            },
+            _ => anyhow::bail!("Entry is not a tool call"),
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(id.as_u64() as usize));
+        Ok(())
     }
 
     fn entry_mut(&mut self, id: ThreadEntryId) -> Option<&mut ThreadEntry> {
@@ -341,7 +385,7 @@ impl AcpThread {
             match &entry.content {
                 AgentThreadEntryContent::ToolCall(call) => match call.status {
                     ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Allowed | ToolCallStatus::Rejected => continue,
+                    ToolCallStatus::Allowed { .. } | ToolCallStatus::Rejected => continue,
                 },
                 AgentThreadEntryContent::Message(_) => {
                     // Reached the beginning of the turn
@@ -478,7 +522,7 @@ mod tests {
             assert!(matches!(
                 thread.entries().last().unwrap().content,
                 AgentThreadEntryContent::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed,
+                    status: ToolCallStatus::Allowed { .. },
                     ..
                 })
             ));
@@ -498,7 +542,7 @@ mod tests {
             assert!(matches!(
                 thread.entries[1].content,
                 AgentThreadEntryContent::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed,
+                    status: ToolCallStatus::Allowed { .. },
                     ..
                 })
             ));

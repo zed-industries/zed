@@ -1,11 +1,14 @@
 use std::path::Path;
 use std::rc::Rc;
+use std::time::Duration;
 
+use agentic_coding_protocol::{self as acp};
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    App, EdgesRefinement, Empty, Entity, Focusable, ListState, SharedString, StyleRefinement,
-    Subscription, TextStyleRefinement, UnderlineStyle, Window, div, list, prelude::*,
+    Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
+    SharedString, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
+    UnderlineStyle, Window, div, list, percentage, prelude::*,
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
@@ -256,11 +259,30 @@ impl AcpThreadView {
     fn render_tool_call(&self, tool_call: &ToolCall, window: &Window, cx: &Context<Self>) -> Div {
         let status_icon = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { .. } => Empty.into_element().into_any(),
-            ToolCallStatus::Allowed => Icon::new(IconName::Check)
+            ToolCallStatus::Allowed {
+                status: acp::ToolCallStatus::Running,
+                ..
+            } => Icon::new(IconName::ArrowCircle)
+                .color(Color::Success)
+                .size(IconSize::Small)
+                .with_animation(
+                    "running",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                )
+                .into_any_element(),
+            ToolCallStatus::Allowed {
+                status: acp::ToolCallStatus::Finished,
+                ..
+            } => Icon::new(IconName::Check)
                 .color(Color::Success)
                 .size(IconSize::Small)
                 .into_any_element(),
-            ToolCallStatus::Rejected => Icon::new(IconName::X)
+            ToolCallStatus::Rejected
+            | ToolCallStatus::Allowed {
+                status: acp::ToolCallStatus::Error,
+                ..
+            } => Icon::new(IconName::X)
                 .color(Color::Error)
                 .size(IconSize::Small)
                 .into_any_element(),
@@ -309,7 +331,18 @@ impl AcpThreadView {
                 )
                 .into_any()
                 .into(),
-            ToolCallStatus::Allowed => None,
+            ToolCallStatus::Allowed { content, .. } => content.clone().map(|content| {
+                div()
+                    .border_color(cx.theme().colors().border)
+                    .border_t_1()
+                    .px_2()
+                    .py_1p5()
+                    .child(MarkdownElement::new(
+                        content,
+                        default_markdown_style(window, cx),
+                    ))
+                    .into_any_element()
+            }),
             ToolCallStatus::Rejected => None,
         };
 
