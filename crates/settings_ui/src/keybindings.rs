@@ -30,6 +30,7 @@ use crate::{
 
 actions!(zed, [OpenKeymapEditor]);
 
+const KEYMAP_EDITOR_NAMESPACE: &'static str = "keymap_editor";
 actions!(keymap_editor, [EditBinding, CopyAction, CopyContext]);
 
 pub fn init(cx: &mut App) {
@@ -61,6 +62,7 @@ pub fn init(cx: &mut App) {
 
         command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&keymap_ui_actions);
+            filter.hide_namespace(KEYMAP_EDITOR_NAMESPACE);
         });
 
         cx.observe_flag::<SettingsUiFeatureFlag, _>(
@@ -71,6 +73,7 @@ pub fn init(cx: &mut App) {
                         cx,
                         |filter, _cx| {
                             filter.show_action_types(keymap_ui_actions.iter());
+                            filter.show_namespace(KEYMAP_EDITOR_NAMESPACE);
                         },
                     );
                 } else {
@@ -78,6 +81,7 @@ pub fn init(cx: &mut App) {
                         cx,
                         |filter, _cx| {
                             filter.hide_action_types(&keymap_ui_actions);
+                            filter.hide_namespace(KEYMAP_EDITOR_NAMESPACE);
                         },
                     );
                 }
