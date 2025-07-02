@@ -618,7 +618,7 @@ fn register_actions(
             .detach()
         })
         .register_action(|workspace, _: &NewWindowForWorkspace, window, cx| {
-            workspace.new_window_for_workspace(&NewWindowForWorkspace, window, cx);
+            workspace.new_project_window(&NewWindowForWorkspace, window, cx);
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {

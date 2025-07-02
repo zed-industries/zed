@@ -2060,7 +2060,7 @@ impl Workspace {
         .detach_and_log_err(cx)
     }
 
-    pub fn new_window_for_workspace(
+    pub fn new_project_window(
         &mut self,
         _: &NewWindowForWorkspace,
         window: &mut Window,
@@ -2068,12 +2068,17 @@ impl Workspace {
     ) {
         let project = self.project.clone();
         let app_state = self.app_state.clone();
-        let workspace_id = self.database_id;
         let current_bounds = window.window_bounds();
 
         cx.spawn_in(window, async move |_, cx| {
             let mut options =
                 cx.update(|_window, cx| (app_state.build_window_options)(None, cx))?;
+
+            // Generate a new workspace ID for the new window
+            let workspace_id = persistence::DB
+                .next_id()
+                .await
+                .unwrap_or_else(|_| Default::default());
 
             // Offset new window position by 50 pixels
             if let WindowBounds::Windowed(bounds) = current_bounds {
@@ -2087,7 +2092,7 @@ impl Workspace {
             // Create new window with shared project
             cx.open_window(options, {
                 move |window, cx| {
-                    cx.new(|cx| Workspace::new(workspace_id, project, app_state, window, cx))
+                    cx.new(|cx| Workspace::new(Some(workspace_id), project, app_state, window, cx))
                 }
             })?;
 
