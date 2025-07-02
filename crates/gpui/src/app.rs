@@ -264,7 +264,7 @@ pub struct App {
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
-        FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
+        FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, Option<&mut Window>, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
     pub(crate) pending_notifications: FxHashSet<EntityId>,
     pub(crate) pending_global_notifications: FxHashSet<TypeId>,
@@ -1340,14 +1340,19 @@ impl App {
     }
 
     /// Register a global listener for actions invoked via the keyboard.
-    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
+    /// This function will optionally be passed a mutable reference to the window
+    /// that was focused when the action was dispatched.
+    pub fn on_action<A: Action>(
+        &mut self,
+        listener: impl Fn(&A, Option<&mut Window>, &mut Self) + 'static,
+    ) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
             .or_default()
-            .push(Rc::new(move |action, phase, cx| {
+            .push(Rc::new(move |action, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     let action = action.downcast_ref().unwrap();
-                    listener(action, cx)
+                    listener(action, window, cx)
                 }
             }));
     }
@@ -1524,7 +1529,7 @@ impl App {
             .remove(&action.as_any().type_id())
         {
             for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, self);
+                listener(action.as_any(), DispatchPhase::Capture, None, self);
                 if !self.propagate_event {
                     break;
                 }
@@ -1546,7 +1551,7 @@ impl App {
                 .remove(&action.as_any().type_id())
             {
                 for listener in global_listeners.iter().rev() {
-                    listener(action.as_any(), DispatchPhase::Bubble, self);
+                    listener(action.as_any(), DispatchPhase::Bubble, None, self);
                     if !self.propagate_event {
                         break;
                     }

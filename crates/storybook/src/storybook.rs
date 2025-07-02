@@ -157,7 +157,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(quit);
 }
 
-fn quit(_: &Quit, cx: &mut App) {
+fn quit(_: &Quit, _window: Option<&mut Window>, cx: &mut App) {
     cx.spawn(async move |cx| {
         cx.update(|cx| cx.quit())?;
         anyhow::Ok(())

@@ -254,7 +254,7 @@ fn main() {
         cx.set_http_client(Arc::new(http_client));
 
         cx.activate(true);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Quit, _window, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus(vec![Menu {
             name: "Image Gallery".into(),
