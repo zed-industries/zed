@@ -258,7 +258,8 @@ impl AcpServer {
         let thread_id: ThreadId = response.thread_id.into();
         let server = self.clone();
         let thread = cx.new(|_| AcpThread {
-            title: "The agent2 thread".into(),
+            // todo!
+            title: "ACP Thread".into(),
             id: thread_id.clone(),
             next_entry_id: ThreadEntryId(0),
             entries: Vec::default(),
