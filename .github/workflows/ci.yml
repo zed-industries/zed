@@ -202,6 +202,9 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Run TOML fmt checks
+        uses: ./.github/actions/toml_fmt
+
       - name: Check for typos
         uses: crate-ci/typos@8e6a4285bcbde632c5d79900a7779746e8b7ea3f # v1.24.6
         with:

@@ -1,0 +1,17 @@
+name: "Check TOML formatting"
+description: "Checks toml  formatting use taplo"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Taplo
+      env:
+        version: "0.10.0"
+      run: |
+        curl -Ls "https://github.com/tamasfe/taplo/releases/download/${{ env.version }}/taplo-full-linux-x86_64.gz" | \
+        gzip -d > taplo && \
+        chmod +x taplo && \
+        sudo mv taplo /usr/local/bin/taplo
+    - name: run taplo
+      shell: bash -euxo pipefail {0}
+      run: taplo format --check --colors never
