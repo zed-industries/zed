@@ -31,6 +31,7 @@ log.workspace = true
 markdown.workspace = true
 parking_lot.workspace = true
 project.workspace = true
+proto.workspace = true
 settings.workspace = true
 smol.workspace = true
 theme.workspace = true

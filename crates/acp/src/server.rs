@@ -238,13 +238,13 @@ impl acp::Client for AcpClientDelegate {
 }
 
 impl AcpServer {
-    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut AsyncApp) -> Arc<Self> {
+    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut App) -> Arc<Self> {
         let stdin = process.stdin.take().expect("process didn't have stdin");
         let stdout = process.stdout.take().expect("process didn't have stdout");
 
         let threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>> = Default::default();
         let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(project.clone(), threads.clone(), cx.clone()),
+            AcpClientDelegate::new(project.clone(), threads.clone(), cx.to_async()),
             stdin,
             stdout,
         );
@@ -269,14 +269,35 @@ impl AcpServer {
         })
     }
 
+    pub async fn initialize(&self) -> Result<acp::InitializeResponse> {
+        self.connection
+            .request(acp::InitializeParams)
+            .await
+            .map_err(to_anyhow)
+    }
+
+    pub async fn authenticate(&self) -> Result<()> {
+        self.connection
+            .request(acp::AuthenticateParams)
+            .await
+            .map_err(to_anyhow)?;
+
+        Ok(())
+    }
+
     pub async fn create_thread(self: Arc<Self>, cx: &mut AsyncApp) -> Result<Entity<AcpThread>> {
-        let response = self.connection.request(acp::CreateThreadParams).await?;
+        let response = self
+            .connection
+            .request(acp::CreateThreadParams)
+            .await
+            .map_err(to_anyhow)?;
+
         let thread_id: ThreadId = response.thread_id.into();
         let server = self.clone();
         let thread = cx.new(|_| AcpThread {
             // todo!
             title: "ACP Thread".into(),
-            id: thread_id.clone(),
+            id: thread_id.clone(), // Either<ErrorState, Id>
             next_entry_id: ThreadEntryId(0),
             entries: Vec::default(),
             project: self.project.clone(),
@@ -297,13 +318,24 @@ impl AcpServer {
                 thread_id: thread_id.clone().into(),
                 message,
             })
-            .await?;
+            .await
+            .map_err(to_anyhow)?;
         Ok(())
     }
 
     pub fn exit_status(&self) -> Option<ExitStatus> {
         self.exit_status.lock().clone()
     }
+}
+
+#[track_caller]
+fn to_anyhow(e: acp::Error) -> anyhow::Error {
+    log::error!(
+        "failed to send message: {code}: {message}",
+        code = e.code,
+        message = e.message
+    );
+    anyhow::anyhow!(e.message)
 }
 
 impl From<acp::ThreadId> for ThreadId {
