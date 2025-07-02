@@ -15,7 +15,6 @@ use calloop::{
     generic::{FdWrapper, Generic},
 };
 use collections::HashMap;
-use futures::channel::oneshot;
 use http_client::Url;
 use log::Level;
 use smallvec::SmallVec;
@@ -64,7 +63,7 @@ use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
     modifiers_from_xinput_info, point, px,
 };
 
@@ -1486,7 +1485,8 @@ impl LinuxClient for X11Client {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    {
         crate::platform::scap_screen_capture::scap_screen_sources(
             &self.0.borrow().common.foreground_executor,
         )

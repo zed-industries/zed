@@ -193,7 +193,7 @@ pub(crate) trait Platform: 'static {
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
-            .send(Err(anyhow!(
+            .send(Err(anyhow::anyhow!(
                 "gpui was compiled without the screen-capture feature"
             )))
             .ok();
