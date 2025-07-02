@@ -296,7 +296,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(utf8_char_boundary(
+                let (prefix, suffix) = chunk.text.split_at(next_utf8_char_boundary(
                     chunk.text,
                     self.transforms.end(&()).0.0 - self.output_offset.0,
                 ));
@@ -389,7 +389,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                let (chunk, remainder) = inlay_chunk.split_at(utf8_char_boundary(
+                let (chunk, remainder) = inlay_chunk.split_at(next_utf8_char_boundary(
                     inlay_chunk,
                     next_inlay_highlight_endpoint,
                 ));
@@ -1147,50 +1147,53 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 /// the previous valid `char` in the string. We look for the *previous* valid
 /// one because if the index is in the middle of a UTF-8 multibyte sequence, we
 /// can always get from there to a valid index by searching backwards, whereas
-/// if we search forward we may run out of string bytes before finding a `char`.
+/// Finds the nearest UTF-8 char boundary to the given `byte_index`.
+/// Searches forward first, then backward if we hit the end of the string.
 ///
-/// Panics if given an empty slice.
 #[inline(always)]
-fn utf8_char_boundary(text: &str, byte_index: usize) -> usize {
-    let mut byte_index = byte_index.min(text.len().saturating_sub(1));
-    #[cfg(debug_assertions)]
-    let start_byte_index = byte_index;
+fn next_utf8_char_boundary(text: &str, initial_index: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut search_index = initial_index;
 
     loop {
-        if let Some(byte) = text.as_bytes().get(byte_index) {
-            // The bits in a UTF-8 continuation byte are always 10xxxxxx,
-            // so if we see one of those, we'd be splitting on a continuation
-            // byte instead of a Unicode Scalar Value like we need.
-            if (byte >> 6) != 0b00000010 {
-                return byte_index;
+        if let Some(&byte) = bytes.get(search_index) {
+            if is_utf8_char_boundary(byte) {
+                return search_index;
             }
         } else {
-            // This should only happen if given an empty string, because we started at index
-            // (text.len() - 1) and then decremented from there. A valid nonempty &str should
-            // have at least one byte which passes the conditional, and the function's docs
-            // note that it panics when given an empty string.
-            panic!(
-                "Tried to find UTF-8 char boundary at index {byte_index} in a string with length {}",
-                text.len()
-            );
+            // We ran off the end of the string, so try to find a boundary by going in reverse.
+            break;
         }
 
-        // Eventually we'll get down to index 0, which in a &str is guaranteed
-        // to not be a continuation byte.
-        byte_index -= 1;
-
-        #[cfg(debug_assertions)]
-        {
-            // UTF-8 can have at most 3 continuation bytes, so we should never
-            // look back more than 4 bytes total (including the starting byte).
-            // If we do, the &str was invalid UTF-8, which should never happen!
-            debug_assert!(
-                start_byte_index.abs_diff(byte_index) < 4,
-                "Looked back {} bytes without finding a UTF-8 boundary - the given string must be malformed",
-                start_byte_index.abs_diff(byte_index).saturating_add(1)
-            );
-        }
+        search_index += 1;
     }
+
+    // Search in reverse this time.
+    search_index = initial_index
+        .saturating_sub(1)
+        .min(text.len().saturating_sub(1));
+
+    loop {
+        if let Some(&byte) = bytes.get(search_index) {
+            if is_utf8_char_boundary(byte) {
+                return search_index;
+            }
+        } else {
+            // The only way .get() could return None when we're decrementing backwards from an index
+            // that is guaranteed to start out as less than or equal to the length is if len was 0.
+            panic!(
+                "next_utf8_char_boundary was called on an empty string, which should never happen."
+            );
+        }
+
+        search_index -= 1;
+    }
+}
+
+// Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
+const fn is_utf8_char_boundary(byte: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (byte as i8) >= -0x40
 }
 
 #[cfg(test)]
