@@ -53,11 +53,11 @@ impl Render for AgentPanelOnboarding {
                         "You can also use Zed AI by bringing your own API keys",
                     ))
                     .child(BulletItem::new(
-                        "No need for any of the plans; not even signing in",
+                        "No need for any of the plans; no need to sign in; no payment required",
                     )),
             )
             .child(
-                Button::new("configure-providers", "Continue Models")
+                Button::new("configure-providers", "Configure Models")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click(cx.listener(Self::configure_providers)),
