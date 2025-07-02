@@ -17,8 +17,8 @@ use settings::KeybindSource;
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    ActiveTheme as _, App, BorrowAppContext, ContextMenu, KeyBinding, ParentElement as _, Render,
+    SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
@@ -571,7 +571,7 @@ impl Render for KeymapEditor {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
-        div()
+        v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -586,9 +586,9 @@ impl Render for KeymapEditor {
             .bg(theme.colors().editor_background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
+            .mt_4()
             .px_4()
-            .v_flex()
-            .pb_4()
+            .gap_4()
             .child(
                 h_flex()
                     .key_context({
@@ -596,12 +596,13 @@ impl Render for KeymapEditor {
                         context.add("BufferSearchBar");
                         context
                     })
-                    .w_full()
-                    .h_12()
-                    .px_4()
-                    .my_4()
-                    .border_2()
+                    .h_8()
+                    .pl_2()
+                    .pr_1()
+                    .py_1()
+                    .border_1()
                     .border_color(theme.colors().border)
+                    .rounded_lg()
                     .child(self.filter_editor.clone()),
             )
             .child(
@@ -742,7 +743,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
 struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
-    keybind_editor: Entity<KeybindInput>,
+    keybind_editor: Entity<KeystrokeInput>,
     fs: Arc<dyn Fs>,
     error: Option<String>,
 }
@@ -764,7 +765,7 @@ impl KeybindingEditorModal {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(KeybindInput::new);
+        let keybind_editor = cx.new(KeystrokeInput::new);
         Self {
             editing_keybind,
             fs,
@@ -861,11 +862,13 @@ async fn save_keybinding_update(
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+
     let existing_keystrokes = existing
         .ui_key_binding
         .as_ref()
-        .map(|keybinding| keybinding.key_binding.keystrokes())
+        .map(|keybinding| keybinding.keystrokes.as_slice())
         .unwrap_or_default();
+
     let context = existing
         .context
         .as_ref()
@@ -909,12 +912,12 @@ async fn save_keybinding_update(
     Ok(())
 }
 
-struct KeybindInput {
+struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
 }
 
-impl KeybindInput {
+impl KeystrokeInput {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
@@ -989,13 +992,13 @@ impl KeybindInput {
     }
 }
 
-impl Focusable for KeybindInput {
+impl Focusable for KeystrokeInput {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for KeybindInput {
+impl Render for KeystrokeInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
 
@@ -1011,7 +1014,6 @@ impl Render for KeybindInput {
             })
             .py_2()
             .px_3()
-            .gap_1()
             .gap_2()
             .min_h_8()
             .w_full()
