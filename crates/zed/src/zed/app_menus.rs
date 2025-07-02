@@ -233,6 +233,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Minimize", super::Minimize),
                 MenuItem::action("Zoom", super::Zoom),
                 MenuItem::separator(),
+                MenuItem::action("New Project Window", workspace::NewProjectWindow),
             ],
         },
         Menu {
