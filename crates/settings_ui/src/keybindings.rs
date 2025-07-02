@@ -787,7 +787,7 @@ impl Render for KeybindingEditorModal {
                     .px_4()
                     .pb_4()
                     .gap_2()
-                    .child(Label::new("Input desired keybinding, then hit save"))
+                    .child(Label::new("Input desired keystroke, then hit save"))
                     .child(self.keybind_editor.clone()),
             )
             .child(
