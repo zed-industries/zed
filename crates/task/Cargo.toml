@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 [features]
 test-support = [
     "gpui/test-support",
-    "util/test-support"
+    "util/test-support",
 ]
 
 [lints]

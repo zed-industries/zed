@@ -17,8 +17,10 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
-aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"] }
-aws-smithy-types = {workspace = true}
+aws-sdk-bedrockruntime = { workspace = true, features = [
+    "behavior-version-latest",
+] }
+aws-smithy-types = { workspace = true }
 futures.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true

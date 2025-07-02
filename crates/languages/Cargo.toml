@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 test-support = [
-    "load-grammars"
+    "load-grammars",
 ]
 load-grammars = [
     "tree-sitter",

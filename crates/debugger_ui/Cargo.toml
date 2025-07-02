@@ -22,7 +22,7 @@ test-support = [
     "util/test-support",
     "workspace/test-support",
     "unindent",
-    "debugger_tools"
+    "debugger_tools",
 ]
 
 [dependencies]

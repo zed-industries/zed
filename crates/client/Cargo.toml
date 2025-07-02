@@ -13,12 +13,20 @@ path = "src/client.rs"
 doctest = false
 
 [features]
-test-support = ["clock/test-support", "collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = [
+    "clock/test-support",
+    "collections/test-support",
+    "gpui/test-support",
+    "rpc/test-support",
+]
 
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
-async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
+async-tungstenite = { workspace = true, features = [
+    "tokio",
+    "tokio-rustls-manual-roots",
+] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
@@ -51,7 +59,9 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
-tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
+tokio-socks = { version = "0.5.2", default-features = false, features = [
+    "futures-io",
+] }
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
@@ -81,4 +91,7 @@ tokio-native-tls = "0.3"
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
 rustls-pki-types = "1.12"
-tokio-rustls = { version = "0.26", features = ["tls12", "ring"], default-features = false }
+tokio-rustls = { version = "0.26", features = [
+    "tls12",
+    "ring",
+], default-features = false }

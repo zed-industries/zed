@@ -50,14 +50,26 @@ reqwest_client.workspace = true
 rpc.workspace = true
 rustc-demangle.workspace = true
 scrypt = "0.11"
-sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+sea-orm = { version = "1.1.0-rc.1", features = [
+    "sqlx-postgres",
+    "postgres-array",
+    "runtime-tokio-rustls",
+    "with-uuid",
+] }
 semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+sqlx = { version = "0.8", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "json",
+    "time",
+    "uuid",
+    "any",
+] }
 strum.workspace = true
 subtle.workspace = true
 supermaven_api.workspace = true
@@ -70,7 +82,12 @@ toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }
 tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
+tracing-subscriber = { version = "0.3.18", features = [
+    "env-filter",
+    "json",
+    "registry",
+    "tracing-log",
+] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
@@ -107,7 +124,7 @@ hyper.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
-livekit_client =  { workspace = true, features = ["test-support"] }
+livekit_client = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
 multi_buffer = { workspace = true, features = ["test-support"] }

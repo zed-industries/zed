@@ -32,6 +32,6 @@ util.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-fs = { workspace = true,  features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

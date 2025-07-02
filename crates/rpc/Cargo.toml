@@ -15,7 +15,11 @@ doctest = false
 
 [features]
 gpui = ["dep:gpui"]
-test-support = ["collections/test-support", "gpui/test-support", "proto/test-support"]
+test-support = [
+    "collections/test-support",
+    "gpui/test-support",
+    "proto/test-support",
+]
 
 [dependencies]
 anyhow.workspace = true

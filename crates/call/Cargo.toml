@@ -19,7 +19,7 @@ test-support = [
     "gpui/test-support",
     "livekit_client/test-support",
     "project/test-support",
-    "util/test-support"
+    "util/test-support",
 ]
 
 [dependencies]

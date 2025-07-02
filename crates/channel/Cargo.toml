@@ -13,7 +13,11 @@ path = "src/channel.rs"
 doctest = false
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support", "rpc/test-support"]
+test-support = [
+    "collections/test-support",
+    "gpui/test-support",
+    "rpc/test-support",
+]
 
 [dependencies]
 anyhow.workspace = true

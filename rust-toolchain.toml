@@ -1,7 +1,7 @@
 [toolchain]
 channel = "1.88"
 profile = "minimal"
-components = [ "rustfmt", "clippy" ]
+components = ["rustfmt", "clippy"]
 targets = [
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
