@@ -17,6 +17,7 @@ default = []
 [dependencies]
 agent.workspace = true
 agent_settings.workspace = true
+client.workspace = true
 component.workspace = true
 gpui.workspace = true
 inventory.workspace = true

@@ -32,7 +32,7 @@ use agent::{
     thread_store::{TextThreadStore, ThreadStore},
 };
 use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
-use ai_onboarding::{OnboardingSource, ZedAiOnboarding};
+use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -60,8 +60,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, Callout, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, Callout, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -428,7 +428,7 @@ pub struct AgentPanel {
     height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
-    hide_upsell: bool,
+    onboarding: Entity<AgentPanelOnboarding>,
 }
 
 impl AgentPanel {
@@ -662,6 +662,12 @@ impl AgentPanel {
             },
         );
 
+        let onboarding = cx.new(|_cx| {
+            AgentPanelOnboarding::new(user_store.clone(), |_window, cx| {
+                Upsell::set_dismissed(true, cx);
+            })
+        });
+
         Self {
             active_view,
             workspace,
@@ -691,7 +697,7 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
-            hide_upsell: false,
+            onboarding,
         }
     }
 
@@ -2019,33 +2025,44 @@ impl AgentPanel {
     }
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
-        let plan = self.user_store.read(cx).current_plan();
+        true
 
-        // change this when the "signing in is === free plan" is in place
-        match &self.active_view {
-            ActiveView::Thread { thread, .. } => {
-                let is_using_zed_provider = thread
-                    .read(cx)
-                    .thread()
-                    .read(cx)
-                    .configured_model()
-                    .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
+        // if Upsell::dismissed() {
+        //     return false;
+        // }
 
-                plan.is_none() && is_using_zed_provider
-            }
-            ActiveView::TextThread { .. } => {
-                let is_using_zed_provider = LanguageModelRegistry::global(cx)
-                    .read(cx)
-                    .default_model()
-                    .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
+        // match &self.active_view {
+        //     ActiveView::Thread { thread, .. } => {
+        //         let is_using_zed_provider = thread
+        //             .read(cx)
+        //             .thread()
+        //             .read(cx)
+        //             .configured_model()
+        //             .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
 
-                plan.is_none() && is_using_zed_provider
-            }
-            ActiveView::History | ActiveView::Configuration => false,
-        }
+        //         if !is_using_zed_provider {
+        //             return false;
+        //         }
+        //     }
+        //     ActiveView::TextThread { .. } => {
+        //         let is_using_zed_provider = LanguageModelRegistry::global(cx)
+        //             .read(cx)
+        //             .default_model()
+        //             .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
+
+        //         if !is_using_zed_provider {
+        //             return false;
+        //         }
+        //     }
+        //     ActiveView::History | ActiveView::Configuration => return false,
+        // }
+
+        // TODO: change this when the "signing in is === free plan" is in place
+        // let plan = self.user_store.read(cx).current_plan();
+        // plan.is_none()
     }
 
-    fn render_upsell(
+    fn render_onboarding(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -2054,19 +2071,7 @@ impl AgentPanel {
             return None;
         }
 
-        let store = self.user_store.read(cx);
-        let is_signed_in = store.current_user().is_some();
-        let has_accepted_tos = store.current_user_has_accepted_terms().unwrap_or(false);
-        let plan = store.current_plan();
-        let account_too_young = store.account_too_young();
-
-        Some(div().size_full().child(cx.new(|_cx| ZedAiOnboarding {
-            is_signed_in,
-            has_accepted_terms_of_service: has_accepted_tos,
-            plan,
-            account_too_young,
-            source: OnboardingSource::AgentPanel,
-        })))
+        Some(div().size_full().child(self.onboarding.clone()))
     }
 
     fn render_trial_end_upsell(
@@ -2915,7 +2920,7 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_upsell(window, cx))
+            .children(self.render_onboarding(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread {
@@ -3131,7 +3136,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 struct Upsell;
 
 impl Dismissable for Upsell {
-    const KEY: &'static str = "dismissed-trial-upsell";
+    const KEY: &'static str = "dismissed-upsell";
 }
 
 struct TrialEndUpsell;
