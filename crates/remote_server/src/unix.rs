@@ -584,7 +584,43 @@ impl ServerPaths {
     }
 }
 
-pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
+#[derive(Debug, Error)]
+pub(crate) enum ExecuteProxyError {
+    #[error("Failed to init server paths")]
+    ServerPath(#[from] ServerPathError),
+
+    #[error(transparent)]
+    ServerNotRunning(#[from] ProxyLaunchError),
+
+    #[error("Failed to check PidFile '{path}'")]
+    CheckPidFile {
+        #[source]
+        source: CheckPidError,
+        path: PathBuf,
+    },
+
+    #[error("Failed to kill pid '{pid}'")]
+    KillRunningServer {
+        #[source]
+        source: KillRunningServerError,
+        pid: u32,
+    },
+
+    #[error("failed to spawn server")]
+    SpawnServer(#[source] SpawnServerError),
+
+    #[error("stdin_task failed")]
+    StdinTask(#[source] anyhow::Error),
+    #[error("stdout_task failed")]
+    StdoutTask(#[source] anyhow::Error),
+    #[error("stderr_task failed")]
+    StderrTask(#[source] anyhow::Error),
+}
+
+pub(crate) fn execute_proxy(
+    identifier: String,
+    is_reconnecting: bool,
+) -> Result<(), ExecuteProxyError> {
     init_logging_proxy();
 
     let server_paths = ServerPaths::new(&identifier)?;
@@ -601,12 +637,19 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     log::info!("starting proxy process. PID: {}", std::process::id());
 
-    let server_pid = check_pid_file(&server_paths.pid_file)?;
+    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
+        ExecuteProxyError::CheckPidFile {
+            source,
+            path: server_paths.pid_file.clone(),
+        }
+    })?;
     let server_running = server_pid.is_some();
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
-            anyhow::bail!(ProxyLaunchError::ServerNotRunning);
+            return Err(ExecuteProxyError::ServerNotRunning(
+                ProxyLaunchError::ServerNotRunning,
+            ));
         }
     } else {
         if let Some(pid) = server_pid {
@@ -614,10 +657,11 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
                 "proxy found server already running with PID {}. Killing process and cleaning up files...",
                 pid
             );
-            kill_running_server(pid, &server_paths)?;
+            kill_running_server(pid, &server_paths)
+                .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
         }
 
-        spawn_server(&server_paths)?;
+        spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
     };
 
     let stdin_task = smol::spawn(async move {
@@ -657,9 +701,9 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result.context("stdin_task failed"),
-            result = stdout_task.fuse() => result.context("stdout_task failed"),
-            result = stderr_task.fuse() => result.context("stderr_task failed"),
+            result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
+            result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
+            result = stderr_task.fuse() => result.map_err(ExecuteProxyError::StderrTask),
         }
     }) {
         log::error!(

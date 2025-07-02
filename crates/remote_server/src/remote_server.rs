@@ -38,8 +38,7 @@ pub enum Commands {
 pub fn run(command: Commands) -> anyhow::Result<()> {
     use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
-    use remote::proxy::ProxyLaunchError;
-    use unix::{execute_proxy, execute_run};
+    use unix::{ExecuteProxyError, execute_proxy, execute_run};
 
     match command {
         Commands::Run {
@@ -60,7 +59,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             reconnect,
         } => execute_proxy(identifier, reconnect)
             .inspect_err(|err| {
-                if let Some(err) = err.downcast_ref::<ProxyLaunchError>() {
+                if let ExecuteProxyError::ServerNotRunning(err) = err {
                     std::process::exit(err.to_exit_code());
                 }
             })
