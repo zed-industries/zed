@@ -32,10 +32,14 @@ bitflags.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+component.workspace = true
 dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true
+debugger_tools = { workspace = true, optional = true }
 editor.workspace = true
+env_logger = { workspace = true, optional = true }
+feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -64,11 +68,10 @@ theme.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
 ui.workspace = true
-util.workspace = true
-workspace.workspace = true
-workspace-hack.workspace = true
-debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
+util.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]

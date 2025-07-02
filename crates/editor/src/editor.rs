@@ -21,6 +21,7 @@ mod editor_settings;
 mod editor_settings_controls;
 mod element;
 mod git;
+mod gutter;
 mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
@@ -201,8 +202,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
+    ButtonSize, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName, IconSize,
+    Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -7984,121 +7985,6 @@ impl Editor {
                         .log_err();
                 })
         })
-    }
-
-    fn render_breakpoint(
-        &self,
-        position: Anchor,
-        row: DisplayRow,
-        breakpoint: &Breakpoint,
-        state: Option<BreakpointSessionState>,
-        cx: &mut Context<Self>,
-    ) -> IconButton {
-        let is_rejected = state.is_some_and(|s| !s.verified);
-        // Is it a breakpoint that shows up when hovering over gutter?
-        let (is_phantom, collides_with_existing) = self.gutter_breakpoint_indicator.0.map_or(
-            (false, false),
-            |PhantomBreakpointIndicator {
-                 is_active,
-                 display_row,
-                 collides_with_existing_breakpoint,
-             }| {
-                (
-                    is_active && display_row == row,
-                    collides_with_existing_breakpoint,
-                )
-            },
-        );
-
-        let (color, icon) = {
-            let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
-                (false, false) => ui::IconName::DebugBreakpoint,
-                (true, false) => ui::IconName::DebugLogBreakpoint,
-                (false, true) => ui::IconName::DebugDisabledBreakpoint,
-                (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
-            };
-
-            let color = if is_phantom {
-                Color::Hint
-            } else if is_rejected {
-                Color::Disabled
-            } else {
-                Color::Debugger
-            };
-
-            (color, icon)
-        };
-
-        let breakpoint = Arc::from(breakpoint.clone());
-
-        let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
-            ..Default::default()
-        };
-        let primary_action_text = if breakpoint.is_disabled() {
-            "Enable breakpoint"
-        } else if is_phantom && !collides_with_existing {
-            "Set breakpoint"
-        } else {
-            "Unset breakpoint"
-        };
-        let focus_handle = self.focus_handle.clone();
-
-        let meta = if is_rejected {
-            SharedString::from("No executable code is associated with this line.")
-        } else if collides_with_existing && !breakpoint.is_disabled() {
-            SharedString::from(format!(
-                "{alt_as_text}-click to disable,\nright-click for more options."
-            ))
-        } else {
-            SharedString::from("Right-click for more options.")
-        };
-        IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
-            .icon_size(IconSize::XSmall)
-            .size(ui::ButtonSize::None)
-            .when(is_rejected, |this| {
-                this.indicator(Indicator::icon(Icon::new(IconName::Warning)).color(Color::Warning))
-            })
-            .icon_color(color)
-            .style(ButtonStyle::Transparent)
-            .on_click(cx.listener({
-                let breakpoint = breakpoint.clone();
-
-                move |editor, event: &ClickEvent, window, cx| {
-                    let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
-                        BreakpointEditAction::InvertState
-                    } else {
-                        BreakpointEditAction::Toggle
-                    };
-
-                    window.focus(&editor.focus_handle(cx));
-                    editor.edit_breakpoint_at_anchor(
-                        position,
-                        breakpoint.as_ref().clone(),
-                        edit_action,
-                        cx,
-                    );
-                }
-            }))
-            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(
-                    row,
-                    Some(position),
-                    event.down.position,
-                    window,
-                    cx,
-                );
-            }))
-            .tooltip(move |window, cx| {
-                Tooltip::with_meta_in(
-                    primary_action_text,
-                    Some(&ToggleBreakpoint),
-                    meta.clone(),
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            })
     }
 
     fn build_tasks_context(
