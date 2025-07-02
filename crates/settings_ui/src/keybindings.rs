@@ -190,13 +190,13 @@ impl KeymapEditor {
         this: WeakEntity<Self>,
         query: String,
         cx: &mut AsyncApp,
-    ) -> Result<(), db::anyhow::Error> {
+    ) -> anyhow::Result<()> {
         let query = command_palette::normalize_action_query(&query);
         let (string_match_candidates, keybind_count) = this.read_with(cx, |this, _| {
             (this.string_match_candidates.clone(), this.keybindings.len())
         })?;
         let executor = cx.background_executor().clone();
-        let matches = fuzzy::match_strings(
+        let mut matches = fuzzy::match_strings(
             &string_match_candidates,
             &query,
             true,
@@ -207,6 +207,23 @@ impl KeymapEditor {
         )
         .await;
         this.update(cx, |this, cx| {
+            if query.is_empty() {
+                // apply default sort
+                // sorts by source precedence, and alphabetically by action name within each source
+                matches.sort_by_key(|match_item| {
+                    let keybind = &this.keybindings[match_item.candidate_id];
+                    let source = keybind.source.as_ref().map(|s| s.0);
+                    use KeybindSource::*;
+                    let source_precedence = match source {
+                        Some(User) => 0,
+                        Some(Vim) => 1,
+                        Some(Base) => 2,
+                        Some(Default) => 3,
+                        None => 4,
+                    };
+                    return (source_precedence, keybind.action.as_ref());
+                });
+            }
             this.selected_index.take();
             this.scroll_to_item(0, ScrollStrategy::Top, cx);
             this.matches = matches;
@@ -216,7 +233,7 @@ impl KeymapEditor {
 
     fn process_bindings(
         json_language: Arc<Language>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
@@ -246,7 +263,7 @@ impl KeymapEditor {
             unmapped_action_names.remove(&action_name);
             let action_input = key_binding
                 .action_input()
-                .map(|input| TextWithSyntaxHighlighting::new(input, json_language.clone()));
+                .map(|input| SyntaxHighlightedText::new(input, json_language.clone()));
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
@@ -283,6 +300,7 @@ impl KeymapEditor {
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
             let json_language = Self::load_json_language(workspace, cx).await;
+
             let query = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
                     Self::process_bindings(json_language.clone(), cx);
@@ -502,7 +520,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
-    action_input: Option<TextWithSyntaxHighlighting>,
+    action_input: Option<SyntaxHighlightedText>,
     context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -671,12 +689,12 @@ impl Render for KeymapEditor {
 }
 
 #[derive(Debug, Clone, IntoElement)]
-struct TextWithSyntaxHighlighting {
+struct SyntaxHighlightedText {
     text: SharedString,
     language: Arc<Language>,
 }
 
-impl TextWithSyntaxHighlighting {
+impl SyntaxHighlightedText {
     pub fn new(text: impl Into<SharedString>, language: Arc<Language>) -> Self {
         Self {
             text: text.into(),
@@ -685,7 +703,7 @@ impl TextWithSyntaxHighlighting {
     }
 }
 
-impl RenderOnce for TextWithSyntaxHighlighting {
+impl RenderOnce for SyntaxHighlightedText {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let text_style = window.text_style();
         let syntax_theme = cx.theme().syntax();
