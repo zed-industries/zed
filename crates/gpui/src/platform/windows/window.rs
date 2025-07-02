@@ -951,7 +951,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
