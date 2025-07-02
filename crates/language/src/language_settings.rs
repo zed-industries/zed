@@ -321,7 +321,7 @@ inventory::submit! {
             let language_settings_content_ref = generator
                 .subschema_for::<LanguageSettingsContent>()
                 .to_value();
-            let schema = json_schema!({
+            replace_subschema::<LanguageToSettingsMap>(generator, || json_schema!({
                 "type": "object",
                 "properties": params
                     .language_names
@@ -333,8 +333,7 @@ inventory::submit! {
                         )
                     })
                     .collect::<serde_json::Map<_, _>>()
-            });
-            replace_subschema::<LanguageToSettingsMap>(generator, schema)
+            }))
         }
     }
 }
