@@ -824,7 +824,7 @@ impl Render for KeybindingEditorModal {
                                         .await
                                         {
                                             this.update(cx, |this, cx| {
-                                                this.error = Some(err);
+                                                this.error = Some(err.to_string());
                                                 cx.notify();
                                             })
                                             .log_err();
@@ -853,31 +853,33 @@ async fn save_keybinding_update(
     new_keystrokes: &[Keystroke],
     fs: &Arc<dyn Fs>,
     tab_size: usize,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
-        .map_err(|err| format!("Failed to load keymap file: {}", err))?;
+        .context("Failed to load keymap file")?;
     let existing_keystrokes = existing
         .ui_key_binding
         .as_ref()
         .map(|keybinding| keybinding.key_binding.keystrokes())
         .unwrap_or_default();
-    let operation = if existing.ui_key_binding.is_some() {
-        let context = existing
-            .context
-            .as_ref()
-            .and_then(KeybindContextString::local_str);
+    let context = existing
+        .context
+        .as_ref()
+        .and_then(KeybindContextString::local_str);
 
+    let input = existing
+        .action_input
+        .as_ref()
+        .map(|input| input.text.as_ref());
+
+    let operation = if existing.ui_key_binding.is_some() {
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
                 context,
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing
-                    .action_input
-                    .as_ref()
-                    .map(|input| input.text.as_ref()),
+                input,
             },
             target_source: existing
                 .source
@@ -888,24 +890,18 @@ async fn save_keybinding_update(
                 keystrokes: new_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
-                input: existing
-                    .action_input
-                    .as_ref()
-                    .map(|input| input.text.as_ref()),
+                input,
             },
         }
     } else {
-        return Err(
-            "Not Implemented: Creating new bindings from unbound actions is not supported yet."
-                .to_string(),
-        );
+        anyhow::bail!("Adding new bindings not implemented yet");
     };
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
-            .map_err(|err| format!("Failed to update keybinding: {}", err))?;
+            .context("Failed to update keybinding")?;
     fs.atomic_write(paths::keymap_file().clone(), updated_keymap_contents)
         .await
-        .map_err(|err| format!("Failed to write keymap file: {}", err))?;
+        .context("Failed to write keymap file")?;
     Ok(())
 }
 
@@ -1025,7 +1021,7 @@ fn build_keybind_context_menu(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, |menu, window, cx| {
+    ContextMenu::build(window, cx, |menu, _window, cx| {
         let Some(this) = this.upgrade() else {
             return menu;
         };
