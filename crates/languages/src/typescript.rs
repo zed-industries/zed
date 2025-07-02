@@ -340,7 +340,7 @@ impl TypeScriptContextProvider {
 
 async fn detect_package_manager(
     worktree_root: PathBuf,
-    fs: Arc<dyn Fs>,
+    fs: &dyn Fs,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
     if let Some(package_json_data) = package_json_data {
@@ -445,7 +445,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 let package_json_data = task.await.log_err();
                 vars.insert(
                     TYPESCRIPT_RUNNER_VARIABLE,
-                    detect_package_manager(worktree_root, fs, package_json_data.clone())
+                    detect_package_manager(worktree_root, fs.as_ref(), package_json_data.clone())
                         .await
                         .to_owned(),
                 );
@@ -782,8 +782,8 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "2.4.4";
-    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
+    const CURRENT_VERSION: &'static str = "3.0.10";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/3.0.10";
 
     #[cfg(not(windows))]
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -822,18 +822,22 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
+        let worktree_root = delegate.worktree_root_path().to_path_buf();
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
+        let package_manager = detect_package_manager(worktree_root, fs, None).await;
+
         let mut default_workspace_configuration = json!({
             "validate": "on",
+            "packageManager": package_manager,
             "rulesCustomizations": [],
             "run": "onType",
             "nodePath": null,
@@ -864,6 +868,7 @@ impl LspAdapter for EsLintLspAdapter {
             "experimental": {
                 "useFlatConfig": use_flat_config,
             },
+            "useFlatConfig": use_flat_config,
         });
 
         let override_options = cx.update(|cx| {
