@@ -137,6 +137,12 @@ pub enum ToolCall {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ToolCallId(ThreadEntryId);
 
+impl ToolCallId {
+    pub fn as_u64(&self) -> u64 {
+        self.0.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ThreadEntryId(pub u64);
 

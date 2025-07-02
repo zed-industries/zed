@@ -284,6 +284,6 @@ impl From<acp::ToolCallId> for ToolCallId {
 
 impl From<ToolCallId> for acp::ToolCallId {
     fn from(tool_call_id: ToolCallId) -> Self {
-        acp::ToolCallId(tool_call_id.0.0)
+        acp::ToolCallId(tool_call_id.as_u64())
     }
 }

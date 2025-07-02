@@ -223,20 +223,24 @@ impl AcpThreadView {
 
                 match message.role {
                     Role::User => div()
-                        .text_xs()
-                        .m_1()
                         .p_2()
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_lg()
-                        .shadow_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(message_body)
+                        .pt_4()
+                        .child(
+                            div()
+                                .text_xs()
+                                .p_2()
+                                .bg(cx.theme().colors().editor_background)
+                                .rounded_lg()
+                                .shadow_md()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .child(message_body),
+                        )
                         .into_any(),
                     Role::Assistant => div()
                         .text_ui(cx)
-                        .px_2()
-                        .py_4()
+                        .p_4()
+                        .pt_2()
                         .child(message_body)
                         .into_any(),
                 }
@@ -261,14 +265,14 @@ impl AcpThreadView {
                         ))
                         .child(
                             h_flex()
-                                .child(Button::new(("allow", id.0.0), "Allow").on_click(
+                                .child(Button::new(("allow", id.as_u64()), "Allow").on_click(
                                     cx.listener({
                                         move |this, _, _, cx| {
                                             this.authorize_tool_call(id, true, cx);
                                         }
                                     }),
                                 ))
-                                .child(Button::new(("reject", id.0.0), "Reject").on_click(
+                                .child(Button::new(("reject", id.as_u64()), "Reject").on_click(
                                     cx.listener({
                                         move |this, _, _, cx| {
                                             this.authorize_tool_call(id, false, cx);
@@ -307,12 +311,10 @@ impl Render for AcpThreadView {
                 ThreadState::LoadError(e) => div()
                     .p_2()
                     .child(Label::new(format!("Failed to load {e}")).into_any_element()),
-                ThreadState::Ready { .. } => div()
-                    .child(
-                        list(self.list_state.clone())
-                            .with_sizing_behavior(gpui::ListSizingBehavior::Infer),
-                    )
-                    .p_2(),
+                ThreadState::Ready { .. } => div().h_full().child(
+                    list(self.list_state.clone())
+                        .with_sizing_behavior(gpui::ListSizingBehavior::Infer),
+                ),
             })
             .when(self.send_task.is_some(), |this| {
                 this.child(
