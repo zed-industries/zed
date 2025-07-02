@@ -187,7 +187,7 @@ actions!(
         NewSearch,
         NewTerminal,
         NewWindow,
-        NewWindowForWorkspace,
+        NewProjectWindow,
         Open,
         OpenFiles,
         OpenInTerminal,
@@ -2062,7 +2062,7 @@ impl Workspace {
 
     pub fn new_project_window(
         &mut self,
-        _: &NewWindowForWorkspace,
+        _: &NewProjectWindow,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -10405,9 +10405,9 @@ mod tests {
         let initial_bounds =
             workspace.update_in(cx, |_, window, _| window.window_bounds().get_bounds());
 
-        // Dispatch NewWindowForWorkspace action
+        // Dispatch NewProjectWindow action
         workspace.update_in(cx, |workspace, window, cx| {
-            workspace.new_project_window(&NewWindowForWorkspace, window, cx);
+            workspace.new_project_window(&NewProjectWindow, window, cx);
         });
 
         // Allow async task to complete
@@ -10471,7 +10471,7 @@ mod tests {
         // Create multiple new windows
         for _ in 0..3 {
             workspace.update_in(cx, |workspace, window, cx| {
-                workspace.new_project_window(&NewWindowForWorkspace, window, cx);
+                workspace.new_project_window(&NewProjectWindow, window, cx);
             });
         }
 

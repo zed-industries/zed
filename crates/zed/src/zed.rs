@@ -65,7 +65,7 @@ use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
-    AppState, NewFile, NewWindow, NewWindowForWorkspace, OpenLog, Toast, Workspace,
+    AppState, NewFile, NewWindow, NewProjectWindow, OpenLog, Toast, Workspace,
     WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
@@ -617,8 +617,8 @@ fn register_actions(
             })
             .detach()
         })
-        .register_action(|workspace, _: &NewWindowForWorkspace, window, cx| {
-            workspace.new_project_window(&NewWindowForWorkspace, window, cx);
+        .register_action(|workspace, _: &NewProjectWindow, window, cx| {
+            workspace.new_project_window(&NewProjectWindow, window, cx);
         })
         .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
             if !action.from_existing_connection {
