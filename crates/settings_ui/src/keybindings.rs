@@ -30,6 +30,8 @@ use crate::{
 
 actions!(zed, [OpenKeymapEditor]);
 
+actions!(keymap_editor, [EditBinding, CopyAction, CopyContext]);
+
 pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();
     cx.set_global(keymap_event_channel);
@@ -345,6 +347,33 @@ impl KeymapEditor {
         });
     }
 
+    fn focus_search(
+        &mut self,
+        _: &search::FocusSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .filter_editor
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            window.focus(&self.filter_editor.focus_handle(cx));
+        } else {
+            self.filter_editor.update(cx, |editor, cx| {
+                editor.select_all(&Default::default(), window, cx);
+            });
+        }
+        self.selected_index.take();
+    }
+
+    fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
+        self.selected_index
+            .and_then(|match_index| self.matches.get(match_index))
+            .map(|r#match| r#match.candidate_id)
+            .and_then(|keybind_index| self.keybindings.get(keybind_index))
+    }
+
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected) = self.selected_index {
             let selected = selected + 1;
@@ -411,13 +440,6 @@ impl KeymapEditor {
         self.edit_selected_keybinding(window, cx);
     }
 
-    fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
-        self.selected_index
-            .and_then(|match_index| self.matches.get(match_index))
-            .map(|r#match| r#match.candidate_id)
-            .and_then(|keybind_index| self.keybindings.get(keybind_index))
-    }
-
     fn edit_selected_keybinding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(keybind) = self.selected_binding() else {
             return;
@@ -434,24 +456,40 @@ impl KeymapEditor {
             .log_err();
     }
 
-    fn focus_search(
+    fn edit_binding(&mut self, _: &EditBinding, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit_selected_keybinding(window, cx);
+    }
+
+    fn copy_context_to_clipboard(
         &mut self,
-        _: &search::FocusSearch,
-        window: &mut Window,
+        _: &CopyContext,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self
-            .filter_editor
-            .focus_handle(cx)
-            .contains_focused(window, cx)
-        {
-            window.focus(&self.filter_editor.focus_handle(cx));
-        } else {
-            self.filter_editor.update(cx, |editor, cx| {
-                editor.select_all(&Default::default(), window, cx);
-            });
-        }
-        self.selected_index.take();
+        let context = self
+            .selected_binding()
+            .and_then(|binding| binding.context.as_ref())
+            .and_then(KeybindContextString::local_str)
+            .map(|context| context.to_string());
+        let Some(context) = context else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
+    }
+
+    fn copy_action_to_clipboard(
+        &mut self,
+        _: &CopyAction,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = self
+            .selected_binding()
+            .map(|binding| binding.action.to_string());
+        let Some(action) = action else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
     }
 }
 
@@ -519,6 +557,9 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::edit_binding))
+            .on_action(cx.listener(Self::copy_action_to_clipboard))
+            .on_action(cx.listener(Self::copy_context_to_clipboard))
             .size_full()
             .bg(theme.colors().editor_background)
             .id("keymap-editor")
@@ -623,39 +664,6 @@ impl Render for KeymapEditor {
                     ),
             )
     }
-}
-
-fn build_keybind_context_menu(
-    this: &WeakEntity<KeymapEditor>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, |menu, window, cx| {
-        let Some(this_entity) = this.upgrade() else {
-            return menu;
-        };
-        let selected_binding_context = this
-            .read_with(cx, |this, _cx| {
-                this.selected_binding()
-                    .and_then(|binding| binding.context.as_ref())
-                    .and_then(KeybindContextString::local)
-                    .map(|context| context.to_string())
-            })
-            .ok()
-            .flatten();
-        menu.entry(
-            "Edit",
-            None,
-            window.handler_for(&this_entity, |this, window, cx| {
-                this.edit_selected_keybinding(window, cx);
-            }),
-        )
-        .when_some(selected_binding_context, |menu, context| {
-            menu.entry("Copy context", None, move |_window, cx| {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
-            })
-        })
-    })
 }
 
 #[derive(Debug, Clone, IntoElement)]
@@ -1010,6 +1018,36 @@ impl Render for KeybindInput {
             .justify_center()
             .child(ui::text_for_keystrokes(&self.keystrokes, cx));
     }
+}
+
+fn build_keybind_context_menu(
+    this: &WeakEntity<KeymapEditor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ContextMenu> {
+    ContextMenu::build(window, cx, |menu, window, cx| {
+        let Some(this) = this.upgrade() else {
+            return menu;
+        };
+        let selected_binding = this.read_with(cx, |this, _cx| this.selected_binding().cloned());
+        let Some(selected_binding) = selected_binding else {
+            return menu;
+        };
+
+        let selected_binding_has_context = selected_binding
+            .context
+            .as_ref()
+            .and_then(KeybindContextString::local)
+            .is_some();
+
+        menu.action("Edit Binding", Box::new(EditBinding))
+            .action("Copy action", Box::new(CopyAction))
+            .action_disabled_when(
+                !selected_binding_has_context,
+                "Copy Context",
+                Box::new(CopyContext),
+            )
+    })
 }
 
 impl SerializableItem for KeymapEditor {
