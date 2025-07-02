@@ -8,8 +8,8 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText,
-    Subscription, WeakEntity, actions, div, transparent_black,
+    Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
+    WeakEntity, actions, div, transparent_black,
 };
 use language::{Language, LanguageConfig};
 use settings::KeybindSource;
@@ -18,7 +18,7 @@ use util::ResultExt;
 
 use ui::{
     ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
-    Styled as _, Window, prelude::*, right_click_menu,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
@@ -145,7 +145,7 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names...", cx);
+            editor.set_placeholder_text("Filter action names…", cx);
             editor
         });
 
@@ -248,7 +248,7 @@ impl KeymapEditor {
 
             let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(
-                ui::KeyBinding::new(key_binding.clone(), cx)
+                ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
                     .vim_mode(source == Some(settings::KeybindSource::Vim)),
             );
 
@@ -571,7 +571,7 @@ impl Render for KeymapEditor {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
-        div()
+        v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -586,9 +586,9 @@ impl Render for KeymapEditor {
             .bg(theme.colors().editor_background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
+            .pt_4()
             .px_4()
-            .v_flex()
-            .pb_4()
+            .gap_4()
             .child(
                 h_flex()
                     .key_context({
@@ -596,12 +596,13 @@ impl Render for KeymapEditor {
                         context.add("BufferSearchBar");
                         context
                     })
-                    .w_full()
-                    .h_12()
-                    .px_4()
-                    .my_4()
-                    .border_2()
+                    .h_8()
+                    .pl_2()
+                    .pr_1()
+                    .py_1()
+                    .border_1()
                     .border_color(theme.colors().border)
+                    .rounded_lg()
                     .child(self.filter_editor.clone()),
             )
             .child(
@@ -742,7 +743,7 @@ impl RenderOnce for SyntaxHighlightedText {
 
 struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
-    keybind_editor: Entity<KeybindInput>,
+    keybind_editor: Entity<KeystrokeInput>,
     fs: Arc<dyn Fs>,
     error: Option<String>,
 }
@@ -764,7 +765,7 @@ impl KeybindingEditorModal {
         _window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(KeybindInput::new);
+        let keybind_editor = cx.new(KeystrokeInput::new);
         Self {
             editing_keybind,
             fs,
@@ -777,84 +778,65 @@ impl KeybindingEditorModal {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+
         return v_flex()
-            .gap_4()
             .w(rems(36.))
+            .elevation_3(cx)
             .child(
                 v_flex()
-                    .items_center()
-                    .text_center()
-                    .bg(theme.background)
-                    .border_color(theme.border)
-                    .border_2()
+                    .pt_2()
                     .px_4()
-                    .py_2()
+                    .pb_4()
+                    .gap_2()
+                    .child(Label::new("Input desired keystroke, then hit save"))
+                    .child(self.keybind_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .p_2()
                     .w_full()
+                    .gap_1()
+                    .justify_end()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .child("Input desired keybinding, then hit save"),
+                        Button::new("cancel", "Cancel")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                     )
                     .child(
-                        h_flex()
-                            .w_full()
-                            .child(self.keybind_editor.clone())
-                            .child(
-                                IconButton::new("backspace-btn", ui::IconName::Backspace).on_click(
-                                    cx.listener(|this, _event, _window, cx| {
-                                        this.keybind_editor.update(cx, |editor, cx| {
-                                            editor.keystrokes.pop();
+                        Button::new("save-btn", "Save Keybinding").on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                let existing_keybind = this.editing_keybind.clone();
+                                let fs = this.fs.clone();
+                                let new_keystrokes = this
+                                    .keybind_editor
+                                    .read_with(cx, |editor, _| editor.keystrokes.clone());
+                                if new_keystrokes.is_empty() {
+                                    this.error = Some("Keystrokes cannot be empty".to_string());
+                                    cx.notify();
+                                    return;
+                                }
+                                let tab_size =
+                                    cx.global::<settings::SettingsStore>().json_tab_size();
+                                cx.spawn(async move |this, cx| {
+                                    if let Err(err) = save_keybinding_update(
+                                        existing_keybind,
+                                        &new_keystrokes,
+                                        &fs,
+                                        tab_size,
+                                    )
+                                    .await
+                                    {
+                                        this.update(cx, |this, cx| {
+                                            this.error = Some(err.to_string());
                                             cx.notify();
                                         })
-                                    }),
-                                ),
-                            )
-                            .child(IconButton::new("clear-btn", ui::IconName::Eraser).on_click(
-                                cx.listener(|this, _event, _window, cx| {
-                                    this.keybind_editor.update(cx, |editor, cx| {
-                                        editor.keystrokes.clear();
-                                        cx.notify();
-                                    })
-                                }),
-                            )),
-                    )
-                    .child(
-                        h_flex().w_full().items_center().justify_center().child(
-                            Button::new("save-btn", "Save")
-                                .label_size(LabelSize::Large)
-                                .on_click(cx.listener(|this, _event, _window, cx| {
-                                    let existing_keybind = this.editing_keybind.clone();
-                                    let fs = this.fs.clone();
-                                    let new_keystrokes = this
-                                        .keybind_editor
-                                        .read_with(cx, |editor, _| editor.keystrokes.clone());
-                                    if new_keystrokes.is_empty() {
-                                        this.error = Some("Keystrokes cannot be empty".to_string());
-                                        cx.notify();
-                                        return;
+                                        .log_err();
                                     }
-                                    let tab_size =
-                                        cx.global::<settings::SettingsStore>().json_tab_size();
-                                    cx.spawn(async move |this, cx| {
-                                        if let Err(err) = save_keybinding_update(
-                                            existing_keybind,
-                                            &new_keystrokes,
-                                            &fs,
-                                            tab_size,
-                                        )
-                                        .await
-                                        {
-                                            this.update(cx, |this, cx| {
-                                                this.error = Some(err.to_string());
-                                                cx.notify();
-                                            })
-                                            .log_err();
-                                        }
-                                    })
-                                    .detach();
-                                })),
-                        ),
+                                })
+                                .detach();
+                            },
+                        )),
                     ),
             )
             .when_some(self.error.clone(), |this, error| {
@@ -879,11 +861,13 @@ async fn save_keybinding_update(
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
         .context("Failed to load keymap file")?;
+
     let existing_keystrokes = existing
         .ui_key_binding
         .as_ref()
-        .map(|keybinding| keybinding.key_binding.keystrokes())
+        .map(|keybinding| keybinding.keystrokes.as_slice())
         .unwrap_or_default();
+
     let context = existing
         .context
         .as_ref()
@@ -927,12 +911,12 @@ async fn save_keybinding_update(
     Ok(())
 }
 
-struct KeybindInput {
+struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
 }
 
-impl KeybindInput {
+impl KeystrokeInput {
     fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         Self {
@@ -1007,16 +991,18 @@ impl KeybindInput {
     }
 }
 
-impl Focusable for KeybindInput {
+impl Focusable for KeystrokeInput {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for KeybindInput {
+impl Render for KeystrokeInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        return div()
+
+        return h_flex()
+            .id("keybinding_input")
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_key_down(cx.listener(Self::on_key_down))
@@ -1025,16 +1011,55 @@ impl Render for KeybindInput {
                 style.border_color = Some(colors.border_focused);
                 style
             })
-            .h_12()
+            .py_2()
+            .px_3()
+            .gap_2()
+            .min_h_8()
             .w_full()
+            .justify_between()
             .bg(colors.editor_background)
-            .border_2()
-            .border_color(colors.border)
-            .p_4()
-            .flex_row()
-            .text_center()
-            .justify_center()
-            .child(ui::text_for_keystrokes(&self.keystrokes, cx));
+            .border_1()
+            .rounded_md()
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .justify_center()
+                    .flex_wrap()
+                    .gap(ui::DynamicSpacing::Base04.rems(cx))
+                    .children(self.keystrokes.iter().map(|keystroke| {
+                        h_flex().children(ui::render_keystroke(
+                            keystroke,
+                            None,
+                            Some(rems(0.875).into()),
+                            ui::PlatformStyle::platform(),
+                            false,
+                        ))
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_0p5()
+                    .flex_none()
+                    .child(
+                        IconButton::new("backspace-btn", IconName::Delete)
+                            .tooltip(Tooltip::text("Delete Keystroke"))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.keystrokes.pop();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        IconButton::new("clear-btn", IconName::Eraser)
+                            .tooltip(Tooltip::text("Clear Keystrokes"))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.keystrokes.clear();
+                                cx.notify();
+                            })),
+                    ),
+            );
     }
 }
 
