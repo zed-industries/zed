@@ -214,8 +214,7 @@ impl acp::Client for AcpClientDelegate {
                             format!("Info: {prompt}\n{urls:?}")
                         }
                     };
-                    // todo! tools that don't require confirmation
-                    thread.push_tool_call(request.title, description, tx, cx)
+                    thread.push_tool_call(request.title, description, Some(tx), cx)
                 })
             })?
             .context("Failed to update thread")?;
@@ -229,6 +228,24 @@ impl acp::Client for AcpClientDelegate {
         Ok(acp::RequestToolCallConfirmationResponse {
             id: entry_id.into(),
             outcome,
+        })
+    }
+
+    async fn push_tool_call(
+        &self,
+        request: acp::PushToolCallParams,
+    ) -> Result<acp::PushToolCallResponse> {
+        let cx = &mut self.cx.clone();
+        let entry_id = cx
+            .update(|cx| {
+                self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
+                    thread.push_tool_call(request.title, request.description, None, cx)
+                })
+            })?
+            .context("Failed to update thread")?;
+
+        Ok(acp::PushToolCallResponse {
+            id: entry_id.into(),
         })
     }
 

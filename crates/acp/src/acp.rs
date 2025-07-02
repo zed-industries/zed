@@ -273,10 +273,19 @@ impl AcpThread {
         &mut self,
         title: String,
         description: String,
-        respond_tx: oneshot::Sender<bool>,
+        confirmation_tx: Option<oneshot::Sender<bool>>,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
+
+        let description = cx.new(|cx| {
+            Markdown::new(
+                description.into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        });
 
         let entry_id = self.push_entry(
             AgentThreadEntryContent::ToolCall(ToolCall {
@@ -285,16 +294,16 @@ impl AcpThread {
                 tool_name: cx.new(|cx| {
                     Markdown::new(title.into(), Some(language_registry.clone()), None, cx)
                 }),
-                status: ToolCallStatus::WaitingForConfirmation {
-                    description: cx.new(|cx| {
-                        Markdown::new(
-                            description.into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    }),
-                    respond_tx,
+                status: if let Some(respond_tx) = confirmation_tx {
+                    ToolCallStatus::WaitingForConfirmation {
+                        description,
+                        respond_tx,
+                    }
+                } else {
+                    ToolCallStatus::Allowed {
+                        status: acp::ToolCallStatus::Running,
+                        content: Some(description),
+                    }
                 },
             }),
             cx,
