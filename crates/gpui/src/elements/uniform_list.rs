@@ -88,13 +88,17 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
+    /// Attempt to place the element at the bottom of the list's viewport.
+    /// May not be possible if there's not enough list items above the item scrolled to:
+    /// in this case, the element will be placed at the closest possible position.
+    Bottom,
 }
 
 #[derive(Clone, Debug, Default)]
 #[allow(missing_docs)]
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
-    pub deferred_scroll_to_item: Option<(usize, ScrollStrategy)>,
+    pub deferred_scroll_to_item: Option<(usize, ScrollStrategy, bool)>,
     /// Size of the item, captured during last layout.
     pub last_item_size: Option<ItemSize>,
     /// Whether the list was vertically flipped during last layout.
@@ -122,9 +126,14 @@ impl UniformListScrollHandle {
         })))
     }
 
-    /// Scroll the list to the given item index.
+    /// Scroll the list so that the given item index is onscreen.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy));
+        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy, false));
+    }
+
+    /// Scroll the list to the given item index strictly following the strategy.
+    pub fn scroll_to_item_strict(&self, ix: usize, strategy: ScrollStrategy) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy, true));
     }
 
     /// Check if the list is flipped vertically.
@@ -137,7 +146,7 @@ impl UniformListScrollHandle {
     pub fn logical_scroll_top_index(&self) -> usize {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
-            .map(|(ix, _)| ix)
+            .map(|(ix, _, _)| ix)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
     }
 }
@@ -310,7 +319,7 @@ impl Element for UniformList {
                         scroll_offset.x = Pixels::ZERO;
                     }
 
-                    if let Some((mut ix, scroll_strategy)) = shared_scroll_to_item {
+                    if let Some((mut ix, scroll_strategy, right_away)) = shared_scroll_to_item {
                         if y_flipped {
                             ix = self.item_count.saturating_sub(ix + 1);
                         }
@@ -328,21 +337,31 @@ impl Element for UniformList {
                             updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
 
-                        match scroll_strategy {
-                            ScrollStrategy::Top => {}
-                            ScrollStrategy::Center => {
-                                if scrolled_to_top {
+                        if right_away
+                            || (scrolled_to_top
+                                && (item_top < scroll_top
+                                    || item_bottom > scroll_top + list_height))
+                        {
+                            match scroll_strategy {
+                                ScrollStrategy::Top => {
+                                    updated_scroll_offset.y = -item_top
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
+                                }
+                                ScrollStrategy::Center => {
                                     let item_center = item_top + item_height / 2.0;
                                     let target_scroll_top = item_center - list_height / 2.0;
-
-                                    if item_top < scroll_top
-                                        || item_bottom > scroll_top + list_height
-                                    {
-                                        updated_scroll_offset.y = -target_scroll_top
-                                            .max(Pixels::ZERO)
-                                            .min(content_height - list_height)
-                                            .max(Pixels::ZERO);
-                                    }
+                                    updated_scroll_offset.y = -target_scroll_top
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
+                                }
+                                ScrollStrategy::Bottom => {
+                                    updated_scroll_offset.y = -(item_bottom - list_height)
+                                        .max(Pixels::ZERO)
+                                        .min(content_height - list_height)
+                                        .max(Pixels::ZERO);
                                 }
                             }
                         }
