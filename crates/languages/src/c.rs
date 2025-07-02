@@ -4,7 +4,7 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
@@ -131,8 +131,16 @@ impl super::LspAdapter for CLspAdapter {
                 let text = format!("{} {}", detail, label);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(detail.len() + 1..text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range,
                     text,
                     runs,
                 });
@@ -143,8 +151,16 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(detail.len() + 1..text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range,
                     text,
                     runs,
                 });
@@ -155,16 +171,24 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-                let filter_start = detail.len() + 1;
-                let filter_end =
-                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
-                        end
-                    } else {
-                        text.len()
-                    };
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or_else(|| {
+                        let filter_start = detail.len() + 1;
+                        let filter_end = text
+                            .rfind('(')
+                            .filter(|end| *end > filter_start)
+                            .unwrap_or(text.len());
+                        filter_start..filter_end
+                    });
 
                 return Some(CodeLabel {
-                    filter_range: filter_start..filter_end,
+                    filter_range,
                     text,
                     runs,
                 });
@@ -186,7 +210,8 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label = CodeLabel::plain(label.to_string(), None);
+                    let mut label =
+                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -196,7 +221,10 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(label.to_string(), None))
+        Some(CodeLabel::plain(
+            label.to_string(),
+            completion.filter_text.as_deref(),
+        ))
     }
 
     async fn label_for_symbol(
@@ -282,38 +310,12 @@ impl super::LspAdapter for CLspAdapter {
         Ok(original)
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        server_id: LanguageServerId,
-        buffer: Option<&'_ Buffer>,
-    ) {
-        if let Some(buffer) = buffer {
-            let snapshot = buffer.snapshot();
-            let inactive_regions = buffer
-                .get_diagnostics(server_id)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
-                .map(move |diag| {
-                    let range =
-                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
-                    let mut tags = Vec::with_capacity(1);
-                    if diag.diagnostic.is_unnecessary {
-                        tags.push(DiagnosticTag::UNNECESSARY);
-                    }
-                    lsp::Diagnostic {
-                        range,
-                        severity: Some(diag.diagnostic.severity),
-                        source: diag.diagnostic.source.clone(),
-                        tags: Some(tags),
-                        message: diag.diagnostic.message.clone(),
-                        code: diag.diagnostic.code.clone(),
-                        ..Default::default()
-                    }
-                });
-            params.diagnostics.extend(inactive_regions);
-        }
+    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
+        clangd_ext::is_inactive_region(previous_diagnostic)
+    }
+
+    fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        !clangd_ext::is_lsp_inactive_region(diagnostic)
     }
 }
 

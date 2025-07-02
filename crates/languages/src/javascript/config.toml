@@ -4,6 +4,7 @@ path_suffixes = ["js", "jsx", "mjs", "cjs"]
 # [/ ] is so we match "env node" or "/node" but not "ts-node"
 first_line_pattern = '^#!.*\b(?:[/ ]node|deno run.*--ext[= ]js)\b'
 line_comments = ["// "]
+block_comment = ["/*", "*/"]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

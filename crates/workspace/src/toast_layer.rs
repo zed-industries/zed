@@ -3,19 +3,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task, actions};
+use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
+use zed_actions::toast;
 
 use crate::Workspace;
 
 const DEFAULT_TOAST_DURATION: Duration = Duration::from_secs(10);
 const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
 
-actions!(toast, [RunAction]);
-
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_workspace, _: &RunAction, window, cx| {
+        workspace.register_action(|_workspace, _: &toast::RunAction, window, cx| {
             let workspace = cx.entity();
             let window = window.window_handle();
             cx.defer(move |cx| {

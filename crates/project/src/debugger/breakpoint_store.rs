@@ -267,7 +267,7 @@ impl BreakpointStore {
         message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let breakpoints = this.update(&mut cx, |this, _| this.breakpoint_store())?;
+        let breakpoints = this.read_with(&mut cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
                 this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
@@ -275,7 +275,7 @@ impl BreakpointStore {
             .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
-                this.buffer_store().read(cx).get_by_path(&path, cx)
+                this.buffer_store().read(cx).get_by_path(&path)
             })?
             .context("Could not find buffer for a given path")?;
         let breakpoint = message
@@ -665,6 +665,7 @@ impl BreakpointStore {
             .as_ref()
             .is_some_and(|active_position| active_position == &position)
         {
+            cx.emit(BreakpointStoreEvent::SetDebugLine);
             return;
         }
 
@@ -803,7 +804,7 @@ impl BreakpointStore {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
                     let mut breakpoints_for_file =
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
@@ -840,7 +841,7 @@ impl BreakpointStore {
                         } else {
                             "breakpoint"
                         };
-                        log::info!("Deserialized {count} {breakpoint_str} at path: {path}");
+                        log::debug!("Deserialized {count} {breakpoint_str} at path: {path}");
                     }
 
                     this.breakpoints = new_breakpoints;

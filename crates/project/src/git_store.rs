@@ -23,9 +23,9 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        UpstreamTrackingStatus,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        ResetMode, UpstreamTrackingStatus,
     },
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
@@ -292,7 +292,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool },
+    Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
 }
 
@@ -778,11 +778,7 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .map_or(false, |(repo, path)| {
-                repo.read(cx)
-                    .snapshot
-                    .merge
-                    .conflicted_paths
-                    .contains(&path)
+                repo.read(cx).snapshot.has_conflict(&path)
             });
         let git_store = cx.weak_entity();
         let buffer_git_state = self
@@ -1145,7 +1141,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
-        let merge_conflicts = repo.read(cx).snapshot.merge.conflicted_paths.clone();
+        let repo_snapshot = repo.read(cx).snapshot.clone();
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
@@ -1155,7 +1151,7 @@ impl GitStore {
                         if let Some(conflict_set) = &diff.conflict_set {
                             let conflict_status_changed =
                                 conflict_set.update(cx, |conflict_set, cx| {
-                                    let has_conflict = merge_conflicts.contains(&repo_path);
+                                    let has_conflict = repo_snapshot.has_conflict(&repo_path);
                                     conflict_set.set_has_conflict(has_conflict, cx)
                                 })?;
                             if conflict_status_changed {
@@ -1500,7 +1496,7 @@ impl GitStore {
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, cx)
+                |repo, cx| repo.apply_remote_update(update, is_new, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -1557,6 +1553,7 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -1569,7 +1566,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(askpass, cx)
+                repository_handle.fetch(fetch_options, askpass, cx)
             })?
             .await??;
 
@@ -2179,7 +2176,7 @@ impl GitStore {
         id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
-        this.update(cx, |this, _| {
+        this.read_with(cx, |this, _| {
             this.repositories
                 .get(&id)
                 .context("missing repository handle")
@@ -2668,8 +2665,17 @@ impl RepositorySnapshot {
             .ok()
     }
 
+    pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
+        self.merge.conflicted_paths.contains(&repo_path)
+    }
+
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(repo_path)
+        let had_conflict_on_last_merge_head_change =
+            self.merge.conflicted_paths.contains(&repo_path);
+        let has_conflict_currently = self
+            .status_for_path(&repo_path)
+            .map_or(false, |entry| entry.status.is_conflicted());
+        had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -3316,7 +3322,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3383,7 +3389,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3495,6 +3501,7 @@ impl Repository {
 
     pub fn fetch(
         &mut self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
@@ -3508,7 +3515,7 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.fetch(askpass, environment, cx).await,
+                } => backend.fetch(fetch_options, askpass, environment, cx).await,
                 RepositoryState::Remote { project_id, client } => {
                     askpass_delegates.lock().insert(askpass_id, askpass);
                     let _defer = util::defer(|| {
@@ -3521,6 +3528,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             askpass_id,
+                            remote: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;
@@ -3549,7 +3557,7 @@ impl Repository {
         let args = options
             .map(|option| match option {
                 PushOptions::SetUpstream => " --set-upstream",
-                PushOptions::Force => " --force",
+                PushOptions::Force => " --force-with-lease",
             })
             .unwrap_or("");
 
@@ -3589,7 +3597,10 @@ impl Repository {
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
                                 let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated { full_scan: false });
+                                cx.emit(RepositoryEvent::Updated {
+                                    full_scan: false,
+                                    new_instance: false,
+                                });
                                 snapshot
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -3738,7 +3749,7 @@ impl Repository {
                         let buffer_id = git_store
                             .buffer_store
                             .read(cx)
-                            .get_by_path(&project_path?, cx)?
+                            .get_by_path(&project_path?)?
                             .read(cx)
                             .remote_id();
                         let diff_state = git_store.diffs.get(&buffer_id)?;
@@ -3934,6 +3945,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
+        is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -3967,7 +3979,10 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated { full_scan: true });
+        cx.emit(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: is_new,
+        });
         Ok(())
     }
 
@@ -4022,7 +4037,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .read_with(&mut cx, |this, _| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -4297,7 +4312,10 @@ impl Repository {
                                 .ok();
                         }
                     }
-                    cx.emit(RepositoryEvent::Updated { full_scan: false });
+                    cx.emit(RepositoryEvent::Updated {
+                        full_scan: false,
+                        new_instance: false,
+                    });
                 })
             },
         );
@@ -4538,7 +4556,9 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
+    let statuses = backend
+        .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
+        .await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4557,7 +4577,10 @@ async fn compute_snapshot(
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::Updated { full_scan: true });
+        events.push(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: false,
+        });
     }
 
     // Cache merge conflict paths so they don't change from staging/unstaging,

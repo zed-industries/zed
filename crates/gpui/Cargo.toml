@@ -12,7 +12,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["http_client", "font-kit", "wayland", "x11"]
+default = ["http_client", "font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
     "collections/test-support",
@@ -22,7 +22,7 @@ test-support = [
     "wayland",
     "x11",
 ]
-inspector = []
+inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 runtime_shaders = []
 macos-blade = [
@@ -69,7 +69,7 @@ x11 = [
     "open",
     "scap",
 ]
-
+windows-manifest = []
 
 [lib]
 path = "src/gpui.rs"
@@ -126,6 +126,7 @@ uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 workspace-hack.workspace = true
+libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"

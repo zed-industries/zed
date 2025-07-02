@@ -67,14 +67,8 @@ struct MarkdownExample {
 
 impl MarkdownExample {
     pub fn new(text: SharedString, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
-        let markdown = cx.new(|cx| {
-            Markdown::new(
-                text,
-                Some(language_registry),
-                Some("TypeScript".to_string()),
-                cx,
-            )
-        });
+        let markdown = cx
+            .new(|cx| Markdown::new(text, Some(language_registry), Some("TypeScript".into()), cx));
         Self { markdown }
     }
 }
@@ -113,11 +107,7 @@ impl Render for MarkdownExample {
                 ..Default::default()
             },
             syntax: cx.theme().syntax().clone(),
-            selection_background_color: {
-                let mut selection = cx.theme().players().local().selection;
-                selection.fade_out(0.7);
-                selection
-            },
+            selection_background_color: cx.theme().colors().element_selection_background,
             ..Default::default()
         };
 

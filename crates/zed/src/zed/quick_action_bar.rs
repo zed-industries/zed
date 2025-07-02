@@ -1,6 +1,7 @@
-mod markdown_preview;
+mod preview;
 mod repl_menu;
-use assistant_settings::AssistantSettings;
+
+use agent_settings::AgentSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -111,7 +112,7 @@ impl Render for QuickActionBar {
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
         let has_available_code_actions = editor_value.has_available_code_actions();
-        let code_action_enabled = editor_value.code_actions_enabled(cx);
+        let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 
         let search_button = editor.is_singleton(cx).then(|| {
@@ -147,17 +148,16 @@ impl Render for QuickActionBar {
 
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
-            let (code_action_menu_active, is_deployed_from_quick_action) = {
+            let is_deployed = {
                 let menu_ref = editor.read(cx).context_menu().borrow();
                 let code_action_menu = menu_ref
                     .as_ref()
                     .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                let is_deployed = code_action_menu.as_ref().map_or(false, |menu| {
+                code_action_menu.as_ref().map_or(false, |menu| {
                     matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
-                });
-                (code_action_menu.is_some(), is_deployed)
+                })
             };
-            let code_action_element = if is_deployed_from_quick_action {
+            let code_action_element = if is_deployed {
                 editor.update(cx, |editor, cx| {
                     if let Some(style) = editor.style() {
                         editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
@@ -174,8 +174,8 @@ impl Render for QuickActionBar {
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
-                        .toggle_state(code_action_menu_active)
-                        .when(!code_action_menu_active, |this| {
+                        .toggle_state(is_deployed)
+                        .when(!is_deployed, |this| {
                             this.when(has_available_code_actions, |this| {
                                 this.tooltip(Tooltip::for_action_title(
                                     "Code Actions",
@@ -218,6 +218,12 @@ impl Render for QuickActionBar {
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
+            let has_diff_hunks = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .has_diff_hunks();
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
@@ -252,8 +258,12 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .action("Next Hunk", Box::new(GoToHunk))
-                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                "Previous Hunk",
+                                Box::new(GoToPreviousHunk),
+                            )
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
@@ -556,11 +566,10 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AssistantSettings::get_global(cx).enabled
-                    && AssistantSettings::get_global(cx).button,
+                AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

@@ -8,11 +8,12 @@ use itertools::Itertools;
 
 #[derive(Debug, IntoElement, Clone, RegisterComponent)]
 pub struct KeyBinding {
-    /// A keybinding consists of a key and a set of modifier keys.
-    /// More then one keybinding produces a chord.
+    /// A keybinding consists of a set of keystrokes,
+    /// where each keystroke is a key and a set of modifier keys.
+    /// More than one keystroke produces a chord.
     ///
-    /// This should always contain at least one element.
-    key_binding: gpui::KeyBinding,
+    /// This should always contain at least one keystroke.
+    pub key_binding: gpui::KeyBinding,
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
@@ -35,8 +36,7 @@ impl KeyBinding {
         if let Some(focused) = window.focused(cx) {
             return Self::for_action_in(action, &focused, window, cx);
         }
-        let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
+        let key_binding = window.highest_precedence_binding_for_action(action)?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -47,9 +47,7 @@ impl KeyBinding {
         window: &mut Window,
         cx: &App,
     ) -> Option<Self> {
-        let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            window.bindings_for_action_in(action, focus),
-        )?;
+        let key_binding = window.highest_precedence_binding_for_action_in(action, focus)?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -355,8 +353,7 @@ impl KeyIcon {
 
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
-    let bindings = window.bindings_for_action(action);
-    let key_binding = bindings.last()?;
+    let key_binding = window.highest_precedence_binding_for_action(action)?;
     Some(text_for_keystrokes(key_binding.keystrokes(), cx))
 }
 

@@ -158,7 +158,7 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, _| this.delegate.candidates.clone())
+                .read_with(cx, |this, _| this.delegate.candidates.clone())
                 .ok()
             else {
                 return;
@@ -182,6 +182,7 @@ impl PickerDelegate for AttachModalDelegate {
                     })
                     .collect::<Vec<_>>(),
                 &query,
+                true,
                 true,
                 100,
                 &Default::default(),
@@ -228,26 +229,36 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
-            registry
-                .adapter(&self.definition.adapter)
-                .and_then(|adapter| adapter.config_from_zed_format(self.definition.clone()).ok())
+        let Some(adapter) = cx.read_global::<DapRegistry, _>(|registry, _| {
+            registry.adapter(&self.definition.adapter)
         }) else {
             return;
         };
 
-        let panel = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
-            .ok()
-            .flatten();
-        if let Some(panel) = panel {
-            panel.update(cx, |panel, cx| {
-                panel.start_session(scenario, Default::default(), None, None, window, cx);
-            });
-        }
+        let workspace = self.workspace.clone();
+        let definition = self.definition.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(scenario) = adapter.config_from_zed_format(definition).await else {
+                return;
+            };
 
-        cx.emit(DismissEvent);
+            let panel = workspace
+                .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+                .ok()
+                .flatten();
+            if let Some(panel) = panel {
+                panel
+                    .update_in(cx, |panel, window, cx| {
+                        panel.start_session(scenario, Default::default(), None, None, window, cx);
+                    })
+                    .ok();
+            }
+            this.update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -309,7 +320,7 @@ impl PickerDelegate for AttachModalDelegate {
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn _process_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
-    modal.picker.update(cx, |picker, _| {
+    modal.picker.read_with(cx, |picker, _| {
         picker
             .delegate
             .matches

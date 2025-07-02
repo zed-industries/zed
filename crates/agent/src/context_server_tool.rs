@@ -4,9 +4,9 @@ use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use icons::IconName;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, context_server_store::ContextServerStore};
-use ui::IconName;
 
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
@@ -48,6 +48,10 @@ impl Tool for ContextServerTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        true
+    }
+
+    fn may_perform_edits(&self) -> bool {
         true
     }
 
@@ -100,7 +104,15 @@ impl Tool for ContextServerTool {
                     tool_name,
                     arguments
                 );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                let response = protocol
+                    .request::<context_server::types::requests::CallTool>(
+                        context_server::types::CallToolParams {
+                            name: tool_name,
+                            arguments,
+                            meta: None,
+                        },
+                    )
+                    .await?;
 
                 let mut result = String::new();
                 for content in response.content {
@@ -110,6 +122,9 @@ impl Tool for ContextServerTool {
                         }
                         types::ToolResponseContent::Image { .. } => {
                             log::warn!("Ignoring image content from tool response");
+                        }
+                        types::ToolResponseContent::Audio { .. } => {
+                            log::warn!("Ignoring audio content from tool response");
                         }
                         types::ToolResponseContent::Resource { .. } => {
                             log::warn!("Ignoring resource content from tool response");

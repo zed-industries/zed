@@ -1,24 +1,79 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
+use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde_json::{Map, Value};
+use std::{path::Path, rc::Rc, sync::Arc};
 
-use std::sync::Arc;
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VsCodeSettingsSource {
+    VsCode,
+    Cursor,
+}
+
+impl std::fmt::Display for VsCodeSettingsSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VsCodeSettingsSource::VsCode => write!(f, "VS Code"),
+            VsCodeSettingsSource::Cursor => write!(f, "Cursor"),
+        }
+    }
+}
 
 pub struct VsCodeSettings {
+    pub source: VsCodeSettingsSource,
+    pub path: Rc<Path>,
     content: Map<String, Value>,
 }
 
 impl VsCodeSettings {
-    pub fn from_str(content: &str) -> Result<Self> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_str(content: &str, source: VsCodeSettingsSource) -> Result<Self> {
         Ok(Self {
+            source,
+            path: Path::new("/example-path/Code/User/settings.json").into(),
             content: serde_json_lenient::from_str(content)?,
         })
     }
 
-    pub async fn load_user_settings(fs: Arc<dyn Fs>) -> Result<Self> {
-        let content = fs.load(paths::vscode_settings_file()).await?;
+    pub async fn load_user_settings(source: VsCodeSettingsSource, fs: Arc<dyn Fs>) -> Result<Self> {
+        let candidate_paths = match source {
+            VsCodeSettingsSource::VsCode => vscode_settings_file_paths(),
+            VsCodeSettingsSource::Cursor => cursor_settings_file_paths(),
+        };
+        let mut path = None;
+        for candidate_path in candidate_paths.iter() {
+            if fs.is_file(candidate_path).await {
+                path = Some(candidate_path.clone());
+            }
+        }
+        let Some(path) = path else {
+            return Err(anyhow!(
+                "No settings file found, expected to find it in one of the following paths:\n{}",
+                candidate_paths
+                    .into_iter()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        };
+        let content = fs.load(&path).await.with_context(|| {
+            format!(
+                "Error loading {} settings file from {}",
+                source,
+                path.display()
+            )
+        })?;
+        let content = serde_json_lenient::from_str(&content).with_context(|| {
+            format!(
+                "Error parsing {} settings file from {}",
+                source,
+                path.display()
+            )
+        })?;
         Ok(Self {
-            content: serde_json_lenient::from_str(&content)?,
+            source,
+            path: path.into(),
+            content,
         })
     }
 

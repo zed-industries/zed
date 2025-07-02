@@ -9,8 +9,9 @@
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, InspectorElementId, IntoElement, Overflow, Pixels, Point,
-    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
+    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
+    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -906,7 +907,7 @@ impl Element for List {
         let mut style = Style::default();
         style.refine(&self.style);
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -961,12 +962,15 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
+        let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
+            if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
+                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
-                    event.delta.pixel_delta(px(20.)),
+                    pixel_delta,
                     current_view,
                     window,
                     cx,

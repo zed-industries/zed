@@ -148,7 +148,7 @@ impl Project {
         let ssh_details = self.ssh_details(cx);
         let settings = self.terminal_settings(&path, cx).clone();
 
-        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell);
+        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell).non_interactive();
         let (command, args) = builder.build(command, &Vec::new());
 
         let mut env = self
@@ -514,7 +514,7 @@ impl Project {
         terminal_handle: &Entity<Terminal>,
         cx: &mut App,
     ) {
-        terminal_handle.update(cx, |terminal, _| terminal.input(command));
+        terminal_handle.update(cx, |terminal, _| terminal.input(command.into_bytes()));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {

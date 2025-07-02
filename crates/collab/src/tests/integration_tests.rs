@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_context_editor::ContextStore;
+use assistant_context::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
@@ -20,8 +20,8 @@ use gpui::{
     UpdateGlobal, px, size,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LineEnding, OffsetRangeExt, Point, Rope,
+    Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
@@ -51,14 +51,12 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, separator, uri};
+use util::{path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test(iterations = 10)]
@@ -1678,13 +1676,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1711,13 +1709,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1808,13 +1806,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/j.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1878,7 +1876,6 @@ async fn test_active_call_events(
                 github_login: "user_a".to_string(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1898,7 +1895,6 @@ async fn test_active_call_events(
                 github_login: "user_b".to_string(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -2626,6 +2622,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
 
     // Create the buffer
@@ -2719,6 +2716,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), new_committed_text.clone())],
+        "deadbeef",
     );
 
     // Wait for buffer_local_a to receive it
@@ -3008,6 +3006,7 @@ async fn test_git_status_sync(
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
@@ -3316,13 +3315,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3334,13 +3333,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3360,14 +3359,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -3379,14 +3378,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -4236,7 +4235,8 @@ async fn test_collaborating_with_diagnostics(
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -4246,7 +4246,8 @@ async fn test_collaborating_with_diagnostics(
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 }
             ]
@@ -4258,7 +4259,7 @@ async fn test_collaborating_with_diagnostics(
         &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
-            diagnostics: vec![],
+            diagnostics: Vec::new(),
         },
     );
     executor.run_until_parked();
@@ -4590,14 +4591,13 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                        vec![Formatter::External {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                        Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }]
-                        .into(),
+                        },
                     )));
                 });
             });
@@ -4698,8 +4698,8 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                    Formatter::LanguageServer { name: None },
                 )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,

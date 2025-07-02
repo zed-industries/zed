@@ -123,8 +123,9 @@ impl OngoingScroll {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub enum ScrollbarThumbState {
+    #[default]
     Idle,
     Hovered,
     Dragging,
@@ -157,8 +158,7 @@ pub struct ScrollManager {
     active_scrollbar: Option<ActiveScrollbarState>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
-    dragging_minimap: bool,
-    show_minimap_thumb: bool,
+    minimap_thumb_state: Option<ScrollbarThumbState>,
 }
 
 impl ScrollManager {
@@ -174,8 +174,7 @@ impl ScrollManager {
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
-            dragging_minimap: false,
-            show_minimap_thumb: false,
+            minimap_thumb_state: None,
         }
     }
 
@@ -345,24 +344,6 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn show_minimap_thumb(&mut self, cx: &mut Context<Editor>) {
-        if !self.show_minimap_thumb {
-            self.show_minimap_thumb = true;
-            cx.notify();
-        }
-    }
-
-    pub fn hide_minimap_thumb(&mut self, cx: &mut Context<Editor>) {
-        if self.show_minimap_thumb {
-            self.show_minimap_thumb = false;
-            cx.notify();
-        }
-    }
-
-    pub fn minimap_thumb_visible(&mut self) -> bool {
-        self.show_minimap_thumb
-    }
-
     pub fn autoscroll_request(&self) -> Option<Autoscroll> {
         self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
@@ -374,6 +355,7 @@ impl ScrollManager {
     pub fn dragging_scrollbar_axis(&self) -> Option<Axis> {
         self.active_scrollbar
             .as_ref()
+            .filter(|scrollbar| scrollbar.thumb_state == ScrollbarThumbState::Dragging)
             .map(|scrollbar| scrollbar.axis)
     }
 
@@ -418,13 +400,43 @@ impl ScrollManager {
         }
     }
 
-    pub fn is_dragging_minimap(&self) -> bool {
-        self.dragging_minimap
+    pub fn set_is_hovering_minimap_thumb(&mut self, hovered: bool, cx: &mut Context<Editor>) {
+        self.update_minimap_thumb_state(
+            Some(if hovered {
+                ScrollbarThumbState::Hovered
+            } else {
+                ScrollbarThumbState::Idle
+            }),
+            cx,
+        );
     }
 
-    pub fn set_is_dragging_minimap(&mut self, dragging: bool, cx: &mut Context<Editor>) {
-        self.dragging_minimap = dragging;
-        cx.notify();
+    pub fn set_is_dragging_minimap(&mut self, cx: &mut Context<Editor>) {
+        self.update_minimap_thumb_state(Some(ScrollbarThumbState::Dragging), cx);
+    }
+
+    pub fn hide_minimap_thumb(&mut self, cx: &mut Context<Editor>) {
+        self.update_minimap_thumb_state(None, cx);
+    }
+
+    pub fn is_dragging_minimap(&self) -> bool {
+        self.minimap_thumb_state
+            .is_some_and(|state| state == ScrollbarThumbState::Dragging)
+    }
+
+    fn update_minimap_thumb_state(
+        &mut self,
+        thumb_state: Option<ScrollbarThumbState>,
+        cx: &mut Context<Editor>,
+    ) {
+        if self.minimap_thumb_state != thumb_state {
+            self.minimap_thumb_state = thumb_state;
+            cx.notify();
+        }
+    }
+
+    pub fn minimap_thumb_state(&self) -> Option<ScrollbarThumbState> {
+        self.minimap_thumb_state
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
@@ -475,8 +487,9 @@ impl Editor {
         if opened_first_time {
             cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(cx, |editor, cx| {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
+                    .update_in(cx, |editor, window, cx| {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                        editor.refresh_colors(false, None, window, cx);
                     })
                     .ok()
             })
@@ -587,6 +600,7 @@ impl Editor {
         );
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_colors(false, None, window, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {
@@ -657,12 +671,23 @@ impl Editor {
             return;
         }
 
-        let cur_position = self.scroll_position(cx);
+        let mut current_position = self.scroll_position(cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
-        let new_pos = cur_position + point(0., amount.lines(visible_line_count));
-        self.set_scroll_position(new_pos, window, cx);
+
+        // If the scroll position is currently at the left edge of the document
+        // (x == 0.0) and the intent is to scroll right, the gutter's margin
+        // should first be added to the current position, otherwise the cursor
+        // will end at the column position minus the margin, which looks off.
+        if current_position.x == 0.0 && amount.columns() > 0. {
+            if let Some(last_position_map) = &self.last_position_map {
+                current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+            }
+        }
+        let new_position =
+            current_position + point(amount.columns(), amount.lines(visible_line_count));
+        self.set_scroll_position(new_position, window, cx);
     }
 
     /// Returns an ordering. The newest selection is:

@@ -251,6 +251,14 @@ message Diagnostic {
     Anchor start = 1;
     Anchor end = 2;
     optional string source = 3;
+
+    enum SourceKind {
+        Pulled = 0;
+        Pushed = 1;
+        Other = 2;
+    }
+
+    SourceKind source_kind = 16;
     Severity severity = 4;
     string message = 5;
     optional string code = 6;
@@ -261,6 +269,7 @@ message Diagnostic {
 
     bool is_disk_based = 10;
     bool is_unnecessary = 11;
+    bool underline = 15;
 
     enum Severity {
         None = 0;

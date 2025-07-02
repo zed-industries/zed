@@ -19,10 +19,10 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
+    scroll::{Autoscroll, ScrollAnchor, ScrollbarAutoHide},
 };
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -865,7 +865,7 @@ impl OutlinePanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 OutlinePanel::serialization_key(workspace)
             })
             .ok()
@@ -1099,7 +1099,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
+                            SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
@@ -1107,38 +1107,14 @@ impl OutlinePanel {
                     });
                 } else {
                     let mut offset = Point::default();
-                    let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
-                        let current_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
-                        if current_folded {
-                            let previous_buffer_id = self
-                                .fs_entries
-                                .iter()
-                                .rev()
-                                .filter_map(|entry| match entry {
-                                    FsEntry::File(file) => Some(file.buffer_id),
-                                    FsEntry::ExternalFile(external_file) => {
-                                        Some(external_file.buffer_id)
-                                    }
-                                    FsEntry::Directory(..) => None,
-                                })
-                                .skip_while(|id| *id != buffer_id)
-                                .nth(1);
-                            if let Some(previous_buffer_id) = previous_buffer_id {
-                                if !active_editor
-                                    .read(cx)
-                                    .is_buffer_folded(previous_buffer_id, cx)
-                                {
-                                    offset.y += expand_excerpt_control_height;
-                                }
-                            }
-                        } else {
-                            if multi_buffer_snapshot.as_singleton().is_none() {
-                                offset.y = -(active_editor.read(cx).file_header_size() as f32);
-                            }
-                            offset.y -= expand_excerpt_control_height;
+                        if multi_buffer_snapshot.as_singleton().is_none()
+                            && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
+                        {
+                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
                         }
                     }
+
                     active_editor.update(cx, |editor, cx| {
                         editor.set_scroll_anchor(ScrollAnchor { offset, anchor }, window, cx);
                     });
@@ -3257,15 +3233,22 @@ impl OutlinePanel {
                 self.outline_fetch_tasks.insert(
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, async move |outline_panel, cx| {
+                        let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                buffer_snapshot
+                                let mut outlines = buffer_snapshot
                                     .outline_items_containing(
                                         excerpt_range.context,
                                         false,
                                         Some(&syntax_theme),
                                     )
-                                    .unwrap_or_default()
+                                    .unwrap_or_default();
+                                outlines.retain(|outline| {
+                                    buffer_language.is_none()
+                                        || buffer_language.as_ref()
+                                            == buffer_snapshot.language_at(outline.range.start)
+                                });
+                                outlines
                             })
                             .await;
                         outline_panel
@@ -3839,6 +3822,7 @@ impl OutlinePanel {
                 &generation_state.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &AtomicBool::default(),
                 cx.background_executor().clone(),
@@ -4335,19 +4319,7 @@ impl OutlinePanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4384,12 +4356,8 @@ impl OutlinePanel {
                 .bottom_0()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn should_show_scrollbar(cx: &App) -> bool {
@@ -4537,8 +4505,10 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.entity().clone(), "entries", items_len, {
-                    move |outline_panel, range, window, cx| {
+                uniform_list(
+                    "entries",
+                    items_len,
+                    cx.processor(move |outline_panel, range: Range<usize>, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
                             .map(|entries| entries.to_vec())
@@ -4595,8 +4565,8 @@ impl OutlinePanel {
                                 ),
                             })
                             .collect()
-                    }
-                })
+                    }),
+                )
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .with_width_from_item(self.max_width_item_index)
@@ -5658,7 +5628,7 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")
@@ -5753,7 +5723,7 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        let new_active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let new_active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")

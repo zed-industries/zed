@@ -1,7 +1,7 @@
 use auto_update::AutoUpdater;
 use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
-use gpui::{App, Context, DismissEvent, Entity, SharedString, Window, actions, prelude::*};
+use gpui::{App, Context, DismissEvent, Entity, Window, actions, prelude::*};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -82,7 +82,10 @@ fn view_release_notes_locally(
                         .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", markdown, cx)
+                                let buffer = project.create_local_buffer("", markdown, cx);
+                                project
+                                    .mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
+                                buffer
                             });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
@@ -91,7 +94,6 @@ fn view_release_notes_locally(
 
                             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let tab_content = SharedString::from(body.title.to_string());
                             let editor = cx.new(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), window, cx)
                             });
@@ -102,7 +104,6 @@ fn view_release_notes_locally(
                                     editor,
                                     workspace_handle,
                                     language_registry,
-                                    tab_content,
                                     window,
                                     cx,
                                 );
@@ -129,6 +130,11 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     let Some(updater) = AutoUpdater::get(cx) else {
         return;
     };
+
+    if let ReleaseChannel::Nightly = ReleaseChannel::global(cx) {
+        return;
+    }
+
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;

@@ -560,6 +560,7 @@ impl SummaryIndex {
             thread_id: None,
             prompt_id: None,
             mode: None,
+            intent: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![prompt.into()],

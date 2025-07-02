@@ -29,7 +29,6 @@ actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
@@ -254,16 +253,6 @@ impl Render for WelcomePage {
                                                 ), cx);
                                             })),
                                     )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
                             ),
                     )
                     .child(

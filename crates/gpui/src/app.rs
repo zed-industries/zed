@@ -37,8 +37,8 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
-    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
     SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
     WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
@@ -64,7 +64,7 @@ pub struct AppCell {
 impl AppCell {
     #[doc(hidden)]
     #[track_caller]
-    pub fn borrow(&self) -> AppRef {
+    pub fn borrow(&self) -> AppRef<'_> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
@@ -74,7 +74,7 @@ impl AppCell {
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn borrow_mut(&self) -> AppRefMut {
+    pub fn borrow_mut(&self) -> AppRefMut<'_> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
@@ -84,7 +84,7 @@ impl AppCell {
 
     #[doc(hidden)]
     #[track_caller]
-    pub fn try_borrow_mut(&self) -> Result<AppRefMut, BorrowMutError> {
+    pub fn try_borrow_mut(&self) -> Result<AppRefMut<'_>, BorrowMutError> {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
             eprintln!("borrowed {thread_id:?}");
@@ -909,7 +909,7 @@ impl App {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, window, cx| window.draw(cx))
+                    self.update_window(window, |_, window, cx| window.draw(cx).clear())
                         .unwrap();
                 }
 
@@ -1334,6 +1334,11 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    /// Get all key bindings in the app.
+    pub fn key_bindings(&self) -> Rc<RefCell<Keymap>> {
+        self.keymap.clone()
+    }
+
     /// Register a global listener for actions invoked via the keyboard.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
@@ -1374,7 +1379,7 @@ impl App {
 
     /// Get all action names that have been registered. Note that registration only allows for
     /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
-    pub fn all_action_names(&self) -> &[SharedString] {
+    pub fn all_action_names(&self) -> &[&'static str] {
         self.actions.all_action_names()
     }
 
@@ -1388,14 +1393,19 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Vec<(&'static str, Option<schemars::Schema>)> {
         self.actions.action_schemas(generator)
     }
 
-    /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
-        self.actions.action_deprecations()
+    /// Get a map from a deprecated action name to the canonical name.
+    pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecated_aliases()
+    }
+
+    /// Get a list of all action deprecation messages.
+    pub fn action_deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecation_messages()
     }
 
     /// Register a callback to be invoked when the application is about to quit.
@@ -1559,10 +1569,30 @@ impl App {
         self.active_drag.is_some()
     }
 
+    /// Gets the cursor style of the currently active drag operation.
+    pub fn active_drag_cursor_style(&self) -> Option<CursorStyle> {
+        self.active_drag.as_ref().and_then(|drag| drag.cursor_style)
+    }
+
     /// Stops active drag and clears any related effects.
     pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
         if self.active_drag.is_some() {
             self.active_drag = None;
+            window.refresh();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sets the cursor style for the currently active drag operation.
+    pub fn set_active_drag_cursor_style(
+        &mut self,
+        cursor_style: CursorStyle,
+        window: &mut Window,
+    ) -> bool {
+        if let Some(ref mut drag) = self.active_drag {
+            drag.cursor_style = Some(cursor_style);
             window.refresh();
             true
         } else {
@@ -1578,14 +1608,14 @@ impl App {
             PromptLevel,
             &str,
             Option<&str>,
-            &[&str],
+            &[PromptButton],
             PromptHandle,
             &mut Window,
             &mut App,
         ) -> RenderablePromptHandle
         + 'static,
     ) {
-        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)));
     }
 
     /// Reset the prompt builder to the default implementation.
@@ -1665,7 +1695,7 @@ impl App {
 
     /// Removes an image from the sprite atlas on all windows.
     ///
-    /// If the current window is being updated, it will be removed from `App.windows``, you can use `current_window` to specify the current window.
+    /// If the current window is being updated, it will be removed from `App.windows`, you can use `current_window` to specify the current window.
     /// This is a no-op if the image is not in the sprite atlas.
     pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
         // remove the texture from all other windows

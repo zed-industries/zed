@@ -1,4 +1,4 @@
-use editor::{Bias, Editor, scroll::Autoscroll, styled_runs_for_code_label};
+use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task, WeakEntity,
@@ -66,6 +66,7 @@ impl ProjectSymbolsDelegate {
             &self.visible_match_candidates,
             query,
             false,
+            true,
             MAX_MATCHES,
             &Default::default(),
             cx.background_executor().clone(),
@@ -74,6 +75,7 @@ impl ProjectSymbolsDelegate {
             &self.external_match_candidates,
             query,
             false,
+            true,
             MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
             &Default::default(),
             cx.background_executor().clone(),
@@ -134,9 +136,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.open_project_item::<Editor>(pane, buffer, true, true, window, cx);
 
                     editor.update(cx, |editor, cx| {
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_ranges([position..position])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges([position..position]),
+                        );
                     });
                 })?;
                 anyhow::Ok(())
@@ -342,6 +347,7 @@ mod tests {
                             &candidates,
                             &params.query,
                             true,
+                            true,
                             100,
                             &Default::default(),
                             executor.clone(),
@@ -381,7 +387,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
 
@@ -392,7 +398,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
@@ -406,7 +412,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
     }

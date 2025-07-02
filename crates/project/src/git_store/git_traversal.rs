@@ -211,7 +211,7 @@ pub struct GitEntry {
 }
 
 impl GitEntry {
-    pub fn to_ref(&self) -> GitEntryRef {
+    pub fn to_ref(&self) -> GitEntryRef<'_> {
         GitEntryRef {
             entry: &self.entry,
             git_summary: self.git_summary,
@@ -674,9 +674,7 @@ mod tests {
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -743,6 +741,7 @@ mod tests {
                 ("a.txt".into(), "".into()),
                 ("b/c.txt".into(), "something-else".into()),
             ],
+            "deadbeef",
         );
         cx.executor().run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));

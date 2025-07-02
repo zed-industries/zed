@@ -582,6 +582,7 @@ pub struct Channel {
     pub visibility: ChannelVisibility,
     /// parent_path is the channel ids from the root to this one (not including this one)
     pub parent_path: Vec<ChannelId>,
+    pub channel_order: i32,
 }
 
 impl Channel {
@@ -591,6 +592,7 @@ impl Channel {
             visibility: value.visibility,
             name: value.clone().name,
             parent_path: value.ancestors().collect(),
+            channel_order: value.channel_order,
         }
     }
 
@@ -600,7 +602,12 @@ impl Channel {
             name: self.name.clone(),
             visibility: self.visibility.into(),
             parent_path: self.parent_path.iter().map(|c| c.to_proto()).collect(),
+            channel_order: self.channel_order,
         }
+    }
+
+    pub fn root_id(&self) -> ChannelId {
+        self.parent_path.first().copied().unwrap_or(self.id)
     }
 }
 
@@ -744,6 +751,8 @@ pub struct ProjectCollaborator {
     pub user_id: UserId,
     pub replica_id: ReplicaId,
     pub is_host: bool,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl ProjectCollaborator {
@@ -753,6 +762,8 @@ impl ProjectCollaborator {
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
             is_host: self.is_host,
+            committer_name: self.committer_name.clone(),
+            committer_email: self.committer_email.clone(),
         }
     }
 }

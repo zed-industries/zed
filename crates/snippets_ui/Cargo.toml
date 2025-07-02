@@ -12,12 +12,15 @@ workspace = true
 path = "src/snippets_ui.rs"
 
 [dependencies]
+file_finder.workspace = true
+file_icons.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
 paths.workspace = true
 picker.workspace = true
+settings.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true

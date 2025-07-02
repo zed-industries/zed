@@ -15,7 +15,7 @@ impl Database {
             user_b_busy: bool,
         }
 
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let user_a_participant = Alias::new("user_a_participant");
             let user_b_participant = Alias::new("user_b_participant");
             let mut db_contacts = contact::Entity::find()
@@ -91,7 +91,7 @@ impl Database {
 
     /// Returns whether the given user is a busy (on a call).
     pub async fn is_user_busy(&self, user_id: UserId) -> Result<bool> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(room_participant::Column::UserId.eq(user_id))
                 .one(&*tx)

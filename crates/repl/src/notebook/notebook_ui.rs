@@ -15,7 +15,7 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{Tooltip, prelude::*};
-use workspace::item::{ItemEvent, TabContentParams};
+use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
@@ -782,7 +782,7 @@ impl Item for NotebookEditor {
     // TODO
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,

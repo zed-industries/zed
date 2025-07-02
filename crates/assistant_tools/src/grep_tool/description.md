@@ -6,3 +6,4 @@ Searches the contents of files in the project with a regular expression
 - Never use this tool to search for paths. Only search file contents with this tool.
 - Use this tool when you need to find files containing specific patterns
 - Results are paginated with 20 matches per page. Use the optional 'offset' parameter to request subsequent pages.
+- DO NOT use HTML entities solely to escape characters in the tool parameters.

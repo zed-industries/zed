@@ -214,9 +214,12 @@ pub trait Tool: 'static + Send + Sync {
         ToolSource::Native
     }
 
-    /// Returns true iff the tool needs the users's confirmation
+    /// Returns true if the tool needs the users's confirmation
     /// before having permission to run.
     fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
+
+    /// Returns true if the tool may perform edits.
+    fn may_perform_edits(&self) -> bool;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

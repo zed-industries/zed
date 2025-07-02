@@ -4,9 +4,8 @@ use editor::{
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
-    scroll::Autoscroll,
 };
-use gpui::{Context, Window, action_with_deprecated_aliases, actions, impl_actions, px};
+use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -177,147 +176,143 @@ enum IndentType {
     Same,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct MiddleOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedBackward {
     #[serde(default)]
     char: char,
 }
 
-impl_actions!(
-    vim,
-    [
-        StartOfLine,
-        MiddleOfLine,
-        EndOfLine,
-        FirstNonWhitespace,
-        Down,
-        Up,
-        NextWordStart,
-        NextWordEnd,
-        PreviousWordStart,
-        PreviousWordEnd,
-        NextSubwordStart,
-        NextSubwordEnd,
-        PreviousSubwordStart,
-        PreviousSubwordEnd,
-        UnmatchedForward,
-        UnmatchedBackward
-    ]
-);
-
 actions!(
     vim,
     [
         Left,
-        Backspace,
+        #[action(deprecated_aliases = ["vim::Backspace"])]
+        WrappingLeft,
         Right,
-        Space,
+        #[action(deprecated_aliases = ["vim::Space"])]
+        WrappingRight,
         CurrentLine,
         SentenceForward,
         SentenceBackward,
@@ -356,18 +351,11 @@ actions!(
     ]
 );
 
-action_with_deprecated_aliases!(vim, WrappingLeft, ["vim::Backspace"]);
-action_with_deprecated_aliases!(vim, WrappingRight, ["vim::Space"]);
-
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingLeft, window, cx| {
-        vim.motion(Motion::WrappingLeft, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
         vim.motion(Motion::WrappingLeft, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Down, window, cx| {
@@ -392,10 +380,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(Motion::Right, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingRight, window, cx| {
-        vim.motion(Motion::WrappingRight, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Space, window, cx| {
         vim.motion(Motion::WrappingRight, window, cx)
     });
     Vim::action(
@@ -641,7 +625,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
@@ -780,6 +764,73 @@ impl Motion {
         match self {
             Motion::WrappingLeft | Motion::WrappingRight => true,
             _ => false,
+        }
+    }
+
+    pub(crate) fn push_to_jump_list(&self) -> bool {
+        use Motion::*;
+        match self {
+            CurrentLine
+            | Down { .. }
+            | EndOfLine { .. }
+            | EndOfLineDownward
+            | FindBackward { .. }
+            | FindForward { .. }
+            | FirstNonWhitespace { .. }
+            | GoToColumn
+            | Left
+            | MiddleOfLine { .. }
+            | NextLineStart
+            | NextSubwordEnd { .. }
+            | NextSubwordStart { .. }
+            | NextWordEnd { .. }
+            | NextWordStart { .. }
+            | PreviousLineStart
+            | PreviousSubwordEnd { .. }
+            | PreviousSubwordStart { .. }
+            | PreviousWordEnd { .. }
+            | PreviousWordStart { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. }
+            | Right
+            | StartOfLine { .. }
+            | StartOfLineDownward
+            | Up { .. }
+            | WrappingLeft
+            | WrappingRight => false,
+            EndOfDocument
+            | EndOfParagraph
+            | GoToPercentage
+            | Jump { .. }
+            | Matching
+            | NextComment
+            | NextGreaterIndent
+            | NextLesserIndent
+            | NextMethodEnd
+            | NextMethodStart
+            | NextSameIndent
+            | NextSectionEnd
+            | NextSectionStart
+            | PreviousComment
+            | PreviousGreaterIndent
+            | PreviousLesserIndent
+            | PreviousMethodEnd
+            | PreviousMethodStart
+            | PreviousSameIndent
+            | PreviousSectionEnd
+            | PreviousSectionStart
+            | SentenceBackward
+            | SentenceForward
+            | Sneak { .. }
+            | SneakBackward { .. }
+            | StartOfDocument
+            | StartOfParagraph
+            | UnmatchedBackward { .. }
+            | UnmatchedForward { .. }
+            | WindowBottom
+            | WindowMiddle
+            | WindowTop
+            | ZedSearchResult { .. } => true,
         }
     }
 
@@ -1701,7 +1752,9 @@ fn previous_word_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1874,7 +1927,9 @@ fn previous_subword_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -2273,6 +2328,17 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let mut line_end = map.next_line_boundary(point).0;
     if line_end == point {
         line_end = map.max_point().to_point(map);
+    }
+
+    if let Some((opening_range, closing_range)) = map
+        .buffer_snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, None)
+    {
+        if opening_range.contains(&offset) {
+            return closing_range.start.to_display_point(map);
+        } else if closing_range.contains(&offset) {
+            return opening_range.start.to_display_point(map);
+        }
     }
 
     let line_range = map.prev_line_boundary(point).0..line_end;
@@ -3239,6 +3305,29 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
+
+        // test brackets within tags
+        cx.set_shared_state(indoc! {r"function f() {
+            return (
+                <div rules={ˇ[{ a: 1 }]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"function f() {
+            return (
+                <div rules={[{ a: 1 }ˇ]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"});
+    }
+
+    #[gpui::test]
     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -3612,6 +3701,16 @@ mod test {
           123 234 34ˇ5
           4;5.6 567 678
           789 890 901
+        "});
+
+        // With multi byte char
+        cx.set_shared_state(indoc! {r"
+        bar ˇó
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("g e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        baˇr ó
         "});
     }
 

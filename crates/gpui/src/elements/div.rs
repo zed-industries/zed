@@ -17,11 +17,12 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
-    InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, point, px, size,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
+    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -313,7 +314,7 @@ impl Interactivity {
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
             }));
@@ -567,19 +568,26 @@ impl Interactivity {
         });
     }
 
-    /// Block the mouse from interacting with this element or any of its children
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
+    ///
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
-        self.occlude_mouse = true;
+        self.hitbox_behavior = HitboxBehavior::BlockMouse;
     }
 
-    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The imperative API equivalent to [`InteractiveElement::window_control_area`]
+    pub fn window_control_area(&mut self, area: WindowControlArea) {
+        self.window_control = Some(area);
+    }
+
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
     /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
-    pub fn stop_mouse_events_except_scroll(&mut self) {
-        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
-        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
-        self.on_click(|_, _, cx| cx.stop_propagation());
-        self.on_hover(|_, _, cx| cx.stop_propagation());
+    pub fn block_mouse_except_scroll(&mut self) {
+        self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
 }
 
@@ -605,10 +613,10 @@ pub trait InteractiveElement: Sized {
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
-    fn track_focus(mut self, focus_handle: &FocusHandle) -> FocusableWrapper<Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
-        FocusableWrapper { element: self }
+        self
     }
 
     /// Set the keymap context for this element. This will be used to determine
@@ -949,22 +957,47 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
     }
 
-    /// Stops propagation of left mouse down event.
-    fn block_mouse_down(mut self) -> Self {
-        self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The fluent API equivalent to [`Interactivity::window_control_area`]
+    fn window_control_area(mut self, area: WindowControlArea) -> Self {
+        self.interactivity().window_control_area(area);
+        self
     }
 
-    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
     /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
-    fn stop_mouse_events_except_scroll(mut self) -> Self {
-        self.interactivity().stop_mouse_events_except_scroll();
+    fn block_mouse_except_scroll(mut self) -> Self {
+        self.interactivity().block_mouse_except_scroll();
+        self
+    }
+
+    /// Set the given styles to be applied when this element, specifically, is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
+    /// Set the given styles to be applied when this element is inside another element that is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 }
@@ -973,9 +1006,9 @@ pub trait InteractiveElement: Sized {
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
-    fn focusable(mut self) -> FocusableWrapper<Self> {
+    fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
-        FocusableWrapper { element: self }
+        self
     }
 
     /// Set the overflow x and y to scroll.
@@ -1101,27 +1134,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         Self: Sized,
     {
         self.interactivity().hoverable_tooltip(build_tooltip);
-        self
-    }
-}
-
-/// A trait for providing focus related APIs to interactive elements
-pub trait FocusableElement: InteractiveElement {
-    /// Set the given styles to be applied when this element, specifically, is focused.
-    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
-        self
-    }
-
-    /// Set the given styles to be applied when this element is inside another element that is focused.
-    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
 }
@@ -1448,7 +1460,8 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
-    pub(crate) occlude_mouse: bool,
+    pub(crate) window_control: Option<WindowControlArea>,
+    pub(crate) hitbox_behavior: HitboxBehavior,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1594,7 +1607,7 @@ impl Interactivity {
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
                             let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.occlude_mouse))
+                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
                             } else {
                                 None
                             };
@@ -1611,7 +1624,8 @@ impl Interactivity {
     }
 
     fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
-        self.occlude_mouse
+        self.hitbox_behavior != HitboxBehavior::Normal
+            || self.window_control.is_some()
             || style.mouse_cursor.is_some()
             || self.group.is_some()
             || self.scroll_offset.is_some()
@@ -1729,16 +1743,21 @@ impl Interactivity {
 
                                         if let Some(drag) = cx.active_drag.as_ref() {
                                             if let Some(mouse_cursor) = drag.cursor_style {
-                                                window.set_cursor_style(mouse_cursor, None);
+                                                window.set_window_cursor_style(mouse_cursor);
                                             }
                                         } else {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
+                                                window.set_cursor_style(mouse_cursor, hitbox);
                                             }
                                         }
 
                                         if let Some(group) = self.group.clone() {
                                             GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
+
+                                        if let Some(area) = self.window_control {
+                                            window
+                                                .insert_window_control_hitbox(area, hitbox.clone());
                                         }
 
                                         self.paint_mouse_listeners(
@@ -2270,7 +2289,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
@@ -2300,7 +2319,6 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-                    cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.notify(current_view);
                     }
@@ -2758,126 +2776,6 @@ impl GroupHitboxes {
     }
 }
 
-/// A wrapper around an element that can be focused.
-pub struct FocusableWrapper<E> {
-    /// The element that is focusable
-    pub element: E,
-}
-
-impl<E: InteractiveElement> FocusableElement for FocusableWrapper<E> {}
-
-impl<E> InteractiveElement for FocusableWrapper<E>
-where
-    E: InteractiveElement,
-{
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.element.interactivity()
-    }
-}
-
-impl<E: StatefulInteractiveElement> StatefulInteractiveElement for FocusableWrapper<E> {}
-
-impl<E> Styled for FocusableWrapper<E>
-where
-    E: Styled,
-{
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.element.style()
-    }
-}
-
-impl FocusableWrapper<Div> {
-    /// Add a listener to be called when the children of this `Div` are prepainted.
-    /// This allows you to store the [`Bounds`] of the children for later use.
-    pub fn on_children_prepainted(
-        mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.element = self.element.on_children_prepainted(listener);
-        self
-    }
-}
-
-impl<E> Element for FocusableWrapper<E>
-where
-    E: Element,
-{
-    type RequestLayoutState = E::RequestLayoutState;
-    type PrepaintState = E::PrepaintState;
-
-    fn id(&self) -> Option<ElementId> {
-        self.element.id()
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        self.element.source_location()
-    }
-
-    fn request_layout(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, inspector_id, window, cx)
-    }
-
-    fn prepaint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> E::PrepaintState {
-        self.element
-            .prepaint(id, inspector_id, bounds, state, window, cx)
-    }
-
-    fn paint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.element.paint(
-            id,
-            inspector_id,
-            bounds,
-            request_layout,
-            prepaint,
-            window,
-            cx,
-        )
-    }
-}
-
-impl<E> IntoElement for FocusableWrapper<E>
-where
-    E: IntoElement,
-{
-    type Element = E::Element;
-
-    fn into_element(self) -> Self::Element {
-        self.element.into_element()
-    }
-}
-
-impl<E> ParentElement for FocusableWrapper<E>
-where
-    E: ParentElement,
-{
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.element.extend(elements)
-    }
-}
-
 /// A wrapper around an element that can store state, produced after assigning an ElementId.
 pub struct Stateful<E> {
     pub(crate) element: E,
@@ -2907,8 +2805,6 @@ where
         self.element.interactivity()
     }
 }
-
-impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where
