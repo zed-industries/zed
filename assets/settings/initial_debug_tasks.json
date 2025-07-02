@@ -1,3 +1,7 @@
+// Some example tasks for common languages.
+//
+// For more documentation on how to configure debug tasks,
+// see: https://zed.dev/docs/debugger
 [
   {
     "label": "Debug active PHP file",

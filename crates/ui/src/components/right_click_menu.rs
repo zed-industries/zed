@@ -2,14 +2,14 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     AnyElement, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity,
-    Focusable as _, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
-    ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Window, anchored,
-    deferred, div, px,
+    Focusable as _, GlobalElementId, Hitbox, HitboxBehavior, InteractiveElement, IntoElement,
+    LayoutId, ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Window,
+    anchored, deferred, div, px,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
-    child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
+    child_builder: Option<Box<dyn FnOnce(bool, &mut Window, &mut App) -> AnyElement + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Entity<M> + 'static>>,
     anchor: Option<Corner>,
     attach: Option<Corner>,
@@ -23,11 +23,11 @@ impl<M: ManagedView> RightClickMenu<M> {
 
     pub fn trigger<F, E>(mut self, e: F) -> Self
     where
-        F: FnOnce(bool) -> E + 'static,
+        F: FnOnce(bool, &mut Window, &mut App) -> E + 'static,
         E: IntoElement + 'static,
     {
-        self.child_builder = Some(Box::new(move |is_menu_active| {
-            e(is_menu_active).into_any_element()
+        self.child_builder = Some(Box::new(move |is_menu_active, window, cx| {
+            e(is_menu_active, window, cx).into_any_element()
         }));
         self
     }
@@ -149,10 +149,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                     element
                 });
 
-                let mut child_element = this
-                    .child_builder
-                    .take()
-                    .map(|child_builder| (child_builder)(element_state.menu.borrow().is_some()));
+                let mut child_element = this.child_builder.take().map(|child_builder| {
+                    (child_builder)(element_state.menu.borrow().is_some(), window, cx)
+                });
 
                 let child_layout_id = child_element
                     .as_mut()
@@ -185,7 +184,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         window: &mut Window,
         cx: &mut App,
     ) -> PrepaintState {
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         if let Some(child) = request_layout.child_element.as_mut() {
             child.prepaint(window, cx);

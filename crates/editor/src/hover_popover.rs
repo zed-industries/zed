@@ -3,7 +3,7 @@ use crate::{
     EditorSnapshot, GlobalDiagnosticRenderer, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::{Autoscroll, ScrollAmount},
+    scroll::ScrollAmount,
 };
 use anyhow::Context as _;
 use gpui::{
@@ -165,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
@@ -520,7 +520,7 @@ fn show_hover(
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
-                        |theme| theme.element_hover, // todo update theme
+                        |theme| theme.colors().element_hover, // todo update theme
                         cx,
                     );
                 }
@@ -583,13 +583,6 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = if let Some(ref l) = language {
-        let l = Arc::clone(l);
-        Some(l.lsp_id().clone())
-    } else {
-        None
-    };
-
     let combined_text = blocks
         .iter()
         .map(|block| match &block.kind {
@@ -607,7 +600,7 @@ async fn parse_blocks(
             Markdown::new(
                 combined_text.into(),
                 Some(language_registry.clone()),
-                fallback_language_name,
+                language.map(|language| language.name()),
                 cx,
             )
         })
@@ -655,7 +648,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: { cx.theme().players().local().selection },
+        selection_background_color: cx.theme().colors().element_selection_background,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
@@ -704,7 +697,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: { cx.theme().players().local().selection },
+        selection_background_color: cx.theme().colors().element_selection_background,
         height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
@@ -753,7 +746,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         };
                         editor.update_in(cx, |editor, window, cx| {
                             editor.change_selections(
-                                Some(Autoscroll::fit()),
+                                Default::default(),
                                 window,
                                 cx,
                                 |selections| {
@@ -876,6 +869,7 @@ impl InfoPopover {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         div()
             .id("info_popover")
+            .occlude()
             .elevation_2(cx)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
@@ -1057,7 +1051,9 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::SubstitutedText(parsed) => {
+                            rendered_text.push_str(parsed.as_str())
+                        }
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }
@@ -1100,14 +1096,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

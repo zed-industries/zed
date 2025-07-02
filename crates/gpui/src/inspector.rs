@@ -221,3 +221,34 @@ mod conditional {
         }
     }
 }
+
+/// Provides definitions used by `#[derive_inspector_reflection]`.
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub mod inspector_reflection {
+    use std::any::Any;
+
+    /// Reification of a function that has the signature `fn some_fn(T) -> T`. Provides the name,
+    /// documentation, and ability to invoke the function.
+    #[derive(Clone, Copy)]
+    pub struct FunctionReflection<T> {
+        /// The name of the function
+        pub name: &'static str,
+        /// The method
+        pub function: fn(Box<dyn Any>) -> Box<dyn Any>,
+        /// Documentation for the function
+        pub documentation: Option<&'static str>,
+        /// `PhantomData` for the type of the argument and result
+        pub _type: std::marker::PhantomData<T>,
+    }
+
+    impl<T: 'static> FunctionReflection<T> {
+        /// Invoke this method on a value and return the result.
+        pub fn invoke(&self, value: T) -> T {
+            let boxed = Box::new(value) as Box<dyn Any>;
+            let result = (self.function)(boxed);
+            *result
+                .downcast::<T>()
+                .expect("Type mismatch in reflection invoke")
+        }
+    }
+}

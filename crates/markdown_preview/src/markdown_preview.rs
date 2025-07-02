@@ -6,7 +6,16 @@ pub mod markdown_parser;
 pub mod markdown_preview_view;
 pub mod markdown_renderer;
 
-actions!(markdown, [OpenPreview, OpenPreviewToTheSide]);
+actions!(
+    markdown,
+    [
+        MovePageUp,
+        MovePageDown,
+        OpenPreview,
+        OpenPreviewToTheSide,
+        OpenFollowingPreview
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {

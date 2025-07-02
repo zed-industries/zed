@@ -47,18 +47,12 @@ impl PhpDebugAdapter {
         })
     }
 
-    fn validate_config(
-        &self,
-        _: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        Ok(StartDebuggingRequestArgumentsRequest::Launch)
-    }
-
     async fn get_installed_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
@@ -78,20 +72,41 @@ impl PhpDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        Ok(DebugAdapterBinary {
-            command: delegate
-                .node_runtime()
-                .binary_path()
-                .await?
-                .to_string_lossy()
-                .into_owned(),
-            arguments: vec![
+        let mut configuration = task_definition.config.clone();
+        if let Some(obj) = configuration.as_object_mut() {
+            obj.entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
+
+        let arguments = if let Some(mut args) = user_args {
+            args.insert(
+                0,
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            args
+        } else {
+            vec![
                 adapter_path
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
                 format!("--server={}", port),
-            ],
+            ]
+        };
+
+        Ok(DebugAdapterBinary {
+            command: Some(
+                delegate
+                    .node_runtime()
+                    .binary_path()
+                    .await?
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            arguments,
             connection: Some(TcpArguments {
                 port,
                 host,
@@ -100,8 +115,9 @@ impl PhpDebugAdapter {
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
-                request: self.validate_config(&task_definition.config)?,
+                configuration,
+                request: <Self as DebugAdapter>::request_kind(self, &task_definition.config)
+                    .await?,
             },
         })
     }
@@ -109,7 +125,7 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -156,22 +172,8 @@ impl DebugAdapter for PhpDebugAdapter {
                     "default": false
                 },
                 "pathMappings": {
-                    "type": "array",
-                    "description": "A list of server paths mapping to the local source paths on your machine for remote host debugging",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "serverPath": {
-                                "type": "string",
-                                "description": "Path on the server"
-                            },
-                            "localPath": {
-                                "type": "string",
-                                "description": "Corresponding path on the local machine"
-                            }
-                        },
-                        "required": ["serverPath", "localPath"]
-                    }
+                    "type": "object",
+                    "description": "A mapping of server paths to local paths.",
                 },
                 "log": {
                     "type": "boolean",
@@ -303,7 +305,14 @@ impl DebugAdapter for PhpDebugAdapter {
         Some(SharedString::new_static("PHP").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn request_kind(
+        &self,
+        _: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        Ok(StartDebuggingRequestArgumentsRequest::Launch)
+    }
+
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let obj = match &zed_scenario.request {
             dap::DebugRequest::Attach(_) => {
                 bail!("Php adapter doesn't support attaching")
@@ -331,6 +340,7 @@ impl DebugAdapter for PhpDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
@@ -346,7 +356,13 @@ impl DebugAdapter for PhpDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &task_definition, user_installed_path, cx)
-            .await
+        self.get_installed_binary(
+            delegate,
+            &task_definition,
+            user_installed_path,
+            user_args,
+            cx,
+        )
+        .await
     }
 }

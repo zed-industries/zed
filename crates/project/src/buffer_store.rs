@@ -39,6 +39,7 @@ pub struct BufferStore {
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
+    non_searchable_buffers: HashSet<BufferId>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -622,7 +623,7 @@ impl LocalBufferStore {
                 Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
+                    let text_buffer = text::Buffer::new(0, buffer_id, "");
                     Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
@@ -726,6 +727,7 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
+            non_searchable_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -750,6 +752,7 @@ impl BufferStore {
             path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
+            non_searchable_buffers: Default::default(),
             worktree_store,
         }
     }
@@ -780,7 +783,7 @@ impl BufferStore {
         project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some(buffer) = self.get_by_path(&project_path, cx) {
+        if let Some(buffer) = self.get_by_path(&project_path) {
             cx.emit(BufferStoreEvent::BufferOpened {
                 buffer: buffer.clone(),
                 project_path,
@@ -943,7 +946,7 @@ impl BufferStore {
         self.path_to_buffer_id.get(project_path)
     }
 
-    pub fn get_by_path(&self, path: &ProjectPath, _cx: &App) -> Option<Entity<Buffer>> {
+    pub fn get_by_path(&self, path: &ProjectPath) -> Option<Entity<Buffer>> {
         self.path_to_buffer_id.get(path).and_then(|buffer_id| {
             let buffer = self.get(*buffer_id);
             buffer
@@ -1059,7 +1062,9 @@ impl BufferStore {
         let mut unnamed_buffers = Vec::new();
         for handle in self.buffers() {
             let buffer = handle.read(cx);
-            if let Some(entry_id) = buffer.entry_id(cx) {
+            if self.non_searchable_buffers.contains(&buffer.remote_id()) {
+                continue;
+            } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
                 limit = limit.saturating_sub(1);
@@ -1340,7 +1345,7 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.update(&mut cx, |this, _| {
+        let (buffer, project_id) = this.read_with(&mut cx, |this, _| {
             anyhow::Ok((
                 this.get_existing(buffer_id)?,
                 this.downstream_client
@@ -1354,7 +1359,7 @@ impl BufferStore {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&mut cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
             let new_path = ProjectPath::from_proto(new_path);
@@ -1367,7 +1372,7 @@ impl BufferStore {
                 .await?;
         }
 
-        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.read_with(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
@@ -1524,7 +1529,7 @@ impl BufferStore {
         };
 
         cx.spawn(async move |this, cx| {
-            let Some(buffer) = this.update(cx, |this, _| this.get(buffer_id))? else {
+            let Some(buffer) = this.read_with(cx, |this, _| this.get(buffer_id))? else {
                 return anyhow::Ok(());
             };
 
@@ -1664,6 +1669,10 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
+    }
+
+    pub(crate) fn mark_buffer_as_non_searchable(&mut self, buffer_id: BufferId) {
+        self.non_searchable_buffers.insert(buffer_id);
     }
 }
 

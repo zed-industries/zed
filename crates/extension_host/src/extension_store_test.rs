@@ -4,11 +4,11 @@ use crate::{
     GrammarManifestEntry, RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
@@ -30,9 +30,7 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -165,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -195,6 +194,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
+                        debug_locators: Default::default(),
                     }),
                     dev: false,
                 },
@@ -370,6 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 snippets: None,
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
+                debug_locators: Default::default(),
             }),
             dev: false,
         },
@@ -481,7 +482,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     });
 
     store.update(cx, |store, cx| {
-        store.uninstall_extension("zed-ruby".into(), cx)
+        store
+            .uninstall_extension("zed-ruby".into(), cx)
+            .detach_and_log_err(cx);
     });
 
     cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
@@ -717,11 +720,22 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
             status_updates.next().await.unwrap(),
             status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
         ],
         [
-            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
-            (SharedString::new("gleam"), BinaryStatus::Downloading),
-            (SharedString::new("gleam"), BinaryStatus::None)
+            (
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::Starting
+            ),
+            (
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::CheckingForUpdate
+            ),
+            (
+                LanguageServerName::new_static("gleam"),
+                BinaryStatus::Downloading
+            ),
+            (LanguageServerName::new_static("gleam"), BinaryStatus::None)
         ]
     );
 
@@ -761,8 +775,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .unwrap()
         .into_iter()
+        .flat_map(|response| response.completions)
         .map(|c| c.label.text)
         .collect::<Vec<_>>();
     assert_eq!(
@@ -782,7 +796,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx)
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
     cx.executor().run_until_parked();
 
@@ -804,7 +818,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx)
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)
     });
 
     // The extension re-fetches the latest version of the language server.

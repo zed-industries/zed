@@ -2,8 +2,8 @@ pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, ToOffset, ToPoint, actions::Tab,
-    scroll::Autoscroll,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    actions::Tab, scroll::Autoscroll,
 };
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
@@ -249,9 +249,12 @@ impl GoToLine {
             let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
-            editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                s.select_anchor_ranges([start..start])
-            });
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::center()),
+                window,
+                cx,
+                |s| s.select_anchor_ranges([start..start]),
+            );
             editor.focus_handle(cx).focus(window);
             cx.notify()
         });

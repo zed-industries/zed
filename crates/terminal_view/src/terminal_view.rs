@@ -8,10 +8,10 @@ pub mod terminal_tab_tooltip;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
-    impl_actions,
+    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
+    deferred, div,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
@@ -70,15 +70,15 @@ const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendText(String);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendKeystroke(String);
 
 actions!(terminal, [RerunTask]);
-
-impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
@@ -116,7 +116,7 @@ pub struct TerminalView {
     context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
-    embedded: bool,
+    mode: TerminalMode,
     blinking_terminal_enabled: bool,
     cwd_serialized: bool,
     blinking_paused: bool,
@@ -135,6 +135,40 @@ pub struct TerminalView {
     marked_range_utf16: Option<Range<usize>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
+}
+
+#[derive(Default, Clone)]
+pub enum TerminalMode {
+    #[default]
+    Standalone,
+    Embedded {
+        max_lines_when_unfocused: Option<usize>,
+    },
+}
+
+#[derive(Clone)]
+pub enum ContentMode {
+    Scrollable,
+    Inline {
+        displayed_lines: usize,
+        total_lines: usize,
+    },
+}
+
+impl ContentMode {
+    pub fn is_limited(&self) -> bool {
+        match self {
+            ContentMode::Scrollable => false,
+            ContentMode::Inline {
+                displayed_lines,
+                total_lines,
+            } => displayed_lines < total_lines,
+        }
+    }
+
+    pub fn is_scrollable(&self) -> bool {
+        matches!(self, ContentMode::Scrollable)
+    }
 }
 
 #[derive(Debug)]
@@ -176,7 +210,6 @@ impl TerminalView {
         workspace: WeakEntity<Workspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
-        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -215,7 +248,7 @@ impl TerminalView {
             blink_epoch: 0,
             hover: None,
             hover_tooltip_update: Task::ready(()),
-            embedded,
+            mode: TerminalMode::Standalone,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -233,6 +266,51 @@ impl TerminalView {
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
             ],
             _terminal_subscriptions: terminal_subscriptions,
+        }
+    }
+
+    /// Enable 'embedded' mode where the terminal displays the full content with an optional limit of lines.
+    pub fn set_embedded_mode(
+        &mut self,
+        max_lines_when_unfocused: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = TerminalMode::Embedded {
+            max_lines_when_unfocused,
+        };
+        cx.notify();
+    }
+
+    const MAX_EMBEDDED_LINES: usize = 1_000;
+
+    /// Returns the current `ContentMode` depending on the set `TerminalMode` and the current number of lines
+    ///
+    /// Note: Even in embedded mode, the terminal will fallback to scrollable when its content exceeds `MAX_EMBEDDED_LINES`
+    pub fn content_mode(&self, window: &Window, cx: &App) -> ContentMode {
+        match &self.mode {
+            TerminalMode::Standalone => ContentMode::Scrollable,
+            TerminalMode::Embedded {
+                max_lines_when_unfocused,
+            } => {
+                let total_lines = self.terminal.read(cx).total_lines();
+
+                if total_lines > Self::MAX_EMBEDDED_LINES {
+                    ContentMode::Scrollable
+                } else {
+                    let mut displayed_lines = total_lines;
+
+                    if !self.focus_handle.is_focused(window) {
+                        if let Some(max_lines) = max_lines_when_unfocused {
+                            displayed_lines = displayed_lines.min(*max_lines)
+                        }
+                    }
+
+                    ContentMode::Inline {
+                        displayed_lines,
+                        total_lines,
+                    }
+                }
+            }
         }
     }
 
@@ -266,7 +344,7 @@ impl TerminalView {
     pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if !text.is_empty() {
             self.terminal.update(cx, |term, _| {
-                term.input(text.to_string());
+                term.input(text.to_string().into_bytes());
             });
         }
     }
@@ -389,11 +467,9 @@ impl TerminalView {
     fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .terminal
-            .update(cx, |terminal, _| {
-                terminal
-                    .task()
-                    .map(|task| terminal_rerun_override(&task.id))
-            })
+            .read(cx)
+            .task()
+            .map(|task| terminal_rerun_override(&task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -645,7 +721,7 @@ impl TerminalView {
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
-            term.input(text.0.to_string());
+            term.input(text.0.to_string().into_bytes());
         });
     }
 
@@ -653,7 +729,12 @@ impl TerminalView {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                let processed =
+                    term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                if processed && term.vi_mode_enabled() {
+                    cx.notify();
+                }
+                processed
             });
         }
     }
@@ -814,9 +895,10 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
+            || !self.content_mode(window, cx).is_scrollable()
         {
             return None;
         }
@@ -1464,9 +1546,9 @@ impl Render for TerminalView {
                         focused,
                         self.should_show_cursor(focused, cx),
                         self.block_below_cursor.clone(),
-                        self.embedded,
+                        self.mode.clone(),
                     ))
-                    .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
                         div.child(scrollbar)
                     }),
             )
@@ -1590,7 +1672,6 @@ impl Item for TerminalView {
                 self.workspace.clone(),
                 workspace_id,
                 self.project.clone(),
-                false,
                 window,
                 cx,
             )
@@ -1748,7 +1829,6 @@ impl SerializableItem for TerminalView {
                         workspace,
                         Some(workspace_id),
                         project.downgrade(),
-                        false,
                         window,
                         cx,
                     )

@@ -215,6 +215,7 @@ impl IndexedDocsStore {
                 &candidates,
                 &query,
                 false,
+                true,
                 100,
                 &AtomicBool::default(),
                 executor,

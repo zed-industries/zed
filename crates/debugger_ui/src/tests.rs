@@ -25,8 +25,7 @@ mod inline_values;
 #[cfg(test)]
 mod module_list;
 #[cfg(test)]
-#[cfg(not(windows))]
-mod new_session_modal;
+mod new_process_modal;
 #[cfg(test)]
 mod persistence;
 #[cfg(test)]
@@ -35,9 +34,8 @@ mod stack_frame_list;
 mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    #[cfg(test)]
+    zlog::init_test();
 
     cx.update(|cx| {
         let settings = SettingsStore::test(cx);
@@ -116,6 +114,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         workspace.start_debug_session(
             config.to_scenario(),
             TaskContext::default(),
+            None,
             None,
             window,
             cx,

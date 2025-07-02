@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage, WrappedTextContent,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -306,17 +306,19 @@ impl ExampleInstance {
 
             let thread_store = thread_store.await?;
 
-            let profile_id = meta.profile_id.clone();
-            thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
                 thread_store.update(cx, |thread_store, cx| {
-                    if let Some(json) = &meta.existing_thread_json {
+                    let thread = if let Some(json) = &meta.existing_thread_json {
                         let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
                         thread_store.create_thread_from_serialized(serialized, cx)
                     } else {
                         thread_store.create_thread(cx)
-                    }
+                    };
+                    thread.update(cx, |thread, cx| {
+                        thread.set_profile(meta.profile_id.clone(), cx);
+                    });
+                    thread
                 })?;
 
 
@@ -365,7 +367,13 @@ impl ExampleInstance {
                 });
             })?;
 
-            let mut example_cx = ExampleContext::new(meta.clone(), this.log_prefix.clone(), thread.clone(), model.clone(), cx.clone());
+            let mut example_cx = ExampleContext::new(
+                meta.clone(),
+                this.log_prefix.clone(),
+                thread.clone(),
+                model.clone(),
+                cx.clone(),
+            );
             let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
@@ -576,6 +584,7 @@ impl ExampleInstance {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
+                intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -644,7 +653,7 @@ pub fn wait_for_lang_server(
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let lsp_store = project
-        .update(cx, |project, _| project.lsp_store())
+        .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
 
     let has_lang_server = buffer
@@ -967,11 +976,7 @@ impl RequestMarkdown {
                         }
 
                         match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text)
-                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                                text,
-                                ..
-                            }) => {
+                            LanguageModelToolResultContent::Text(text) => {
                                 writeln!(messages, "{text}\n").ok();
                             }
                             LanguageModelToolResultContent::Image(image) => {
@@ -1025,6 +1030,7 @@ pub fn response_events_to_markdown(
             Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
                 thinking_buffer.push_str(text);
             }
+            Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => {}
             Ok(LanguageModelCompletionEvent::Stop(reason)) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Stop**: {:?}\n\n", reason));
@@ -1048,6 +1054,15 @@ pub fn response_events_to_markdown(
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::StatusUpdate { .. },
             ) => {}
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                json_parse_error, ..
+            }) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!(
+                    "**Error**: parse error in tool use JSON: {}\n\n",
+                    json_parse_error
+                ));
+            }
             Err(error) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Error**: {}\n\n", error));
@@ -1121,9 +1136,21 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::RedactedThinking { .. })
                 | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
+
+                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    json_parse_error,
+                    ..
+                }) => {
+                    flush_text(&mut current_text, &mut content);
+                    content.push(MessageContent::Text(format!(
+                        "ERROR: parse error in tool use JSON: {}",
+                        json_parse_error
+                    )));
+                }
 
                 Err(error) => {
                     flush_text(&mut current_text, &mut content);

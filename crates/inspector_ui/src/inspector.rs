@@ -24,7 +24,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         });
     });
 
-    // Project used for editor buffers + LSP support
+    // Project used for editor buffers with LSP support
     let project = project::Project::local(
         app_state.client.clone(),
         app_state.node_runtime.clone(),
@@ -57,14 +57,12 @@ fn render_inspector(
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
     v_flex()
-        .id("gpui-inspector")
         .size_full()
         .bg(colors.panel_background)
         .text_color(colors.text)
         .font(ui_font)
         .border_l_1()
         .border_color(colors.border)
-        .overflow_y_scroll()
         .child(
             h_flex()
                 .p_2()
@@ -89,6 +87,8 @@ fn render_inspector(
         )
         .child(
             v_flex()
+                .id("gpui-inspector-content")
+                .overflow_y_scroll()
                 .p_2()
                 .gap_2()
                 .when_some(inspector_id, |this, inspector_id| {
@@ -101,26 +101,32 @@ fn render_inspector(
 
 fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
     let source_location = inspector_id.path.source_location;
+    // For unknown reasons, for some elements the path is absolute.
+    let source_location_string = source_location.to_string();
+    let source_location_string = source_location_string
+        .strip_prefix(env!("ZED_REPO_DIR"))
+        .and_then(|s| s.strip_prefix("/"))
+        .map(|s| s.to_string())
+        .unwrap_or(source_location_string);
+
     v_flex()
         .child(Label::new("Element ID").size(LabelSize::Large))
-        .when(inspector_id.instance_id != 0, |this| {
-            this.child(
-                div()
-                    .id("instance-id")
-                    .text_ui(cx)
-                    .tooltip(Tooltip::text(
-                        "Disambiguates elements from the same source location",
-                    ))
-                    .child(format!("Instance {}", inspector_id.instance_id)),
-            )
-        })
+        .child(
+            div()
+                .id("instance-id")
+                .text_ui(cx)
+                .tooltip(Tooltip::text(
+                    "Disambiguates elements from the same source location",
+                ))
+                .child(format!("Instance {}", inspector_id.instance_id)),
+        )
         .child(
             div()
                 .id("source-location")
                 .text_ui(cx)
                 .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                 .underline()
-                .child(format!("{}", source_location))
+                .child(source_location_string)
                 .tooltip(Tooltip::text("Click to open by running zed cli"))
                 .on_click(move |_, _window, cx| {
                     cx.background_spawn(open_zed_source_location(source_location))
@@ -131,7 +137,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
             div()
                 .id("global-id")
                 .text_ui(cx)
-                .min_h_12()
+                .min_h_20()
                 .tooltip(Tooltip::text(
                     "GlobalElementId of the nearest ancestor with an ID",
                 ))

@@ -18,7 +18,7 @@ You can also enable `vim_mode`, which adds vim bindings too.
 
 ## User keymaps
 
-Zed reads your keymap from `~/.zed/keymap.json` on MacOS (or `~/.config/zed/keymap.json` on Linux). You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
+Zed reads your keymap from `~/.config/zed/keymap.json`. You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
 
 The file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
 
@@ -62,7 +62,7 @@ Each keypress is a sequence of modifiers followed by a key. The modifiers are:
 - `fn-` The function key
 - `secondary-` Equivalent to `cmd` when Zed is running on macOS and `ctrl` when on Windows and Linux
 
-The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that that key generates with `cmd` pressed.
+The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that key generates with `cmd` pressed.
 
 A few examples:
 
