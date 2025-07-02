@@ -25,14 +25,20 @@ $channel = Get-Content "RELEASE_CHANNEL"
 $env:ZED_RELEASE_CHANNEL = $channel
 Pop-Location
 
+function ParseZedWorkspace {
+    $metadata = cargo metadata --no-deps --offline | ConvertFrom-Json
+    $env:ZED_WORKSPACE = $metadata.workspace_root
+    $env:RELEASE_VERSION = $metadata.packages | Where-Object { $_.name -eq "zed" } | Select-Object -ExpandProperty version
+}
+
 function CheckEnvironmentVariables {
     $requiredVars = @(
-        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL', 
+        'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',
         'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET',
         'ACCOUNT_NAME', 'CERT_PROFILE_NAME', 'ENDPOINT',
         'FILE_DIGEST', 'TIMESTAMP_DIGEST', 'TIMESTAMP_SERVER'
     )
-    
+
     foreach ($var in $requiredVars) {
         if (-not (Test-Path "env:$var")) {
             Write-Error "$var is not set"
@@ -113,6 +119,7 @@ function BuildInstaller {
     switch ($channel) {
         "stable" {
             $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+            $appIconName = "app-icon"
             $appName = "Zed Editor"
             $appDisplayName = "Zed Editor"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION"
@@ -127,6 +134,7 @@ function BuildInstaller {
         }
         "preview" {
             $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
+            $appIconName = "app-icon-preview"
             $appName = "Zed Editor Preview"
             $appDisplayName = "Zed Editor Preview"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
@@ -141,6 +149,7 @@ function BuildInstaller {
         }
         "nightly" {
             $appId = "{{1BDB21D3-14E7-433C-843C-9C97382B2FE0}"
+            $appIconName = "app-icon-nightly"
             $appName = "Zed Editor Nightly"
             $appDisplayName = "Zed Editor Nightly"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-nightly"
@@ -163,10 +172,11 @@ function BuildInstaller {
     # Currently, we are using Windows 2022 runner.
     # Windows runner 2025 doesn't have iscc in PATH for now, https://github.com/actions/runner-images/issues/11228
     # $innoSetupPath = "iscc.exe"
-    $innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
+    $innoSetupPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 
     $definitions = @{
         "AppId"          = $appId
+        "AppIconName"    = $appIconName
         "OutputDir"      = "$env:ZED_WORKSPACE\target"
         "AppSetupName"   = $appSetupName
         "AppName"        = $appName
@@ -189,7 +199,7 @@ function BuildInstaller {
         $defs += "/d$key=`"$($definitions[$key])`""
     }
 
-    $innoArgs = @($issFilePath) + $innoFilePath + $defs + "/sDefaultsign=`"$signTool`""
+    $innoArgs = @($issFilePath) + $defs + "/sDefaultsign=`"$signTool`""
 
     # Execute Inno Setup
     Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
@@ -206,6 +216,7 @@ function BuildInstaller {
     }
 }
 
+ParseZedWorkspace
 CheckEnvironmentVariables
 PrepareForBundle
 BuildZedAndItsFriends
