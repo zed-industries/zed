@@ -2442,7 +2442,7 @@ impl EditorElement {
                 .git
                 .inline_blame
                 .and_then(|settings| settings.min_column)
-                .map(|col| self.column_pixels(col as usize, window, cx))
+                .map(|col| self.column_pixels(col as usize, window))
                 .unwrap_or(px(0.));
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
@@ -2627,7 +2627,7 @@ impl EditorElement {
                 .enumerate()
                 .filter_map(|(i, indent_guide)| {
                     let single_indent_width =
-                        self.column_pixels(indent_guide.tab_size as usize, window, cx);
+                        self.column_pixels(indent_guide.tab_size as usize, window);
                     let total_width = single_indent_width * indent_guide.depth as f32;
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
@@ -2653,6 +2653,39 @@ impl EditorElement {
                 })
                 .collect(),
         )
+    }
+
+    fn layout_wrap_guides(
+        &self,
+        em_width: Pixels,
+        em_advance: Pixels,
+        scroll_position: gpui::Point<f32>,
+        scrollbar_layout: Option<&EditorScrollbars>,
+        vertical_scrollbar_width: Pixels,
+        text_hitbox: &Hitbox,
+        hitbox: &Hitbox,
+        window: &Window,
+        cx: &App,
+    ) -> SmallVec<[(Pixels, bool); 2]> {
+        let scroll_left = scroll_position.x * em_advance;
+        let horizontal_offset = text_hitbox.origin.x + em_width / 2. - scroll_left;
+        let vertical_scrollbar_width = scrollbar_layout
+            .and_then(|layout| layout.visible.then_some(vertical_scrollbar_width))
+            .unwrap_or_default();
+
+        self.editor
+            .read(cx)
+            .wrap_guides(cx)
+            .into_iter()
+            .flat_map(|(guide, active)| {
+                let wrap_position = self.column_pixels(guide, window);
+                let wrap_guide_x = wrap_position + horizontal_offset;
+                let display_wrap_guide = wrap_guide_x >= text_hitbox.origin.x
+                    && wrap_guide_x <= hitbox.bounds.right() - vertical_scrollbar_width;
+
+                display_wrap_guide.then_some((wrap_guide_x, active))
+            })
+            .collect()
     }
 
     fn calculate_indent_guide_bounds(
@@ -5238,26 +5271,7 @@ impl EditorElement {
                     paint_highlight(range.start, range.end, color, edges);
                 }
 
-                let scroll_left = layout.position_map.snapshot.scroll_position().x
-                    * layout.position_map.em_advance;
-
-                for (wrap_position, active) in layout.wrap_guides.iter() {
-                    let x = (layout.position_map.text_hitbox.origin.x
-                        + *wrap_position
-                        + layout.position_map.em_width / 2.)
-                        - scroll_left;
-
-                    let show_scrollbars = layout
-                        .scrollbars_layout
-                        .as_ref()
-                        .map_or(false, |layout| layout.visible);
-
-                    if x < layout.position_map.text_hitbox.origin.x
-                        || (show_scrollbars && x > self.scrollbar_left(&layout.hitbox.bounds))
-                    {
-                        continue;
-                    }
-
+                for (guide_x, active) in layout.wrap_guides.iter() {
                     let color = if *active {
                         cx.theme().colors().editor_active_wrap_guide
                     } else {
@@ -5265,7 +5279,7 @@ impl EditorElement {
                     };
                     window.paint_quad(fill(
                         Bounds {
-                            origin: point(x, layout.position_map.text_hitbox.origin.y),
+                            origin: point(*guide_x, layout.position_map.text_hitbox.origin.y),
                             size: size(px(1.), layout.position_map.text_hitbox.size.height),
                         },
                         color,
@@ -6856,11 +6870,7 @@ impl EditorElement {
         });
     }
 
-    fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
-        bounds.top_right().x - self.style.scrollbar_width
-    }
-
-    fn column_pixels(&self, column: usize, window: &mut Window, _: &mut App) -> Pixels {
+    fn column_pixels(&self, column: usize, window: &Window) -> Pixels {
         let style = &self.style;
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let layout = window.text_system().shape_line(
@@ -6879,14 +6889,9 @@ impl EditorElement {
         layout.width
     }
 
-    fn max_line_number_width(
-        &self,
-        snapshot: &EditorSnapshot,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Pixels {
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, window: &mut Window) -> Pixels {
         let digit_count = snapshot.widest_line_number().ilog10() + 1;
-        self.column_pixels(digit_count as usize, window, cx)
+        self.column_pixels(digit_count as usize, window)
     }
 
     fn shape_line_number(
@@ -7787,7 +7792,7 @@ impl Element for EditorElement {
                     } => {
                         let editor_handle = cx.entity().clone();
                         let max_line_number_width =
-                            self.max_line_number_width(&editor.snapshot(window, cx), window, cx);
+                            self.max_line_number_width(&editor.snapshot(window, cx), window);
                         window.request_measured_layout(
                             Style::default(),
                             move |known_dimensions, available_space, window, cx| {
@@ -7877,7 +7882,7 @@ impl Element for EditorElement {
                         .gutter_dimensions(
                             font_id,
                             font_size,
-                            self.max_line_number_width(&snapshot, window, cx),
+                            self.max_line_number_width(&snapshot, window),
                             cx,
                         )
                         .or_else(|| {
@@ -7951,14 +7956,6 @@ impl Element for EditorElement {
                             }
                         }
                     });
-
-                    let wrap_guides = self
-                        .editor
-                        .read(cx)
-                        .wrap_guides(cx)
-                        .iter()
-                        .map(|(guide, active)| (self.column_pixels(*guide, window, cx), *active))
-                        .collect::<SmallVec<[_; 2]>>();
 
                     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
                     let gutter_hitbox = window.insert_hitbox(
@@ -8794,6 +8791,18 @@ impl Element for EditorElement {
                     window.with_element_namespace("expand_toggles", |window| {
                         self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
                     });
+
+                    let wrap_guides = self.layout_wrap_guides(
+                        em_width,
+                        em_advance,
+                        scroll_position,
+                        scrollbars_layout.as_ref(),
+                        vertical_scrollbar_width,
+                        &text_hitbox,
+                        &hitbox,
+                        window,
+                        cx,
+                    );
 
                     let minimap = window.with_element_namespace("minimap", |window| {
                         self.layout_minimap(
