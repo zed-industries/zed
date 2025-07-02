@@ -124,8 +124,8 @@ impl AcpThreadView {
 
         let list_state = ListState::new(
             0,
-            gpui::ListAlignment::Top,
-            px(1000.0),
+            gpui::ListAlignment::Bottom,
+            px(2048.0),
             cx.processor({
                 move |this: &mut Self, item: usize, window, cx| {
                     let Some(entry) = this
@@ -228,7 +228,7 @@ impl AcpThreadView {
                         .child(
                             div()
                                 .text_xs()
-                                .p_2()
+                                .p_3()
                                 .bg(cx.theme().colors().editor_background)
                                 .rounded_lg()
                                 .shadow_md()
@@ -239,7 +239,7 @@ impl AcpThreadView {
                         .into_any(),
                     Role::Assistant => div()
                         .text_ui(cx)
-                        .p_4()
+                        .p_5()
                         .pt_2()
                         .child(message_body)
                         .into_any(),
@@ -356,16 +356,22 @@ impl Render for AcpThreadView {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .h_full()
             .child(match &self.thread_state {
-                ThreadState::Loading { .. } => {
-                    div().p_2().child(Label::new("Connecting to Gemini..."))
-                }
+                ThreadState::Loading { .. } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .justify_end()
+                    .child(Label::new("Connecting to Gemini...")),
                 ThreadState::LoadError(e) => div()
                     .p_2()
+                    .flex_1()
+                    .justify_end()
                     .child(Label::new(format!("Failed to load {e}")).into_any_element()),
-                ThreadState::Ready { .. } => div().h_full().child(
+                ThreadState::Ready { .. } => v_flex().flex_1().pb_4().child(
                     list(self.list_state.clone())
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Infer),
+                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                        .flex_grow(),
                 ),
             })
             .when(self.send_task.is_some(), |this| {
