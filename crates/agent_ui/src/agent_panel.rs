@@ -2056,18 +2056,17 @@ impl AgentPanel {
 
         let store = self.user_store.read(cx);
         let is_signed_in = store.current_user().is_some();
-        let has_accepted_terms_of_service =
-            store.current_user_has_accepted_terms().unwrap_or(false);
+        let has_accepted_tos = store.current_user_has_accepted_terms().unwrap_or(false);
         let plan = store.current_plan();
         let account_too_young = store.account_too_young();
 
-        Some(cx.new(|_cx| ZedAiOnboarding {
+        Some(div().size_full().child(cx.new(|_cx| ZedAiOnboarding {
             is_signed_in,
-            has_accepted_terms_of_service,
+            has_accepted_terms_of_service: has_accepted_tos,
             plan,
             account_too_young,
             source: OnboardingSource::AgentPanel,
-        }))
+        })))
     }
 
     fn render_trial_end_upsell(

@@ -298,21 +298,66 @@ impl Render for ZedPredictModal {
                             .overflow_hidden(),
                     ),
             )
+            // .child(
+            //     h_flex()
+            //         .w_full()
+            //         .mb_2()
+            //         .justify_between()
+            //         // .child(
+            //         //     v_flex(), // .gap_1()
+            //         //               // .child(
+            //         //               //     Label::new("Introducing Zed AI's")
+            //         //               //         .size(LabelSize::Small)
+            //         //               //         .color(Color::Muted),
+            //         //               // )
+            //         //               // .child(Headline::new("Edit Prediction").size(HeadlineSize::Large)),
+            //         // )
+            //         .child({
+            //             let tab = |n: usize| {
+            //                 let text_color = cx.theme().colors().text;
+            //                 let border_color = cx.theme().colors().text_accent.opacity(0.4);
+            //                 h_flex().child(
+            //                     h_flex()
+            //                         .px_4()
+            //                         .py_0p5()
+            //                         .bg(cx.theme().colors().editor_background)
+            //                         .border_1()
+            //                         .border_color(border_color)
+            //                         .rounded_sm()
+            //                         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            //                         .text_size(TextSize::XSmall.rems(cx))
+            //                         .text_color(text_color)
+            //                         .child("tab")
+            //                         .with_animation(
+            //                             n,
+            //                             Animation::new(Duration::from_secs(2)).repeat(),
+            //                             move |tab, delta| {
+            //                                 let delta = (delta - 0.15 * n as f32) / 0.7;
+            //                                 let delta = 1.0 - (0.5 - delta).abs() * 2.;
+            //                                 let delta = ease_in_out(delta.clamp(0., 1.));
+            //                                 let delta = 0.1 + 0.9 * delta;
+            //                                 tab.border_color(border_color.opacity(delta))
+            //                                     .text_color(text_color.opacity(delta))
+            //                             },
+            //                         ),
+            //                 )
+            //             };
+            //             v_flex()
+            //                 .gap_2()
+            //                 .items_center()
+            //                 .pr_2p5()
+            //                 .child(tab(0).ml_neg_20())
+            //                 .child(tab(1))
+            //                 .child(tab(2).ml_20())
+            //         }),
+            // )
             .child(
                 h_flex()
-                    .w_full()
-                    .mb_2()
-                    .justify_between()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Introducing Zed AI's")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Headline::new("Edit Prediction").size(HeadlineSize::Large)),
-                    )
+                    .absolute()
+                    .top_2()
+                    .right_2()
+                    .p_1p5()
+                    .items_end()
                     .child({
                         let tab = |n: usize| {
                             let text_color = cx.theme().colors().text;
@@ -393,119 +438,110 @@ impl Render for ZedPredictModal {
             };
             let plan = plan.unwrap_or(proto::Plan::Free);
 
-            base.child(Label::new(copy).color(Color::Muted))
-                .child(
-                    h_flex().child(
-                        Checkbox::new("plan", ToggleState::Selected)
-                            .fill()
-                            .disabled(true)
-                            .label(format!(
-                                "You get {} edit predictions through your {}.",
-                                if plan == proto::Plan::Free {
-                                    "2,000"
-                                } else {
-                                    "unlimited"
-                                },
-                                match plan {
-                                    proto::Plan::Free => "Zed Free plan",
-                                    proto::Plan::ZedPro => "Zed Pro plan",
-                                    proto::Plan::ZedProTrial => "Zed Pro trial",
-                                }
-                            )),
-                    ),
-                )
-                .child(
-                    h_flex()
-                        .child(
-                            Checkbox::new("tos-checkbox", self.terms_of_service.into())
-                                .fill()
-                                .label("I have read and accept the")
-                                .on_click(cx.listener(move |this, state, _window, cx| {
-                                    this.terms_of_service = *state == ToggleState::Selected;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("view-tos", "Terms of Service")
-                                .icon(IconName::ArrowUpRight)
-                                .icon_size(IconSize::Indicator)
-                                .icon_color(Color::Muted)
-                                .on_click(cx.listener(Self::view_terms)),
-                        ),
-                )
-                .child(
-                    v_flex()
-                        .child(
-                            h_flex()
-                                .flex_wrap()
-                                .child(
-                                    Checkbox::new(
-                                        "training-data-checkbox",
-                                        self.data_collection_opted_in.into(),
-                                    )
-                                    .label(
-                                        "Contribute to the open dataset when editing open source.",
-                                    )
-                                    .fill()
-                                    .on_click(cx.listener(
-                                        move |this, state, _window, cx| {
-                                            this.data_collection_opted_in =
-                                                *state == ToggleState::Selected;
-                                            cx.notify()
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    Button::new("learn-more", "Learn More")
-                                        .icon(accordion_icons.0)
-                                        .icon_size(IconSize::Indicator)
-                                        .icon_color(Color::Muted)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.data_collection_expanded =
-                                                !this.data_collection_expanded;
-                                            cx.notify();
-
-                                            if this.data_collection_expanded {
-                                                onboarding_event!(
-                                                    "Data Collection Learn More Clicked"
-                                                );
-                                            }
-                                        })),
-                                ),
-                        )
-                        .when(self.data_collection_expanded, |element| {
-                            element.child(self.render_data_collection_explanation(cx))
-                        }),
-                )
-                .child(
-                    v_flex()
-                        .mt_2()
-                        .gap_2()
-                        .w_full()
-                        .child(
-                            Button::new("accept-tos", "Enable Edit Prediction")
-                                .disabled(!self.terms_of_service)
-                                .style(ButtonStyle::Tinted(TintColor::Accent))
-                                .full_width()
-                                .on_click(cx.listener(Self::accept_and_enable)),
-                        )
-                        .child(blog_post_button),
-                )
-                .child(ZedAiOnboarding {
-                    is_signed_in: store.current_user().is_some(),
-                    has_accepted_terms_of_service: store
-                        .current_user_has_accepted_terms()
-                        .unwrap_or(false),
-                    plan: store.current_plan(),
-                    account_too_young: store.account_too_young(),
-                .child(cx.new(|_cx| ZedAiOnboarding {
+            base
+                // .child(
+                //     h_flex().child(
+                //         Checkbox::new("plan", ToggleState::Selected)
+                //             .fill()
+                //             .disabled(true)
+                //             .label(format!(
+                //                 "You get {} edit predictions through your {}.",
+                //                 if plan == proto::Plan::Free {
+                //                     "2,000"
+                //                 } else {
+                //                     "unlimited"
+                //                 },
+                //                 match plan {
+                //                     proto::Plan::Free => "Zed Free plan",
+                //                     proto::Plan::ZedPro => "Zed Pro plan",
+                //                     proto::Plan::ZedProTrial => "Zed Pro trial",
+                //                 }
+                //             )),
+                //     ),
+                // )
+                // .child(
+                //     h_flex()
+                //         .child(
+                //             Checkbox::new("tos-checkbox", self.terms_of_service.into())
+                //                 .fill()
+                //                 .label("I have read and accept the")
+                //                 .on_click(cx.listener(move |this, state, _window, cx| {
+                //                     this.terms_of_service = *state == ToggleState::Selected;
+                //                     cx.notify();
+                //                 })),
+                //         )
+                //         .child(
+                //             Button::new("view-tos", "Terms of Service")
+                //                 .icon(IconName::ArrowUpRight)
+                //                 .icon_size(IconSize::Indicator)
+                //                 .icon_color(Color::Muted)
+                //                 .on_click(cx.listener(Self::view_terms)),
+                //         ),
+                // )
+                // .child(
+                //     v_flex()
+                //         .child(
+                //             h_flex()
+                //                 .flex_wrap()
+                //                 .child(
+                //                     Checkbox::new(
+                //                         "training-data-checkbox",
+                //                         self.data_collection_opted_in.into(),
+                //                     )
+                //                     .label(
+                //                         "Contribute to the open dataset when editing open source.",
+                //                     )
+                //                     .fill()
+                //                     .on_click(cx.listener(
+                //                         move |this, state, _window, cx| {
+                //                             this.data_collection_opted_in =
+                //                                 *state == ToggleState::Selected;
+                //                             cx.notify()
+                //                         },
+                //                     )),
+                //                 )
+                //                 .child(
+                //                     Button::new("learn-more", "Learn More")
+                //                         .icon(accordion_icons.0)
+                //                         .icon_size(IconSize::Indicator)
+                //                         .icon_color(Color::Muted)
+                //                         .on_click(cx.listener(|this, _, _, cx| {
+                //                             this.data_collection_expanded =
+                //                                 !this.data_collection_expanded;
+                //                             cx.notify();
+                //                             if this.data_collection_expanded {
+                //                                 onboarding_event!(
+                //                                     "Data Collection Learn More Clicked"
+                //                                 );
+                //                             }
+                //                         })),
+                //                 ),
+                //         )
+                //         .when(self.data_collection_expanded, |element| {
+                //             element.child(self.render_data_collection_explanation(cx))
+                //         }),
+                // )
+                // .child(
+                //     v_flex()
+                //         .mt_2()
+                //         .gap_2()
+                //         .w_full()
+                //         .child(
+                //             Button::new("accept-tos", "Enable Edit Prediction")
+                //                 .disabled(!self.terms_of_service)
+                //                 .style(ButtonStyle::Tinted(TintColor::Accent))
+                //                 .full_width()
+                //                 .on_click(cx.listener(Self::accept_and_enable)),
+                //         )
+                //         .child(blog_post_button),
+                // )
+                .child(div().pt_2().child(cx.new(|_cx| ZedAiOnboarding {
                     is_signed_in,
                     has_accepted_terms_of_service: has_accepted_terms,
                     plan: current_plan,
                     account_too_young,
                     source: OnboardingSource::EditPredictions,
-                })
-                }))
+                })))
         } else {
             base.child(
                 Label::new("To set Zed as your edit prediction provider, please sign in.")
