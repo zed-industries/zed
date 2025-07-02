@@ -672,12 +672,16 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
+#[derive(Debug, Error)]
+#[error("failed to kill existing server")]
+pub(crate) struct KillRunningServerError(std::io::Error);
+
+fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), KillRunningServerError> {
     log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
-        .context("failed to kill existing server")?;
+        .map_err(KillRunningServerError)?;
 
     for file in [
         &paths.pid_file,
@@ -772,7 +776,15 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     Ok(())
 }
 
-fn check_pid_file(path: &Path) -> Result<Option<u32>> {
+#[derive(Debug, Error)]
+#[error("Failed to remove PID file for missing process (pid `{pid}`")]
+pub(crate) struct CheckPidError {
+    #[source]
+    source: std::io::Error,
+    pid: u32,
+}
+
+fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
@@ -797,7 +809,7 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
             log::debug!(
                 "Found PID file, but process with that PID does not exist. Removing PID file."
             );
-            std::fs::remove_file(&path).context("Failed to remove PID file")?;
+            std::fs::remove_file(&path).map_err(|source| CheckPidError { source, pid })?;
             Ok(None)
         }
     }
