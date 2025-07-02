@@ -121,10 +121,15 @@ pub enum AgentThreadEntryContent {
 }
 
 #[derive(Debug)]
-pub enum ToolCall {
+pub struct ToolCall {
+    id: ToolCallId,
+    tool_name: Entity<Markdown>,
+    status: ToolCallStatus,
+}
+
+#[derive(Debug)]
+pub enum ToolCallStatus {
     WaitingForConfirmation {
-        id: ToolCallId,
-        tool_name: Entity<Markdown>,
         description: Entity<Markdown>,
         respond_tx: oneshot::Sender<bool>,
     },
@@ -270,21 +275,23 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
 
         let entry_id = self.push_entry(
-            AgentThreadEntryContent::ToolCall(ToolCall::WaitingForConfirmation {
+            AgentThreadEntryContent::ToolCall(ToolCall {
                 // todo! clean up id creation
                 id: ToolCallId(ThreadEntryId(self.entries.len() as u64)),
                 tool_name: cx.new(|cx| {
                     Markdown::new(title.into(), Some(language_registry.clone()), None, cx)
                 }),
-                description: cx.new(|cx| {
-                    Markdown::new(
-                        description.into(),
-                        Some(language_registry.clone()),
-                        None,
-                        cx,
-                    )
-                }),
-                respond_tx,
+                status: ToolCallStatus::WaitingForConfirmation {
+                    description: cx.new(|cx| {
+                        Markdown::new(
+                            description.into(),
+                            Some(language_registry.clone()),
+                            None,
+                            cx,
+                        )
+                    }),
+                    respond_tx,
+                },
             }),
             cx,
         );
@@ -302,21 +309,21 @@ impl AcpThread {
             return;
         };
 
-        let new_state = if allowed {
-            ToolCall::Allowed
+        let new_status = if allowed {
+            ToolCallStatus::Allowed
         } else {
-            ToolCall::Rejected
+            ToolCallStatus::Rejected
         };
 
-        let call = mem::replace(call, new_state);
+        let curr_status = mem::replace(&mut call.status, new_status);
 
-        if let ToolCall::WaitingForConfirmation { respond_tx, .. } = call {
+        if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
             respond_tx.send(allowed).log_err();
         } else {
             debug_panic!("tried to authorize an already authorized tool call");
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(id.0.0 as usize));
+        cx.emit(AcpThreadEvent::EntryUpdated(id.as_u64() as usize));
     }
 
     fn entry_mut(&mut self, id: ThreadEntryId) -> Option<&mut ThreadEntry> {
@@ -426,11 +433,10 @@ mod tests {
         run_until_tool_call(&thread, cx).await;
 
         let tool_call_id = thread.read_with(cx, |thread, cx| {
-            let AgentThreadEntryContent::ToolCall(ToolCall::WaitingForConfirmation {
+            let AgentThreadEntryContent::ToolCall(ToolCall {
                 id,
                 tool_name,
-                description,
-                ..
+                status: ToolCallStatus::WaitingForConfirmation { description, .. },
             }) = &thread.entries().last().unwrap().content
             else {
                 panic!();
@@ -454,7 +460,10 @@ mod tests {
             thread.authorize_tool_call(tool_call_id, true, cx);
             assert!(matches!(
                 thread.entries().last().unwrap().content,
-                AgentThreadEntryContent::ToolCall(ToolCall::Allowed)
+                AgentThreadEntryContent::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed,
+                    ..
+                })
             ));
         });
 
@@ -471,7 +480,10 @@ mod tests {
             ));
             assert!(matches!(
                 thread.entries[1].content,
-                AgentThreadEntryContent::ToolCall(ToolCall::Allowed)
+                AgentThreadEntryContent::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed,
+                    ..
+                })
             ));
             assert!(matches!(
                 thread.entries[2].content,

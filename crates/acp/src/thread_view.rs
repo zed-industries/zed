@@ -20,7 +20,7 @@ use zed_actions::agent::Chat;
 
 use crate::{
     AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
-    ToolCall, ToolCallId,
+    ToolCall, ToolCallId, ToolCallStatus,
 };
 
 pub struct AcpThreadView {
@@ -224,7 +224,7 @@ impl AcpThreadView {
                 match message.role {
                     Role::User => div()
                         .p_2()
-                        .pt_4()
+                        .pt_5()
                         .child(
                             div()
                                 .text_xs()
@@ -245,47 +245,99 @@ impl AcpThreadView {
                         .into_any(),
                 }
             }
-            AgentThreadEntryContent::ToolCall(tool_call) => match tool_call {
-                ToolCall::WaitingForConfirmation {
-                    id,
-                    tool_name,
-                    description,
-                    ..
-                } => {
-                    let id = *id;
-                    v_flex()
-                        .elevation_1(cx)
-                        .child(MarkdownElement::new(
-                            tool_name.clone(),
-                            default_markdown_style(window, cx),
-                        ))
-                        .child(MarkdownElement::new(
-                            description.clone(),
-                            default_markdown_style(window, cx),
-                        ))
-                        .child(
-                            h_flex()
-                                .child(Button::new(("allow", id.as_u64()), "Allow").on_click(
-                                    cx.listener({
-                                        move |this, _, _, cx| {
-                                            this.authorize_tool_call(id, true, cx);
-                                        }
-                                    }),
-                                ))
-                                .child(Button::new(("reject", id.as_u64()), "Reject").on_click(
-                                    cx.listener({
-                                        move |this, _, _, cx| {
-                                            this.authorize_tool_call(id, false, cx);
-                                        }
-                                    }),
-                                )),
-                        )
-                        .into_any()
-                }
-                ToolCall::Allowed => div().child("Allowed!").into_any(),
-                ToolCall::Rejected => div().child("Rejected!").into_any(),
-            },
+            AgentThreadEntryContent::ToolCall(tool_call) => div()
+                .px_2()
+                .py_4()
+                .child(self.render_tool_call(tool_call, window, cx))
+                .into_any(),
         }
+    }
+
+    fn render_tool_call(&self, tool_call: &ToolCall, window: &Window, cx: &Context<Self>) -> Div {
+        let status_icon = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { .. } => Empty.into_element().into_any(),
+            ToolCallStatus::Allowed => Icon::new(IconName::Check)
+                .color(Color::Success)
+                .size(IconSize::Small)
+                .into_any_element(),
+            ToolCallStatus::Rejected => Icon::new(IconName::X)
+                .color(Color::Error)
+                .size(IconSize::Small)
+                .into_any_element(),
+        };
+
+        let content = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { description, .. } => v_flex()
+                .border_color(cx.theme().colors().border)
+                .border_t_1()
+                .px_2()
+                .py_1p5()
+                .child(MarkdownElement::new(
+                    description.clone(),
+                    default_markdown_style(window, cx),
+                ))
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(("allow", tool_call.id.as_u64()), "Allow")
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call.id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(id, true, cx);
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("reject", tool_call.id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .on_click(cx.listener({
+                                    let id = tool_call.id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(id, false, cx);
+                                    }
+                                })),
+                        ),
+                )
+                .into_any()
+                .into(),
+            ToolCallStatus::Allowed => None,
+            ToolCallStatus::Rejected => None,
+        };
+
+        v_flex()
+            .text_xs()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1p5()
+                    .w_full()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Cog)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(MarkdownElement::new(
+                        tool_call.tool_name.clone(),
+                        default_markdown_style(window, cx),
+                    ))
+                    .child(div().w_full())
+                    .child(status_icon),
+            )
+            .children(content)
     }
 }
 
