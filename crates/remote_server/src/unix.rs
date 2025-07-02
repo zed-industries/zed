@@ -36,6 +36,7 @@ use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
+use std::process::ExitStatus;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{env, thread};
@@ -690,18 +691,39 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<()> {
+#[derive(Debug, Error)]
+pub(crate) enum SpawnServerError {
+    #[error("failed to remove stdin socket")]
+    RemoveStdinSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stdout socket")]
+    RemoveStdoutSocket(#[source] std::io::Error),
+
+    #[error("failed to remove stderr socket")]
+    RemoveStderrSocket(#[source] std::io::Error),
+
+    #[error("failed to get current_exe")]
+    CurrentExe(#[source] std::io::Error),
+
+    #[error("failed to launch server process")]
+    ProcessStatus(#[source] std::io::Error),
+
+    #[error("failed to launch and detach server process: {status}\n{paths}")]
+    LaunchStatus { status: ExitStatus, paths: String },
+}
+
+fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stdin_socket.exists() {
-        std::fs::remove_file(&paths.stdin_socket)?;
+        std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
     if paths.stdout_socket.exists() {
-        std::fs::remove_file(&paths.stdout_socket)?;
+        std::fs::remove_file(&paths.stdout_socket).map_err(SpawnServerError::RemoveStdoutSocket)?;
     }
     if paths.stderr_socket.exists() {
-        std::fs::remove_file(&paths.stderr_socket)?;
+        std::fs::remove_file(&paths.stderr_socket).map_err(SpawnServerError::RemoveStderrSocket)?;
     }
 
-    let binary_name = std::env::current_exe()?;
+    let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
     let mut server_process = std::process::Command::new(binary_name);
     server_process
         .arg("run")
@@ -718,11 +740,18 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
 
     let status = server_process
         .status()
-        .context("failed to launch server process")?;
-    anyhow::ensure!(
-        status.success(),
-        "failed to launch and detach server process"
-    );
+        .map_err(SpawnServerError::ProcessStatus)?;
+
+    if !status.success() {
+        return Err(SpawnServerError::LaunchStatus {
+            status,
+            paths: format!(
+                "log file: {}, pid file: {}",
+                paths.log_file.display(),
+                paths.pid_file.display()
+            ),
+        });
+    }
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
