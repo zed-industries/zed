@@ -9,10 +9,15 @@ pub mod markdown_renderer;
 actions!(
     markdown,
     [
+        /// Scroll up by one page in the markdown preview
         MovePageUp,
+        /// Scroll down by one page in the markdown preview
         MovePageDown,
+        /// Open a markdown preview for the current file
         OpenPreview,
+        /// Open a markdown preview in a split pane
         OpenPreviewToTheSide,
+        /// Open a following markdown preview that syncs with the editor
         OpenFollowingPreview
     ]
 );

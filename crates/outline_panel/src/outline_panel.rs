@@ -65,17 +65,26 @@ use worktree::{Entry, ProjectEntryId, WorktreeId};
 actions!(
     outline_panel,
     [
+        /// Collapse all entries in the outline tree
         CollapseAllEntries,
+        /// Collapse the currently selected entry
         CollapseSelectedEntry,
+        /// Expand all entries in the outline tree
         ExpandAllEntries,
+        /// Expand the currently selected entry
         ExpandSelectedEntry,
+        /// Fold the selected directory
         FoldDirectory,
+        /// Open the selected entry in the editor
         OpenSelectedEntry,
+        /// Reveal the selected item in the system file manager
         RevealInFileManager,
+        /// Select the parent of the current entry
         SelectParent,
-        ToggleActiveEditorPin,
-        ToggleFocus,
+        /// Unfold the selected directory
         UnfoldDirectory,
+        /// Toggle focus on the outline panel
+        ToggleFocus,
     ]
 );
 

@@ -54,38 +54,71 @@ pub use ui::preview::{all_agent_previews, get_agent_preview};
 actions!(
     agent,
     [
+        /// Create a new text-based conversation thread
         NewTextThread,
+        /// Toggle the context picker interface for adding files, symbols, or other context
         ToggleContextPicker,
+        /// Toggle the navigation menu for switching between threads and views
         ToggleNavigationMenu,
+        /// Toggle the options menu for agent settings and preferences
         ToggleOptionsMenu,
+        /// Delete the recently opened thread from history
         DeleteRecentlyOpenThread,
+        /// Toggle the profile selector for switching between agent profiles
         ToggleProfileSelector,
+        /// Remove all added context from the current conversation
         RemoveAllContext,
+        /// Expand the message editor to full size
         ExpandMessageEditor,
+        /// Open the conversation history view
         OpenHistory,
+        /// Add a context server to the configuration
         AddContextServer,
+        /// Remove the currently selected thread
         RemoveSelectedThread,
+        /// Start a chat conversation with the agent
         Chat,
+        /// Start a chat conversation with follow-up enabled
         ChatWithFollow,
+        /// Cycle to the next inline assist suggestion
         CycleNextInlineAssist,
+        /// Cycle to the previous inline assist suggestion
         CyclePreviousInlineAssist,
+        /// Move focus up in the interface
         FocusUp,
+        /// Move focus down in the interface
         FocusDown,
+        /// Move focus left in the interface
         FocusLeft,
+        /// Move focus right in the interface
         FocusRight,
+        /// Remove the currently focused context item
         RemoveFocusedContext,
+        /// Accept the suggested context item
         AcceptSuggestedContext,
+        /// Open the active thread as a markdown file
         OpenActiveThreadAsMarkdown,
+        /// Open the agent diff view to review changes
         OpenAgentDiff,
+        /// Keep the current suggestion or change
         Keep,
+        /// Reject the current suggestion or change
         Reject,
+        /// Reject all suggestions or changes
         RejectAll,
+        /// Keep all suggestions or changes
         KeepAll,
+        /// Follow the agent's suggestions
         Follow,
+        /// Reset the trial upsell notification
         ResetTrialUpsell,
+        /// Reset the trial end upsell notification
         ResetTrialEndUpsell,
+        /// Continue the current thread
         ContinueThread,
+        /// Continue the thread with burn mode enabled
         ContinueWithBurnMode,
+        /// Toggle burn mode for faster responses
         ToggleBurnMode,
     ]
 );

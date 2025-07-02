@@ -32,7 +32,15 @@ pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
 }
-actions!(tab_switcher, [CloseSelectedItem, ToggleAll]);
+actions!(
+    tab_switcher,
+    [
+        /// Close the selected item in the tab switcher
+        CloseSelectedItem,
+        /// Toggle between showing all tabs or just the current pane's tabs
+        ToggleAll
+    ]
+);
 
 pub struct TabSwitcher {
     picker: Entity<Picker<TabSwitcherDelegate>>,

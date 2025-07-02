@@ -44,7 +44,13 @@ pub struct ImportCursorSettings {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-actions!(zed, [OpenSettingsEditor]);
+actions!(
+    zed,
+    [
+        /// Open the settings editor
+        OpenSettingsEditor
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettingsEditor, cx| {

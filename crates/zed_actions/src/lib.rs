@@ -28,15 +28,25 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
+        /// Open the settings editor
         OpenSettings,
+        /// Open the default keymap file
         OpenDefaultKeymap,
+        /// Open account settings
         OpenAccountSettings,
+        /// Open server settings
         OpenServerSettings,
+        /// Quit the application
         Quit,
+        /// Open the user keymap file
         OpenKeymap,
+        /// Show information about Zed
         About,
+        /// Open the documentation website
         OpenDocs,
+        /// View open source licenses
         OpenLicenses,
+        /// Open the telemetry log
         OpenTelemetryLog,
     ]
 );
@@ -116,7 +126,13 @@ pub struct ResetUiFontSize {
 pub mod dev {
     use gpui::actions;
 
-    actions!(dev, [ToggleInspector]);
+    actions!(
+        dev,
+        [
+            /// Toggle the developer inspector for debugging UI elements
+            ToggleInspector
+        ]
+    );
 }
 
 pub mod workspace {
@@ -139,9 +155,13 @@ pub mod git {
     actions!(
         git,
         [
+            /// Checkout a different git branch
             CheckoutBranch,
+            /// Switch to a different git branch
             Switch,
+            /// Select a different repository
             SelectRepo,
+            /// Open the git branch selector
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch
         ]
@@ -151,25 +171,51 @@ pub mod git {
 pub mod jj {
     use gpui::actions;
 
-    actions!(jj, [BookmarkList]);
+    actions!(
+        jj,
+        [
+            /// Open the Jujutsu bookmark list
+            BookmarkList
+        ]
+    );
 }
 
 pub mod toast {
     use gpui::actions;
 
-    actions!(toast, [RunAction]);
+    actions!(
+        toast,
+        [
+            /// Run the action associated with a toast notification
+            RunAction
+        ]
+    );
 }
 
 pub mod command_palette {
     use gpui::actions;
 
-    actions!(command_palette, [Toggle]);
+    actions!(
+        command_palette,
+        [
+            /// Toggle the command palette
+            Toggle
+        ]
+    );
 }
 
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [FileBugReport, GiveFeedback]);
+    actions!(
+        feedback,
+        [
+            /// Open the bug report form
+            FileBugReport,
+            /// Open the feedback form
+            GiveFeedback
+        ]
+    );
 }
 
 pub mod theme_selector {
@@ -205,7 +251,14 @@ pub mod agent {
 
     actions!(
         agent,
-        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+        [
+            /// Open the agent configuration panel
+            OpenConfiguration,
+            /// Open the agent onboarding modal
+            OpenOnboardingModal,
+            /// Reset the agent onboarding state
+            ResetOnboarding
+        ]
     );
 }
 
@@ -223,7 +276,13 @@ pub mod assistant {
         ]
     );
 
-    actions!(assistant, [ShowConfiguration]);
+    actions!(
+        assistant,
+        [
+            /// Show the assistant configuration panel
+            ShowConfiguration
+        ]
+    );
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
@@ -244,7 +303,15 @@ pub mod assistant {
 pub mod debugger {
     use gpui::actions;
 
-    actions!(debugger, [OpenOnboardingModal, ResetOnboarding]);
+    actions!(
+        debugger,
+        [
+            /// Open the debugger onboarding modal
+            OpenOnboardingModal,
+            /// Reset the debugger onboarding state
+            ResetOnboarding
+        ]
+    );
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
@@ -350,15 +417,36 @@ pub mod outline {
     pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut Window, &mut App)> = OnceLock::new();
 }
 
-actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
-actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
+actions!(
+    zed_predict_onboarding,
+    [
+        /// Open the Zed Predict onboarding modal
+        OpenZedPredictOnboarding
+    ]
+);
+actions!(
+    git_onboarding,
+    [
+        /// Open the git integration onboarding modal
+        OpenGitIntegrationOnboarding
+    ]
+);
 
-actions!(debug_panel, [ToggleFocus]);
+actions!(
+    debug_panel,
+    [
+        /// Toggle focus on the debug panel
+        ToggleFocus
+    ]
+);
 actions!(
     debugger,
     [
+        /// Toggle the enabled state of a breakpoint
         ToggleEnableBreakpoint,
+        /// Remove a breakpoint
         UnsetBreakpoint,
+        /// Open the project debug tasks configuration
         OpenProjectDebugTasks,
     ]
 );

@@ -37,7 +37,16 @@ pub fn init(cx: &mut App) {
 
 actions!(
     rules_library,
-    [NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule]
+    [
+        /// Create a new rule in the rules library
+        NewRule,
+        /// Delete the selected rule
+        DeleteRule,
+        /// Duplicate the selected rule
+        DuplicateRule,
+        /// Toggle whether the selected rule is a default rule
+        ToggleDefaultRule
+    ]
 );
 
 const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(

@@ -13,7 +13,17 @@ pub(crate) enum IndentDirection {
     Auto,
 }
 
-actions!(vim, [Indent, Outdent, AutoIndent]);
+actions!(
+    vim,
+    [
+        /// Increase indentation of selected lines
+        Indent,
+        /// Decrease indentation of selected lines
+        Outdent,
+        /// Automatically adjust indentation based on syntax
+        AutoIndent
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {

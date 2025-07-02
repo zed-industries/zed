@@ -32,36 +32,67 @@ pub mod tests;
 actions!(
     debugger,
     [
+        /// Start a new debugging session
         Start,
+        /// Continue execution until the next breakpoint
         Continue,
+        /// Detach the debugger from the running process
         Detach,
+        /// Pause the currently running program
         Pause,
+        /// Restart the current debugging session
         Restart,
+        /// Rerun the current debugging session with the same configuration
         RerunSession,
+        /// Step into the next function call
         StepInto,
+        /// Step over the current line
         StepOver,
+        /// Step out of the current function
         StepOut,
+        /// Step back to the previous statement
         StepBack,
+        /// Stop the debugging session
         Stop,
+        /// Toggle whether to ignore all breakpoints
         ToggleIgnoreBreakpoints,
+        /// Clear all breakpoints in the project
         ClearAllBreakpoints,
+        /// Focus on the debugger console panel
         FocusConsole,
+        /// Focus on the variables panel
         FocusVariables,
+        /// Focus on the breakpoint list panel
         FocusBreakpointList,
+        /// Focus on the call stack frames panel
         FocusFrames,
+        /// Focus on the loaded modules panel
         FocusModules,
+        /// Focus on the loaded sources panel
         FocusLoadedSources,
+        /// Focus on the terminal panel
         FocusTerminal,
+        /// Show the stack trace for the current thread
         ShowStackTrace,
+        /// Toggle the thread picker dropdown
         ToggleThreadPicker,
+        /// Toggle the session picker dropdown
         ToggleSessionPicker,
+        /// Rerun the last debugging session
         #[action(deprecated_aliases = ["debugger::RerunLastSession"])]
         Rerun,
+        /// Toggle expansion of the selected item in the debugger UI
         ToggleExpandItem,
     ]
 );
 
-actions!(dev, [CopyDebugAdapterArguments]);
+actions!(
+    dev,
+    [
+        /// Copy debug adapter launch arguments to clipboard
+        CopyDebugAdapterArguments
+    ]
+);
 
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);

@@ -9,11 +9,17 @@ use workspace::{ModalView, Workspace};
 actions!(
     zeta,
     [
+        /// Rate the active completion with a thumbs up
         ThumbsUpActiveCompletion,
+        /// Rate the active completion with a thumbs down
         ThumbsDownActiveCompletion,
+        /// Navigate to the next edit in the completion history
         NextEdit,
+        /// Navigate to the previous edit in the completion history
         PreviousEdit,
+        /// Focus on the completions list
         FocusCompletions,
+        /// Preview the selected completion
         PreviewCompletion,
     ]
 );

@@ -177,7 +177,16 @@ enum DeleteMarks {
 
 actions!(
     vim,
-    [VisualCommand, CountCommand, ShellCommand, ArgumentRequired]
+    [
+        /// Execute a command in visual mode
+        VisualCommand,
+        /// Execute a command with a count prefix
+        CountCommand,
+        /// Execute a shell command
+        ShellCommand,
+        /// Indicates that an argument is required for the command
+        ArgumentRequired
+    ]
 );
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]

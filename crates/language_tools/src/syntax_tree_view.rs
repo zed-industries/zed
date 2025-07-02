@@ -15,7 +15,13 @@ use workspace::{
     item::{Item, ItemHandle},
 };
 
-actions!(dev, [OpenSyntaxTreeView]);
+actions!(
+    dev,
+    [
+        /// Open the syntax tree view for the current file
+        OpenSyntaxTreeView
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {

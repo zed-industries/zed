@@ -200,32 +200,59 @@ struct Trash {
 actions!(
     project_panel,
     [
+        /// Expand the selected entry in the project tree
         ExpandSelectedEntry,
+        /// Collapse the selected entry in the project tree
         CollapseSelectedEntry,
+        /// Collapse all entries in the project tree
         CollapseAllEntries,
+        /// Create a new directory
         NewDirectory,
+        /// Create a new file
         NewFile,
+        /// Copy the selected file or directory
         Copy,
+        /// Duplicate the selected file or directory
         Duplicate,
+        /// Reveal the selected item in the system file manager
         RevealInFileManager,
+        /// Remove the selected folder from the project
         RemoveFromProject,
+        /// Open the selected file with the system's default application
         OpenWithSystem,
+        /// Cut the selected file or directory
         Cut,
+        /// Paste the previously cut or copied item
         Paste,
+        /// Rename the selected file or directory
         Rename,
+        /// Open the selected file in the editor
         Open,
+        /// Open the selected file in a permanent tab
         OpenPermanent,
+        /// Toggle focus on the project panel
         ToggleFocus,
+        /// Toggle visibility of git-ignored files
         ToggleHideGitIgnore,
+        /// Start a new search in the selected directory
         NewSearchInDirectory,
+        /// Unfold the selected directory
         UnfoldDirectory,
+        /// Fold the selected directory
         FoldDirectory,
+        /// Select the parent directory
         SelectParent,
+        /// Select the next entry with git changes
         SelectNextGitEntry,
+        /// Select the previous entry with git changes
         SelectPrevGitEntry,
+        /// Select the next entry with diagnostics
         SelectNextDiagnostic,
+        /// Select the previous entry with diagnostics
         SelectPrevDiagnostic,
+        /// Select the next directory
         SelectNextDirectory,
+        /// Select the previous directory
         SelectPrevDirectory,
     ]
 );

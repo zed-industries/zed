@@ -78,7 +78,13 @@ pub struct SendText(String);
 #[action(namespace = terminal)]
 pub struct SendKeystroke(String);
 
-actions!(terminal, [RerunTask]);
+actions!(
+    terminal,
+    [
+        /// Rerun the last executed task in the terminal
+        RerunTask
+    ]
+);
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);

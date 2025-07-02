@@ -85,12 +85,19 @@ use assistant_context::{
 actions!(
     assistant,
     [
+        /// Send the current message to the assistant
         Assist,
+        /// Confirm and execute the entered slash command
         ConfirmCommand,
+        /// Copy code from the assistant's response to the clipboard
         CopyCode,
+        /// Cycle between user and assistant message roles
         CycleMessageRole,
+        /// Insert the selected text into the active editor
         InsertIntoEditor,
+        /// Quote the current selection in the assistant conversation
         QuoteSelection,
+        /// Split the conversation at the current cursor position
         Split,
     ]
 );

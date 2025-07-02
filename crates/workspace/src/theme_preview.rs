@@ -11,7 +11,13 @@ use ui::{
 
 use crate::{Item, Workspace};
 
-actions!(dev, [OpenThemePreview]);
+actions!(
+    dev,
+    [
+        /// Open the theme preview window
+        OpenThemePreview
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {

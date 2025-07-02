@@ -5,7 +5,15 @@ use language::SelectionGoal;
 use settings::Settings;
 use vim_mode_setting::HelixModeSetting;
 
-actions!(vim, [NormalBefore, TemporaryNormal]);
+actions!(
+    vim,
+    [
+        /// Switch to normal mode with cursor positioned before the current character
+        NormalBefore,
+        /// Temporarily switch to normal mode for one command
+        TemporaryNormal
+    ]
+);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::normal_before);

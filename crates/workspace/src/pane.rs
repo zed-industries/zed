@@ -176,25 +176,45 @@ pub struct DeploySearch {
 actions!(
     pane,
     [
+        /// Activate the previous item in the pane
         ActivatePreviousItem,
+        /// Activate the next item in the pane
         ActivateNextItem,
+        /// Activate the last item in the pane
         ActivateLastItem,
+        /// Switch to the alternate file
         AlternateFile,
+        /// Navigate back in history
         GoBack,
+        /// Navigate forward in history
         GoForward,
+        /// Join this pane into the next pane
         JoinIntoNext,
+        /// Join all panes into one
         JoinAll,
+        /// Reopen the most recently closed item
         ReopenClosedItem,
+        /// Split the pane to the left
         SplitLeft,
+        /// Split the pane upward
         SplitUp,
+        /// Split the pane to the right
         SplitRight,
+        /// Split the pane downward
         SplitDown,
+        /// Split the pane horizontally
         SplitHorizontal,
+        /// Split the pane vertically
         SplitVertical,
+        /// Swap the current item with the one to the left
         SwapItemLeft,
+        /// Swap the current item with the one to the right
         SwapItemRight,
+        /// Toggle preview mode for the current tab
         TogglePreviewTab,
+        /// Toggle pin status for the current tab
         TogglePinTab,
+        /// Unpin all tabs in the pane
         UnpinAllTabs,
     ]
 );

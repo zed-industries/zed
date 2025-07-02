@@ -5,7 +5,15 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{Tab, prelude::*};
 
-actions!(panel, [NextPanelTab, PreviousPanelTab]);
+actions!(
+    panel,
+    [
+        /// Navigate to the next tab in the panel
+        NextPanelTab,
+        /// Navigate to the previous tab in the panel
+        PreviousPanelTab
+    ]
+);
 
 pub trait PanelHeader: workspace::Panel {
     fn header_height(&self, cx: &mut App) -> Pixels {

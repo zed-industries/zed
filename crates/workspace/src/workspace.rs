@@ -169,44 +169,83 @@ pub trait DebuggerProvider {
 actions!(
     workspace,
     [
+        /// Activate the next pane in the workspace
         ActivateNextPane,
+        /// Activate the previous pane in the workspace
         ActivatePreviousPane,
+        /// Switch to the next window
         ActivateNextWindow,
+        /// Switch to the previous window
         ActivatePreviousWindow,
+        /// Add a folder to the current project
         AddFolderToProject,
+        /// Clear all notifications
         ClearAllNotifications,
+        /// Close the active dock
         CloseActiveDock,
+        /// Close all docks
         CloseAllDocks,
+        /// Close the current window
         CloseWindow,
+        /// Open the feedback dialog
         Feedback,
+        /// Follow the next collaborator in the session
         FollowNextCollaborator,
+        /// Move the focused panel to the next position
         MoveFocusedPanelToNextPosition,
+        /// Open a new terminal in the center
         NewCenterTerminal,
+        /// Create a new file
         NewFile,
+        /// Create a new file in a vertical split
         NewFileSplitVertical,
+        /// Create a new file in a horizontal split
         NewFileSplitHorizontal,
+        /// Open a new search
         NewSearch,
+        /// Open a new terminal
         NewTerminal,
+        /// Open a new window
         NewWindow,
+        /// Open a file or directory
         Open,
+        /// Open multiple files
         OpenFiles,
+        /// Open the current location in terminal
         OpenInTerminal,
+        /// Open the component preview
         OpenComponentPreview,
+        /// Reload the active item
         ReloadActiveItem,
+        /// Reset the active dock to its default size
         ResetActiveDockSize,
+        /// Reset all open docks to their default sizes
         ResetOpenDocksSize,
+        /// Save the current file with a new name
         SaveAs,
+        /// Save without formatting
         SaveWithoutFormat,
+        /// Shutdown all debug adapters
         ShutdownDebugAdapters,
+        /// Suppress the current notification
         SuppressNotification,
+        /// Toggle the bottom dock
         ToggleBottomDock,
+        /// Toggle centered layout mode
         ToggleCenteredLayout,
+        /// Toggle the left dock
         ToggleLeftDock,
+        /// Toggle the right dock
         ToggleRightDock,
+        /// Toggle zoom on the active pane
         ToggleZoom,
+        /// Stop following a collaborator
         Unfollow,
+        /// Show the welcome screen
         Welcome,
+        /// Restore the banner
         RestoreBanner,
+        /// Toggle expansion of the selected item
         ToggleExpandItem,
     ]
 );
@@ -298,6 +337,7 @@ pub struct Reload {
 actions!(
     project_symbols,
     [
+        /// Toggle the project symbols search
         #[action(name = "Toggle")]
         ToggleProjectSymbols
     ]
@@ -354,13 +394,21 @@ pub struct DecreaseOpenDocksSize {
 actions!(
     workspace,
     [
+        /// Activate the pane to the left
         ActivatePaneLeft,
+        /// Activate the pane to the right
         ActivatePaneRight,
+        /// Activate the pane above
         ActivatePaneUp,
+        /// Activate the pane below
         ActivatePaneDown,
+        /// Swap the current pane with the one to the left
         SwapPaneLeft,
+        /// Swap the current pane with the one to the right
         SwapPaneRight,
+        /// Swap the current pane with the one above
         SwapPaneUp,
+        /// Swap the current pane with the one below
         SwapPaneDown,
     ]
 );
@@ -6677,14 +6725,25 @@ actions!(
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
+        /// Mute your microphone
         Mute,
+        /// Deafen yourself (mute both microphone and speakers)
         Deafen,
+        /// Leave the current call
         LeaveCall,
+        /// Share the current project with collaborators
         ShareProject,
+        /// Share your screen with collaborators
         ScreenShare
     ]
 );
-actions!(zed, [OpenLog]);
+actions!(
+    zed,
+    [
+        /// Open the Zed log file
+        OpenLog
+    ]
+);
 
 async fn join_channel_internal(
     channel_id: ChannelId,

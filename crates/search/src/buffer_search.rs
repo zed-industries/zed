@@ -58,7 +58,17 @@ pub struct Deploy {
     pub selection_search_enabled: bool,
 }
 
-actions!(buffer_search, [DeployReplace, Dismiss, FocusEditor]);
+actions!(
+    buffer_search,
+    [
+        /// Deploy the search and replace interface
+        DeployReplace,
+        /// Dismiss the search bar
+        Dismiss,
+        /// Focus back on the editor
+        FocusEditor
+    ]
+);
 
 impl Deploy {
     pub fn find() -> Self {

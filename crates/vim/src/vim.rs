@@ -134,55 +134,105 @@ struct PushLiteral {
 actions!(
     vim,
     [
+        /// Switch to normal mode
         SwitchToNormalMode,
+        /// Switch to insert mode
         SwitchToInsertMode,
+        /// Switch to replace mode
         SwitchToReplaceMode,
+        /// Switch to visual mode
         SwitchToVisualMode,
+        /// Switch to visual line mode
         SwitchToVisualLineMode,
+        /// Switch to visual block mode
         SwitchToVisualBlockMode,
+        /// Switch to Helix-style normal mode
         SwitchToHelixNormalMode,
+        /// Clear any pending operators
         ClearOperators,
+        /// Clear the exchange register
         ClearExchange,
+        /// Insert a tab character
         Tab,
+        /// Insert a newline
         Enter,
+        /// Select inner text object
         InnerObject,
+        /// Maximize the current pane
         MaximizePane,
+        /// Open the default keymap file
         OpenDefaultKeymap,
+        /// Reset all pane sizes to default
         ResetPaneSizes,
+        /// Resize the pane to the right
         ResizePaneRight,
+        /// Resize the pane to the left
         ResizePaneLeft,
+        /// Resize the pane upward
         ResizePaneUp,
+        /// Resize the pane downward
         ResizePaneDown,
+        /// Start a change operation
         PushChange,
+        /// Start a delete operation
         PushDelete,
+        /// Exchange text regions
         Exchange,
+        /// Start a yank operation
         PushYank,
+        /// Start a replace operation
         PushReplace,
+        /// Delete surrounding characters
         PushDeleteSurrounds,
+        /// Set a mark at the current position
         PushMark,
+        /// Toggle the marks view
         ToggleMarksView,
+        /// Start a forced motion
         PushForcedMotion,
+        /// Start an indent operation
         PushIndent,
+        /// Start an outdent operation
         PushOutdent,
+        /// Start an auto-indent operation
         PushAutoIndent,
+        /// Start a rewrap operation
         PushRewrap,
+        /// Start a shell command operation
         PushShellCommand,
+        /// Convert to lowercase
         PushLowercase,
+        /// Convert to uppercase
         PushUppercase,
+        /// Toggle case
         PushOppositeCase,
+        /// Apply ROT13 encoding
         PushRot13,
+        /// Apply ROT47 encoding
         PushRot47,
+        /// Toggle the registers view
         ToggleRegistersView,
+        /// Select a register
         PushRegister,
+        /// Start recording to a register
         PushRecordRegister,
+        /// Replay a register
         PushReplayRegister,
+        /// Replace with register contents
         PushReplaceWithRegister,
+        /// Toggle comments
         PushToggleComments,
     ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode,]);
+actions!(
+    workspace,
+    [
+        /// Toggle Vim mode on or off
+        ToggleVimMode,
+    ]
+);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {

@@ -73,7 +73,17 @@ pub(crate) struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
+actions!(
+    vim,
+    [
+        /// Submit the current search query
+        SearchSubmit,
+        /// Move to the next search match
+        MoveToNextMatch,
+        /// Move to the previous search match
+        MoveToPreviousMatch
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
