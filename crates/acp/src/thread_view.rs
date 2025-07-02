@@ -329,7 +329,7 @@ impl AcpThreadView {
                             .color(Color::Muted),
                     )
                     .child(MarkdownElement::new(
-                        tool_call.tool_name.clone(),
+                        tool_call.display_name.clone(),
                         default_markdown_style(window, cx),
                     ))
                     .child(div().w_full())
