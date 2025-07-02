@@ -368,7 +368,7 @@ impl Render for AcpThreadView {
                     .flex_1()
                     .justify_end()
                     .child(Label::new(format!("Failed to load {e}")).into_any_element()),
-                ThreadState::Ready { .. } => v_flex()
+                ThreadState::Ready { thread, .. } => v_flex()
                     .flex_1()
                     .gap_2()
                     .pb_2()
@@ -377,16 +377,18 @@ impl Render for AcpThreadView {
                             .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                             .flex_grow(),
                     )
-                    .child(
-                        div()
-                            .px_3()
-                            .child(
-                                Label::new("Generating...")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            )
-                            .when(self.send_task.is_none(), |this| this.invisible()),
-                    ),
+                    .child(div().px_3().children(if self.send_task.is_none() {
+                        None
+                    } else {
+                        Label::new(if thread.read(cx).waiting_for_tool_confirmation() {
+                            "Waiting for tool confirmation"
+                        } else {
+                            "Generating..."
+                        })
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .into()
+                    })),
             })
             .child(
                 v_flex()

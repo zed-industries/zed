@@ -335,6 +335,23 @@ impl AcpThread {
         entry
     }
 
+    /// Returns true if the last turn is awaiting tool authorization
+    pub fn waiting_for_tool_confirmation(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match &entry.content {
+                AgentThreadEntryContent::ToolCall(call) => match call.status {
+                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
+                    ToolCallStatus::Allowed | ToolCallStatus::Rejected => continue,
+                },
+                AgentThreadEntryContent::Message(_) => {
+                    // Reached the beginning of the turn
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
     pub fn send(&mut self, message: &str, cx: &mut Context<Self>) -> Task<Result<()>> {
         let agent = self.server.clone();
         let id = self.id.clone();
