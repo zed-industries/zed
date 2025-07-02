@@ -40,7 +40,7 @@ impl Render for AgentPanelOnboarding {
                 h_flex()
                     .gap_2()
                     .child(
-                        Label::new("BYOK")
+                        Label::new("API Keys")
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .buffer_font(cx),
@@ -50,10 +50,10 @@ impl Render for AgentPanelOnboarding {
             .child(
                 List::new()
                     .child(BulletItem::new(
-                        "You can also use Zed AI by bringing your own API keys",
+                        "You can also use AI in Zed by bringing your own API keys",
                     ))
                     .child(BulletItem::new(
-                        "No need for any of the plans; no need to sign in; no payment required",
+                        "No need for any of the plans or even to sign in",
                     )),
             )
             .child(
