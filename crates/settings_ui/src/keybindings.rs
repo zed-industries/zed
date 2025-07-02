@@ -801,13 +801,11 @@ impl Render for KeybindingEditorModal {
                     .border_color(cx.theme().colors().border_variant)
                     .child(
                         Button::new("cancel", "Cancel")
-                            .label_size(LabelSize::Large)
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                     )
                     .child(
-                        Button::new("save-btn", "Save Keybinding")
-                            .label_size(LabelSize::Large)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
+                        Button::new("save-btn", "Save Keybinding").on_click(cx.listener(
+                            |this, _event, _window, cx| {
                                 let existing_keybind = this.editing_keybind.clone();
                                 let fs = this.fs.clone();
                                 let new_keystrokes = this
@@ -837,7 +835,8 @@ impl Render for KeybindingEditorModal {
                                     }
                                 })
                                 .detach();
-                            })),
+                            },
+                        )),
                     ),
             )
             .when_some(self.error.clone(), |this, error| {
