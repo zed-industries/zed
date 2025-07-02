@@ -8,8 +8,8 @@ use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
-    Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, UpdateGlobal, WeakEntity,
-    actions, prelude::*, svg, transparent_black,
+    Action, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, UpdateGlobal,
+    WeakEntity, actions, prelude::*, svg, transparent_black,
 };
 use menu;
 use persistence::ONBOARDING_DB;
@@ -29,6 +29,7 @@ use workspace::{
     item::{Item, ItemEvent, SerializableItem},
     notifications::NotifyResultExt,
 };
+use zed_actions;
 
 actions!(
     onboarding,
@@ -714,8 +715,11 @@ impl OnboardingUI {
                                     .style(ButtonStyle::Subtle)
                                     .color(Color::Muted)
                                     .on_click(cx.listener(|_, _, window, cx| {
-                                        // TODO: Open theme selector
-                                        cx.notify();
+                                        window.dispatch_action(
+                                            zed_actions::theme_selector::Toggle::default()
+                                                .boxed_clone(),
+                                            cx,
+                                        );
                                     })),
                             ),
                     )
