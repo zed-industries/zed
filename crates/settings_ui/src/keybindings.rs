@@ -248,7 +248,7 @@ impl KeymapEditor {
 
             let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(
-                ui::KeyBinding::new_from_action(key_binding.clone(), cx)
+                ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
                     .vim_mode(source == Some(settings::KeybindSource::Vim)),
             );
 
