@@ -1,9 +1,8 @@
-use crate::{AcpThread, ThreadEntryId, ThreadId, ToolCallId};
+use crate::{AcpThread, ThreadEntryId, ThreadId, ToolCallId, ToolCallRequest};
 use agentic_coding_protocol as acp;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::channel::oneshot;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
@@ -182,52 +181,18 @@ impl acp::Client for AcpClientDelegate {
         &self,
         request: acp::RequestToolCallConfirmationParams,
     ) -> Result<acp::RequestToolCallConfirmationResponse> {
-        let (tx, rx) = oneshot::channel();
-
         let cx = &mut self.cx.clone();
-        let entry_id = cx
+        let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                    // todo! Should we pass through richer data than a description?
-                    let description = match request.confirmation {
-                        acp::ToolCallConfirmation::Edit {
-                            file_name,
-                            file_diff,
-                        } => {
-                            // todo! Nicer syntax/presentation based on file extension? Better way to communicate diff?
-                            format!("Edit file `{file_name}` with diff:\n```\n{file_diff}\n```")
-                        }
-                        acp::ToolCallConfirmation::Execute {
-                            command,
-                            root_command: _,
-                        } => {
-                            format!("Execute command `{command}`")
-                        }
-                        acp::ToolCallConfirmation::Mcp {
-                            server_name,
-                            tool_name: _,
-                            tool_display_name,
-                        } => {
-                            format!("MCP: {server_name} - {tool_display_name}")
-                        }
-                        acp::ToolCallConfirmation::Info { prompt, urls } => {
-                            format!("Info: {prompt}\n{urls:?}")
-                        }
-                    };
-                    thread.push_tool_call(request.title, description, Some(tx), cx)
+                    thread.request_tool_call(request.title, request.confirmation, cx)
                 })
             })?
             .context("Failed to update thread")?;
 
-        let outcome = if rx.await? {
-            // todo! Handle other outcomes
-            acp::ToolCallConfirmationOutcome::Allow
-        } else {
-            acp::ToolCallConfirmationOutcome::Reject
-        };
         Ok(acp::RequestToolCallConfirmationResponse {
-            id: entry_id.into(),
-            outcome,
+            id: id.into(),
+            outcome: outcome.await?,
         })
     }
 
@@ -239,7 +204,7 @@ impl acp::Client for AcpClientDelegate {
         let entry_id = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                    thread.push_tool_call(request.title, request.description, None, cx)
+                    thread.push_tool_call(request.title, cx)
                 })
             })?
             .context("Failed to update thread")?;

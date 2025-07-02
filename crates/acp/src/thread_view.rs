@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agentic_coding_protocol::{self as acp};
+use agentic_coding_protocol::{self as acp, ToolCallConfirmation};
 use anyhow::Result;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -191,12 +191,17 @@ impl AcpThreadView {
         });
     }
 
-    fn authorize_tool_call(&mut self, id: ToolCallId, allowed: bool, cx: &mut Context<Self>) {
+    fn authorize_tool_call(
+        &mut self,
+        id: ToolCallId,
+        outcome: acp::ToolCallConfirmationOutcome,
+        cx: &mut Context<Self>,
+    ) {
         let Some(thread) = self.thread() else {
             return;
         };
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(id, allowed, cx);
+            thread.authorize_tool_call(id, outcome, cx);
         });
         cx.notify();
     }
@@ -289,48 +294,9 @@ impl AcpThreadView {
         };
 
         let content = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { description, .. } => v_flex()
-                .border_color(cx.theme().colors().border)
-                .border_t_1()
-                .px_2()
-                .py_1p5()
-                .child(MarkdownElement::new(
-                    description.clone(),
-                    default_markdown_style(window, cx),
-                ))
-                .child(
-                    h_flex()
-                        .justify_end()
-                        .gap_1()
-                        .child(
-                            Button::new(("allow", tool_call.id.as_u64()), "Allow")
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Success)
-                                .on_click(cx.listener({
-                                    let id = tool_call.id;
-                                    move |this, _, _, cx| {
-                                        this.authorize_tool_call(id, true, cx);
-                                    }
-                                })),
-                        )
-                        .child(
-                            Button::new(("reject", tool_call.id.as_u64()), "Reject")
-                                .icon(IconName::X)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Error)
-                                .on_click(cx.listener({
-                                    let id = tool_call.id;
-                                    move |this, _, _, cx| {
-                                        this.authorize_tool_call(id, false, cx);
-                                    }
-                                })),
-                        ),
-                )
-                .into_any()
-                .into(),
+            ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
+                Some(self.render_tool_call_confirmation(tool_call.id, confirmation, cx))
+            }
             ToolCallStatus::Allowed { content, .. } => content.clone().map(|content| {
                 div()
                     .border_color(cx.theme().colors().border)
@@ -371,6 +337,309 @@ impl AcpThreadView {
                     .child(status_icon),
             )
             .children(content)
+    }
+
+    fn render_tool_call_confirmation(
+        &self,
+        tool_call_id: ToolCallId,
+        confirmation: &ToolCallConfirmation,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        match confirmation {
+            ToolCallConfirmation::Edit {
+                file_name,
+                file_diff,
+            } => v_flex()
+                .border_color(cx.theme().colors().border)
+                .border_t_1()
+                .px_2()
+                .py_1p5()
+                // todo! nicer rendering
+                .child(file_name.clone())
+                .child(file_diff.clone())
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Always Allow Edits")
+                                .icon(IconName::CheckDouble)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Allow")
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Allow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("reject", tool_call_id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Reject,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any(),
+            ToolCallConfirmation::Execute {
+                command,
+                root_command,
+            } => v_flex()
+                .border_color(cx.theme().colors().border)
+                .border_t_1()
+                .px_2()
+                .py_1p5()
+                // todo! nicer rendering
+                .child(command.clone())
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(
+                                ("allow", tool_call_id.as_u64()),
+                                format!("Always Allow {root_command}"),
+                            )
+                            .icon(IconName::CheckDouble)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Success)
+                            .on_click(cx.listener({
+                                let id = tool_call_id;
+                                move |this, _, _, cx| {
+                                    this.authorize_tool_call(
+                                        id,
+                                        acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                        cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Allow")
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Allow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("reject", tool_call_id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Reject,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any(),
+            ToolCallConfirmation::Mcp {
+                server_name,
+                tool_name: _,
+                tool_display_name,
+            } => v_flex()
+                .border_color(cx.theme().colors().border)
+                .border_t_1()
+                .px_2()
+                .py_1p5()
+                // todo! nicer rendering
+                .child(format!("{server_name} - {tool_display_name}"))
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(
+                                ("allow", tool_call_id.as_u64()),
+                                format!("Always Allow {server_name}"),
+                            )
+                            .icon(IconName::CheckDouble)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Success)
+                            .on_click(cx.listener({
+                                let id = tool_call_id;
+                                move |this, _, _, cx| {
+                                    this.authorize_tool_call(
+                                        id,
+                                        acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer,
+                                        cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            Button::new(
+                                ("allow", tool_call_id.as_u64()),
+                                format!("Always Allow {tool_display_name}"),
+                            )
+                            .icon(IconName::CheckDouble)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Success)
+                            .on_click(cx.listener({
+                                let id = tool_call_id;
+                                move |this, _, _, cx| {
+                                    this.authorize_tool_call(
+                                        id,
+                                        acp::ToolCallConfirmationOutcome::AlwaysAllowTool,
+                                        cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Allow")
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Allow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("reject", tool_call_id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Reject,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any(),
+            ToolCallConfirmation::Info { prompt, urls: _ } => v_flex()
+                .border_color(cx.theme().colors().border)
+                .border_t_1()
+                .px_2()
+                .py_1p5()
+                // todo! nicer rendering
+                .child(prompt.clone())
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Always Allow")
+                                .icon(IconName::CheckDouble)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Allow")
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Allow,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(("reject", tool_call_id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Reject,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any(),
+        }
     }
 }
 

@@ -130,8 +130,8 @@ pub struct ToolCall {
 #[derive(Debug)]
 pub enum ToolCallStatus {
     WaitingForConfirmation {
-        description: Entity<Markdown>,
-        respond_tx: oneshot::Sender<bool>,
+        confirmation: acp::ToolCallConfirmation,
+        respond_tx: oneshot::Sender<acp::ToolCallConfirmationOutcome>,
     },
     // todo! Running?
     Allowed {
@@ -269,23 +269,39 @@ impl AcpThread {
         );
     }
 
-    pub fn push_tool_call(
+    pub fn request_tool_call(
         &mut self,
         title: String,
-        description: String,
-        confirmation_tx: Option<oneshot::Sender<bool>>,
+        confirmation: acp::ToolCallConfirmation,
+        cx: &mut Context<Self>,
+    ) -> ToolCallRequest {
+        let (tx, rx) = oneshot::channel();
+
+        let status = ToolCallStatus::WaitingForConfirmation {
+            confirmation,
+            respond_tx: tx,
+        };
+
+        let id = self.insert_tool_call(title, status, cx);
+        ToolCallRequest { id, outcome: rx }
+    }
+
+    pub fn push_tool_call(&mut self, title: String, cx: &mut Context<Self>) -> ToolCallId {
+        let status = ToolCallStatus::Allowed {
+            status: acp::ToolCallStatus::Running,
+            content: None,
+        };
+
+        self.insert_tool_call(title, status, cx)
+    }
+
+    fn insert_tool_call(
+        &mut self,
+        title: String,
+        status: ToolCallStatus,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
-
-        let description = cx.new(|cx| {
-            Markdown::new(
-                description.into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        });
 
         let entry_id = self.push_entry(
             AgentThreadEntryContent::ToolCall(ToolCall {
@@ -294,17 +310,7 @@ impl AcpThread {
                 tool_name: cx.new(|cx| {
                     Markdown::new(title.into(), Some(language_registry.clone()), None, cx)
                 }),
-                status: if let Some(respond_tx) = confirmation_tx {
-                    ToolCallStatus::WaitingForConfirmation {
-                        description,
-                        respond_tx,
-                    }
-                } else {
-                    ToolCallStatus::Allowed {
-                        status: acp::ToolCallStatus::Running,
-                        content: Some(description),
-                    }
-                },
+                status,
             }),
             cx,
         );
@@ -312,7 +318,12 @@ impl AcpThread {
         ToolCallId(entry_id)
     }
 
-    pub fn authorize_tool_call(&mut self, id: ToolCallId, allowed: bool, cx: &mut Context<Self>) {
+    pub fn authorize_tool_call(
+        &mut self,
+        id: ToolCallId,
+        outcome: acp::ToolCallConfirmationOutcome,
+        cx: &mut Context<Self>,
+    ) {
         let Some(entry) = self.entry_mut(id.0) else {
             return;
         };
@@ -322,19 +333,19 @@ impl AcpThread {
             return;
         };
 
-        let new_status = if allowed {
+        let new_status = if outcome == acp::ToolCallConfirmationOutcome::Reject {
+            ToolCallStatus::Rejected
+        } else {
             ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Running,
                 content: None,
             }
-        } else {
-            ToolCallStatus::Rejected
         };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(allowed).log_err();
+            respond_tx.send(outcome).log_err();
         } else {
             debug_panic!("tried to authorize an already authorized tool call");
         }
@@ -422,6 +433,11 @@ impl AcpThread {
     }
 }
 
+pub struct ToolCallRequest {
+    pub id: ToolCallId,
+    pub outcome: oneshot::Receiver<acp::ToolCallConfirmationOutcome>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,7 +522,7 @@ mod tests {
             let AgentThreadEntryContent::ToolCall(ToolCall {
                 id,
                 tool_name,
-                status: ToolCallStatus::WaitingForConfirmation { description, .. },
+                status: ToolCallStatus::Allowed { .. },
             }) = &thread.entries().last().unwrap().content
             else {
                 panic!();
@@ -516,18 +532,19 @@ mod tests {
                 assert_eq!(md.source(), "read_file");
             });
 
-            description.read_with(cx, |md, _cx| {
-                assert!(
-                    md.source().contains("foo"),
-                    "Expected description to contain 'foo', but got {}",
-                    md.source()
-                );
-            });
+            // todo!
+            // description.read_with(cx, |md, _cx| {
+            //     assert!(
+            //         md.source().contains("foo"),
+            //         "Expected description to contain 'foo', but got {}",
+            //         md.source()
+            //     );
+            // });
             *id
         });
 
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, true, cx);
+            thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
             assert!(matches!(
                 thread.entries().last().unwrap().content,
                 AgentThreadEntryContent::ToolCall(ToolCall {
