@@ -3229,8 +3229,7 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
-            let workspace_settings = WorkspaceSettings::get_global(cx);
-            let target_pane = match workspace_settings.file_opening_behavior {
+            let target_pane = match WorkspaceSettings::get_global(cx).file_opening_behavior {
                 FileOpeningBehavior::ActivePane => self.last_active_center_pane.clone(),
                 FileOpeningBehavior::FirstPane => None,
             };
