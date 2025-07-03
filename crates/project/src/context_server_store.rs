@@ -818,9 +818,9 @@ mod tests {
         .await;
 
         let executor = cx.executor();
-        let registry = cx.new(|_| {
+        let registry = cx.new(|cx| {
             let mut registry = ContextServerDescriptorRegistry::new();
-            registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1);
+            registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1, cx);
             registry
         });
         let store = cx.new(|cx| {
