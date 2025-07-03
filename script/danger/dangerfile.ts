@@ -105,12 +105,13 @@ const modifiedFixtures = danger.git.modified_files.filter((file) =>
 
 if (modifiedFixtures.length > 0) {
   if (!body.includes(FIXTURE_CHANGE_ATTESTATION)) {
+    const modifiedFixturesStr = modifiedFixtures.map((path) => "`" + path + "`").join(", ");
     fail(
       [
-        `This PR modifies eval or test fixtures (${modifiedFixtures.join(", ")}), which are typically expected to remain unchanged.`,
+        `This PR modifies eval or test fixtures (${modifiedFixturesStr}), which are typically expected to remain unchanged.`,
         "If these changes are intentional and required, please add the following attestation to your PR description: ",
         `"${FIXTURE_CHANGE_ATTESTATION}"`,
-      ].join("\n"),
+      ].join("\n\n"),
     );
   }
 }
