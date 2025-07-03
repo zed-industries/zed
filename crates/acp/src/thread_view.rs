@@ -543,35 +543,36 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let status_icon = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { .. } => Empty.into_element().into_any(),
+            ToolCallStatus::WaitingForConfirmation { .. } => None,
             ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Running,
                 ..
-            } => Icon::new(IconName::ArrowCircle)
-                .color(Color::Success)
-                .size(IconSize::Small)
-                .with_animation(
-                    "running",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
-                .into_any_element(),
+            } => Some(
+                Icon::new(IconName::ArrowCircle)
+                    .color(Color::Accent)
+                    .size(IconSize::Small)
+                    .with_animation(
+                        "running",
+                        Animation::new(Duration::from_secs(2)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    )
+                    .into_any(),
+            ),
             ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Finished,
                 ..
-            } => Icon::new(IconName::Check)
-                .color(Color::Success)
-                .size(IconSize::Small)
-                .into_any_element(),
+            } => None,
             ToolCallStatus::Rejected
             | ToolCallStatus::Canceled
             | ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Error,
                 ..
-            } => Icon::new(IconName::X)
-                .color(Color::Error)
-                .size(IconSize::Small)
-                .into_any_element(),
+            } => Some(
+                Icon::new(IconName::X)
+                    .color(Color::Error)
+                    .size(IconSize::Small)
+                    .into_any_element(),
+            ),
         };
 
         let content = match &tool_call.status {
@@ -621,7 +622,7 @@ impl AcpThreadView {
                         default_markdown_style(window, cx),
                     ))
                     .child(div().w_full())
-                    .child(status_icon),
+                    .children(status_icon),
             )
             .children(content)
     }
