@@ -3279,6 +3279,29 @@ fn test_contiguous_ranges() {
     );
 }
 
+#[test]
+fn test_buffer_chunks_tabs() {
+    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc😁");
+    let mut iter = buffer.as_rope().chunks();
+
+    while let Some((str, _, chars)) = iter.peek_tabs() {
+        dbg!(str.len(), str.bytes().count());
+        dbg!(str, format!("{:b}", chars));
+        iter.next();
+    }
+    dbg!("---");
+
+    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc");
+    let mut iter = buffer.as_rope().chunks();
+    iter.seek(3);
+
+    while let Some((str, tabs, _)) = iter.peek_tabs() {
+        dbg!(str, format!("{:b}", tabs));
+        iter.next();
+    }
+    assert!(false)
+}
+
 #[gpui::test(iterations = 500)]
 fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing
@@ -3740,4 +3763,81 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings::<AllLanguageSettings>(cx, f);
     });
+}
+
+#[gpui::test(iterations = 100)]
+fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
+    use util::RandomCharIter;
+
+    // Generate random text
+    let len = rng.gen_range(0..10000);
+    let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    // Get all chunks and verify their bitmaps
+    let chunks = snapshot.chunks(0..snapshot.len(), false);
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+        let tabs_bitmap = chunk.tabs;
+
+        // Check empty chunks have empty bitmaps
+        if chunk_text.is_empty() {
+            assert_eq!(
+                chars_bitmap, 0,
+                "Empty chunk should have empty chars bitmap"
+            );
+            assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+            continue;
+        }
+
+        // Verify that chunk text doesn't exceed 128 bytes
+        assert!(
+            chunk_text.len() <= 128,
+            "Chunk text length {} exceeds 128 bytes",
+            chunk_text.len()
+        );
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
+        }
+
+        // Verify tabs bitmap
+        for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+            let is_tab = byte == b'\t';
+            let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != is_tab {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                assert_eq!(
+                    has_bit, is_tab,
+                    "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                    byte_idx, chunk_text, byte as char, is_tab, has_bit
+                );
+            }
+        }
+    }
 }
