@@ -79,7 +79,7 @@ impl acp::Client for AcpClientDelegate {
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                    thread.request_tool_call(request.label, request.icon, request.confirmation, cx)
+                    thread.request_tool_call(request.label, request.icon, request.content, request.confirmation, cx)
                 })
             })?
             .context("Failed to update thread")?;
@@ -98,7 +98,7 @@ impl acp::Client for AcpClientDelegate {
         let entry_id = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                    thread.push_tool_call(request.label, request.icon, cx)
+                    thread.push_tool_call(request.label, request.icon, request.content, cx)
                 })
             })?
             .context("Failed to update thread")?;

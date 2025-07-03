@@ -127,6 +127,7 @@ pub struct ToolCall {
     id: ToolCallId,
     label: Entity<Markdown>,
     icon: IconName,
+    content: Option<ToolCallContent>,
     status: ToolCallStatus,
 }
 
@@ -138,7 +139,6 @@ pub enum ToolCallStatus {
     },
     Allowed {
         status: acp::ToolCallStatus,
-        content: Option<ToolCallContent>,
     },
     Rejected,
 }
@@ -146,7 +146,6 @@ pub enum ToolCallStatus {
 #[derive(Debug)]
 pub enum ToolCallConfirmation {
     Edit {
-        diff: Diff,
         description: Option<Entity<Markdown>>,
     },
     Execute {
@@ -187,8 +186,7 @@ impl ToolCallConfirmation {
         };
 
         match confirmation {
-            acp::ToolCallConfirmation::Edit { diff, description } => Self::Edit {
-                diff: Diff::from_acp(diff, language_registry.clone(), cx),
+            acp::ToolCallConfirmation::Edit { description } => Self::Edit {
                 description: description.map(|description| to_md(description, cx)),
             },
             acp::ToolCallConfirmation::Execute {
@@ -226,6 +224,23 @@ impl ToolCallConfirmation {
 pub enum ToolCallContent {
     Markdown { markdown: Entity<Markdown> },
     Diff { diff: Diff },
+}
+
+impl ToolCallContent {
+    pub fn from_acp(
+        content: acp::ToolCallContent,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        match content {
+            acp::ToolCallContent::Markdown { markdown } => Self::Markdown {
+                markdown: cx.new(|cx| Markdown::new_text(markdown.into(), cx)),
+            },
+            acp::ToolCallContent::Diff { diff } => Self::Diff {
+                diff: Diff::from_acp(diff, language_registry, cx),
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -442,6 +457,7 @@ impl AcpThread {
         &mut self,
         label: String,
         icon: acp::Icon,
+        content: Option<acp::ToolCallContent>,
         confirmation: acp::ToolCallConfirmation,
         cx: &mut Context<Self>,
     ) -> ToolCallRequest {
@@ -456,7 +472,7 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(label, status, icon, cx);
+        let id = self.insert_tool_call(label, status, icon, content, cx);
         ToolCallRequest { id, outcome: rx }
     }
 
@@ -464,14 +480,14 @@ impl AcpThread {
         &mut self,
         label: String,
         icon: acp::Icon,
+        content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
-            content: None,
         };
 
-        self.insert_tool_call(label, status, icon, cx)
+        self.insert_tool_call(label, status, icon, content, cx)
     }
 
     fn insert_tool_call(
@@ -479,6 +495,7 @@ impl AcpThread {
         label: String,
         status: ToolCallStatus,
         icon: acp::Icon,
+        content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
     ) -> ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
@@ -491,6 +508,8 @@ impl AcpThread {
                     Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
                 }),
                 icon: acp_icon_to_ui_icon(icon),
+                content: content
+                    .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
                 status,
             }),
             cx,
@@ -519,7 +538,6 @@ impl AcpThread {
         } else {
             ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Running,
-                content: None,
             }
         };
 
@@ -545,32 +563,23 @@ impl AcpThread {
         let entry = self.entry_mut(id.0).context("Entry not found")?;
 
         match &mut entry.content {
-            AgentThreadEntryContent::ToolCall(call) => match &mut call.status {
-                ToolCallStatus::Allowed { content, status } => {
-                    *content = new_content.map(|new_content| match new_content {
-                        acp::ToolCallContent::Markdown { markdown } => ToolCallContent::Markdown {
-                            markdown: cx.new(|cx| {
-                                Markdown::new(
-                                    markdown.into(),
-                                    Some(language_registry.clone()),
-                                    None,
-                                    cx,
-                                )
-                            }),
-                        },
-                        acp::ToolCallContent::Diff { diff } => ToolCallContent::Diff {
-                            diff: Diff::from_acp(diff, language_registry, cx),
-                        },
-                    });
-                    *status = new_status;
+            AgentThreadEntryContent::ToolCall(call) => {
+                call.content = new_content.map(|new_content| {
+                    ToolCallContent::from_acp(new_content, language_registry, cx)
+                });
+
+                match &mut call.status {
+                    ToolCallStatus::Allowed { status } => {
+                        *status = new_status;
+                    }
+                    ToolCallStatus::WaitingForConfirmation { .. } => {
+                        anyhow::bail!("Tool call hasn't been authorized yet")
+                    }
+                    ToolCallStatus::Rejected => {
+                        anyhow::bail!("Tool call was rejected and therefore can't be updated")
+                    }
                 }
-                ToolCallStatus::WaitingForConfirmation { .. } => {
-                    anyhow::bail!("Tool call hasn't been authorized yet")
-                }
-                ToolCallStatus::Rejected => {
-                    anyhow::bail!("Tool call was rejected and therefore can't be updated")
-                }
-            },
+            }
             _ => anyhow::bail!("Entry is not a tool call"),
         }
 
@@ -789,11 +798,8 @@ mod tests {
 
         thread.read_with(cx, |thread, cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
-                status:
-                    ToolCallStatus::Allowed {
-                        content: Some(ToolCallContent::Markdown { markdown }),
-                        ..
-                    },
+                content: Some(ToolCallContent::Markdown { markdown }),
+                status: ToolCallStatus::Allowed { .. },
                 ..
             }) = &thread.entries()[1].content
             else {
