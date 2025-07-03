@@ -1206,7 +1206,7 @@ fn handle_system_theme_changed(
                         drop(lock);
                         callback();
                         state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-                        configure_dwm_dark_mode(handle);
+                        configure_dwm_dark_mode(handle, new_appearance);
                     }
                 }
                 _ => {}
@@ -1468,7 +1468,7 @@ fn get_frame_thickness(dpi: u32) -> i32 {
     resize_frame_thickness + padding_thickness
 }
 
-pub(crate) fn notify_frame_changed(handle: HWND) {
+fn notify_frame_changed(handle: HWND) {
     unsafe {
         SetWindowPos(
             handle,

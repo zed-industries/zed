@@ -85,6 +85,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         gpu_context: &BladeContext,
         min_size: Option<Size<Pixels>>,
+        appearance: WindowAppearance,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -100,7 +101,6 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let appearance = system_appearance().unwrap_or_default();
         let restore_from_minimized = None;
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
@@ -209,6 +209,7 @@ impl WindowsWindowStatePtr {
             context.display,
             context.gpu_context,
             context.min_size,
+            context.appearance,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -341,6 +342,7 @@ struct WindowCreateContext<'a> {
     main_receiver: flume::Receiver<Runnable>,
     gpu_context: &'a BladeContext,
     main_thread_id_win32: u32,
+    appearance: WindowAppearance,
 }
 
 impl WindowsWindow {
@@ -390,6 +392,7 @@ impl WindowsWindow {
         } else {
             WindowsDisplay::primary_monitor().unwrap()
         };
+        let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -406,6 +409,7 @@ impl WindowsWindow {
             main_receiver,
             gpu_context,
             main_thread_id_win32,
+            appearance,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -429,7 +433,7 @@ impl WindowsWindow {
         let state_ptr = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
-        configure_dwm_dark_mode(hwnd);
+        configure_dwm_dark_mode(hwnd, appearance);
         state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
