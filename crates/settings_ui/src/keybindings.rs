@@ -824,6 +824,7 @@ impl RenderOnce for SyntaxHighlightedText {
 struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
     keybind_editor: Entity<KeystrokeInput>,
+    context_editor: Entity<Editor>,
     fs: Arc<dyn Fs>,
     error: Option<String>,
 }
@@ -842,14 +843,29 @@ impl KeybindingEditorModal {
     pub fn new(
         editing_keybind: ProcessedKeybinding,
         fs: Arc<dyn Fs>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Self {
         let keybind_editor = cx.new(KeystrokeInput::new);
+        let context_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            if let Some(context) = editing_keybind
+                .context
+                .as_ref()
+                .and_then(KeybindContextString::local)
+            {
+                editor.set_text(context.clone(), window, cx);
+            } else {
+                editor.set_placeholder_text("Keybinding context", cx);
+            }
+
+            editor
+        });
         Self {
             editing_keybind,
             fs,
             keybind_editor,
+            context_editor,
             error: None,
         }
     }
@@ -868,13 +884,34 @@ impl Render for KeybindingEditorModal {
                     .gap_2()
                     .child(
                         v_flex().child(Label::new("Edit Keystroke")).child(
-                            Label::new(
-                                "Input the desired keystroke for the selected action and hit save.",
-                            )
-                            .color(Color::Muted),
+                            Label::new("Input the desired keystroke for the selected action.")
+                                .color(Color::Muted),
                         ),
                     )
                     .child(self.keybind_editor.clone()),
+            )
+            .child(
+                v_flex()
+                    .p_3()
+                    .gap_3()
+                    .child(
+                        v_flex().child(Label::new("Edit Keystroke")).child(
+                            Label::new("Input the desired keystroke for the selected action.")
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .border_color(cx.theme().colors().border_variant)
+                            .border_1()
+                            .py_2()
+                            .px_3()
+                            .min_h_8()
+                            .rounded_md()
+                            .bg(theme.editor_background)
+                            .child(self.context_editor.clone()),
+                    ),
             )
             .child(
                 h_flex()
