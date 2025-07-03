@@ -126,7 +126,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("in-from-bottom")
+                                            .id("animate-in-from-bottom")
                                             .absolute()
                                             .size(px(element_size))
                                             .left(px(offset))
@@ -145,7 +145,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("in-from-top")
+                                            .id("animate-in-from-top")
                                             .absolute()
                                             .size(px(element_size))
                                             .left(px(offset))
@@ -164,7 +164,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("in-from-left")
+                                            .id("animate-in-from-left")
                                             .absolute()
                                             .size(px(element_size))
                                             .top(px(offset))
@@ -183,7 +183,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("in-from-right")
+                                            .id("animate-in-from-right")
                                             .absolute()
                                             .size(px(element_size))
                                             .top(px(offset))
@@ -208,7 +208,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("fade-in-from-bottom")
+                                            .id("fade-animate-in-from-bottom")
                                             .absolute()
                                             .size(px(element_size))
                                             .left(px(offset))
@@ -227,7 +227,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("fade-in-from-top")
+                                            .id("fade-animate-in-from-top")
                                             .absolute()
                                             .size(px(element_size))
                                             .left(px(offset))
@@ -246,7 +246,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("fade-in-from-left")
+                                            .id("fade-animate-in-from-left")
                                             .absolute()
                                             .size(px(element_size))
                                             .top(px(offset))
@@ -265,7 +265,7 @@ impl Component for Animation {
                                     .size(px(container_size))
                                     .child(
                                         div()
-                                            .id("fade-in-from-right")
+                                            .id("fade-animate-in-from-right")
                                             .absolute()
                                             .size(px(element_size))
                                             .top(px(offset))
