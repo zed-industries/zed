@@ -9,16 +9,15 @@ use std::{
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Entity, FocusHandle, Focusable, ListHorizontalSizingBehavior, ListState,
-    MouseButton, ScrollHandle, Stateful, Task, TextStyle, list,
+    AppContext, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task, TextStyle,
+    list,
 };
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, Context, Div, Divider, Element, FluentBuilder, InteractiveElement,
-    IntoElement, Label, LabelCommon, LineHeightStyle, ParentElement, Render, Scrollbar,
-    ScrollbarState, StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px,
-    relative, v_flex,
+    ActiveTheme, Color, Context, Div, Element, FluentBuilder, InteractiveElement, IntoElement,
+    Label, LabelCommon, LineHeightStyle, ParentElement, Render, Scrollbar, ScrollbarState,
+    StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 
@@ -37,7 +36,6 @@ pub(crate) struct MemoryView {
 impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let line_width = 16;
-        let scroll_handle = ScrollHandle::new();
         let base_row_ix = Arc::new(AtomicUsize::new(0));
         let next_row_ix = Arc::new(AtomicUsize::new(0));
         let middle = base_row_ix.clone();
@@ -46,17 +44,17 @@ impl MemoryView {
             Self::list_rows(line_width),
             gpui::ListAlignment::Top,
             px(1000.),
-            move |ix, window, cx| {
+            move |ix, _, cx| {
                 let start = middle.load(std::sync::atomic::Ordering::Relaxed);
 
                 if ix == 255 {
-                    next.fetch_update(
+                    _ = next.fetch_update(
                         std::sync::atomic::Ordering::Relaxed,
                         std::sync::atomic::Ordering::Relaxed,
                         |ix| ix.checked_add(1),
                     );
                 } else if ix == 0 {
-                    next.fetch_update(
+                    _ = next.fetch_update(
                         std::sync::atomic::Ordering::Relaxed,
                         std::sync::atomic::Ordering::Relaxed,
                         |ix| ix.checked_sub(1),
