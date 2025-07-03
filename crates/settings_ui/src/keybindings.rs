@@ -588,6 +588,8 @@ impl Render for KeymapEditor {
         let theme = cx.theme();
 
         v_flex()
+            .id("keymap-editor")
+            .track_focus(&self.focus_handle)
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -599,12 +601,9 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .size_full()
+            .p_2()
+            .gap_1()
             .bg(theme.colors().editor_background)
-            .id("keymap-editor")
-            .track_focus(&self.focus_handle)
-            .pt_4()
-            .px_4()
-            .gap_4()
             .child(
                 h_flex()
                     .key_context({
@@ -796,15 +795,20 @@ impl Render for KeybindingEditorModal {
         let theme = cx.theme().colors();
 
         return v_flex()
-            .w(rems(36.))
+            .w(rems(34.))
             .elevation_3(cx)
             .child(
                 v_flex()
-                    .pt_2()
-                    .px_4()
-                    .pb_4()
+                    .p_3()
                     .gap_2()
-                    .child(Label::new("Input desired keystroke, then hit save"))
+                    .child(
+                        v_flex().child(Label::new("Edit Keystroke")).child(
+                            Label::new(
+                                "Input the desired keystroke for the selected action and hit save.",
+                            )
+                            .color(Color::Muted),
+                        ),
+                    )
                     .child(self.keybind_editor.clone()),
             )
             .child(
@@ -819,41 +823,38 @@ impl Render for KeybindingEditorModal {
                         Button::new("cancel", "Cancel")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                     )
-                    .child(
-                        Button::new("save-btn", "Save Keybinding").on_click(cx.listener(
-                            |this, _event, _window, cx| {
-                                let existing_keybind = this.editing_keybind.clone();
-                                let fs = this.fs.clone();
-                                let new_keystrokes = this
-                                    .keybind_editor
-                                    .read_with(cx, |editor, _| editor.keystrokes.clone());
-                                if new_keystrokes.is_empty() {
-                                    this.error = Some("Keystrokes cannot be empty".to_string());
-                                    cx.notify();
-                                    return;
+                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                        |this, _event, _window, cx| {
+                            let existing_keybind = this.editing_keybind.clone();
+                            let fs = this.fs.clone();
+                            let new_keystrokes = this
+                                .keybind_editor
+                                .read_with(cx, |editor, _| editor.keystrokes.clone());
+                            if new_keystrokes.is_empty() {
+                                this.error = Some("Keystrokes cannot be empty".to_string());
+                                cx.notify();
+                                return;
+                            }
+                            let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+                            cx.spawn(async move |this, cx| {
+                                if let Err(err) = save_keybinding_update(
+                                    existing_keybind,
+                                    &new_keystrokes,
+                                    &fs,
+                                    tab_size,
+                                )
+                                .await
+                                {
+                                    this.update(cx, |this, cx| {
+                                        this.error = Some(err.to_string());
+                                        cx.notify();
+                                    })
+                                    .log_err();
                                 }
-                                let tab_size =
-                                    cx.global::<settings::SettingsStore>().json_tab_size();
-                                cx.spawn(async move |this, cx| {
-                                    if let Err(err) = save_keybinding_update(
-                                        existing_keybind,
-                                        &new_keystrokes,
-                                        &fs,
-                                        tab_size,
-                                    )
-                                    .await
-                                    {
-                                        this.update(cx, |this, cx| {
-                                            this.error = Some(err.to_string());
-                                            cx.notify();
-                                        })
-                                        .log_err();
-                                    }
-                                })
-                                .detach();
-                            },
-                        )),
-                    ),
+                            })
+                            .detach();
+                        },
+                    ))),
             )
             .when_some(self.error.clone(), |this, error| {
                 this.child(
