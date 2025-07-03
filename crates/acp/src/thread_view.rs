@@ -24,8 +24,9 @@ use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
 use crate::{
-    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, Diff, MessageChunk, Role,
-    ThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId, ToolCallStatus,
+    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage,
+    AssistantMessageChunk, Diff, ThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent,
+    ToolCallId, ToolCallStatus, UserMessageChunk,
 };
 
 pub struct AcpThreadView {
@@ -390,45 +391,51 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match &entry.content {
-            AgentThreadEntryContent::Message(message) => {
-                let style = if message.role == Role::User {
-                    user_message_markdown_style(window, cx)
-                } else {
-                    default_markdown_style(window, cx)
-                };
+            AgentThreadEntryContent::UserMessage(message) => {
+                let style = user_message_markdown_style(window, cx);
+                let message_body = div().children(message.chunks.iter().map(|chunk| match chunk {
+                    UserMessageChunk::Text { chunk } => {
+                        // todo!() open link
+                        MarkdownElement::new(chunk.clone(), style.clone())
+                    }
+                    _ => todo!(),
+                }));
+                div()
+                    .p_2()
+                    .pt_5()
+                    .child(
+                        div()
+                            .text_xs()
+                            .p_3()
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_lg()
+                            .shadow_md()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(message_body),
+                    )
+                    .into_any()
+            }
+            AgentThreadEntryContent::AssistantMessage(AssistantMessage { chunks }) => {
+                let style = default_markdown_style(window, cx);
                 let message_body = div()
-                    .children(message.chunks.iter().map(|chunk| match chunk {
-                        MessageChunk::Text { chunk } => {
+                    .children(chunks.iter().map(|chunk| match chunk {
+                        AssistantMessageChunk::Text { chunk } => {
                             // todo!() open link
                             MarkdownElement::new(chunk.clone(), style.clone())
                         }
-                        _ => todo!(),
+                        AssistantMessageChunk::Thought { chunk } => {
+                            MarkdownElement::new(chunk.clone(), style.clone())
+                        }
                     }))
                     .into_any();
 
-                match message.role {
-                    Role::User => div()
-                        .p_2()
-                        .pt_5()
-                        .child(
-                            div()
-                                .text_xs()
-                                .p_3()
-                                .bg(cx.theme().colors().editor_background)
-                                .rounded_lg()
-                                .shadow_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .child(message_body),
-                        )
-                        .into_any(),
-                    Role::Assistant => div()
-                        .text_ui(cx)
-                        .p_5()
-                        .pt_2()
-                        .child(message_body)
-                        .into_any(),
-                }
+                div()
+                    .text_ui(cx)
+                    .p_5()
+                    .pt_2()
+                    .child(message_body)
+                    .into_any()
             }
             AgentThreadEntryContent::ToolCall(tool_call) => div()
                 .px_2()

@@ -56,10 +56,10 @@ impl AcpClientDelegate {
 
 #[async_trait(?Send)]
 impl acp::Client for AcpClientDelegate {
-    async fn stream_message_chunk(
+    async fn stream_assistant_message_chunk(
         &self,
-        params: acp::StreamMessageChunkParams,
-    ) -> Result<acp::StreamMessageChunkResponse> {
+        params: acp::StreamAssistantMessageChunkParams,
+    ) -> Result<acp::StreamAssistantMessageChunkResponse> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -68,7 +68,7 @@ impl acp::Client for AcpClientDelegate {
             });
         })?;
 
-        Ok(acp::StreamMessageChunkResponse)
+        Ok(acp::StreamAssistantMessageChunkResponse)
     }
 
     async fn request_tool_call_confirmation(
@@ -209,11 +209,11 @@ impl AcpServer {
     pub async fn send_message(
         &self,
         thread_id: ThreadId,
-        message: acp::Message,
+        message: acp::UserMessage,
         _cx: &mut AsyncApp,
     ) -> Result<()> {
         self.connection
-            .request(acp::SendMessageParams {
+            .request(acp::SendUserMessageParams {
                 thread_id: thread_id.clone().into(),
                 message,
             })
