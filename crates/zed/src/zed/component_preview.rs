@@ -1119,7 +1119,7 @@ impl ComponentPreviewPage {
         }
     }
 
-    fn render_header(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render_header(&self, _: &Window, cx: &App) -> impl IntoElement {
         v_flex()
             .py_12()
             .px_16()
