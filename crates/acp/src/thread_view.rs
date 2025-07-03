@@ -1,10 +1,10 @@
-use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
+use collections::HashSet;
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
@@ -38,6 +38,7 @@ pub struct AcpThreadView {
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     auth_task: Option<Task<()>>,
+    expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
 }
 
@@ -127,7 +128,8 @@ impl AcpThreadView {
             list_state: list_state,
             last_error: None,
             auth_task: None,
-            expanded_thinking_blocks: HashSet::new(),
+            expanded_tool_calls: HashSet::default(),
+            expanded_thinking_blocks: HashSet::default(),
         }
     }
 
@@ -1152,6 +1154,7 @@ impl Render for AcpThreadView {
                     .flex_1()
                     .justify_end()
                     .child(Label::new(format!("Failed to load: {e}")).into_any_element()),
+                ThreadState::Ready { thread, .. } => v_flex().flex_1().map(|this| {
                     if self.list_state.item_count() > 0 {
                         this.child(
                             list(self.list_state.clone())
