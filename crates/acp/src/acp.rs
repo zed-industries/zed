@@ -872,7 +872,7 @@ mod tests {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
-        run_until_tool_call(&thread, cx).await;
+        run_until_first_tool_call(&thread, cx).await;
 
         let tool_call_id = thread.read_with(cx, |thread, _cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
@@ -941,7 +941,7 @@ mod tests {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
-        run_until_tool_call(&thread, cx).await;
+        let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
 
         thread.read_with(cx, |thread, _cx| {
             let AgentThreadEntryContent::ToolCall(ToolCall {
@@ -952,7 +952,7 @@ mod tests {
                         ..
                     },
                 ..
-            }) = &thread.entries()[1].content
+            }) = &thread.entries()[first_tool_call_ix].content
             else {
                 panic!("{:?}", thread.entries()[1].content);
             };
@@ -971,7 +971,7 @@ mod tests {
             let AgentThreadEntryContent::ToolCall(ToolCall {
                 status: ToolCallStatus::Canceled,
                 ..
-            }) = &thread.entries()[1].content
+            }) = &thread.entries()[first_tool_call_ix].content
             else {
                 panic!();
             };
@@ -985,24 +985,24 @@ mod tests {
             .unwrap();
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
-                &thread.entries()[3].content,
-                AgentThreadEntryContent::UserMessage(..),
+                &thread.entries().last().unwrap().content,
+                AgentThreadEntryContent::AssistantMessage(..),
             ))
         });
     }
 
-    async fn run_until_tool_call(thread: &Entity<AcpThread>, cx: &mut TestAppContext) {
-        let (mut tx, mut rx) = mpsc::channel::<()>(1);
+    async fn run_until_first_tool_call(
+        thread: &Entity<AcpThread>,
+        cx: &mut TestAppContext,
+    ) -> usize {
+        let (mut tx, mut rx) = mpsc::channel::<usize>(1);
 
         let subscription = cx.update(|cx| {
             cx.subscribe(thread, move |thread, _, cx| {
-                if thread
-                    .read(cx)
-                    .entries
-                    .iter()
-                    .any(|e| matches!(e.content, AgentThreadEntryContent::ToolCall(_)))
-                {
-                    tx.try_send(()).unwrap();
+                for (ix, entry) in thread.read(cx).entries.iter().enumerate() {
+                    if matches!(entry.content, AgentThreadEntryContent::ToolCall(_)) {
+                        return tx.try_send(ix).unwrap();
+                    }
                 }
             })
         });
@@ -1011,8 +1011,9 @@ mod tests {
             _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))) => {
                 panic!("Timeout waiting for tool call")
             }
-            _ = rx.next().fuse() => {
+            ix = rx.next().fuse() => {
                 drop(subscription);
+                ix.unwrap()
             }
         }
     }
