@@ -536,6 +536,7 @@ impl ComponentPreview {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = id.clone();
                         if this.active_page == PreviewPage::Component(id.clone()) {
+                            // Force the preview to render again
                             this.reset_key = this.reset_key.wrapping_add(1);
                             cx.notify();
                             return;
