@@ -16,7 +16,7 @@ use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
     Completion, CompletionResponse,
-    debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
+    debugger::session::{CompletionsQuery, OutputToken, Session},
 };
 use settings::Settings;
 use std::{cell::RefCell, ops::Range, rc::Rc, usize};
@@ -89,11 +89,6 @@ impl Console {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
-                if let SessionEvent::ConsoleOutput = event {
-                    this.update_output(window, cx)
-                }
-            }),
             cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
                     console.query_bar.focus_handle(cx).focus(window);
@@ -486,9 +481,9 @@ impl Console {
 }
 
 impl Render for Console {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query_focus_handle = self.query_bar.focus_handle(cx);
-
+        self.update_output(window, cx);
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")

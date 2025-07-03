@@ -1016,7 +1016,7 @@ impl Session {
 
         cx.spawn(async move |this, cx| {
             while let Some(output) = rx.next().await {
-                this.update(cx, |this, cx| {
+                this.update(cx, |this, _| {
                     let event = dap::OutputEvent {
                         category: None,
                         output,
@@ -1028,7 +1028,7 @@ impl Session {
                         data: None,
                         location_reference: None,
                     };
-                    this.push_output(event, cx);
+                    this.push_output(event);
                 })?;
             }
             anyhow::Ok(())
@@ -1458,7 +1458,7 @@ impl Session {
                     return;
                 }
 
-                self.push_output(event, cx);
+                self.push_output(event);
                 cx.notify();
             }
             Events::Breakpoint(event) => self.breakpoint_store.update(cx, |store, _| {
@@ -1645,10 +1645,9 @@ impl Session {
             });
     }
 
-    fn push_output(&mut self, event: OutputEvent, cx: &mut Context<Self>) {
+    fn push_output(&mut self, event: OutputEvent) {
         self.output.push_back(event);
         self.output_token.0 += 1;
-        cx.emit(SessionEvent::ConsoleOutput);
     }
 
     pub fn any_stopped_thread(&self) -> bool {
@@ -2352,7 +2351,7 @@ impl Session {
             data: None,
             location_reference: None,
         };
-        self.push_output(event, cx);
+        self.push_output(event);
         let request = self.mode.request_dap(EvaluateCommand {
             expression,
             context,
@@ -2375,7 +2374,7 @@ impl Session {
                             data: None,
                             location_reference: None,
                         };
-                        this.push_output(event, cx);
+                        this.push_output(event);
                     }
                     Err(e) => {
                         let event = dap::OutputEvent {
@@ -2389,7 +2388,7 @@ impl Session {
                             data: None,
                             location_reference: None,
                         };
-                        this.push_output(event, cx);
+                        this.push_output(event);
                     }
                 };
                 cx.notify();
