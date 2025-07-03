@@ -1,5 +1,5 @@
 use collections::HashMap;
-use editor::{SelectionEffects, display_map::ToDisplayPoint, movement};
+use editor::{SelectionEffects, display_map::ToDisplayPoint};
 use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
