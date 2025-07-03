@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
@@ -54,9 +54,17 @@ impl Prettier {
         ".prettierrc.toml",
         ".prettierrc.js",
         ".prettierrc.cjs",
+        ".prettierrc.mjs",
+        ".prettierrc.ts",
+        ".prettierrc.cts",
+        ".prettierrc.mts",
         "package.json",
         "prettier.config.js",
         "prettier.config.cjs",
+        "prettier.config.mjs",
+        "prettier.config.ts",
+        "prettier.config.cts",
+        "prettier.config.mts",
         ".editorconfig",
         ".prettierignore",
     ];
@@ -292,7 +300,7 @@ impl Prettier {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
+                let params = server.default_initialize_params(false, cx);
                 let configuration = lsp::DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
@@ -343,6 +351,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("plugin.js"),
                                 // this one is for @prettier/plugin-php
                                 prettier_plugin_dir.join("standalone.js"),
+                                // this one is for prettier-plugin-latex
+                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
                                 prettier_plugin_dir,
                             ]
                             .into_iter()
@@ -421,7 +431,7 @@ impl Prettier {
                             prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
                             if prettier_parser.is_none() {
                                 log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                                return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
+                                anyhow::bail!("Cannot determine prettier parser for unsaved file");
                             }
 
                         }
@@ -450,9 +460,13 @@ impl Prettier {
                             },
                         })
                     })?
-                    .context("prettier params calculation")?;
+                    .context("building prettier request")?;
 
-                let response = local.server.request::<Format>(params).await?;
+                let response = local
+                    .server
+                    .request::<Format>(params)
+                    .await
+                    .into_response()?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }
@@ -482,6 +496,7 @@ impl Prettier {
                 .server
                 .request::<ClearCache>(())
                 .await
+                .into_response()
                 .context("prettier clear cache"),
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(()),

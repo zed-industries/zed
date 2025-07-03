@@ -13,7 +13,13 @@ use ui::{
 };
 use workspace::{Item, SplitDirection, Workspace};
 
-actions!(debug, [OpenKeyContextView]);
+actions!(
+    dev,
+    [
+        /// Opens the key context view for debugging keybindings.
+        OpenKeyContextView
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -150,8 +156,8 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Keyboard Context".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Keyboard Context".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

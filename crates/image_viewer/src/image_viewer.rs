@@ -11,6 +11,7 @@ use gpui::{
     InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
     Window, canvas, div, fill, img, opaque_grey, point, size,
 };
+use language::{DiskState, File as _};
 use persistence::IMAGE_VIEWER;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
@@ -18,7 +19,7 @@ use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
@@ -35,9 +36,19 @@ impl ImageView {
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
+        cx.on_release_in(window, |this, window, cx| {
+            let image_data = this.image_item.read(cx).image.clone();
+            if let Some(image) = image_data.clone().get_render_image(window, cx) {
+                cx.drop_image(image, None);
+            }
+            image_data.remove_asset(cx);
+        })
+        .detach();
+
         Self {
             image_item,
             project,
@@ -94,12 +105,12 @@ impl Item for ImageView {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        let abs_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
+        let abs_path = self.image_item.read(cx).abs_path(cx)?;
         let file_path = abs_path.compact().to_string_lossy().to_string();
         Some(file_path.into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
 
         let label_color = if ItemSettings::get_global(cx).git_status {
@@ -121,25 +132,28 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        let title = self
-            .image_item
-            .read(cx)
-            .file
-            .file_name(cx)
-            .to_string_lossy()
-            .to_string();
-        Label::new(title)
+        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
             .single_line()
             .color(label_color)
             .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 
+    fn tab_content_text(&self, _: usize, cx: &App) -> SharedString {
+        self.image_item
+            .read(cx)
+            .file
+            .file_name(cx)
+            .to_string_lossy()
+            .to_string()
+            .into()
+    }
+
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
-        let path = self.image_item.read(cx).path();
+        let path = self.image_item.read(cx).abs_path(cx)?;
         ItemSettings::get_global(cx)
             .file_icons
-            .then(|| FileIcons::get_icon(path, cx))
+            .then(|| FileIcons::get_icon(&path, cx))
             .flatten()
             .map(Icon::from_path)
     }
@@ -177,6 +191,10 @@ impl Item for ImageView {
             focus_handle: cx.focus_handle(),
         }))
     }
+
+    fn has_deleted_file(&self, cx: &App) -> bool {
+        self.image_item.read(cx).file.disk_state() == DiskState::Deleted
+    }
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
@@ -208,11 +226,11 @@ impl SerializableItem for ImageView {
         item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<Entity<Self>>> {
+    ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
-                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
+                .context("No image path found")?;
 
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {
@@ -231,21 +249,25 @@ impl SerializableItem for ImageView {
                 .update(cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
-            cx.update(|_, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, cx))))?
+            cx.update(
+                |window, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, window, cx))),
+            )?
         })
     }
 
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            IMAGE_VIEWER
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+    ) -> Task<anyhow::Result<()>> {
+        delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "image_viewers",
+            &IMAGE_VIEWER,
+            cx,
+        )
     }
 
     fn serialize(
@@ -255,9 +277,9 @@ impl SerializableItem for ImageView {
         _closing: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
+        let image_path = self.image_item.read(cx).abs_path(cx)?;
 
         Some(cx.background_spawn({
             async move {
@@ -358,15 +380,15 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         project: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         item: Entity<Self::Item>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self
     where
         Self: Sized,
     {
-        Self::new(item, project, cx)
+        Self::new(item, project, window, cx)
     }
 }
 
@@ -377,10 +399,9 @@ pub fn init(cx: &mut App) {
 }
 
 mod persistence {
-    use anyhow::Result;
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+    use db::{define_connection, query, sqlez_macros::sql};
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     define_connection! {
@@ -417,32 +438,6 @@ mod persistence {
                 FROM image_viewers
                 WHERE item_id = ? AND workspace_id = ?
             }
-        }
-
-        pub async fn delete_unloaded_items(
-            &self,
-            workspace: WorkspaceId,
-            alive_items: Vec<ItemId>,
-        ) -> Result<()> {
-            let placeholders = alive_items
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<&str>>()
-                .join(", ");
-
-            let query = format!(
-                "DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-            );
-
-            self.write(move |conn| {
-                let mut statement = Statement::prepare(conn, query)?;
-                let mut next_index = statement.bind(&workspace, 1)?;
-                for id in alive_items {
-                    next_index = statement.bind(&id, next_index)?;
-                }
-                statement.exec()
-            })
-            .await
         }
     }
 }

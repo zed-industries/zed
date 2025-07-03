@@ -1,7 +1,5 @@
-// todo(windows): remove
-#![cfg_attr(windows, allow(dead_code))]
-
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -27,6 +25,7 @@ mod test;
 mod windows;
 
 #[cfg(all(
+    feature = "screen-capture",
     any(target_os = "linux", target_os = "freebsd"),
     any(feature = "wayland", feature = "x11"),
 ))]
@@ -38,7 +37,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    point, px, size,
+    WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -47,6 +46,7 @@ use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -66,6 +66,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keyboard::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -79,7 +80,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::TestScreenCaptureSource;
+pub use test::{TestDispatcher, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -93,6 +94,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
     if headless {
         return Rc::new(HeadlessClient::new());
     }
@@ -102,7 +106,11 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
         "Wayland" => Rc::new(WaylandClient::new()),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(X11Client::new()),
+        "X11" => Rc::new(
+            X11Client::new()
+                .context("Failed to initialize X11 client.")
+                .unwrap(),
+        ),
 
         "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
@@ -142,7 +150,11 @@ pub fn guess_compositor() -> &'static str {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
-    Rc::new(WindowsPlatform::new())
+    Rc::new(
+        WindowsPlatform::new()
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
+            .unwrap(),
+    )
 }
 
 pub(crate) trait Platform: 'static {
@@ -165,10 +177,28 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(not(feature = "screen-capture"))]
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    #[cfg(not(feature = "screen-capture"))]
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow::anyhow!(
+                "gpui was compiled without the screen-capture feature"
+            )))
+            .ok();
+        sources_rx
+    }
 
     fn open_window(
         &self,
@@ -411,6 +441,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
+    fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(
@@ -418,7 +449,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn is_active(&self) -> bool;
@@ -436,6 +467,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
@@ -445,6 +477,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    fn titlebar_double_click(&self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -596,7 +629,7 @@ impl PlatformTextSystem for NoopTextSystem {
                 .unwrap()
                 .width
             / metrics.units_per_em as f32;
-        let mut glyphs = SmallVec::default();
+        let mut glyphs = Vec::new();
         for (ix, c) in text.char_indices() {
             if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
                 glyphs.push(ShapedGlyph {
@@ -716,7 +749,7 @@ impl<T> ops::Index<usize> for AtlasTextureList<T> {
 
 impl<T> AtlasTextureList<T> {
     #[allow(unused)]
-    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+    fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
         self.textures.drain(..)
     }
@@ -756,7 +789,6 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
-    Path = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -802,6 +834,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
@@ -809,7 +842,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -833,7 +869,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    fn replace_and_mark_text_in_range(
+    pub fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
@@ -852,6 +888,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
@@ -1069,7 +1106,10 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub focus: bool,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1236,8 +1276,60 @@ pub enum PromptLevel {
     Critical,
 }
 
+/// Prompt Button
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptButton {
+    /// Ok button
+    Ok(SharedString),
+    /// Cancel button
+    Cancel(SharedString),
+    /// Other button
+    Other(SharedString),
+}
+
+impl PromptButton {
+    /// Create a button with label
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        PromptButton::Other(label.into())
+    }
+
+    /// Create an Ok button
+    pub fn ok(label: impl Into<SharedString>) -> Self {
+        PromptButton::Ok(label.into())
+    }
+
+    /// Create a Cancel button
+    pub fn cancel(label: impl Into<SharedString>) -> Self {
+        PromptButton::Cancel(label.into())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_cancel(&self) -> bool {
+        matches!(self, PromptButton::Cancel(_))
+    }
+
+    /// Returns the label of the button
+    pub fn label(&self) -> &SharedString {
+        match self {
+            PromptButton::Ok(label) => label,
+            PromptButton::Cancel(label) => label,
+            PromptButton::Other(label) => label,
+        }
+    }
+}
+
+impl From<&str> for PromptButton {
+    fn from(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "ok" => PromptButton::Ok("Ok".into()),
+            "cancel" => PromptButton::Cancel("Cancel".into()),
+            _ => PromptButton::Other(SharedString::from(value.to_owned())),
+        }
+    }
+}
+
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
     Arrow,
@@ -1479,6 +1571,35 @@ pub enum ImageFormat {
     Tiff,
 }
 
+impl ImageFormat {
+    /// Returns the mime type for the ImageFormat
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
+            ImageFormat::Gif => "image/gif",
+            ImageFormat::Svg => "image/svg+xml",
+            ImageFormat::Bmp => "image/bmp",
+            ImageFormat::Tiff => "image/tiff",
+        }
+    }
+
+    /// Returns the ImageFormat for the given mime type
+    pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        match mime_type {
+            "image/png" => Some(Self::Png),
+            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
+            "image/webp" => Some(Self::Webp),
+            "image/gif" => Some(Self::Gif),
+            "image/svg+xml" => Some(Self::Svg),
+            "image/bmp" => Some(Self::Bmp),
+            "image/tiff" | "image/tif" => Some(Self::Tiff),
+            _ => None,
+        }
+    }
+}
+
 /// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
@@ -1487,7 +1608,7 @@ pub struct Image {
     /// The raw image bytes
     pub bytes: Vec<u8>,
     /// The unique ID for the image
-    pub id: u64,
+    id: u64,
 }
 
 impl Hash for Image {
@@ -1499,10 +1620,15 @@ impl Hash for Image {
 impl Image {
     /// An empty image containing no data
     pub fn empty() -> Self {
+        Self::from_bytes(ImageFormat::Png, Vec::new())
+    }
+
+    /// Create an image from a format and bytes
+    pub fn from_bytes(format: ImageFormat, bytes: Vec<u8>) -> Self {
         Self {
-            format: ImageFormat::Png,
-            bytes: Vec::new(),
-            id: 0,
+            id: hash(&bytes),
+            format,
+            bytes,
         }
     }
 
@@ -1520,6 +1646,22 @@ impl Image {
         ImageSource::Image(self)
             .use_data(None, window, cx)
             .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `get_asset` API to make this image renderable
+    pub fn get_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self)
+            .get_data(None, window, cx)
+            .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `remove_asset` API to drop this image, if possible.
+    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
+        ImageSource::Image(self).remove_asset(cx);
     }
 
     /// Convert the clipboard image to an `ImageData` object.
@@ -1642,12 +1784,4 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
-}
-
-/// A trait for platform-specific keyboard layouts
-pub trait PlatformKeyboardLayout {
-    /// Get the keyboard layout ID, which should be unique to the layout
-    fn id(&self) -> &str;
-    /// Get the keyboard layout display name
-    fn name(&self) -> &str;
 }

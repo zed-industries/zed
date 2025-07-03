@@ -16,13 +16,21 @@ use crate::repl_store::ReplStore;
 actions!(
     repl,
     [
+        /// Runs the current cell and advances to the next one.
         Run,
+        /// Runs the current cell without advancing.
         RunInPlace,
+        /// Clears all outputs in the REPL.
         ClearOutputs,
+        /// Opens the REPL sessions panel.
         Sessions,
+        /// Interrupts the currently running kernel.
         Interrupt,
+        /// Shuts down the current kernel.
         Shutdown,
+        /// Restarts the current kernel.
         Restart,
+        /// Refreshes the list of available kernelspecs.
         RefreshKernelspecs
     ]
 );
@@ -178,8 +186,8 @@ impl Focusable for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("REPL Sessions".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "REPL Sessions".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

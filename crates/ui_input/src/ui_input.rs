@@ -29,7 +29,7 @@ pub struct SingleLineInput {
     label: Option<SharedString>,
     /// The placeholder text for the text field.
     placeholder: SharedString,
-    /// Exposes the underlying [`Model<Editor>`] to allow for customizing the editor beyond the provided API.
+    /// Exposes the underlying [`Entity<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
     /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
     pub editor: Entity<Editor>,
@@ -138,18 +138,18 @@ impl Render for SingleLineInput {
             .when_some(self.label.clone(), |this, label| {
                 this.child(
                     Label::new(label)
-                        .size(LabelSize::Default)
+                        .size(LabelSize::Small)
                         .color(if self.disabled {
                             Color::Disabled
                         } else {
-                            Color::Muted
+                            Color::Default
                         }),
                 )
             })
             .child(
                 h_flex()
                     .px_2()
-                    .py_1()
+                    .py_1p5()
                     .bg(style.background_color)
                     .text_color(style.text_color)
                     .rounded_md()

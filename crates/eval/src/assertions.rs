@@ -28,6 +28,17 @@ impl AssertionsReport {
         }
     }
 
+    pub fn error(msg: String) -> Self {
+        let assert = RanAssertion {
+            id: "no-unhandled-errors".into(),
+            result: Err(msg),
+        };
+        AssertionsReport {
+            ran: vec![assert],
+            max: Some(1),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.ran.is_empty()
     }
@@ -145,7 +156,9 @@ pub fn print_table_divider() {
 }
 
 fn truncate(assertion: &str, max_width: usize) -> String {
-    if assertion.len() <= max_width {
+    let is_verbose = std::env::var("VERBOSE").is_ok_and(|v| !v.is_empty());
+
+    if assertion.len() <= max_width || is_verbose {
         assertion.to_string()
     } else {
         let mut end_ix = max_width - 1;

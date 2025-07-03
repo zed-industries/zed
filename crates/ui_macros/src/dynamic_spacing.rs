@@ -23,7 +23,7 @@ enum DynamicSpacingValue {
 impl Parse for DynamicSpacingInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(DynamicSpacingInput {
-            values: input.parse_terminated(DynamicSpacingValue::parse)?,
+            values: input.parse_terminated(DynamicSpacingValue::parse, Token![,])?,
         })
     }
 }

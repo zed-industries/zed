@@ -74,10 +74,12 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
         .map(|item| item.item_id().as_u64())
         .filter(|active_id| items_to_serialize.contains(active_id));
 
+    let pinned_count = pane.pinned_count();
     SerializedPane {
         active,
         children,
         active_item,
+        pinned_count,
     }
 }
 
@@ -229,10 +231,11 @@ async fn deserialize_pane_group(
                 })
                 .log_err()?;
             let active_item = serialized_pane.active_item;
-
+            let pinned_count = serialized_pane.pinned_count;
             let terminal = pane
                 .update_in(cx, |pane, window, cx| {
                     populate_pane_items(pane, new_items, active_item, window, cx);
+                    pane.set_pinned_count(pinned_count);
                     // Avoid blank panes in splits
                     if pane.items_len() == 0 {
                         let working_directory = workspace
@@ -338,6 +341,8 @@ pub(crate) struct SerializedPane {
     pub active: bool,
     pub children: Vec<u64>,
     pub active_item: Option<u64>,
+    #[serde(default)]
+    pub pinned_count: usize,
 }
 
 #[derive(Debug)]
@@ -458,31 +463,5 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
-    }
-
-    pub async fn delete_unloaded_items(
-        &self,
-        workspace: WorkspaceId,
-        alive_items: Vec<ItemId>,
-    ) -> Result<()> {
-        let placeholders = alive_items
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<&str>>()
-            .join(", ");
-
-        let query = format!(
-            "DELETE FROM terminals WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-        );
-
-        self.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&workspace, 1)?;
-            for id in alive_items {
-                next_index = statement.bind(&id, next_index)?;
-            }
-            statement.exec()
-        })
-        .await
     }
 }

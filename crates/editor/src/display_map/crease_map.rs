@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{App, IconName, SharedString, Window};
+use ui::{App, SharedString, Window};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -38,6 +38,10 @@ impl CreaseSnapshot {
         CreaseSnapshot {
             creases: SumTree::new(snapshot),
         }
+    }
+
+    pub fn creases(&self) -> impl Iterator<Item = (CreaseId, &Crease<Anchor>)> {
+        self.creases.iter().map(|item| (item.id, &item.crease))
     }
 
     /// Returns the first Crease starting on the specified buffer row.
@@ -147,7 +151,7 @@ pub enum Crease<T> {
 /// Metadata about a [`Crease`], that is used for serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreaseMetadata {
-    pub icon: IconName,
+    pub icon_path: SharedString,
     pub label: SharedString,
 }
 
@@ -237,6 +241,13 @@ impl<T> Crease<T> {
             Crease::Block { range, .. } => range,
         }
     }
+
+    pub fn metadata(&self) -> Option<&CreaseMetadata> {
+        match self {
+            Self::Inline { metadata, .. } => metadata.as_ref(),
+            Self::Block { .. } => None,
+        }
+    }
 }
 
 impl<T> std::fmt::Debug for Crease<T>
@@ -305,7 +316,7 @@ impl CreaseMap {
         &mut self,
         ids: impl IntoIterator<Item = CreaseId>,
         snapshot: &MultiBufferSnapshot,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         let mut removals = Vec::new();
         for id in ids {
             if let Some(range) = self.id_to_range.remove(&id) {
@@ -320,11 +331,11 @@ impl CreaseMap {
             let mut new_creases = SumTree::new(snapshot);
             let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
 
-            for (id, range) in removals {
-                new_creases.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
+            for (id, range) in &removals {
+                new_creases.append(cursor.slice(range, Bias::Left, snapshot), snapshot);
                 while let Some(item) = cursor.item() {
                     cursor.next(snapshot);
-                    if item.id == id {
+                    if item.id == *id {
                         break;
                     } else {
                         new_creases.push(item.clone(), snapshot);
@@ -335,6 +346,8 @@ impl CreaseMap {
             new_creases.append(cursor.suffix(snapshot), snapshot);
             new_creases
         };
+
+        removals
     }
 }
 

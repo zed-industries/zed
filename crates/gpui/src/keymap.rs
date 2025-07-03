@@ -23,6 +23,10 @@ pub struct Keymap {
     version: KeymapVersion,
 }
 
+/// Index of a binding within a keymap.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct BindingIndex(usize);
+
 impl Keymap {
     /// Create a new keymap with the given bindings.
     pub fn new(bindings: Vec<KeyBinding>) -> Self {
@@ -63,7 +67,7 @@ impl Keymap {
     }
 
     /// Iterate over all bindings, in the order they were added.
-    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> {
+    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> + ExactSizeIterator {
         self.bindings.iter()
     }
 
@@ -73,6 +77,15 @@ impl Keymap {
         &'a self,
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
+        self.bindings_for_action_with_indices(action)
+            .map(|(_, binding)| binding)
+    }
+
+    /// Like `bindings_for_action_with_indices`, but also returns the binding indices.
+    pub fn bindings_for_action_with_indices<'a>(
+        &'a self,
+        action: &'a dyn Action,
+    ) -> impl 'a + DoubleEndedIterator<Item = (BindingIndex, &'a KeyBinding)> {
         let action_id = action.type_id();
         let binding_indices = self
             .binding_indices_by_action_id
@@ -105,7 +118,7 @@ impl Keymap {
                 }
             }
 
-            Some(binding)
+            Some((BindingIndex(*ix), binding))
         })
     }
 
@@ -123,7 +136,7 @@ impl Keymap {
 
     /// Returns a list of bindings that match the given input, and a boolean indicating whether or
     /// not more bindings might match if the input was longer. Bindings are returned in precedence
-    /// order.
+    /// order (higher precedence first, reverse of the order they were added to the keymap).
     ///
     /// Precedence is defined by the depth in the tree (matches on the Editor take precedence over
     /// matches on the Pane, then the Workspace, etc.). Bindings with no context are treated as the
@@ -140,41 +153,95 @@ impl Keymap {
         input: &[Keystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let possibilities = self.bindings().rev().filter_map(|binding| {
-            binding
-                .match_keystrokes(input)
-                .map(|pending| (binding, pending))
-        });
+        let (bindings, pending) = self.bindings_for_input_with_indices(input, context_stack);
+        let bindings = bindings
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .collect::<SmallVec<[KeyBinding; 1]>>();
+        (bindings, pending)
+    }
 
-        let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
-        let mut is_pending = None;
+    /// Like `bindings_for_input`, but also returns the binding indices.
+    pub fn bindings_for_input_with_indices(
+        &self,
+        input: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
+        let possibilities = self
+            .bindings()
+            .enumerate()
+            .rev()
+            .filter_map(|(ix, binding)| {
+                binding
+                    .match_keystrokes(input)
+                    .map(|pending| (BindingIndex(ix), binding, pending))
+            });
 
-        'outer: for (binding, pending) in possibilities {
+        let mut bindings: SmallVec<[(BindingIndex, KeyBinding, usize); 1]> = SmallVec::new();
+
+        // (pending, is_no_action, depth, keystrokes)
+        let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
+
+        'outer: for (binding_index, binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
-                    if is_pending.is_none() {
-                        is_pending = Some(pending);
+                    let is_no_action = is_no_action(&*binding.action);
+                    // We only want to consider a binding pending if it has an action
+                    // This, however, means that if we have both a NoAction binding and a binding
+                    // with an action at the same depth, we should still set is_pending to true.
+                    if let Some(pending_info) = pending_info_opt.as_mut() {
+                        let (
+                            already_pending,
+                            pending_is_no_action,
+                            pending_depth,
+                            pending_keystrokes,
+                        ) = *pending_info;
+
+                        // We only want to change the pending status if it's not already pending AND if
+                        // the existing pending status was set by a NoAction binding. This avoids a NoAction
+                        // binding erroneously setting the pending status to true when a binding with an action
+                        // already set it to false
+                        //
+                        // We also want to change the pending status if the keystrokes don't match,
+                        // meaning it's different keystrokes than the NoAction that set pending to false
+                        if pending
+                            && !already_pending
+                            && pending_is_no_action
+                            && (pending_depth == depth
+                                || pending_keystrokes != binding.keystrokes())
+                        {
+                            pending_info.0 = !is_no_action;
+                        }
+                    } else {
+                        pending_info_opt = Some((
+                            pending && !is_no_action,
+                            is_no_action,
+                            depth,
+                            binding.keystrokes(),
+                        ));
                     }
+
                     if !pending {
-                        bindings.push((binding.clone(), depth));
+                        bindings.push((binding_index, binding.clone(), depth));
                         continue 'outer;
                     }
                 }
             }
         }
-        bindings.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+        // sort by descending depth
+        bindings.sort_by(|a, b| a.2.cmp(&b.2).reverse());
         let bindings = bindings
             .into_iter()
-            .map_while(|(binding, _)| {
+            .map_while(|(binding_index, binding, _)| {
                 if is_no_action(&*binding.action) {
                     None
                 } else {
-                    Some(binding)
+                    Some((binding_index, binding))
                 }
             })
             .collect();
 
-        (bindings, is_pending.unwrap_or_default())
+        (bindings, pending_info_opt.unwrap_or_default().0)
     }
 
     /// Check if the given binding is enabled, given a certain key context.
@@ -188,41 +255,16 @@ impl Keymap {
 
         true
     }
-
-    /// WARN: Assumes the bindings are in the order they were added to the keymap
-    /// returns the last binding for the given bindings, which
-    /// should be the user's binding in their keymap.json if they've set one,
-    /// otherwise, the last declared binding for this action in the base keymaps
-    /// (with Vim mode bindings being considered as declared later if Vim mode
-    /// is enabled)
-    ///
-    /// If you are considering changing the behavior of this function
-    /// (especially to fix a user reported issue) see issues #23621, #24931,
-    /// and possibly others as evidence that it has swapped back and forth a
-    /// couple times. The decision as of now is to pick a side and leave it
-    /// as is, until we have a better way to decide which binding to display
-    /// that is consistent and not confusing.
-    pub fn binding_to_display_from_bindings(mut bindings: Vec<KeyBinding>) -> Option<KeyBinding> {
-        bindings.pop()
-    }
-
-    /// Like `bindings_to_display_from_bindings` but takes a `DoubleEndedIterator` and returns a
-    /// reference.
-    pub fn binding_to_display_from_bindings_iterator<'a>(
-        mut bindings: impl DoubleEndedIterator<Item = &'a KeyBinding>,
-    ) -> Option<&'a KeyBinding> {
-        bindings.next_back()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{NoAction, actions};
+    use gpui::NoAction;
 
     actions!(
-        keymap_test,
+        test_only,
         [ActionAlpha, ActionBeta, ActionGamma, ActionDelta,]
     );
 
@@ -305,6 +347,102 @@ mod tests {
                 .0
                 .is_empty()
         );
+    }
+
+    #[test]
+    /// Tests for https://github.com/zed-industries/zed/issues/30259
+    fn test_multiple_keystroke_binding_disabled() {
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space = || Keystroke::parse("space").unwrap();
+        let w = || Keystroke::parse("w").unwrap();
+
+        let space_w = [space(), w()];
+        let space_w_w = [space(), w(), w()];
+
+        let workspace_context = || [KeyContext::parse("workspace").unwrap()];
+
+        let editor_workspace_context = || {
+            [
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ]
+        };
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let space_workspace = keymap.bindings_for_input(&[space()], &workspace_context());
+        assert!(space_workspace.0.is_empty());
+        assert_eq!(space_workspace.1, true);
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, false);
+
+        // Ensure `space w` results in pending input on the workspace, but not editor
+        let space_w_workspace = keymap.bindings_for_input(&space_w, &workspace_context());
+        assert!(space_w_workspace.0.is_empty());
+        assert_eq!(space_w_workspace.1, true);
+
+        let space_w_editor = keymap.bindings_for_input(&space_w, &editor_workspace_context());
+        assert!(space_w_editor.0.is_empty());
+        assert_eq!(space_w_editor.1, false);
+
+        // Ensure `space w w` results in the binding in the workspace, but not in the editor
+        let space_w_w_workspace = keymap.bindings_for_input(&space_w_w, &workspace_context());
+        assert!(!space_w_w_workspace.0.is_empty());
+        assert_eq!(space_w_w_workspace.1, false);
+
+        let space_w_w_editor = keymap.bindings_for_input(&space_w_w, &editor_workspace_context());
+        assert!(space_w_w_editor.0.is_empty());
+        assert_eq!(space_w_w_editor.1, false);
+
+        // Now test what happens if we have another binding defined AFTER the NoAction
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
+
+        // Now test what happens if we have another binding defined BEFORE the NoAction
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
+
+        // Now test what happens if we have another binding defined at a higher context
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
     }
 
     #[test]

@@ -1,0 +1,123 @@
+interface dap {
+    use common.{env-vars};
+
+    /// Resolves a specified TcpArgumentsTemplate into TcpArguments
+    resolve-tcp-template: func(template: tcp-arguments-template) -> result<tcp-arguments, string>;
+
+    record launch-request {
+        program: string,
+        cwd: option<string>,
+        args: list<string>,
+        envs: env-vars,
+    }
+
+    record attach-request {
+        process-id: option<u32>,
+    }
+
+    variant debug-request {
+        launch(launch-request),
+        attach(attach-request)
+    }
+
+    record tcp-arguments {
+        port: u16,
+        host: u32,
+        timeout: option<u64>,
+    }
+
+    record tcp-arguments-template {
+        port: option<u16>,
+        host: option<u32>,
+        timeout: option<u64>,
+    }
+
+    /// Debug Config is the "highest-level" configuration for a debug session.
+    /// It comes from a new process modal UI; thus, it is essentially debug-adapter-agnostic.
+    /// It is expected of the extension to translate this generic configuration into something that can be debugged by the adapter (debug scenario).
+    record debug-config {
+        /// Name of the debug task
+        label: string,
+        /// The debug adapter to use
+        adapter: string,
+        request: debug-request,
+        stop-on-entry: option<bool>,
+    }
+
+    record task-template {
+        /// Human readable name of the task to display in the UI.
+        label: string,
+        /// Executable command to spawn.
+        command: string,
+        args: list<string>,
+        env: env-vars,
+        cwd: option<string>,
+    }
+
+    /// A task template with substituted task variables.
+    type resolved-task = task-template;
+
+    /// A task template for building a debug target.
+    type build-task-template = task-template;
+
+    variant build-task-definition {
+        by-name(string),
+        template(build-task-definition-template-payload )
+    }
+    record build-task-definition-template-payload {
+        locator-name: option<string>,
+        template: build-task-template
+    }
+
+    /// Debug Scenario is the user-facing configuration type (used in debug.json). It is still concerned with what to debug and not necessarily how to do it (except for any
+    /// debug-adapter-specific configuration options).
+    record debug-scenario {
+        /// Unsubstituted label for the task.DebugAdapterBinary
+        label: string,
+        /// Name of the Debug Adapter this configuration is intended for.
+        adapter: string,
+        /// An optional build step to be ran prior to starting a debug session. Build steps are used by Zed's locators to locate the executable to debug.
+        build: option<build-task-definition>,
+        /// JSON-encoded configuration for a given debug adapter.
+        config: string,
+        /// TCP connection parameters (if they were specified by user)
+        tcp-connection: option<tcp-arguments-template>,
+    }
+
+    enum start-debugging-request-arguments-request {
+        launch,
+        attach,
+    }
+
+    record debug-task-definition {
+        /// Unsubstituted label for the task.DebugAdapterBinary
+        label: string,
+        /// Name of the Debug Adapter this configuration is intended for.
+        adapter: string,
+        /// JSON-encoded configuration for a given debug adapter.
+        config: string,
+        /// TCP connection parameters (if they were specified by user)
+        tcp-connection: option<tcp-arguments-template>,
+    }
+
+    record start-debugging-request-arguments {
+        /// JSON-encoded configuration for a given debug adapter. It is specific to each debug adapter.
+        /// `configuration` will have it's Zed variable references substituted prior to being passed to the debug adapter.
+        configuration: string,
+        request: start-debugging-request-arguments-request,
+    }
+
+    /// The lowest-level representation of a debug session, which specifies:
+    /// - How to start a debug adapter process
+    /// - How to start a debug session with it (using DAP protocol)
+    /// for a given debug scenario.
+    record debug-adapter-binary {
+        command: option<string>,
+        arguments: list<string>,
+        envs: env-vars,
+        cwd: option<string>,
+        /// Zed will use TCP transport if `connection` is specified.
+        connection: option<tcp-arguments>,
+        request-args: start-debugging-request-arguments
+    }
+}

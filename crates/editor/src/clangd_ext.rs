@@ -39,12 +39,12 @@ pub fn switch_source_header(
         else {
             return Ok(());
         };
-        let source_file = buffer.update(cx, |buffer, _| {
+        let source_file = buffer.read_with(cx, |buffer, _| {
             buffer.file().map(|file| file.path()).map(|path| path.to_string_lossy().to_string()).unwrap_or_else(|| "Unknown".to_string())
         })?;
 
         let switch_source_header = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
             let request = proto::LspExtSwitchSourceHeader {
                 project_id,
                 buffer_id: buffer_id.to_proto(),

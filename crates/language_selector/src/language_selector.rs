@@ -1,7 +1,7 @@
 mod active_buffer_language;
 
 pub use active_buffer_language::ActiveBufferLanguage;
-use anyhow::anyhow;
+use anyhow::Context as _;
 use editor::Editor;
 use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
@@ -19,7 +19,13 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(language_selector, [Toggle]);
+actions!(
+    language_selector,
+    [
+        /// Toggles the language selector modal.
+        Toggle
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(LanguageSelector::register).detach();
@@ -192,12 +198,8 @@ impl PickerDelegate for LanguageSelectorDelegate {
             let buffer = self.buffer.downgrade();
             cx.spawn_in(window, async move |_, cx| {
                 let language = language.await?;
-                let project = project
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("project was dropped"))?;
-                let buffer = buffer
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
+                let project = project.upgrade().context("project was dropped")?;
+                let buffer = buffer.upgrade().context("buffer was dropped")?;
                 project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
                 })
@@ -251,6 +253,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,

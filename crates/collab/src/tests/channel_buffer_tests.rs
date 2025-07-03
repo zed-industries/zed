@@ -13,6 +13,7 @@ use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
 use rpc::{RECEIVE_TIMEOUT, proto::PeerId};
 use serde_json::json;
 use std::ops::Range;
+use workspace::CollaboratorId;
 
 #[gpui::test]
 async fn test_core_channel_buffers(
@@ -177,7 +178,7 @@ async fn test_channel_notes_participant_indices(
     channel_view_a.update_in(cx_a, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
             editor.insert("a", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
             });
         });
@@ -187,7 +188,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), window, cx);
             editor.insert("b", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![1..2]);
             });
         });
@@ -197,7 +198,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), window, cx);
             editor.insert("c", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![2..3]);
             });
         });
@@ -272,12 +273,12 @@ async fn test_channel_notes_participant_indices(
         .unwrap();
 
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges(vec![0..1]);
         });
     });
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges(vec![2..3]);
         });
     });
@@ -300,13 +301,20 @@ fn assert_remote_selections(
     cx: &mut Context<Editor>,
 ) {
     let snapshot = editor.snapshot(window, cx);
+    let hub = editor.collaboration_hub().unwrap();
+    let collaborators = hub.collaborators(cx);
     let range = Anchor::min()..Anchor::max();
     let remote_selections = snapshot
-        .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
+        .remote_selections_in_range(&range, hub, cx)
         .map(|s| {
+            let CollaboratorId::PeerId(peer_id) = s.collaborator_id else {
+                panic!("unexpected collaborator id");
+            };
             let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
             let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
-            (s.participant_index, start..end)
+            let user_id = collaborators.get(&peer_id).unwrap().user_id;
+            let participant_index = hub.user_participant_indices(cx).get(&user_id).copied();
+            (participant_index, start..end)
         })
         .collect::<Vec<_>>();
     assert_eq!(

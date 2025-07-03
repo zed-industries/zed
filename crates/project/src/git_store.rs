@@ -23,9 +23,9 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        UpstreamTrackingStatus,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
+        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
+        ResetMode, UpstreamTrackingStatus,
     },
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
@@ -163,7 +163,7 @@ struct LocalDownstreamState {
     _task: Task<Result<()>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
@@ -292,7 +292,7 @@ pub enum RepositoryState {
 
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
-    Updated { full_scan: bool },
+    Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
 }
 
@@ -778,11 +778,7 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .map_or(false, |(repo, path)| {
-                repo.read(cx)
-                    .snapshot
-                    .merge
-                    .conflicted_paths
-                    .contains(&path)
+                repo.read(cx).snapshot.has_conflict(&path)
             });
         let git_store = cx.weak_entity();
         let buffer_git_state = self
@@ -976,7 +972,7 @@ impl GitStore {
             return cx.spawn(async move |cx| {
                 let provider_registry = cx.update(GitHostingProviderRegistry::default_global)?;
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
-                    .map_err(|_| anyhow!("no permalink available"))
+                    .context("no permalink available")
             });
 
             // TODO remote case
@@ -997,23 +993,20 @@ impl GitStore {
                     RepositoryState::Local { backend, .. } => {
                         let origin_url = backend
                             .remote_url(&remote)
-                            .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
+                            .with_context(|| format!("remote \"{remote}\" not found"))?;
 
-                        let sha = backend
-                            .head_sha()
-                            .await
-                            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+                        let sha = backend.head_sha().await.context("reading HEAD SHA")?;
 
                         let provider_registry =
                             cx.update(GitHostingProviderRegistry::default_global)?;
 
                         let (provider, remote) =
                             parse_git_remote_url(provider_registry, &origin_url)
-                                .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+                                .context("parsing Git remote URL")?;
 
-                        let path = repo_path
-                            .to_str()
-                            .ok_or_else(|| anyhow!("failed to convert path to string"))?;
+                        let path = repo_path.to_str().with_context(|| {
+                            format!("converting repo path {repo_path:?} to string")
+                        })?;
 
                         Ok(provider.build_permalink(
                             remote,
@@ -1148,7 +1141,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
-        let merge_conflicts = repo.read(cx).snapshot.merge.conflicted_paths.clone();
+        let repo_snapshot = repo.read(cx).snapshot.clone();
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
@@ -1158,7 +1151,7 @@ impl GitStore {
                         if let Some(conflict_set) = &diff.conflict_set {
                             let conflict_status_changed =
                                 conflict_set.update(cx, |conflict_set, cx| {
-                                    let has_conflict = merge_conflicts.contains(&repo_path);
+                                    let has_conflict = repo_snapshot.has_conflict(&repo_path);
                                     conflict_set.set_has_conflict(has_conflict, cx)
                                 })?;
                             if conflict_status_changed {
@@ -1503,7 +1496,7 @@ impl GitStore {
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, cx| repo.apply_remote_update(update, cx)
+                |repo, cx| repo.apply_remote_update(update, is_new, cx)
             })?;
 
             this.active_repo_id.get_or_insert_with(|| {
@@ -1560,6 +1553,7 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -1572,7 +1566,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(askpass, cx)
+                repository_handle.fetch(fetch_options, askpass, cx)
             })?
             .await??;
 
@@ -1966,7 +1960,7 @@ impl GitStore {
         let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone())?;
         let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
             debug_panic!("no askpass found");
-            return Err(anyhow::anyhow!("no askpass found"));
+            anyhow::bail!("no askpass found");
         };
 
         let response = askpass.ask_password(envelope.payload.prompt).await?;
@@ -2035,7 +2029,7 @@ impl GitStore {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_unstaged_diff(buffer, cx))
             })?
-            .ok_or_else(|| anyhow!("no such buffer"))?
+            .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
             let shared_diffs = this
@@ -2059,7 +2053,7 @@ impl GitStore {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_uncommitted_diff(buffer, cx))
             })?
-            .ok_or_else(|| anyhow!("no such buffer"))?
+            .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
             let shared_diffs = this
@@ -2182,7 +2176,7 @@ impl GitStore {
         id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
-        this.update(cx, |this, _| {
+        this.read_with(cx, |this, _| {
             this.repositories
                 .get(&id)
                 .context("missing repository handle")
@@ -2671,8 +2665,17 @@ impl RepositorySnapshot {
             .ok()
     }
 
+    pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
+        self.merge.conflicted_paths.contains(&repo_path)
+    }
+
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(repo_path)
+        let had_conflict_on_last_merge_head_change =
+            self.merge.conflicted_paths.contains(&repo_path);
+        let has_conflict_currently = self
+            .status_for_path(&repo_path)
+            .map_or(false, |entry| entry.status.is_conflicted());
+        had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -2692,6 +2695,7 @@ impl MergeDetails {
         status: &SumTree<StatusEntry>,
         prev_snapshot: &RepositorySnapshot,
     ) -> Result<(MergeDetails, bool)> {
+        log::debug!("load merge details");
         let message = backend.merge_message().await;
         let heads = backend
             .revparse_batch(vec![
@@ -2709,12 +2713,33 @@ impl MergeDetails {
             .collect::<Vec<_>>();
         let merge_heads_changed = heads != prev_snapshot.merge.heads;
         let conflicted_paths = if merge_heads_changed {
-            TreeSet::from_ordered_entries(
+            let current_conflicted_paths = TreeSet::from_ordered_entries(
                 status
                     .iter()
                     .filter(|entry| entry.status.is_conflicted())
                     .map(|entry| entry.repo_path.clone()),
-            )
+            );
+
+            // It can happen that we run a scan while a lengthy merge is in progress
+            // that will eventually result in conflicts, but before those conflicts
+            // are reported by `git status`. Since for the moment we only care about
+            // the merge heads state for the purposes of tracking conflicts, don't update
+            // this state until we see some conflicts.
+            if heads.iter().any(Option::is_some)
+                && !prev_snapshot.merge.heads.iter().any(Option::is_some)
+                && current_conflicted_paths.is_empty()
+            {
+                log::debug!("not updating merge heads because no conflicts found");
+                return Ok((
+                    MergeDetails {
+                        message: message.map(SharedString::from),
+                        ..prev_snapshot.merge.clone()
+                    },
+                    false,
+                ));
+            }
+
+            current_conflicted_paths
         } else {
             prev_snapshot.merge.conflicted_paths.clone()
         };
@@ -3297,7 +3322,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3364,7 +3389,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3476,6 +3501,7 @@ impl Repository {
 
     pub fn fetch(
         &mut self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
@@ -3489,7 +3515,7 @@ impl Repository {
                     backend,
                     environment,
                     ..
-                } => backend.fetch(askpass, environment, cx).await,
+                } => backend.fetch(fetch_options, askpass, environment, cx).await,
                 RepositoryState::Remote { project_id, client } => {
                     askpass_delegates.lock().insert(askpass_id, askpass);
                     let _defer = util::defer(|| {
@@ -3502,6 +3528,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             askpass_id,
+                            remote: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;
@@ -3530,7 +3557,7 @@ impl Repository {
         let args = options
             .map(|option| match option {
                 PushOptions::SetUpstream => " --set-upstream",
-                PushOptions::Force => " --force",
+                PushOptions::Force => " --force-with-lease",
             })
             .unwrap_or("");
 
@@ -3570,7 +3597,10 @@ impl Repository {
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
                                 let snapshot = this.snapshot.clone();
-                                cx.emit(RepositoryEvent::Updated { full_scan: false });
+                                cx.emit(RepositoryEvent::Updated {
+                                    full_scan: false,
+                                    new_instance: false,
+                                });
                                 snapshot
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -3719,7 +3749,7 @@ impl Repository {
                         let buffer_id = git_store
                             .buffer_store
                             .read(cx)
-                            .get_by_path(&project_path?, cx)?
+                            .get_by_path(&project_path?)?
                             .read(cx)
                             .remote_id();
                         let diff_state = git_store.diffs.get(&buffer_id)?;
@@ -3768,13 +3798,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
@@ -3897,7 +3923,7 @@ impl Repository {
         self.send_job(None, |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => backend.checkpoint().await,
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3911,7 +3937,7 @@ impl Repository {
                 RepositoryState::Local { backend, .. } => {
                     backend.restore_checkpoint(checkpoint).await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3919,6 +3945,7 @@ impl Repository {
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateRepository,
+        is_new: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
@@ -3952,7 +3979,10 @@ impl Repository {
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
-        cx.emit(RepositoryEvent::Updated { full_scan: true });
+        cx.emit(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: is_new,
+        });
         Ok(())
     }
 
@@ -3966,7 +3996,7 @@ impl Repository {
                 RepositoryState::Local { backend, .. } => {
                     backend.compare_checkpoints(left, right).await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3983,7 +4013,7 @@ impl Repository {
                         .diff_checkpoints(base_checkpoint, target_checkpoint)
                         .await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3998,6 +4028,8 @@ impl Repository {
             Some(GitJobKey::ReloadGitState),
             None,
             |state, mut cx| async move {
+                log::debug!("run scheduled git status scan");
+
                 let Some(this) = this.upgrade() else {
                     return Ok(());
                 };
@@ -4005,7 +4037,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .read_with(&mut cx, |this, _| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
@@ -4044,7 +4076,7 @@ impl Repository {
         cx.spawn(async move |_, cx| {
             let environment = project_environment
                 .upgrade()
-                .ok_or_else(|| anyhow!("missing project environment"))?
+                .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
                     project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
                 })?
@@ -4056,7 +4088,7 @@ impl Repository {
             let backend = cx
                 .background_spawn(async move {
                     fs.open_repo(&dot_git_abs_path)
-                        .ok_or_else(|| anyhow!("failed to build repository"))
+                        .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
                 })
                 .await?;
 
@@ -4195,8 +4227,7 @@ impl Repository {
                             buffer_id: buffer_id.to_proto(),
                         })
                         .await?;
-                    let mode =
-                        Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
+                    let mode = Mode::from_i32(response.mode).context("Invalid mode")?;
                     let bases = match mode {
                         Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
                         Mode::IndexAndHead => DiffBasesChange::SetEach {
@@ -4258,9 +4289,9 @@ impl Repository {
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-                        for path in changed_paths.iter() {
+                        for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
+                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
                         changed_path_statuses
@@ -4281,7 +4312,10 @@ impl Repository {
                                 .ok();
                         }
                     }
-                    cx.emit(RepositoryEvent::Updated { full_scan: false });
+                    cx.emit(RepositoryEvent::Updated {
+                        full_scan: false,
+                        new_instance: false,
+                    });
                 })
             },
         );
@@ -4333,7 +4367,7 @@ fn get_permalink_in_rust_registry_src(
     let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
     let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
     let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
-        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
+        .context("parsing package.repository field of manifest")?;
     let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
     let permalink = provider.build_permalink(
         remote,
@@ -4436,7 +4470,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4465,7 +4499,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()
@@ -4522,7 +4556,9 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
+    let statuses = backend
+        .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
+        .await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4535,12 +4571,16 @@ async fn compute_snapshot(
     );
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
+    log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
     if merge_heads_changed
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
-        events.push(RepositoryEvent::Updated { full_scan: true });
+        events.push(RepositoryEvent::Updated {
+            full_scan: true,
+            new_instance: false,
+        });
     }
 
     // Cache merge conflict paths so they don't change from staging/unstaging,
@@ -4576,7 +4616,7 @@ fn status_from_proto(
 
     let Some(variant) = status.and_then(|status| status.variant) else {
         let code = proto::GitStatus::from_i32(simple_status)
-            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
+            .with_context(|| format!("Invalid git status code: {simple_status}"))?;
         let result = match code {
             proto::GitStatus::Added => TrackedStatus {
                 worktree_status: StatusCode::Added,
@@ -4598,7 +4638,7 @@ fn status_from_proto(
                 index_status: StatusCode::Unmodified,
             }
             .into(),
-            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
+            _ => anyhow::bail!("Invalid code for simple status: {simple_status}"),
         };
         return Ok(result);
     };
@@ -4610,12 +4650,12 @@ fn status_from_proto(
             let [first_head, second_head] =
                 [unmerged.first_head, unmerged.second_head].map(|head| {
                     let code = proto::GitStatus::from_i32(head)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
+                        .with_context(|| format!("Invalid git status code: {head}"))?;
                     let result = match code {
                         proto::GitStatus::Added => UnmergedStatusCode::Added,
                         proto::GitStatus::Updated => UnmergedStatusCode::Updated,
                         proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
-                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
+                        _ => anyhow::bail!("Invalid code for unmerged status: {code:?}"),
                     };
                     Ok(result)
                 });
@@ -4630,7 +4670,7 @@ fn status_from_proto(
             let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
                 .map(|status| {
                     let code = proto::GitStatus::from_i32(status)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
+                        .with_context(|| format!("Invalid git status code: {status}"))?;
                     let result = match code {
                         proto::GitStatus::Modified => StatusCode::Modified,
                         proto::GitStatus::TypeChanged => StatusCode::TypeChanged,
@@ -4639,7 +4679,7 @@ fn status_from_proto(
                         proto::GitStatus::Renamed => StatusCode::Renamed,
                         proto::GitStatus::Copied => StatusCode::Copied,
                         proto::GitStatus::Unmodified => StatusCode::Unmodified,
-                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
+                        _ => anyhow::bail!("Invalid code for tracked status: {code:?}"),
                     };
                     Ok(result)
                 });

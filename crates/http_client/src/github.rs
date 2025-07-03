@@ -1,5 +1,5 @@
 use crate::HttpClient;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub async fn latest_github_release(
     require_assets: bool,
     pre_release: bool,
     http: Arc<dyn HttpClient>,
-) -> Result<GithubRelease, anyhow::Error> {
+) -> anyhow::Result<GithubRelease> {
     let mut response = http
         .get(
             format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),
@@ -60,12 +60,12 @@ pub async fn latest_github_release(
         Ok(releases) => releases,
 
         Err(err) => {
-            log::error!("Error deserializing: {:?}", err);
+            log::error!("Error deserializing: {err:?}");
             log::error!(
                 "GitHub API response text: {:?}",
                 String::from_utf8_lossy(body.as_slice())
             );
-            return Err(anyhow!("error deserializing latest release"));
+            anyhow::bail!("error deserializing latest release: {err:?}");
         }
     };
 
@@ -73,14 +73,14 @@ pub async fn latest_github_release(
         .into_iter()
         .filter(|release| !require_assets || !release.assets.is_empty())
         .find(|release| release.pre_release == pre_release)
-        .ok_or(anyhow!("Failed to find a release"))
+        .context("finding a prerelease")
 }
 
 pub async fn get_release_by_tag_name(
     repo_name_with_owner: &str,
     tag: &str,
     http: Arc<dyn HttpClient>,
-) -> Result<GithubRelease, anyhow::Error> {
+) -> anyhow::Result<GithubRelease> {
     let mut response = http
         .get(
             &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),
@@ -107,12 +107,12 @@ pub async fn get_release_by_tag_name(
     }
 
     let release = serde_json::from_slice::<GithubRelease>(body.as_slice()).map_err(|err| {
-        log::error!("Error deserializing: {:?}", err);
+        log::error!("Error deserializing: {err:?}");
         log::error!(
             "GitHub API response text: {:?}",
             String::from_utf8_lossy(body.as_slice())
         );
-        anyhow!("error deserializing GitHub release")
+        anyhow!("error deserializing GitHub release: {err:?}")
     })?;
 
     Ok(release)
@@ -140,7 +140,7 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
         }
     );
     url.path_segments_mut()
-        .map_err(|_| anyhow!("cannot modify url path segments"))?
+        .map_err(|()| anyhow!("cannot modify url path segments"))?
         .push(&asset_filename);
     Ok(url.to_string())
 }

@@ -1,9 +1,12 @@
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -40,13 +43,7 @@ impl Scene {
         self.surfaces.clear();
     }
 
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
+    #[allow(dead_code)]
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
         &self.paths
     }
@@ -146,7 +143,7 @@ impl Scene {
         ),
         allow(dead_code)
     )]
-    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
+    pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch<'_>> {
         BatchIterator {
             shadows: &self.shadows,
             shadows_start: 0,
@@ -506,7 +503,7 @@ impl From<Shadow> for Primitive {
 }
 
 /// The style of a border.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub enum BorderStyle {
     /// A solid border.
@@ -676,7 +673,7 @@ pub(crate) struct PathId(pub(crate) usize);
 
 /// A line made up of a series of vertices and control points.
 #[derive(Clone, Debug)]
-pub struct Path<P: Clone + Default + Debug> {
+pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) id: PathId,
     order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
@@ -686,6 +683,7 @@ pub struct Path<P: Clone + Default + Debug> {
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
+    base_scale: f32,
 }
 
 impl Path<Pixels> {
@@ -704,25 +702,35 @@ impl Path<Pixels> {
             content_mask: Default::default(),
             color: Default::default(),
             contour_count: 0,
+            base_scale: 1.0,
         }
     }
 
-    /// Scale this path by the given factor.
-    pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
+    /// Set the base scale of the path.
+    pub fn scale(mut self, factor: f32) -> Self {
+        self.base_scale = factor;
+        self
+    }
+
+    /// Apply a scale to the path.
+    pub(crate) fn apply_scale(&self, factor: f32) -> Path<ScaledPixels> {
         Path {
             id: self.id,
             order: self.order,
-            bounds: self.bounds.scale(factor),
-            content_mask: self.content_mask.scale(factor),
+            bounds: self.bounds.scale(self.base_scale * factor),
+            content_mask: self.content_mask.scale(self.base_scale * factor),
             vertices: self
                 .vertices
                 .iter()
-                .map(|vertex| vertex.scale(factor))
+                .map(|vertex| vertex.scale(self.base_scale * factor))
                 .collect(),
-            start: self.start.map(|start| start.scale(factor)),
-            current: self.current.scale(factor),
+            start: self
+                .start
+                .map(|start| start.scale(self.base_scale * factor)),
+            current: self.current.scale(self.base_scale * factor),
             contour_count: self.contour_count,
             color: self.color,
+            base_scale: 1.0,
         }
     }
 
@@ -737,10 +745,7 @@ impl Path<Pixels> {
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+            self.push_triangle((self.start, self.current, to));
         }
         self.current = to;
     }
@@ -749,25 +754,15 @@ impl Path<Pixels> {
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+            self.push_triangle((self.start, self.current, to));
         }
 
-        self.push_triangle(
-            (self.current, ctrl, to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
+        self.push_triangle((self.current, ctrl, to));
         self.current = to;
     }
 
     /// Push a triangle to the Path.
-    pub fn push_triangle(
-        &mut self,
-        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
-        st: (Point<f32>, Point<f32>, Point<f32>),
-    ) {
+    pub fn push_triangle(&mut self, xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>)) {
         self.bounds = self
             .bounds
             .union(&Bounds {
@@ -785,17 +780,14 @@ impl Path<Pixels> {
 
         self.vertices.push(PathVertex {
             xy_position: xy.0,
-            st_position: st.0,
             content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.1,
-            st_position: st.1,
             content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.2,
-            st_position: st.2,
             content_mask: Default::default(),
         });
     }
@@ -809,9 +801,8 @@ impl From<Path<ScaledPixels>> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct PathVertex<P: Clone + Default + Debug> {
+pub(crate) struct PathVertex<P: Clone + Debug + Default + PartialEq> {
     pub(crate) xy_position: Point<P>,
-    pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,
 }
 
@@ -819,7 +810,6 @@ impl PathVertex<Pixels> {
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
         PathVertex {
             xy_position: self.xy_position.scale(factor),
-            st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
     }

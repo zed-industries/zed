@@ -4,9 +4,8 @@ use editor::{
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
-    scroll::Autoscroll,
 };
-use gpui::{Context, Window, action_with_deprecated_aliases, actions, impl_actions, px};
+use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -82,6 +81,9 @@ pub enum Motion {
     },
     CurrentLine,
     StartOfLine {
+        display_lines: bool,
+    },
+    MiddleOfLine {
         display_lines: bool,
     },
     EndOfLine {
@@ -174,189 +176,241 @@ enum IndentType {
     Same,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the next word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the next word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the previous word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the previous word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the next subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the next subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the previous subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the previous subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves cursor up by the specified number of lines.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves cursor down by the specified number of lines.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the first non-whitespace character on the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the middle of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct MiddleOfLine {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+/// Finds the next unmatched bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Finds the previous unmatched bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedBackward {
     #[serde(default)]
     char: char,
 }
 
-impl_actions!(
-    vim,
-    [
-        StartOfLine,
-        EndOfLine,
-        FirstNonWhitespace,
-        Down,
-        Up,
-        NextWordStart,
-        NextWordEnd,
-        PreviousWordStart,
-        PreviousWordEnd,
-        NextSubwordStart,
-        NextSubwordEnd,
-        PreviousSubwordStart,
-        PreviousSubwordEnd,
-        UnmatchedForward,
-        UnmatchedBackward
-    ]
-);
-
 actions!(
     vim,
     [
+        /// Moves cursor left one character.
         Left,
-        Backspace,
+        /// Moves cursor left one character, wrapping to previous line.
+        #[action(deprecated_aliases = ["vim::Backspace"])]
+        WrappingLeft,
+        /// Moves cursor right one character.
         Right,
-        Space,
+        /// Moves cursor right one character, wrapping to next line.
+        #[action(deprecated_aliases = ["vim::Space"])]
+        WrappingRight,
+        /// Selects the current line.
         CurrentLine,
+        /// Moves to the start of the next sentence.
         SentenceForward,
+        /// Moves to the start of the previous sentence.
         SentenceBackward,
+        /// Moves to the start of the paragraph.
         StartOfParagraph,
+        /// Moves to the end of the paragraph.
         EndOfParagraph,
+        /// Moves to the start of the document.
         StartOfDocument,
+        /// Moves to the end of the document.
         EndOfDocument,
+        /// Moves to the matching bracket or delimiter.
         Matching,
+        /// Goes to a percentage position in the file.
         GoToPercentage,
+        /// Moves to the start of the next line.
         NextLineStart,
+        /// Moves to the start of the previous line.
         PreviousLineStart,
+        /// Moves to the start of a line downward.
         StartOfLineDownward,
+        /// Moves to the end of a line downward.
         EndOfLineDownward,
+        /// Goes to a specific column number.
         GoToColumn,
+        /// Repeats the last character find.
         RepeatFind,
+        /// Repeats the last character find in reverse.
         RepeatFindReversed,
+        /// Moves to the top of the window.
         WindowTop,
+        /// Moves to the middle of the window.
         WindowMiddle,
+        /// Moves to the bottom of the window.
         WindowBottom,
+        /// Moves to the start of the next section.
         NextSectionStart,
+        /// Moves to the end of the next section.
         NextSectionEnd,
+        /// Moves to the start of the previous section.
         PreviousSectionStart,
+        /// Moves to the end of the previous section.
         PreviousSectionEnd,
+        /// Moves to the start of the next method.
         NextMethodStart,
+        /// Moves to the end of the next method.
         NextMethodEnd,
+        /// Moves to the start of the previous method.
         PreviousMethodStart,
+        /// Moves to the end of the previous method.
         PreviousMethodEnd,
+        /// Moves to the next comment.
         NextComment,
+        /// Moves to the previous comment.
         PreviousComment,
+        /// Moves to the previous line with lesser indentation.
         PreviousLesserIndent,
+        /// Moves to the previous line with greater indentation.
         PreviousGreaterIndent,
+        /// Moves to the previous line with the same indentation.
         PreviousSameIndent,
+        /// Moves to the next line with lesser indentation.
         NextLesserIndent,
+        /// Moves to the next line with greater indentation.
         NextGreaterIndent,
+        /// Moves to the next line with the same indentation.
         NextSameIndent,
     ]
 );
-
-action_with_deprecated_aliases!(vim, WrappingLeft, ["vim::Backspace"]);
-action_with_deprecated_aliases!(vim, WrappingRight, ["vim::Space"]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingLeft, window, cx| {
-        vim.motion(Motion::WrappingLeft, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
         vim.motion(Motion::WrappingLeft, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Down, window, cx| {
@@ -383,10 +437,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &WrappingRight, window, cx| {
         vim.motion(Motion::WrappingRight, window, cx)
     });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Space, window, cx| {
-        vim.motion(Motion::WrappingRight, window, cx)
-    });
     Vim::action(
         editor,
         cx,
@@ -403,6 +453,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
         vim.motion(
             Motion::StartOfLine {
+                display_lines: action.display_lines,
+            },
+            window,
+            cx,
+        )
+    });
+    Vim::action(editor, cx, |vim, action: &MiddleOfLine, window, cx| {
+        vim.motion(
+            Motion::MiddleOfLine {
                 display_lines: action.display_lines,
             },
             window,
@@ -621,7 +680,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
@@ -737,6 +796,7 @@ impl Motion {
             | SentenceBackward
             | SentenceForward
             | GoToColumn
+            | MiddleOfLine { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | NextWordStart { .. }
@@ -762,6 +822,73 @@ impl Motion {
         }
     }
 
+    pub(crate) fn push_to_jump_list(&self) -> bool {
+        use Motion::*;
+        match self {
+            CurrentLine
+            | Down { .. }
+            | EndOfLine { .. }
+            | EndOfLineDownward
+            | FindBackward { .. }
+            | FindForward { .. }
+            | FirstNonWhitespace { .. }
+            | GoToColumn
+            | Left
+            | MiddleOfLine { .. }
+            | NextLineStart
+            | NextSubwordEnd { .. }
+            | NextSubwordStart { .. }
+            | NextWordEnd { .. }
+            | NextWordStart { .. }
+            | PreviousLineStart
+            | PreviousSubwordEnd { .. }
+            | PreviousSubwordStart { .. }
+            | PreviousWordEnd { .. }
+            | PreviousWordStart { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. }
+            | Right
+            | StartOfLine { .. }
+            | StartOfLineDownward
+            | Up { .. }
+            | WrappingLeft
+            | WrappingRight => false,
+            EndOfDocument
+            | EndOfParagraph
+            | GoToPercentage
+            | Jump { .. }
+            | Matching
+            | NextComment
+            | NextGreaterIndent
+            | NextLesserIndent
+            | NextMethodEnd
+            | NextMethodStart
+            | NextSameIndent
+            | NextSectionEnd
+            | NextSectionStart
+            | PreviousComment
+            | PreviousGreaterIndent
+            | PreviousLesserIndent
+            | PreviousMethodEnd
+            | PreviousMethodStart
+            | PreviousSameIndent
+            | PreviousSectionEnd
+            | PreviousSectionStart
+            | SentenceBackward
+            | SentenceForward
+            | Sneak { .. }
+            | SneakBackward { .. }
+            | StartOfDocument
+            | StartOfParagraph
+            | UnmatchedBackward { .. }
+            | UnmatchedForward { .. }
+            | WindowBottom
+            | WindowMiddle
+            | WindowTop
+            | ZedSearchResult { .. } => true,
+        }
+    }
+
     pub fn infallible(&self) -> bool {
         use Motion::*;
         match self {
@@ -769,6 +896,7 @@ impl Motion {
             Down { .. }
             | Up { .. }
             | EndOfLine { .. }
+            | MiddleOfLine { .. }
             | Matching
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
@@ -892,6 +1020,10 @@ impl Motion {
             ),
             StartOfLine { display_lines } => (
                 start_of_line(map, *display_lines, point),
+                SelectionGoal::None,
+            ),
+            MiddleOfLine { display_lines } => (
+                middle_of_line(map, *display_lines, point, maybe_times),
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
@@ -1309,6 +1441,16 @@ impl Motion {
                     end_point.row -= 1;
                     end_point.column = 0;
                     selection.end = map.clip_point(map.next_line_boundary(end_point).1, Bias::Left);
+                } else if let Motion::EndOfParagraph = self {
+                    // Special case: When using the "}" motion, it's possible
+                    // that there's no blank lines after the paragraph the
+                    // cursor is currently on.
+                    // In this situation the `end_point.column` value will be
+                    // greater than 0, so the selection doesn't actually end on
+                    // the first character of a blank line. In that case, we'll
+                    // want to move one column to the right, to actually include
+                    // all characters of the last non-blank line.
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
         } else if kind == MotionKind::Inclusive {
@@ -1665,7 +1807,9 @@ fn previous_word_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1838,7 +1982,9 @@ fn previous_subword_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1931,6 +2077,36 @@ pub(crate) fn start_of_line(
         map.clip_point(DisplayPoint::new(point.row(), 0), Bias::Right)
     } else {
         map.prev_line_boundary(point.to_point(map)).1
+    }
+}
+
+pub(crate) fn middle_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+    times: Option<usize>,
+) -> DisplayPoint {
+    let percent = if let Some(times) = times.filter(|&t| t <= 100) {
+        times as f64 / 100.
+    } else {
+        0.5
+    };
+    if display_lines {
+        map.clip_point(
+            DisplayPoint::new(
+                point.row(),
+                (map.line_len(point.row()) as f64 * percent) as u32,
+            ),
+            Bias::Left,
+        )
+    } else {
+        let mut buffer_point = point.to_point(map);
+        buffer_point.column = (map
+            .buffer_snapshot
+            .line_len(MultiBufferRow(buffer_point.row)) as f64
+            * percent) as u32;
+
+        map.clip_point(buffer_point.to_display_point(map), Bias::Left)
     }
 }
 
@@ -2209,6 +2385,17 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
+    if let Some((opening_range, closing_range)) = map
+        .buffer_snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, None)
+    {
+        if opening_range.contains(&offset) {
+            return closing_range.start.to_display_point(map);
+        } else if closing_range.contains(&offset) {
+            return opening_range.start.to_display_point(map);
+        }
+    }
+
     let line_range = map.prev_line_boundary(point).0..line_end;
     let visible_line_range =
         line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
@@ -2400,6 +2587,10 @@ fn find_forward(
     if found {
         if before && to.column() > 0 {
             *to.column_mut() -= 1;
+            Some(map.clip_point(to, Bias::Left))
+        } else if before && to.row().0 > 0 {
+            *to.row_mut() -= 1;
+            *to.column_mut() = map.line(to.row()).len() as u32;
             Some(map.clip_point(to, Bias::Left))
         } else {
             Some(to)
@@ -3169,6 +3360,29 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_braces_in_tag(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
+
+        // test brackets within tags
+        cx.set_shared_state(indoc! {r"function f() {
+            return (
+                <div rules={ˇ[{ a: 1 }]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"function f() {
+            return (
+                <div rules={[{ a: 1 }ˇ]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"});
+    }
+
+    #[gpui::test]
     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -3543,6 +3757,16 @@ mod test {
           4;5.6 567 678
           789 890 901
         "});
+
+        // With multi byte char
+        cx.set_shared_state(indoc! {r"
+        bar ˇó
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("g e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        baˇr ó
+        "});
     }
 
     #[gpui::test]
@@ -3888,6 +4112,61 @@ mod test {
         cx.simulate_shared_keystrokes("d v 0").await;
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
+    async fn test_forced_motion_delete_to_middle_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             ˇbrown fox
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick bˇrown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quickˇown fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick brown foˇx
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quicˇk
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 7 5 g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇ fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 2 3 g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇuick brown fox
             jumped over the lazy dog"});
         assert_eq!(cx.cx.forced_motion(), false);
     }

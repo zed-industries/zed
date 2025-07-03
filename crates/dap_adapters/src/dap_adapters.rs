@@ -5,17 +5,18 @@ mod javascript;
 mod php;
 mod python;
 
-use std::{net::Ipv4Addr, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry, DebugRequest,
+    DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
+    configure_tcp_connection,
 };
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
@@ -23,44 +24,21 @@ use gpui::{App, BorrowAppContext};
 use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
-use serde_json::{Value, json};
-use task::TcpArgumentsTemplate;
+use serde_json::json;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
         registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
-        registry.add_adapter(Arc::from(PythonDebugAdapter));
-        registry.add_adapter(Arc::from(PhpDebugAdapter));
-        registry.add_adapter(Arc::from(JsDebugAdapter));
-        registry.add_adapter(Arc::from(GoDebugAdapter));
+        registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
+        registry.add_adapter(Arc::from(PhpDebugAdapter::default()));
+        registry.add_adapter(Arc::from(JsDebugAdapter::default()));
+        registry.add_adapter(Arc::from(GoDebugAdapter::default()));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
-    })
-}
 
-pub(crate) async fn configure_tcp_connection(
-    tcp_connection: TcpArgumentsTemplate,
-) -> Result<(Ipv4Addr, u16, Option<u64>)> {
-    let host = tcp_connection.host();
-    let timeout = tcp_connection.timeout;
-
-    let port = if let Some(port) = tcp_connection.port {
-        port
-    } else {
-        dap::transport::TcpTransport::port(&tcp_connection).await?
-    };
-
-    Ok((host, port, timeout))
-}
-
-trait ToDap {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
-}
-
-impl ToDap for DebugRequest {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
-        match self {
-            Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,
-            Self::Attach(_) => dap::StartDebuggingRequestArgumentsRequest::Attach,
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            registry.add_adapter(Arc::from(dap::FakeAdapter {}));
         }
-    }
+    })
 }

@@ -1,6 +1,6 @@
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use collections::{HashMap, HashSet};
-use schemars::{JsonSchema, r#gen::SchemaSettings};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -9,8 +9,7 @@ use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX,
-    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
+    VariableName, ZED_VARIABLE_NAME_PREFIX, serde_helpers::non_empty_string_vec,
 };
 
 /// A template definition of a Zed task to run.
@@ -61,7 +60,7 @@ pub struct TaskTemplate {
     /// Represents the tags which this template attaches to.
     /// Adding this removes this task from other UI and gives you ability to run it by tag.
     #[serde(default, deserialize_with = "non_empty_string_vec")]
-    #[schemars(schema_with = "non_empty_string_vec_json_schema")]
+    #[schemars(length(min = 1))]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
@@ -81,15 +80,6 @@ pub enum DebugArgsRequest {
     Launch,
     /// Attach
     Attach(AttachRequest),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// The type of task modal to spawn
-pub enum TaskModal {
-    /// Show regular tasks
-    ScriptModal,
-    /// Show debug tasks
-    DebugModal,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -125,10 +115,9 @@ pub struct TaskTemplates(pub Vec<TaskTemplate>);
 impl TaskTemplates {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
+        let schema = schemars::generate::SchemaSettings::draft2019_09()
             .into_generator()
-            .into_root_schema_for::<Self>();
+            .root_schema_for::<Self>();
 
         serde_json_lenient::to_value(schema).unwrap()
     }
@@ -302,6 +291,28 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) -> Option<String> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_str(
+        template_str,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
 fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
@@ -358,6 +369,31 @@ fn substitute_all_template_variables_in_vec(
     Some(expanded)
 }
 
+pub fn substitute_variables_in_map(
+    keys_and_values: &HashMap<String, String>,
+    context: &TaskContext,
+) -> Option<HashMap<String, String>> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_map(
+        keys_and_values,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
 fn substitute_all_template_variables_in_map(
     keys_and_values: &HashMap<String, String>,
     task_variables: &HashMap<String, &str>,

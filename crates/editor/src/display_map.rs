@@ -31,13 +31,15 @@ use crate::{
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{
+    ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -47,12 +49,13 @@ pub use invisibles::{is_invisible, replacement};
 use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
-use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
+use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -75,11 +78,17 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HighlightKey {
+    Type(TypeId),
+    TypePlus(TypeId, usize),
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -109,6 +118,7 @@ pub struct DisplayMap {
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
+    pub(crate) diagnostics_max_severity: DiagnosticSeverity,
 }
 
 impl DisplayMap {
@@ -120,6 +130,7 @@ impl DisplayMap {
         buffer_header_height: u32,
         excerpt_header_height: u32,
         fold_placeholder: FoldPlaceholder,
+        diagnostics_max_severity: DiagnosticSeverity,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -145,6 +156,7 @@ impl DisplayMap {
             block_map,
             crease_map,
             fold_placeholder,
+            diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -171,6 +183,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
+            diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
@@ -258,6 +271,7 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
+                        render_in_minimap: true,
                     }
                 }),
         );
@@ -391,7 +405,7 @@ impl DisplayMap {
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
     }
@@ -467,12 +481,11 @@ impl DisplayMap {
 
     pub fn highlight_text(
         &mut self,
-        type_id: TypeId,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
     ) {
-        self.text_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+        self.text_highlights.insert(key, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -495,11 +508,22 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&type_id)?;
+        let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
         Some((highlights.0, &highlights.1))
     }
+
+    #[cfg(feature = "test-support")]
+    pub fn all_text_highlights(
+        &self,
+    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        self.text_highlights.values()
+    }
+
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&type_id).is_some();
+        let mut cleared = self
+            .text_highlights
+            .remove(&HighlightKey::Type(type_id))
+            .is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -516,7 +540,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -633,6 +657,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -646,6 +671,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -661,6 +687,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -687,6 +714,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -710,6 +738,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -722,6 +751,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
+                    is_inlay,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -744,6 +774,7 @@ pub struct DisplaySnapshot {
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
     masked: bool,
+    diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -937,22 +968,39 @@ impl DisplaySnapshot {
                 .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
+                // For color inlays, blend the color with the editor background
+                let mut processed_highlight = chunk_highlight;
+                if chunk.is_inlay {
+                    if let Some(inlay_color) = chunk_highlight.color {
+                        // Only blend if the color has transparency (alpha < 1.0)
+                        if inlay_color.a < 1.0 {
+                            let blended_color = editor_style.background.blend(inlay_color);
+                            processed_highlight.color = Some(blended_color);
+                        }
+                    }
+                }
+
                 if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
+                    highlight_style.highlight(processed_highlight);
                 } else {
-                    highlight_style = Some(chunk_highlight);
+                    highlight_style = Some(processed_highlight);
                 }
             }
 
             let mut diagnostic_highlight = HighlightStyle::default();
 
-            if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
-            }
-
-            if let Some(severity) = chunk.diagnostic_severity {
-                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
+                self.diagnostics_max_severity
+                    .into_lsp()
+                    .map_or(false, |max_severity| severity <= &max_severity)
+            }) {
+                if chunk.is_unnecessary {
+                    diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
+                }
+                if chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
@@ -972,6 +1020,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
@@ -1017,9 +1066,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system
-            .layout_line(&line, font_size, &runs)
-            .expect("we expect the font to be loaded because it's rendered by the editor")
+        text_system.layout_line(&line, font_size, &runs)
     }
 
     pub fn x_for_display_point(
@@ -1316,7 +1363,9 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&type_id).cloned()
+        self.text_highlights
+            .get(&HighlightKey::Type(type_id))
+            .cloned()
     }
 
     #[allow(unused)]
@@ -1544,6 +1593,7 @@ pub mod tests {
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -1613,6 +1663,7 @@ pub mod tests {
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
+                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1791,6 +1842,7 @@ pub mod tests {
                     1,
                     1,
                     FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
                     cx,
                 )
             });
@@ -1900,6 +1952,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -1961,6 +2014,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -1975,6 +2029,7 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -1984,11 +2039,11 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay {
-                    id: InlayId::InlineCompletion(0),
-                    position: buffer_snapshot.anchor_after(0),
-                    text: "\n".into(),
-                }],
+                vec![Inlay::inline_completion(
+                    0,
+                    buffer_snapshot.anchor_after(0),
+                    "\n",
+                )],
                 cx,
             );
         });
@@ -2053,6 +2108,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2153,6 +2209,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2170,6 +2227,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2179,6 +2237,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2232,7 +2291,7 @@ pub mod tests {
                     [DiagnosticEntry {
                         range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
                         diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
+                            severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "hi".into(),
                             ..Default::default()
@@ -2256,6 +2315,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2266,7 +2326,7 @@ pub mod tests {
         // Insert a block in the middle of a multi-line diagnostic.
         map.update(cx, |map, cx| {
             map.highlight_text(
-                TypeId::of::<usize>(),
+                HighlightKey::Type(TypeId::of::<usize>()),
                 vec![
                     buffer_snapshot.anchor_before(Point::new(3, 9))
                         ..buffer_snapshot.anchor_after(Point::new(3, 14)),
@@ -2284,13 +2344,14 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             )
         });
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks = Vec::<(String, Option<DiagnosticSeverity>, Rgba)>::new();
+        let mut chunks = Vec::<(String, Option<lsp::DiagnosticSeverity>, Rgba)>::new();
         for chunk in snapshot.chunks(DisplayRow(0)..DisplayRow(5), true, Default::default()) {
             let color = chunk
                 .highlight_style
@@ -2311,11 +2372,11 @@ pub mod tests {
             [
                 (
                     "struct A {\n    b: usize;\n".into(),
-                    Some(DiagnosticSeverity::ERROR),
+                    Some(lsp::DiagnosticSeverity::ERROR),
                     black
                 ),
                 ("\n".into(), None, black),
-                ("}".into(), Some(DiagnosticSeverity::ERROR), black),
+                ("}".into(), Some(lsp::DiagnosticSeverity::ERROR), black),
                 ("\nconst c: ".into(), None, black),
                 ("usize".into(), None, red),
                 (" = ".into(), None, black),
@@ -2343,6 +2404,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2358,6 +2420,7 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2483,6 +2546,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2490,7 +2554,9 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some(Hsla::blue())),
+                ("oute".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None),
+                ("r".to_string(), Some(Hsla::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -2513,8 +2579,11 @@ pub mod tests {
             [
                 ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
-                ("  \nfn ".to_string(), Some(Hsla::red())),
-                ("i\n".to_string(), Some(Hsla::blue()))
+                ("  ".to_string(), Some(Hsla::red())),
+                ("\n".to_string(), None),
+                ("fn ".to_string(), Some(Hsla::red())),
+                ("i".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None)
             ]
         );
     }
@@ -2565,6 +2634,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2578,7 +2648,7 @@ pub mod tests {
 
         map.update(cx, |map, _cx| {
             map.highlight_text(
-                TypeId::of::<MyType>(),
+                HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
                     .into_iter()
                     .map(|range| {
@@ -2689,6 +2759,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             );
             let snapshot = map.buffer.read(cx).snapshot(cx);
@@ -2726,6 +2797,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2801,6 +2873,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });

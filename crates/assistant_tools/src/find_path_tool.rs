@@ -1,13 +1,15 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+};
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
 };
 use language;
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,12 @@ pub struct FindPathToolInput {
     pub offset: usize,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct FindPathToolOutput {
+    glob: String,
+    paths: Vec<PathBuf>,
+}
+
 const RESULTS_PER_PAGE: usize = 50;
 
 pub struct FindPathTool;
@@ -48,6 +56,10 @@ impl Tool for FindPathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
         false
     }
 
@@ -73,9 +85,10 @@ impl Tool for FindPathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -98,7 +111,7 @@ impl Tool for FindPathTool {
             sender.send(paginated_matches.to_vec()).log_err();
 
             if matches.is_empty() {
-                Ok("No matches found".to_string())
+                Ok("No matches found".to_string().into())
             } else {
                 let mut message = format!("Found {} total matches.", matches.len());
                 if matches.len() > RESULTS_PER_PAGE {
@@ -110,10 +123,20 @@ impl Tool for FindPathTool {
                     )
                     .unwrap();
                 }
-                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+
+                for mat in matches.iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
-                Ok(message)
+
+                let output = FindPathToolOutput {
+                    glob,
+                    paths: matches,
+                };
+
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text(message),
+                    output: Some(serde_json::to_value(output)?),
+                })
             }
         });
 
@@ -121,6 +144,18 @@ impl Tool for FindPathTool {
             output: task,
             card: Some(card.into()),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<assistant_tool::AnyToolCard> {
+        let output = serde_json::from_value::<FindPathToolOutput>(output).ok()?;
+        let card = cx.new(|_| FindPathToolCard::from_output(output));
+        Some(card.into())
     }
 }
 
@@ -179,6 +214,15 @@ impl FindPathToolCard {
             _receiver_task: Some(_receiver_task),
         }
     }
+
+    fn from_output(output: FindPathToolOutput) -> Self {
+        Self {
+            glob: output.glob,
+            paths: output.paths,
+            expanded: false,
+            _receiver_task: None,
+        }
+    }
 }
 
 impl ToolCard for FindPathToolCard {
@@ -196,8 +240,6 @@ impl ToolCard for FindPathToolCard {
         } else {
             format!("{} matches", self.paths.len()).into()
         };
-
-        let glob_label = self.glob.to_string();
 
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
@@ -272,7 +314,7 @@ impl ToolCard for FindPathToolCard {
             .gap_1()
             .child(
                 ToolCallCardHeader::new(IconName::SearchCode, matches_label)
-                    .with_code_path(glob_label)
+                    .with_code_path(&self.glob)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)
                             .opened_icon(IconName::ChevronUp)

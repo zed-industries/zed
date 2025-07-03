@@ -7,8 +7,8 @@ use client::{
 };
 use collections::HashMap;
 use editor::{
-    CollaborationHub, DisplayPoint, Editor, EditorEvent, display_map::ToDisplayPoint,
-    scroll::Autoscroll,
+    CollaborationHub, DisplayPoint, Editor, EditorEvent, SelectionEffects,
+    display_map::ToDisplayPoint, scroll::Autoscroll,
 };
 use gpui::{
     AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
@@ -22,7 +22,7 @@ use std::{
 };
 use ui::prelude::*;
 use util::ResultExt;
-use workspace::item::TabContentParams;
+use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
@@ -30,7 +30,13 @@ use workspace::{
 };
 use workspace::{item::Dedup, notifications::NotificationId};
 
-actions!(collab, [CopyLink]);
+actions!(
+    collab,
+    [
+        /// Copies a link to the current position in the channel buffer.
+        CopyLink
+    ]
+);
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ChannelView>(cx)
@@ -260,9 +266,16 @@ impl ChannelView {
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
             {
                 self.editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)])
-                    })
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::focused()),
+                        window,
+                        cx,
+                        |s| {
+                            s.replace_cursors_with(|map| {
+                                vec![item.range.start.to_display_point(map)]
+                            })
+                        },
+                    )
                 });
                 return;
             }
@@ -354,6 +367,10 @@ impl ChannelView {
                 editor.set_read_only(true);
                 cx.notify();
             }),
+            ChannelBufferEvent::Connected => self.editor.update(cx, |editor, cx| {
+                editor.set_read_only(false);
+                cx.notify();
+            }),
             ChannelBufferEvent::ChannelChanged => {
                 self.editor.update(cx, |_, cx| {
                     cx.emit(editor::EditorEvent::TitleChanged);
@@ -392,6 +409,23 @@ impl ChannelView {
         self.channel_buffer.update(cx, |buffer, cx| {
             buffer.acknowledge_buffer_version(cx);
         });
+    }
+
+    fn get_channel(&self, cx: &App) -> (SharedString, Option<SharedString>) {
+        if let Some(channel) = self.channel(cx) {
+            let status = match (
+                self.channel_buffer.read(cx).buffer().read(cx).read_only(),
+                self.channel_buffer.read(cx).is_connected(),
+            ) {
+                (false, true) => None,
+                (true, true) => Some("read-only"),
+                (_, false) => Some("disconnected"),
+            };
+
+            (channel.name.clone(), status.map(Into::into))
+        } else {
+            ("<unknown>".into(), Some("disconnected".into()))
+        }
     }
 }
 
@@ -440,26 +474,21 @@ impl Item for ChannelView {
         Some(Icon::new(icon))
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> gpui::AnyElement {
-        let (channel_name, status) = if let Some(channel) = self.channel(cx) {
-            let status = match (
-                self.channel_buffer.read(cx).buffer().read(cx).read_only(),
-                self.channel_buffer.read(cx).is_connected(),
-            ) {
-                (false, true) => None,
-                (true, true) => Some("read-only"),
-                (_, false) => Some("disconnected"),
-            };
-
-            (channel.name.clone(), status)
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        let (name, status) = self.get_channel(cx);
+        if let Some(status) = status {
+            format!("{name} - {status}").into()
         } else {
-            ("<unknown>".into(), Some("disconnected"))
-        };
+            name
+        }
+    }
 
+    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> gpui::AnyElement {
+        let (name, status) = self.get_channel(cx);
         h_flex()
             .gap_2()
             .child(
-                Label::new(channel_name)
+                Label::new(name)
                     .color(params.text_color())
                     .when(params.preview, |this| this.italic()),
             )
@@ -642,15 +671,14 @@ impl FollowableItem for ChannelView {
         })
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn is_project_item(&self, _window: &Window, _cx: &App) -> bool {

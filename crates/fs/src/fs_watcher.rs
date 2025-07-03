@@ -23,7 +23,7 @@ impl FsWatcher {
 }
 
 impl Watcher for FsWatcher {
-    fn add(&self, path: &std::path::Path) -> gpui::Result<()> {
+    fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let root_path = SanitizedPath::from(path);
 
         let tx = self.tx.clone();
@@ -78,7 +78,7 @@ impl Watcher for FsWatcher {
         Ok(())
     }
 
-    fn remove(&self, path: &std::path::Path) -> gpui::Result<()> {
+    fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         use notify::Watcher;
         Ok(global(|w| w.watcher.lock().unwatch(path))??)
     }
@@ -130,6 +130,6 @@ pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     });
     match result {
         Ok(g) => Ok(f(g)),
-        Err(e) => Err(anyhow::anyhow!("{}", e)),
+        Err(e) => Err(anyhow::anyhow!("{e}")),
     }
 }

@@ -11,7 +11,6 @@ pub mod component_prelude;
 mod components;
 pub mod prelude;
 mod styles;
-mod tests;
 mod traits;
 pub mod utils;
 

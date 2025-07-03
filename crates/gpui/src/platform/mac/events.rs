@@ -1,5 +1,5 @@
 use crate::{
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
@@ -21,15 +21,16 @@ const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
 const ENTER_KEY: u16 = 0x0d;
 const NUMPAD_ENTER_KEY: u16 = 0x03;
-const ESCAPE_KEY: u16 = 0x1b;
+pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY,
+        "escape" => ESCAPE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
         "left" => NSLeftArrowFunctionKey,
@@ -120,6 +121,11 @@ impl PlatformInput {
                 NSEventType::NSFlagsChanged => {
                     Some(Self::ModifiersChanged(ModifiersChangedEvent {
                         modifiers: read_modifiers(native_event),
+                        capslock: Capslock {
+                            on: native_event
+                                .modifierFlags()
+                                .contains(NSEventModifierFlags::NSAlphaShiftKeyMask),
+                        },
                     }))
                 }
                 NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {

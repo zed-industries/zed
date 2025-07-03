@@ -65,7 +65,7 @@ pub fn init_panic_hook(
                     Some(commit_sha) => format!(
                         "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
                         (may not be uploaded, line may be incorrect if files modified)\n",
-                        commit_sha.0,
+                        commit_sha.full(),
                         location.file(),
                         location.line()
                     ),
@@ -114,7 +114,7 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
-            app_commit_sha: app_commit_sha.as_ref().map(|sha| sha.0.clone()),
+            app_commit_sha: app_commit_sha.as_ref().map(|sha| sha.full()),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
@@ -291,7 +291,7 @@ pub fn monitor_main_thread_hangs(
                     // ASYNC SIGNAL SAFETY: This lock is only accessed one other time,
                     // which can only be triggered by This signal handler. In addition,
                     // this signal handler is immediately removed by SA_RESETHAND, and this
-                    // signal handler cannot be re-entrant due to to the SIGUSR2 mask defined
+                    // signal handler cannot be re-entrant due to the SIGUSR2 mask defined
                     // below
                     let mut bt = BACKTRACE.lock();
                     bt.clear();

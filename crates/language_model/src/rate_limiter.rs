@@ -1,4 +1,3 @@
-use anyhow::Result;
 use futures::Stream;
 use smol::lock::{Semaphore, SemaphoreGuardArc};
 use std::{
@@ -8,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::RequestUsage;
+use crate::LanguageModelCompletionError;
 
 #[derive(Clone)]
 pub struct RateLimiter {
@@ -38,9 +37,12 @@ impl RateLimiter {
         }
     }
 
-    pub fn run<'a, Fut, T>(&self, future: Fut) -> impl 'a + Future<Output = Result<T>>
+    pub fn run<'a, Fut, T>(
+        &self,
+        future: Fut,
+    ) -> impl 'a + Future<Output = Result<T, LanguageModelCompletionError>>
     where
-        Fut: 'a + Future<Output = Result<T>>,
+        Fut: 'a + Future<Output = Result<T, LanguageModelCompletionError>>,
     {
         let guard = self.semaphore.acquire_arc();
         async move {
@@ -54,9 +56,12 @@ impl RateLimiter {
     pub fn stream<'a, Fut, T>(
         &self,
         future: Fut,
-    ) -> impl 'a + Future<Output = Result<impl Stream<Item = T::Item> + use<Fut, T>>>
+    ) -> impl 'a
+    + Future<
+        Output = Result<impl Stream<Item = T::Item> + use<Fut, T>, LanguageModelCompletionError>,
+    >
     where
-        Fut: 'a + Future<Output = Result<T>>,
+        Fut: 'a + Future<Output = Result<T, LanguageModelCompletionError>>,
         T: Stream,
     {
         let guard = self.semaphore.acquire_arc();
@@ -67,34 +72,6 @@ impl RateLimiter {
                 inner,
                 _guard: guard,
             })
-        }
-    }
-
-    pub fn stream_with_usage<'a, Fut, T>(
-        &self,
-        future: Fut,
-    ) -> impl 'a
-    + Future<
-        Output = Result<(
-            impl Stream<Item = T::Item> + use<Fut, T>,
-            Option<RequestUsage>,
-        )>,
-    >
-    where
-        Fut: 'a + Future<Output = Result<(T, Option<RequestUsage>)>>,
-        T: Stream,
-    {
-        let guard = self.semaphore.acquire_arc();
-        async move {
-            let guard = guard.await;
-            let (inner, usage) = future.await?;
-            Ok((
-                RateLimitGuard {
-                    inner,
-                    _guard: guard,
-                },
-                usage,
-            ))
         }
     }
 }

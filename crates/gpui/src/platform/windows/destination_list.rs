@@ -54,9 +54,7 @@ impl DockMenuItem {
                 },
                 action,
             }),
-            _ => Err(anyhow::anyhow!(
-                "Only `MenuItem::Action` is supported for dock menu on Windows."
-            )),
+            _ => anyhow::bail!("Only `MenuItem::Action` is supported for dock menu on Windows."),
         }
     }
 }
@@ -137,10 +135,7 @@ fn add_recent_folders(
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
 
-        for folder_path in entries
-            .iter()
-            .filter(|path| !is_item_in_array(path, removed))
-        {
+        for folder_path in entries.iter().filter(|path| !removed.contains(path)) {
             let argument = HSTRING::from(
                 folder_path
                     .iter()
@@ -163,8 +158,8 @@ fn add_recent_folders(
                 .iter()
                 .map(|p| {
                     p.file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_else(|| p.to_string_lossy().to_string())
+                        .map(|name| name.to_string_lossy())
+                        .unwrap_or_else(|| p.to_string_lossy())
                 })
                 .join(", ");
 
@@ -179,11 +174,6 @@ fn add_recent_folders(
         list.AppendCategory(&HSTRING::from("Recent Folders"), &tasks)?;
         Ok(())
     }
-}
-
-#[inline]
-fn is_item_in_array(item: &SmallVec<[PathBuf; 2]>, removed: &Vec<SmallVec<[PathBuf; 2]>>) -> bool {
-    removed.iter().any(|removed_item| removed_item == item)
 }
 
 fn create_shell_link(

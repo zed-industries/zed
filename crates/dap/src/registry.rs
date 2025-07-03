@@ -1,25 +1,35 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::FxHashMap;
-use gpui::{App, Global};
+use gpui::{App, Global, SharedString};
+use language::LanguageName;
 use parking_lot::RwLock;
-use task::{DebugRequest, SpawnInTerminal};
+use task::{
+    AdapterSchema, AdapterSchemas, DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate,
+};
 
 use crate::adapters::{DebugAdapter, DebugAdapterName};
 use std::{collections::BTreeMap, sync::Arc};
 
-/// Given a user build configuration, locator creates a fill-in debug target ([DebugRequest]) on behalf of the user.
+/// Given a user build configuration, locator creates a fill-in debug target ([DebugScenario]) on behalf of the user.
 #[async_trait]
 pub trait DapLocator: Send + Sync {
+    fn name(&self) -> SharedString;
     /// Determines whether this locator can generate debug target for given task.
-    fn accepts(&self, build_config: &SpawnInTerminal) -> bool;
+    async fn create_scenario(
+        &self,
+        build_config: &TaskTemplate,
+        resolved_label: &str,
+        adapter: &DebugAdapterName,
+    ) -> Option<DebugScenario>;
+
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest>;
 }
 
 #[derive(Default)]
 struct DapRegistryState {
     adapters: BTreeMap<DebugAdapterName, Arc<dyn DebugAdapter>>,
-    locators: FxHashMap<String, Arc<dyn DapLocator>>,
+    locators: FxHashMap<SharedString, Arc<dyn DapLocator>>,
 }
 
 #[derive(Clone, Default)]
@@ -29,34 +39,46 @@ impl Global for DapRegistry {}
 
 impl DapRegistry {
     pub fn global(cx: &mut App) -> &mut Self {
-        let ret = cx.default_global::<Self>();
-
-        #[cfg(any(test, feature = "test-support"))]
-        if ret.adapter(crate::FakeAdapter::ADAPTER_NAME).is_none() {
-            ret.add_adapter(Arc::new(crate::FakeAdapter::new()));
-        }
-
-        ret
+        cx.default_global::<Self>()
     }
 
     pub fn add_adapter(&self, adapter: Arc<dyn DebugAdapter>) {
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
-        debug_assert!(
-            _previous_value.is_none(),
-            "Attempted to insert a new debug adapter when one is already registered"
-        );
+    }
+    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
+        self.0.write().locators.insert(locator.name(), locator);
     }
 
-    pub fn add_locator(&self, name: String, locator: Arc<dyn DapLocator>) {
-        let _previous_value = self.0.write().locators.insert(name, locator);
-        debug_assert!(
-            _previous_value.is_none(),
-            "Attempted to insert a new debug locator when one is already registered"
-        );
+    pub fn remove_adapter(&self, name: &str) {
+        self.0.write().adapters.remove(name);
     }
 
-    pub fn locators(&self) -> FxHashMap<String, Arc<dyn DapLocator>> {
+    pub fn remove_locator(&self, locator: &str) {
+        self.0.write().locators.remove(locator);
+    }
+
+    pub fn adapter_language(&self, adapter_name: &str) -> Option<LanguageName> {
+        self.adapter(adapter_name)
+            .and_then(|adapter| adapter.adapter_language_name())
+    }
+
+    pub async fn adapters_schema(&self) -> task::AdapterSchemas {
+        let mut schemas = AdapterSchemas(vec![]);
+
+        let adapters = self.0.read().adapters.clone();
+
+        for (name, adapter) in adapters.into_iter() {
+            schemas.0.push(AdapterSchema {
+                adapter: name.into(),
+                schema: adapter.dap_schema(),
+            });
+        }
+
+        schemas
+    }
+
+    pub fn locators(&self) -> FxHashMap<SharedString, Arc<dyn DapLocator>> {
         self.0.read().locators.clone()
     }
 

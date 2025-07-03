@@ -6,6 +6,8 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::Diagnostic;
+use project::project_settings::ProjectSettings;
+use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
@@ -22,6 +24,11 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let indicator = h_flex().gap_2();
+        if !ProjectSettings::get_global(cx).diagnostics.button {
+            return indicator;
+        }
+
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
                 this.child(
@@ -84,8 +91,7 @@ impl Render for DiagnosticIndicator {
             None
         };
 
-        h_flex()
-            .gap_2()
+        indicator
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)

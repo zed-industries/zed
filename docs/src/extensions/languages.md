@@ -27,6 +27,7 @@ line_comments = ["# "]
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
 - `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `debuggers` is an array of strings that are used to identify debuggers in the language. When launching a debugger's `New Process Modal`, Zed will order available debuggers by the order of entries in this array.
 
 <!--
 TBD: Document `language_name/config.toml` keys
@@ -54,7 +55,7 @@ repository = "https://github.com/gleam-lang/tree-sitter-gleam"
 rev = "58b7cac8fc14c92b0677c542610d8738c373fa81"
 ```
 
-The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `rev` field must contain a Git revision to use, such as the SHA of a Git commit. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
+The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `rev` field must contain a Git revision to use, such as the SHA of a Git commit. If you're developing an extension locally and want to load a grammar from the local filesystem, you can use a `file://` URL for `repository`. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
 
 ## Tree-sitter Queries
 
@@ -368,7 +369,7 @@ Zed uses the [Language Server Protocol](https://microsoft.github.io/language-ser
 An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
 ```toml
-[language_servers.my-language]
+[language_servers.my-language-server]
 name = "My Language LSP"
 languages = ["My Language"]
 ```
@@ -392,3 +393,21 @@ impl zed::Extension for MyExtension {
 ```
 
 You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
+
+### Multi-Language Support
+
+If your language server supports additional languages, you can use `language_ids` to map Zed `languages` to the desired [LSP-specific `languageId`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem) identifiers:
+
+```toml
+
+[language-servers.my-language-server]
+name = "Whatever LSP"
+languages = ["JavaScript", "JSX", "HTML", "CSS"]
+
+[language-servers.my-language-server.language_ids]
+"JavaScript" = "javascript"
+"JSX" = "javascriptreact"
+"TSX" = "typescriptreact"
+"HTML" = "html"
+"CSS" = "css"
+```

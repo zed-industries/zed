@@ -169,8 +169,14 @@ messages!(
     (LspExtRunnablesResponse, Background),
     (LspExtSwitchSourceHeader, Background),
     (LspExtSwitchSourceHeaderResponse, Background),
+    (LspExtGoToParentModule, Background),
+    (LspExtGoToParentModuleResponse, Background),
+    (LspExtCancelFlycheck, Background),
+    (LspExtRunFlycheck, Background),
+    (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
+    (ReorderChannel, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -215,6 +221,10 @@ messages!(
     (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
+    (GetDocumentColor, Background),
+    (GetDocumentColorResponse, Background),
+    (GetColorPresentation, Background),
+    (GetColorPresentationResponse, Background),
     (RefreshCodeLens, Background),
     (GetCodeLens, Background),
     (GetCodeLensResponse, Background),
@@ -300,6 +310,10 @@ messages!(
     (DebugAdapterBinary, Background),
     (RunDebugLocators, Background),
     (DebugRequest, Background),
+    (LogToDebugConsole, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
+    (PullWorkspaceDiagnostics, Background)
 );
 
 request_messages!(
@@ -383,12 +397,15 @@ request_messages!(
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
+    (ReorderChannel, Ack),
     (RequestContact, Ack),
     (
         ResolveCompletionDocumentation,
         ResolveCompletionDocumentationResponse
     ),
     (ResolveInlayHint, ResolveInlayHintResponse),
+    (GetDocumentColor, GetDocumentColorResponse),
+    (GetColorPresentation, GetColorPresentationResponse),
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
@@ -422,6 +439,10 @@ request_messages!(
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
+    (LspExtGoToParentModule, LspExtGoToParentModuleResponse),
+    (LspExtCancelFlycheck, Ack),
+    (LspExtRunFlycheck, Ack),
+    (LspExtClearFlycheck, Ack),
     (AddWorktree, AddWorktreeResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
@@ -457,6 +478,8 @@ request_messages!(
     (ToggleBreakpoint, Ack),
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (PullWorkspaceDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -470,9 +493,11 @@ entity_messages!(
     BufferSaved,
     CloseBuffer,
     Commit,
+    GetColorPresentation,
     CopyProjectEntry,
     CreateBufferForPeer,
     CreateProjectEntry,
+    GetDocumentColor,
     DeleteProjectEntry,
     ExpandProjectEntry,
     ExpandAllForProjectEntry,
@@ -544,6 +569,10 @@ entity_messages!(
     UpdateContext,
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
+    LspExtGoToParentModule,
+    LspExtCancelFlycheck,
+    LspExtRunFlycheck,
+    LspExtClearFlycheck,
     LanguageServerLog,
     Toast,
     HideToast,
@@ -578,6 +607,9 @@ entity_messages!(
     ToggleBreakpoint,
     RunDebugLocators,
     GetDebugAdapterBinary,
+    LogToDebugConsole,
+    GetDocumentDiagnostics,
+    PullWorkspaceDiagnostics
 );
 
 entity_messages!(
@@ -600,7 +632,7 @@ impl From<Timestamp> for SystemTime {
 
 impl From<SystemTime> for Timestamp {
     fn from(time: SystemTime) -> Self {
-        let duration = time.duration_since(UNIX_EPOCH).unwrap();
+        let duration = time.duration_since(UNIX_EPOCH).unwrap_or_default();
         Self {
             seconds: duration.as_secs(),
             nanos: duration.subsec_nanos(),

@@ -8,7 +8,7 @@ use std::{
 #[derive(Debug)]
 pub(crate) struct BoundsTree<U>
 where
-    U: Default + Clone + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     root: Option<usize>,
     nodes: Vec<Node<U>>,
@@ -17,7 +17,14 @@ where
 
 impl<U> BoundsTree<U>
 where
-    U: Clone + Debug + PartialOrd + Add<U, Output = U> + Sub<Output = U> + Half + Default,
+    U: Clone
+        + Debug
+        + PartialEq
+        + PartialOrd
+        + Add<U, Output = U>
+        + Sub<Output = U>
+        + Half
+        + Default,
 {
     pub fn clear(&mut self) {
         self.root = None;
@@ -104,7 +111,7 @@ where
             self.root = Some(new_parent);
         }
 
-        for node_index in self.stack.drain(..) {
+        for node_index in self.stack.drain(..).rev() {
             let Node::Internal {
                 max_order: max_ordering,
                 ..
@@ -112,7 +119,10 @@ where
             else {
                 unreachable!()
             };
-            *max_ordering = cmp::max(*max_ordering, ordering);
+            if *max_ordering >= ordering {
+                break;
+            }
+            *max_ordering = ordering;
         }
 
         ordering
@@ -174,7 +184,7 @@ where
 
 impl<U> Default for BoundsTree<U>
 where
-    U: Default + Clone + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn default() -> Self {
         BoundsTree {
@@ -188,7 +198,7 @@ where
 #[derive(Debug, Clone)]
 enum Node<U>
 where
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     Leaf {
         bounds: Bounds<U>,
@@ -204,7 +214,7 @@ where
 
 impl<U> Node<U>
 where
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn bounds(&self) -> &Bounds<U> {
         match self {
@@ -230,6 +240,7 @@ where
 mod tests {
     use super::*;
     use crate::{Bounds, Point, Size};
+    use rand::{Rng, SeedableRng};
 
     #[test]
     fn test_insert() {
@@ -286,5 +297,41 @@ mod tests {
         assert_eq!(tree.insert(bounds4), 1); // bounds4 does not overlap with bounds1, bounds2, or bounds3
         assert_eq!(tree.insert(bounds5), 1); // bounds5 does not overlap with any other bounds
         assert_eq!(tree.insert(bounds6), 2); // bounds6 overlaps with bounds4, so it should have a different order
+    }
+
+    #[test]
+    fn test_random_iterations() {
+        let max_bounds = 100;
+        for seed in 1..=1000 {
+            // let seed = 44;
+            let mut tree = BoundsTree::default();
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed as u64);
+            let mut expected_quads: Vec<(Bounds<f32>, u32)> = Vec::new();
+
+            // Insert a random number of random AABBs into the tree.
+            let num_bounds = rng.gen_range(1..=max_bounds);
+            for _ in 0..num_bounds {
+                let min_x: f32 = rng.gen_range(-100.0..100.0);
+                let min_y: f32 = rng.gen_range(-100.0..100.0);
+                let width: f32 = rng.gen_range(0.0..50.0);
+                let height: f32 = rng.gen_range(0.0..50.0);
+                let bounds = Bounds {
+                    origin: Point { x: min_x, y: min_y },
+                    size: Size { width, height },
+                };
+
+                let expected_ordering = expected_quads
+                    .iter()
+                    .filter_map(|quad| quad.0.intersects(&bounds).then_some(quad.1))
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                expected_quads.push((bounds, expected_ordering));
+
+                // Insert the AABB into the tree and collect intersections.
+                let actual_ordering = tree.insert(bounds);
+                assert_eq!(actual_ordering, expected_ordering);
+            }
+        }
     }
 }

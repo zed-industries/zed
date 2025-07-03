@@ -1,43 +1,42 @@
 mod application_menu;
 mod collab;
 mod onboarding_banner;
+pub mod platform_title_bar;
 mod platforms;
-mod window_controls;
+mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
 
-use crate::application_menu::ApplicationMenu;
+use crate::{application_menu::ApplicationMenu, platform_title_bar::PlatformTitleBar};
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
     ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
 };
 
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedProFeatureFlag};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
-    Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div, px,
+    Action, AnyElement, App, Context, Corner, Element, Entity, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
-use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
+use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -48,11 +47,21 @@ const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
 
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
-
-actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
+actions!(
+    collab,
+    [
+        /// Toggles the user menu dropdown.
+        ToggleUserMenu,
+        /// Toggles the project menu dropdown.
+        ToggleProjectMenu,
+        /// Switches to a different git branch.
+        SwitchBranch
+    ]
+);
 
 pub fn init(cx: &mut App) {
+    TitleBarSettings::register(cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -110,14 +119,11 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct TitleBar {
-    platform_style: PlatformStyle,
-    content: Stateful<Div>,
-    children: SmallVec<[AnyElement; 2]>,
+    platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
-    should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
@@ -125,148 +131,70 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let close_action = Box::new(workspace::CloseWindow);
-        let height = Self::height(window);
-        let supported_controls = window.window_controls();
-        let decorations = window.window_decorations();
-        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if window.is_window_active() && !self.should_move {
-                cx.theme().colors().title_bar_background
-            } else {
-                cx.theme().colors().title_bar_inactive_background
-            }
-        } else {
-            cx.theme().colors().title_bar_background
-        };
+        let title_bar_settings = *TitleBarSettings::get_global(cx);
 
-        h_flex()
-            .id("titlebar")
-            .w_full()
-            .h(height)
-            .map(|this| {
-                if window.is_fullscreen() {
-                    this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac {
-                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
-                } else {
-                    this.pl_2()
-                }
-            })
-            .map(|el| match decorations {
-                Decorations::Server => el,
-                Decorations::Client { tiling, .. } => el
-                    .when(!(tiling.top || tiling.right), |el| {
-                        el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
-                    .when(!(tiling.top || tiling.left), |el| {
-                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
-                    // this border is to avoid a transparent gap in the rounded corners
-                    .mt(px(-1.))
-                    .border(px(1.))
-                    .border_color(titlebar_color),
-            })
-            .bg(titlebar_color)
-            .content_stretch()
-            .child(
-                div()
-                    .id("titlebar-content")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .w_full()
-                    // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style != PlatformStyle::Windows, |this| {
-                        this.on_click(|event, window, _| {
-                            if event.up.click_count == 2 {
-                                window.zoom_window();
-                            }
+        let mut children = Vec::new();
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .map(|title_bar| {
+                    let mut render_project_items = title_bar_settings.show_branch_name
+                        || title_bar_settings.show_project_items;
+                    title_bar
+                        .when_some(self.application_menu.clone(), |title_bar, menu| {
+                            render_project_items &= !menu.read(cx).all_menus_shown();
+                            title_bar.child(menu)
                         })
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .map(|title_bar| {
-                                let mut render_project_items = true;
-                                title_bar
-                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
-                                        render_project_items = !menu.read(cx).all_menus_shown();
-                                        title_bar.child(menu)
-                                    })
-                                    .when(render_project_items, |title_bar| {
-                                        title_bar
-                                            .children(self.render_project_host(cx))
-                                            .child(self.render_project_name(cx))
-                                            .children(self.render_project_branch(cx))
-                                    })
-                            })
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
-                    )
-                    .child(self.render_collaborator_list(window, cx))
-                    .child(self.banner.clone())
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .pr_1()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .children(self.render_call_controls(window, cx))
-                            .map(|el| {
-                                let status = self.client.status();
-                                let status = &*status.borrow();
-                                if matches!(status, client::Status::Connected { .. }) {
-                                    el.child(self.render_user_menu_button(cx))
-                                } else {
-                                    el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
-                                        .child(self.render_user_menu_button(cx))
-                                }
-                            }),
-                    ),
-            )
-            .when(!window.is_fullscreen(), |title_bar| {
-                match self.platform_style {
-                    PlatformStyle::Mac => title_bar,
-                    PlatformStyle::Linux => {
-                        if matches!(decorations, Decorations::Client { .. }) {
+                        .when(render_project_items, |title_bar| {
                             title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar.on_mouse_down(
-                                        gpui::MouseButton::Right,
-                                        move |ev, window, _| window.show_window_menu(ev.position),
-                                    )
+                                .when(title_bar_settings.show_project_items, |title_bar| {
+                                    title_bar
+                                        .children(self.render_project_host(cx))
+                                        .child(self.render_project_name(cx))
                                 })
-                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
-                                    if this.should_move {
-                                        this.should_move = false;
-                                        window.start_window_move();
-                                    }
-                                }))
-                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = false;
-                                }))
-                                .on_mouse_up(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = false;
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = true;
-                                    }),
-                                )
-                        } else {
-                            title_bar
-                        }
+                                .when(title_bar_settings.show_branch_name, |title_bar| {
+                                    title_bar.children(self.render_project_branch(cx))
+                                })
+                        })
+                })
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .into_any_element(),
+        );
+
+        children.push(self.render_collaborator_list(window, cx).into_any_element());
+
+        if title_bar_settings.show_onboarding_banner {
+            children.push(self.banner.clone().into_any_element())
+        }
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .pr_1()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .children(self.render_call_controls(window, cx))
+                .map(|el| {
+                    let status = self.client.status();
+                    let status = &*status.borrow();
+                    if matches!(status, client::Status::Connected { .. }) {
+                        el.child(self.render_user_menu_button(cx))
+                    } else {
+                        el.children(self.render_connection_status(status, cx))
+                            .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
+                                el.child(self.render_sign_in_button(cx))
+                            })
+                            .child(self.render_user_menu_button(cx))
                     }
-                    PlatformStyle::Windows => {
-                        title_bar.child(platform_windows::WindowsWindowControls::new(height))
-                    }
-                }
-            })
+                })
+                .into_any_element(),
+        );
+
+        self.platform_titlebar.update(cx, |this, _| {
+            this.set_children(children);
+        });
+
+        self.platform_titlebar.clone().into_any_element()
     }
 }
 
@@ -309,45 +237,27 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Git Onboarding",
-                IconName::GitBranchSmall,
-                "Git Support",
+                "Debugger Onboarding",
+                IconName::Debug,
+                "The Debugger",
                 None,
-                zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
+                zed_actions::debugger::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
 
+        let platform_titlebar = cx.new(|_| PlatformTitleBar::new(id));
+
         Self {
-            platform_style,
-            content: div().id(id.into()),
-            children: SmallVec::new(),
+            platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
-            should_move: false,
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
             banner,
         }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn height(window: &mut Window) -> Pixels {
-        (1.75 * window.rem_size()).max(px(34.))
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn height(_window: &mut Window) -> Pixels {
-        // todo(windows) instead of hard coded size report the actual size to the Windows platform API
-        px(32.)
-    }
-
-    /// Sets the platform style.
-    pub fn platform_style(mut self, style: PlatformStyle) -> Self {
-        self.platform_style = style;
-        self
     }
 
     fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -411,14 +321,24 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&OpenRemote {
+                            from_existing_connection: false,
+                            create_new_window: false,
+                        }),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(
+                        OpenRemote {
+                            from_existing_connection: false,
+                            create_new_window: false,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
                 })
                 .into_any_element(),
         )
@@ -454,7 +374,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text(format!(
                     "{} is sharing this project. Click to follow.",
-                    host_user.github_login.clone()
+                    host_user.github_login
                 )))
                 .on_click({
                     let host_peer_id = host.peer_id;
@@ -518,7 +438,7 @@ impl TitleBar {
             let repo = repository.read(cx);
             repo.branch
                 .as_ref()
-                .map(|branch| branch.name.clone())
+                .map(|branch| branch.name())
                 .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
@@ -549,7 +469,17 @@ impl TitleBar {
                     let _ = workspace.update(cx, |_this, cx| {
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
-                }),
+                })
+                .when(
+                    TitleBarSettings::get_global(cx).show_branch_icon,
+                    |branch_button| {
+                        branch_button
+                            .icon(IconName::GitBranch)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Indicator)
+                    },
+                ),
         )
     }
 
@@ -611,8 +541,8 @@ impl TitleBar {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing)
-                    | Some(AutoUpdateStatus::Downloading)
+                    Some(AutoUpdateStatus::Installing { .. })
+                    | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
                     Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
                         "Please update Zed to Collaborate"
@@ -649,6 +579,7 @@ impl TitleBar {
                         client
                             .authenticate_and_connect(true, &cx)
                             .await
+                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
@@ -658,26 +589,28 @@ impl TitleBar {
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
-            let plan = user_store.current_plan();
+            let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
+            let plan = self.user_store.read(cx).current_plan().filter(|_| {
+                // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
+                has_subscription_period
+            });
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<ZedProFeatureFlag>(), |menu| {
-                            menu.action(
-                                format!(
-                                    "Current Plan: {}",
-                                    match plan {
-                                        None => "",
-                                        Some(proto::Plan::Free) => "Free",
-                                        Some(proto::Plan::ZedPro) => "Pro",
-                                        Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
-                                    }
-                                ),
-                                zed_actions::OpenAccountSettings.boxed_clone(),
-                            )
-                            .separator()
-                        })
+                    ContextMenu::build(window, cx, |menu, _, _cx| {
+                        menu.link(
+                            format!(
+                                "Current Plan: {}",
+                                match plan {
+                                    None => "None",
+                                    Some(proto::Plan::Free) => "Zed Free",
+                                    Some(proto::Plan::ZedPro) => "Zed Pro",
+                                    Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
+                                }
+                            ),
+                            zed_actions::OpenAccountSettings.boxed_clone(),
+                        )
+                        .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action(
@@ -693,13 +626,6 @@ impl TitleBar {
                             zed_actions::Extensions::default().boxed_clone(),
                         )
                         .separator()
-                        .link(
-                            "Book Onboarding",
-                            OpenBrowser {
-                                url: BOOK_ONBOARDING.to_string(),
-                            }
-                            .boxed_clone(),
-                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -710,7 +636,7 @@ impl TitleBar {
                             h_flex()
                                 .gap_0p5()
                                 .children(
-                                    workspace::WorkspaceSettings::get_global(cx)
+                                    TitleBarSettings::get_global(cx)
                                         .show_user_picture
                                         .then(|| Avatar::new(user.avatar_uri.clone())),
                                 )
@@ -743,14 +669,6 @@ impl TitleBar {
                                 "Extensions",
                                 zed_actions::Extensions::default().boxed_clone(),
                             )
-                            .separator()
-                            .link(
-                                "Book Onboarding",
-                                OpenBrowser {
-                                    url: BOOK_ONBOARDING.to_string(),
-                                }
-                                .boxed_clone(),
-                            )
                     })
                     .into()
                 })
@@ -759,19 +677,5 @@ impl TitleBar {
                     Tooltip::text("Toggle User Menu"),
                 )
         }
-    }
-}
-
-impl InteractiveElement for TitleBar {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.content.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for TitleBar {}
-
-impl ParentElement for TitleBar {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
     }
 }

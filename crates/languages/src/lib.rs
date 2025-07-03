@@ -1,6 +1,5 @@
 use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
-use json::json_task_context;
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
@@ -12,17 +11,22 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
+use crate::json::JsonTaskProvider;
+
 mod bash;
 mod c;
 mod css;
 mod go;
 mod json;
+mod package_json;
 mod python;
 mod rust;
 mod tailwind;
 mod typescript;
 mod vtsls;
 mod yaml;
+
+pub(crate) use package_json::{PackageJson, PackageJsonData};
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -78,7 +82,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
-    let json_context_provider = Arc::new(json_task_context());
+    let json_context_provider = Arc::new(JsonTaskProvider);
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
@@ -88,7 +92,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
-    let typescript_context = Arc::new(typescript::typescript_task_context());
+    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new());
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));

@@ -4,10 +4,14 @@ JavaScript support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
 - Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+- Debug Adapter: [vscode-js-debug](https://github.com/microsoft/vscode-js-debug)
 
 ## Code formatting
 
-Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting. But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/). You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings. See the [configuration](../configuring-zed.md) documentation for more information.
+Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting.
+But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/).
+You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings.
+See [the configuration docs](../configuring-zed.md) for more information.
 
 For example, if you have Prettier installed and on your `PATH`, you can use it to format JavaScript files by adding the following to your `settings.json`:
 
@@ -34,12 +38,12 @@ In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used pr
 
 ## JSDoc
 
-Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax. Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
+Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax.
+Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
 
 ## ESLint
 
-You can configure Zed to format code using `eslint --fix` by running the ESLint
-code action when formatting:
+You can configure Zed to format code using `eslint --fix` by running the ESLint code action when formatting:
 
 ```json
 {
@@ -77,7 +81,7 @@ You can also only execute a single ESLint rule when using `fixAll`:
 ```
 
 > **Note:** the other formatter you have configured will still run, after ESLint.
-> So if your language server or prettier configuration don't format according to
+> So if your language server or Prettier configuration don't format according to
 > ESLint's rules, then they will overwrite what ESLint fixed and you end up with
 > errors.
 
@@ -169,6 +173,54 @@ You can configure ESLint's `workingDirectory` setting:
     }
   }
 }
+```
+
+## Debugging
+
+Zed supports debugging JavaScript code out of the box.
+The following can be debugged without writing additional configuration:
+
+- Tasks from `package.json`
+- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine)
+
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+
+As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
+
+If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
+
+### Debug the current file
+
+```json
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Debug JS file",
+    "type": "node",
+    "request": "launch",
+    "program": "$ZED_FILE",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]
+```
+
+This implicitly runs the current file using `node`.
+
+### Launch a web app in Chrome
+
+```json
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Debug app in Chrome",
+    "type": "chrome",
+    "request": "launch",
+    "file": "$ZED_WORKTREE_ROOT/index.html",
+    "webRoot": "$ZED_WORKTREE_ROOT",
+    "console": "integratedTerminal",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]
 ```
 
 ## See also

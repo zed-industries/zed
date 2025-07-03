@@ -1,6 +1,7 @@
 mod avatar;
 mod banner;
 mod button;
+mod callout;
 mod content_group;
 mod context_menu;
 mod disclosure;
@@ -31,7 +32,6 @@ mod settings_group;
 mod stack;
 mod tab;
 mod tab_bar;
-mod table;
 mod toggle;
 mod tooltip;
 
@@ -41,6 +41,7 @@ mod stories;
 pub use avatar::*;
 pub use banner::*;
 pub use button::*;
+pub use callout::*;
 pub use content_group::*;
 pub use context_menu::*;
 pub use disclosure::*;
@@ -71,7 +72,6 @@ pub use settings_group::*;
 pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
-pub use table::*;
 pub use toggle::*;
 pub use tooltip::*;
 

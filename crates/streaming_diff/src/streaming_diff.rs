@@ -7,6 +7,7 @@ use std::{
     ops::Range,
 };
 
+#[derive(Default)]
 struct Matrix {
     cells: Vec<f64>,
     rows: usize,
@@ -95,6 +96,7 @@ pub enum CharOperation {
     Keep { bytes: usize },
 }
 
+#[derive(Default)]
 pub struct StreamingDiff {
     old: Vec<char>,
     new: Vec<char>,

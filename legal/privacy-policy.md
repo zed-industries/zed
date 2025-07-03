@@ -3,7 +3,7 @@ title: Privacy Policy
 slug: privacy-policy
 ---
 
-At Zed Industries, Inc. ("Zed", "Company" or "we"), we take privacy and the security of data seriously. This Privacy Policy is established to help advise you about how we treat your personal data. By using or accessing our website located at zed.dev, or the Solution or services available pursuant the Zed Terms of Use located at [https://zed.dev/terms](https://zed.dev/terms) (collectively, the "Services"), you acknowledge awareness of the practices and policies outlined below, and hereby consent that we will collect, use, and share your personal data as described in this Privacy Policy.
+At Zed Industries, Inc. ("Zed", "Company" or "we"), we take privacy and the security of data seriously. This Privacy Policy is established to help advise you about how we treat your personal data. By using or accessing our website located at zed.dev, or the Solution or services available pursuant the Zed End User Terms located at [https://zed.dev/terms](https://zed.dev/terms) (collectively, the "Services"), you acknowledge awareness of the practices and policies outlined below, and hereby consent that we will collect, use, and share your personal data as described in this Privacy Policy.
 
 As we grow and expand our Services, we may modify this Privacy Policy from time to time. When material modifications are made, we will alert you to any such changes by placing a notice on the Company website, by sending you an email and/or by some other means. Please note that if you've opted not to receive legal notice emails from us (or haven't provided us with a valid email address), those legal notices will still govern your use of the Services. If you use the Services after any changes to the Privacy Policy have been published on our website, you consent and agree to all of the changes.
 
@@ -215,7 +215,7 @@ The "Our Commercial or Business Purposes for Collecting Personal Data" section a
 
 We will only process your Personal Data if we have a lawful basis for doing so. Lawful bases for processing include consent, contractual necessity and our "legitimate interests" or the legitimate interest of others, as further described below.
 
-- Contractual Necessity: We process the following categories of Personal Data as a matter of "contractual necessity", meaning that we need to process the data to perform under our Terms of Use with you, which enables us to provide you with the Services. When we process data due to contractual necessity, failure to provide such Personal Data will result in your inability to use some or all portions of the Services that require such data.
+- Contractual Necessity: We process the following categories of Personal Data as a matter of "contractual necessity", meaning that we need to process the data to perform under our End User Terms with you, which enables us to provide you with the Services. When we process data due to contractual necessity, failure to provide such Personal Data will result in your inability to use some or all portions of the Services that require such data.
   - Profile or Contact Data
   - Payment Data
 - Legitimate Interest: We process the following categories of Personal Data when we believe it furthers the legitimate interest of us or third parties:
@@ -265,4 +265,4 @@ If you have additional questions about this Privacy Policy, the methods in which
   PO Box 1916
   Denver CO 80205
 
-**DATE: September 1, 2024**
+**DATE: May 6, 2025**

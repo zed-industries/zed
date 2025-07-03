@@ -1,23 +1,28 @@
+mod head;
+pub mod highlighted_match_with_paths;
+pub mod popover_menu;
+
 use anyhow::Result;
-use editor::{Editor, scroll::Autoscroll};
+use editor::{
+    Editor, SelectionEffects,
+    actions::{MoveDown, MoveUp},
+    scroll::Autoscroll,
+};
 use gpui::{
-    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, impl_actions,
-    list, prelude::*, uniform_list,
+    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, list,
+    prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 use ui::{
     Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
 };
 use util::ResultExt;
 use workspace::ModalView;
-
-mod head;
-pub mod highlighted_match_with_paths;
 
 enum ElementContainer {
     List(ListState),
@@ -29,17 +34,22 @@ pub enum Direction {
     Down,
 }
 
-actions!(picker, [ConfirmCompletion]);
+actions!(
+    picker,
+    [
+        /// Confirms the selected completion in the picker.
+        ConfirmCompletion
+    ]
+);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = picker)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }
-
-impl_actions!(picker, [ConfirmInput]);
 
 struct PendingUpdateMatches {
     delegate_update_matches: Option<Task<()>>,
@@ -185,7 +195,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .overflow_hidden()
                     .flex_none()
                     .h_9()
-                    .px_3()
+                    .px_2p5()
                     .child(editor.clone()),
             )
             .when(
@@ -201,6 +211,7 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem>;
+
     fn render_header(
         &self,
         _window: &mut Window,
@@ -208,6 +219,7 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> Option<AnyElement> {
         None
     }
+
     fn render_footer(
         &self,
         _window: &mut Window,
@@ -451,6 +463,10 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&Default::default(), window, cx);
+    }
+
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
@@ -466,7 +482,16 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&Default::default(), window, cx);
+    }
+
+    pub fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, Some(Direction::Down), true, window, cx);
@@ -588,7 +613,9 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                self.cancel(&menu::Cancel, window, cx);
+                if self.is_modal {
+                    self.cancel(&menu::Cancel, window, cx);
+                }
             }
             _ => {}
         }
@@ -674,9 +701,12 @@ impl<D: PickerDelegate> Picker<D> {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges(Some(editor_offset..editor_offset))
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges(Some(editor_offset..editor_offset)),
+                );
             });
         }
     }
@@ -740,14 +770,13 @@ impl<D: PickerDelegate> Picker<D> {
 
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
-                cx.entity().clone(),
                 "candidates",
                 self.delegate.match_count(),
-                move |picker, visible_range, window, cx| {
+                cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
                     visible_range
                         .map(|ix| picker.render_element(window, cx, ix))
                         .collect()
-                },
+                }),
             )
             .with_sizing_behavior(sizing_behavior)
             .when_some(self.widest_item, |el, widest_item| {
@@ -855,6 +884,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))

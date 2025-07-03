@@ -1,5 +1,5 @@
 use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -20,10 +20,10 @@ use std::{
     thread::panicking,
 };
 
+use super::Context;
+use crate::util::atomic_incr_if_not_zero;
 #[cfg(any(test, feature = "leak-detection"))]
 use collections::HashMap;
-
-use super::Context;
 
 slotmap::new_key_type! {
     /// A unique identifier for a entity across the application.
@@ -529,11 +529,10 @@ impl AnyWeakEntity {
         let ref_counts = ref_counts.read();
         let ref_count = ref_counts.counts.get(self.entity_id)?;
 
-        // entity_id is in dropped_entity_ids
-        if ref_count.load(SeqCst) == 0 {
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            // entity_id is in dropped_entity_ids
             return None;
         }
-        ref_count.fetch_add(1, SeqCst);
         drop(ref_counts);
 
         Some(AnyEntity {
@@ -585,7 +584,7 @@ impl AnyWeakEntity {
             // Safety:
             //   Docs say this is safe but can be unspecified if slotmap changes the representation
             //   after `1.0.7`, that said, providing a valid entity_id here is not necessary as long
-            //   as we guarantee that that `entity_id` is never used if `entity_ref_counts` equals
+            //   as we guarantee that `entity_id` is never used if `entity_ref_counts` equals
             //   to `Weak::new()` (that is, it's unable to upgrade), that is the invariant that
             //   actually needs to be hold true.
             //
@@ -692,7 +691,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity released"))
+                .context("entity released")
                 .map(|this| cx.update_entity(&this, update)),
         )
     }
@@ -710,7 +709,7 @@ impl<T: 'static> WeakEntity<T> {
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+        let this = self.upgrade().context("entity released")?;
 
         crate::Flatten::flatten(window.update(cx, |_, window, cx| {
             this.update(cx, |entity, cx| update(entity, window, cx))
@@ -727,7 +726,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .context("entity released")
                 .map(|this| cx.read_entity(&this, read)),
         )
     }

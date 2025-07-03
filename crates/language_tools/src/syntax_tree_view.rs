@@ -1,4 +1,4 @@
-use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
+use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
@@ -15,7 +15,13 @@ use workspace::{
     item::{Item, ItemHandle},
 };
 
-actions!(debug, [OpenSyntaxTreeView]);
+actions!(
+    dev,
+    [
+        /// Opens the syntax tree view for the current file.
+        OpenSyntaxTreeView
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -303,10 +309,9 @@ impl Render for SyntaxTreeView {
         {
             let layer = layer.clone();
             rendered = rendered.child(uniform_list(
-                cx.entity().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
-                move |this, range, _, cx| {
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     let mut items = Vec::new();
                     let mut cursor = layer.node().walk();
                     let mut descendant_ix = range.start;
@@ -341,7 +346,7 @@ impl Render for SyntaxTreeView {
                                                 mem::swap(&mut range.start, &mut range.end);
 
                                                 editor.change_selections(
-                                                    Some(Autoscroll::newest()),
+                                                    SelectionEffects::scroll(Autoscroll::newest()),
                                                     window, cx,
                                                     |selections| {
                                                         selections.select_ranges(vec![range]);
@@ -359,7 +364,7 @@ impl Render for SyntaxTreeView {
                                                 editor.clear_background_highlights::<Self>( cx);
                                                 editor.highlight_background::<Self>(
                                                     &[range],
-                                                    |theme| theme.editor_document_highlight_write_background,
+                                                    |theme| theme.colors().editor_document_highlight_write_background,
                                                      cx,
                                                 );
                                             });
@@ -377,7 +382,7 @@ impl Render for SyntaxTreeView {
                         }
                     }
                     items
-                },
+                }),
             )
             .size_full()
             .track_scroll(self.list_scroll_handle.clone())
@@ -401,8 +406,8 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Syntax Tree".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Syntax Tree".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

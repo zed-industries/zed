@@ -9,11 +9,17 @@ use workspace::{ModalView, Workspace};
 actions!(
     zeta,
     [
+        /// Rates the active completion with a thumbs up.
         ThumbsUpActiveCompletion,
+        /// Rates the active completion with a thumbs down.
         ThumbsDownActiveCompletion,
+        /// Navigates to the next edit in the completion history.
         NextEdit,
+        /// Navigates to the previous edit in the completion history.
         PreviousEdit,
+        /// Focuses on the completions list.
         FocusCompletions,
+        /// Previews the selected completion.
         PreviewCompletion,
     ]
 );
@@ -275,9 +281,9 @@ impl RateCompletionModal {
             completion,
             feedback_editor: cx.new(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
+                editor.disable_scrollbars_and_minimap(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
-                editor.set_show_scrollbars(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);

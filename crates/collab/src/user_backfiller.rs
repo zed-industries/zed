@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use util::ResultExt;
 
@@ -82,7 +82,7 @@ impl UserBackfiller {
             {
                 Ok(github_user) => {
                     self.db
-                        .get_or_create_user_by_github_account(
+                        .update_or_create_user_by_github_account(
                             &user.github_login,
                             github_user.id,
                             user.email_address.as_deref(),
@@ -144,12 +144,9 @@ impl UserBackfiller {
             }
         }
 
-        let response = match response.error_for_status() {
-            Ok(response) => response,
-            Err(err) => return Err(anyhow!("failed to fetch GitHub user: {err}")),
-        };
-
         response
+            .error_for_status()
+            .context("fetching GitHub user")?
             .json()
             .await
             .with_context(|| format!("failed to deserialize GitHub user from '{url}'"))

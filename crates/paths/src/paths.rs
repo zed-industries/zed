@@ -1,5 +1,6 @@
 //! Paths to locations used by Zed.
 
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -106,6 +107,7 @@ pub fn data_dir() -> &'static PathBuf {
         }
     })
 }
+
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -191,6 +193,12 @@ pub fn settings_file() -> &'static PathBuf {
     SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
 }
 
+/// Returns the path to the global settings file.
+pub fn global_settings_file() -> &'static PathBuf {
+    static GLOBAL_SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    GLOBAL_SETTINGS_FILE.get_or_init(|| config_dir().join("global_settings.json"))
+}
+
 /// Returns the path to the `settings_backup.json` file.
 pub fn settings_backup_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
@@ -216,9 +224,9 @@ pub fn tasks_file() -> &'static PathBuf {
 }
 
 /// Returns the path to the `debug.json` file.
-pub fn debug_tasks_file() -> &'static PathBuf {
-    static DEBUG_TASKS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_TASKS_FILE.get_or_init(|| config_dir().join("debug.json"))
+pub fn debug_scenarios_file() -> &'static PathBuf {
+    static DEBUG_SCENARIOS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
 /// Returns the path to the extensions directory.
@@ -402,6 +410,7 @@ pub fn task_file_name() -> &'static str {
 }
 
 /// Returns the relative path to a `debug.json` file within a project.
+/// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -411,17 +420,82 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
-/// Returns the path to the vscode user settings file
-pub fn vscode_settings_file() -> &'static PathBuf {
-    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    let rel_path = "Code/User/Settings.json";
-    LOGS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
+pub fn user_ssh_config_file() -> PathBuf {
+    home_dir().join(".ssh/config")
+}
+
+pub fn global_ssh_config_file() -> &'static Path {
+    Path::new("/etc/ssh/ssh_config")
+}
+
+/// Returns candidate paths for the vscode user settings file
+pub fn vscode_settings_file_paths() -> Vec<PathBuf> {
+    let mut paths = vscode_user_data_paths();
+    for path in paths.iter_mut() {
+        path.push("User/settings.json");
+    }
+    paths
+}
+
+/// Returns candidate paths for the cursor user settings file
+pub fn cursor_settings_file_paths() -> Vec<PathBuf> {
+    let mut paths = cursor_user_data_paths();
+    for path in paths.iter_mut() {
+        path.push("User/settings.json");
+    }
+    paths
+}
+
+fn vscode_user_data_paths() -> Vec<PathBuf> {
+    // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
+    const VSCODE_PRODUCT_NAMES: &[&str] = &[
+        "Code",
+        "Code - OSS",
+        "VSCodium",
+        "Code Dev",
+        "Code - OSS Dev",
+        "code-oss-dev",
+    ];
+    let mut paths = Vec::new();
+    if let Ok(portable_path) = env::var("VSCODE_PORTABLE") {
+        paths.push(Path::new(&portable_path).join("user-data"));
+    }
+    if let Ok(vscode_appdata) = env::var("VSCODE_APPDATA") {
+        for product_name in VSCODE_PRODUCT_NAMES {
+            paths.push(Path::new(&vscode_appdata).join(product_name));
+        }
+    }
+    for product_name in VSCODE_PRODUCT_NAMES {
+        add_vscode_user_data_paths(&mut paths, product_name);
+    }
+    paths
+}
+
+fn cursor_user_data_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    add_vscode_user_data_paths(&mut paths, "Cursor");
+    paths
+}
+
+fn add_vscode_user_data_paths(paths: &mut Vec<PathBuf>, product_name: &str) {
+    if cfg!(target_os = "macos") {
+        paths.push(
             home_dir()
                 .join("Library/Application Support")
-                .join(rel_path)
-        } else {
-            config_dir().join(rel_path)
+                .join(product_name),
+        );
+    } else if cfg!(target_os = "windows") {
+        if let Some(data_local_dir) = dirs::data_local_dir() {
+            paths.push(data_local_dir.join(product_name));
         }
-    })
+        if let Some(data_dir) = dirs::data_dir() {
+            paths.push(data_dir.join(product_name));
+        }
+    } else {
+        paths.push(
+            dirs::config_dir()
+                .unwrap_or(home_dir().join(".config"))
+                .join(product_name),
+        );
+    }
 }

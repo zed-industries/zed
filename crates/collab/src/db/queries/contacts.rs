@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 impl Database {
@@ -215,7 +217,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such contact"))?;
+                .context("no such contact")?;
 
             contact::Entity::delete_by_id(contact.id).exec(&*tx).await?;
 

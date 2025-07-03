@@ -6,7 +6,7 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::Item;
@@ -224,10 +224,9 @@ impl Render for ProjectIndexDebugView {
                 .into_any_element()
         } else {
             let mut list = uniform_list(
-                cx.entity().clone(),
                 "ProjectIndexDebugView",
                 self.rows.len(),
-                move |this, range, _, cx| {
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     this.rows[range]
                         .iter()
                         .enumerate()
@@ -262,7 +261,7 @@ impl Render for ProjectIndexDebugView {
                                 })),
                         })
                         .collect()
-                },
+                }),
             )
             .track_scroll(self.list_scroll_handle.clone())
             .size_full()
@@ -289,8 +288,8 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Project Index (Debug)".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Project Index (Debug)".into()
     }
 
     fn clone_on_split(

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
@@ -8,6 +8,8 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::Fs;
+use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
@@ -21,8 +23,13 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::archive::extract_zip;
 use util::merge_json_value_into;
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{
+    ResultExt,
+    fs::{make_file_executable, remove_matching},
+    maybe,
+};
 
 use crate::language_settings::language_settings;
 
@@ -214,26 +221,16 @@ impl LspAdapter for RustLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             };
 
             // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &server_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
+            make_file_executable(&server_path).await?;
         }
 
         Ok(LanguageServerBinary {
@@ -252,7 +249,7 @@ impl LspAdapter for RustLspAdapter {
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        vec!["rustc".into()]
+        vec![CARGO_DIAGNOSTICS_SOURCE_NAME.to_owned()]
     }
 
     fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
@@ -283,6 +280,12 @@ impl LspAdapter for RustLspAdapter {
         }
     }
 
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n *").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
+    }
+
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
@@ -307,10 +310,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} }}"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -327,10 +335,15 @@ impl LspAdapter for RustLspAdapter {
                 let source = Rope::from(format!("{prefix}{text} = ();"));
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                    .unwrap_or(0..name.len());
                 return Some(CodeLabel {
                     text,
                     runs,
-                    filter_range: 0..name.len(),
+                    filter_range,
                 });
             }
             (
@@ -364,9 +377,13 @@ impl LspAdapter for RustLspAdapter {
                         text.push(' ');
                         text.push_str(&detail);
                     }
-
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                        filter_range,
                         text,
                         runs,
                     });
@@ -375,12 +392,18 @@ impl LspAdapter for RustLspAdapter {
                     .as_ref()
                     .map_or(false, |detail| detail.starts_with("macro_rules! "))
                 {
-                    let source = Rope::from(completion.label.as_str());
-                    let runs = language.highlight_text(&source, 0..completion.label.len());
-
+                    let text = completion.label.clone();
+                    let len = text.len();
+                    let source = Rope::from(text.as_str());
+                    let runs = language.highlight_text(&source, 0..len);
+                    let filter_range = completion
+                        .filter_text
+                        .as_deref()
+                        .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
+                        .unwrap_or(0..len);
                     return Some(CodeLabel {
-                        filter_range: 0..completion.label.len(),
-                        text: completion.label.clone(),
+                        filter_range,
+                        text,
                         runs,
                     });
                 }
@@ -403,7 +426,7 @@ impl LspAdapter for RustLspAdapter {
                     label.push(' ');
                     label.push_str(detail);
                 }
-                let mut label = CodeLabel::plain(label, None);
+                let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                 if let Some(highlight_name) = highlight_name {
                     let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name)?;
                     label.runs.push((
@@ -493,12 +516,27 @@ impl LspAdapter for RustLspAdapter {
                     "kinds": [ "cargo", "shell" ],
                 },
             });
-            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            if let Some(original_experimental) = &mut original.capabilities.experimental {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
             }
         }
+
+        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+        if cargo_diagnostics_fetched_separately {
+            let disable_check_on_save = json!({
+                "checkOnSave": false,
+            });
+            if let Some(initialization_options) = &mut original.initialization_options {
+                merge_json_value_into(disable_check_on_save, initialization_options);
+            } else {
+                original.initialization_options = Some(disable_check_on_save);
+            }
+        }
+
         Ok(original)
     }
 }
@@ -533,16 +571,20 @@ const RUST_DOC_TEST_NAME_TASK_VARIABLE: VariableName =
 const RUST_TEST_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_NAME"));
 
+const RUST_MANIFEST_DIRNAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_MANIFEST_DIRNAME"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         task_variables: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
+            .file_location
             .buffer
             .read(cx)
             .file()
@@ -576,8 +618,11 @@ impl ContextProvider for RustContextProvider {
                     variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
                 }
             }
-            if let Some(path) = local_abs_path.as_ref() {
-                if let Some(target) = target_info_from_abs_path(&path, project_env.as_ref()).await {
+            if let Some(path) = local_abs_path.as_ref()
+                && let Some((target, manifest_path)) =
+                    target_info_from_abs_path(&path, project_env.as_ref()).await
+            {
+                if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
                         (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
                         (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
@@ -600,6 +645,10 @@ impl ContextProvider for RustContextProvider {
                         );
                     }
                 }
+                variables.extend(TaskVariables::from_iter([(
+                    RUST_MANIFEST_DIRNAME_TASK_VARIABLE.clone(),
+                    manifest_path.to_string_lossy().into_owned(),
+                )]));
             }
             Ok(variables)
         })
@@ -607,9 +656,10 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
@@ -628,11 +678,6 @@ impl ContextProvider for RustContextProvider {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
-        };
-        let build_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["build".into(), "-p".into(), package_to_run]
-        } else {
-            vec!["build".into()]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -667,12 +712,13 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-test".to_owned()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -687,12 +733,13 @@ impl ContextProvider for RustContextProvider {
                     "--doc".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-doc-test".to_owned()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -706,10 +753,11 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "--".into(),
                     RUST_TEST_FRAGMENT_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-mod-test".to_owned()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -744,7 +792,7 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
+                cwd: Some(RUST_MANIFEST_DIRNAME_TASK_VARIABLE.template_value()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -758,37 +806,6 @@ impl ContextProvider for RustContextProvider {
                 label: "Clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "Build {} {} (package: {})",
-                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
-                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                command: "cargo".into(),
-                args: build_task_args,
-                tags: vec!["rust-main".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "Build Test '{}' (package: {})",
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                command: "cargo".into(),
-                args: vec![
-                    "test".into(),
-                    "-p".into(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    "--no-run".into(),
-                ],
-                tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
@@ -810,31 +827,28 @@ impl ContextProvider for RustContextProvider {
                 .collect();
         }
 
-        Some(TaskTemplates(task_templates))
+        Task::ready(Some(TaskTemplates(task_templates)))
     }
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         Some(SERVER_NAME)
     }
-
-    fn debug_adapter(&self) -> Option<String> {
-        Some("CodeLLDB".to_owned())
-    }
 }
 
 /// Part of the data structure of Cargo metadata
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct CargoPackage {
     id: String,
     targets: Vec<CargoTarget>,
+    manifest_path: Arc<Path>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct CargoTarget {
     name: String,
     kind: Vec<String>,
@@ -880,7 +894,7 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<TargetInfo> {
+) -> Option<(Option<TargetInfo>, Arc<Path>)> {
     let mut command = util::command::new_smol_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
@@ -897,12 +911,33 @@ async fn target_info_from_abs_path(
         .stdout;
 
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
-
     target_info_from_metadata(metadata, abs_path)
 }
 
-fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option<TargetInfo> {
+fn target_info_from_metadata(
+    metadata: CargoMetadata,
+    abs_path: &Path,
+) -> Option<(Option<TargetInfo>, Arc<Path>)> {
+    let mut manifest_path = None;
     for package in metadata.packages {
+        let Some(manifest_dir_path) = package.manifest_path.parent() else {
+            continue;
+        };
+
+        let Some(path_from_manifest_dir) = abs_path.strip_prefix(manifest_dir_path).ok() else {
+            continue;
+        };
+        let candidate_path_length = path_from_manifest_dir.components().count();
+        // Pick the most specific manifest path
+        if let Some((path, current_length)) = &mut manifest_path {
+            if candidate_path_length > *current_length {
+                *path = Arc::from(manifest_dir_path);
+                *current_length = candidate_path_length;
+            }
+        } else {
+            manifest_path = Some((Arc::from(manifest_dir_path), candidate_path_length));
+        };
+
         for target in package.targets {
             let Some(bin_kind) = target
                 .kind
@@ -913,17 +948,22 @@ fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option
             };
             let target_path = PathBuf::from(target.src_path);
             if target_path == abs_path {
-                return package_name_from_pkgid(&package.id).map(|package_name| TargetInfo {
-                    package_name: package_name.to_owned(),
-                    target_name: target.name,
-                    required_features: target.required_features,
-                    target_kind: bin_kind,
+                return manifest_path.map(|(path, _)| {
+                    (
+                        package_name_from_pkgid(&package.id).map(|package_name| TargetInfo {
+                            package_name: package_name.to_owned(),
+                            target_name: target.name,
+                            required_features: target.required_features,
+                            target_kind: bin_kind,
+                        }),
+                        path,
+                    )
                 });
             }
         }
     }
 
-    None
+    manifest_path.map(|(path, _)| (None, path))
 }
 
 async fn human_readable_package_name(
@@ -989,7 +1029,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })
@@ -1198,6 +1238,49 @@ mod tests {
                 ],
             })
         );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "await.as_deref_mut()".to_string(),
+                        filter_text: Some("as_deref_mut".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some("fn(&mut self) -> IterMut<'_, T>".to_string()),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel {
+                text: "await.as_deref_mut()".to_string(),
+                filter_range: 6..18,
+                runs: vec![],
+            })
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        label: "inner_value".to_string(),
+                        filter_text: Some("value".to_string()),
+                        detail: Some("String".to_string()),
+                        ..Default::default()
+                    },
+                    &language,
+                )
+                .await,
+            Some(CodeLabel {
+                text: "inner_value: String".to_string(),
+                filter_range: 6..11,
+                runs: vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+            })
+        );
     }
 
     #[gpui::test]
@@ -1334,62 +1417,77 @@ mod tests {
     fn test_target_info_from_metadata() {
         for (input, absolute_path, expected) in [
             (
-                r#"{"packages":[{"id":"path+file:///absolute/path/to/project/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///absolute/path/to/project/zed/crates/zed#0.131.0","manifest_path":"/path/to/zed/Cargo.toml","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "zed".into(),
-                    target_name: "zed".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Bin,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "zed".into(),
+                        target_name: "zed".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Bin,
+                    }),
+                    Arc::from("/path/to/zed".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","manifest_path":"/path/to/custom-package/Cargo.toml","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Bin,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Bin,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: Vec::new(),
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: Vec::new(),
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","manifest_path":"/path/to/custom-package/Cargo.toml","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: vec!["foo".to_owned(), "bar".to_owned()],
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: vec!["foo".to_owned(), "bar".to_owned()],
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":[]}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":[]}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                Some(TargetInfo {
-                    package_name: "my-custom-package".into(),
-                    target_name: "my-custom-bin".into(),
-                    required_features: vec![],
-                    target_kind: TargetKind::Example,
-                }),
+                Some((
+                    Some(TargetInfo {
+                        package_name: "my-custom-package".into(),
+                        target_name: "my-custom-bin".into(),
+                        required_features: vec![],
+                        target_kind: TargetKind::Example,
+                    }),
+                    Arc::from("/path/to/custom-package".as_ref()),
+                )),
             ),
             (
-                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-package","kind":["lib"],"src_path":"/path/to/custom-package/src/main.rs"}],"manifest_path":"/path/to/custom-package/Cargo.toml"}]}"#,
                 "/path/to/custom-package/src/main.rs",
-                None,
+                Some((None, Arc::from("/path/to/custom-package".as_ref()))),
             ),
         ] {
-            let metadata: CargoMetadata = serde_json::from_str(input).unwrap();
+            let metadata: CargoMetadata = serde_json::from_str(input).context(input).unwrap();
 
             let absolute_path = Path::new(absolute_path);
 
