@@ -1,21 +1,21 @@
-mod server;
 mod thread_view;
 
 use agentic_coding_protocol::{self as acp};
 use anyhow::{Context as _, Result};
+use async_trait::async_trait;
 use buffer_diff::BufferDiff;
 use chrono::{DateTime, Utc};
 use editor::{MultiBuffer, PathKey};
 use futures::channel::oneshot;
-use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
 use markdown::Markdown;
 use project::Project;
-use std::{mem, ops::Range, path::PathBuf, sync::Arc};
+use smol::process::Child;
+use std::{mem, ops::Range, path::PathBuf, process::ExitStatus, sync::Arc};
 use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
 
-pub use server::AcpServer;
 pub use thread_view::AcpThreadView;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -359,7 +359,7 @@ impl ToolCallId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ThreadEntryId(pub u64);
 
 impl ThreadEntryId {
@@ -377,13 +377,16 @@ pub struct ThreadEntry {
 }
 
 pub struct AcpThread {
-    id: ThreadId,
     next_entry_id: ThreadEntryId,
     entries: Vec<ThreadEntry>,
-    server: Arc<AcpServer>,
     title: SharedString,
     project: Entity<Project>,
     send_task: Option<Task<()>>,
+
+    connection: Arc<acp::AgentConnection>,
+    exit_status: Option<ExitStatus>,
+    _handler_task: Task<()>,
+    _io_task: Task<()>,
 }
 
 enum AcpThreadEvent {
@@ -401,28 +404,67 @@ pub enum ThreadStatus {
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
 
 impl AcpThread {
-    pub fn new(
-        server: Arc<AcpServer>,
-        thread_id: ThreadId,
-        entries: Vec<AgentThreadEntryContent>,
-        project: Entity<Project>,
-        _: &mut Context<Self>,
-    ) -> Self {
-        let mut next_entry_id = ThreadEntryId(0);
+    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+        let stdin = process.stdin.take().expect("process didn't have stdin");
+        let stdout = process.stdout.take().expect("process didn't have stdout");
+        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+            stdin,
+            stdout,
+        );
+
+        let io_task = cx.spawn(async move |this, cx| {
+            cx.background_spawn(async move {
+                io_fut.await.log_err();
+            })
+            .await;
+            let result = process.status().await.log_err();
+            this.update(cx, |this, _| this.exit_status = result).ok();
+        });
+
         Self {
+            next_entry_id: Default::default(),
+            entries: Default::default(),
             title: "ACP Thread".into(),
-            entries: entries
-                .into_iter()
-                .map(|entry| ThreadEntry {
-                    id: next_entry_id.post_inc(),
-                    content: entry,
-                })
-                .collect(),
-            server,
-            id: thread_id,
-            next_entry_id,
             project,
             send_task: None,
+            connection: Arc::new(connection),
+            exit_status: None,
+            _handler_task: cx.foreground_executor().spawn(handler_fut),
+            _io_task: io_task,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn fake(
+        stdin: async_pipe::PipeWriter,
+        stdout: async_pipe::PipeReader,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+            stdin,
+            stdout,
+        );
+
+        let io_task = cx.background_spawn({
+            async move {
+                io_fut.await.log_err();
+                // todo!() exit status?
+            }
+        });
+
+        Self {
+            next_entry_id: Default::default(),
+            entries: Default::default(),
+            title: "ACP Thread".into(),
+            project,
+            send_task: None,
+            connection: Arc::new(connection),
+            exit_status: None,
+            _handler_task: cx.foreground_executor().spawn(handler_fut),
+            _io_task: io_task,
         }
     }
 
@@ -674,13 +716,32 @@ impl AcpThread {
         false
     }
 
+    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+        let connection = self.connection.clone();
+        async move {
+            connection
+                .request(acp::InitializeParams)
+                .await
+                .map_err(to_anyhow)
+        }
+    }
+
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<acp::AuthenticateResponse>> {
+        let connection = self.connection.clone();
+        async move {
+            connection
+                .request(acp::AuthenticateParams)
+                .await
+                .map_err(to_anyhow)
+        }
+    }
+
     pub fn send(
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
     ) -> impl use<> + Future<Output = Result<()>> {
-        let agent = self.server.clone();
-        let id = self.id.clone();
+        let agent = self.connection.clone();
         let chunk =
             UserMessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
         let message = UserMessage {
@@ -695,26 +756,32 @@ impl AcpThread {
         self.send_task = Some(cx.spawn(async move |this, cx| {
             cancel.await.log_err();
 
-            let result = agent.send_message(id, acp_message, cx).await;
+            let result = agent
+                .request(acp::SendUserMessageParams {
+                    message: acp_message,
+                })
+                .await;
             tx.send(result).log_err();
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
 
         async move {
             match rx.await {
-                Ok(result) => result,
-                Err(_) => Ok(()),
+                Ok(Err(e)) => Err(to_anyhow(e)),
+                _ => Ok(()),
             }
         }
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let agent = self.server.clone();
-        let id = self.id.clone();
+        let agent = self.connection.clone();
 
         if self.send_task.take().is_some() {
             cx.spawn(async move |this, cx| {
-                agent.cancel_send_message(id, cx).await?;
+                agent
+                    .request(acp::CancelSendMessageParams)
+                    .await
+                    .map_err(to_anyhow)?;
 
                 this.update(cx, |this, _cx| {
                     for entry in this.entries.iter_mut() {
@@ -747,6 +814,10 @@ impl AcpThread {
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    pub fn exit_status(&self) -> Option<&ExitStatus> {
+        self.exit_status.as_ref()
     }
 
     #[cfg(test)]
@@ -786,6 +857,112 @@ impl AcpThread {
             }
         }
         result
+    }
+}
+
+#[track_caller]
+fn to_anyhow(e: acp::Error) -> anyhow::Error {
+    log::error!(
+        "failed to send message: {code}: {message}",
+        code = e.code,
+        message = e.message
+    );
+    anyhow::anyhow!(e.message)
+}
+
+struct AcpClientDelegate {
+    thread: WeakEntity<AcpThread>,
+    cx: AsyncApp,
+    // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
+}
+
+impl AcpClientDelegate {
+    fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
+        Self { thread, cx }
+    }
+}
+
+#[async_trait(?Send)]
+impl acp::Client for AcpClientDelegate {
+    async fn stream_assistant_message_chunk(
+        &self,
+        params: acp::StreamAssistantMessageChunkParams,
+    ) -> Result<acp::StreamAssistantMessageChunkResponse> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| {
+                    thread.push_assistant_chunk(params.chunk, cx)
+                })
+                .ok();
+        })?;
+
+        Ok(acp::StreamAssistantMessageChunkResponse)
+    }
+
+    async fn request_tool_call_confirmation(
+        &self,
+        request: acp::RequestToolCallConfirmationParams,
+    ) -> Result<acp::RequestToolCallConfirmationResponse> {
+        let cx = &mut self.cx.clone();
+        let ToolCallRequest { id, outcome } = cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.request_tool_call(
+                        request.label,
+                        request.icon,
+                        request.content,
+                        request.confirmation,
+                        cx,
+                    )
+                })
+            })?
+            .context("Failed to update thread")?;
+
+        Ok(acp::RequestToolCallConfirmationResponse {
+            id: acp::ToolCallId(id.as_u64()),
+            outcome: outcome.await?,
+        })
+    }
+
+    async fn push_tool_call(
+        &self,
+        request: acp::PushToolCallParams,
+    ) -> Result<acp::PushToolCallResponse> {
+        let cx = &mut self.cx.clone();
+        let entry_id = cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.push_tool_call(request.label, request.icon, request.content, cx)
+                })
+            })?
+            .context("Failed to update thread")?;
+
+        Ok(acp::PushToolCallResponse {
+            id: acp::ToolCallId(entry_id.as_u64()),
+        })
+    }
+
+    async fn update_tool_call(
+        &self,
+        request: acp::UpdateToolCallParams,
+    ) -> Result<acp::UpdateToolCallResponse> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.thread.update(cx, |thread, cx| {
+                thread.update_tool_call(
+                    ToolCallId(ThreadEntryId(request.tool_call_id.0)),
+                    request.status,
+                    request.content,
+                    cx,
+                )
+            })
+        })?
+        .context("Failed to update thread")??;
+
+        Ok(acp::UpdateToolCallResponse)
     }
 }
 
@@ -840,18 +1017,13 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (server, fake_server) = fake_acp_server(project, cx);
-
-        server.initialize().await.unwrap();
-
-        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let (thread, fake_server) = fake_acp_thread(project, cx);
 
         fake_server.update(cx, |fake_server, _| {
-            fake_server.on_user_message(move |params, server, mut cx| async move {
+            fake_server.on_user_message(move |_, server, mut cx| async move {
                 server
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
-                            thread_id: params.thread_id.clone(),
                             chunk: acp::AssistantMessageChunk::Thought {
                                 chunk: "Thinking ".into(),
                             },
@@ -862,7 +1034,6 @@ mod tests {
                 server
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
-                            thread_id: params.thread_id,
                             chunk: acp::AssistantMessageChunk::Thought {
                                 chunk: "hard!".into(),
                             },
@@ -902,8 +1073,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let server = gemini_acp_server(project.clone(), cx).await;
-        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let thread = gemini_acp_thread(project.clone(), cx).await;
         thread
             .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
             .await
@@ -935,8 +1105,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let server = gemini_acp_server(project.clone(), cx).await;
-        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let thread = gemini_acp_thread(project.clone(), cx).await;
         thread
             .update(cx, |thread, cx| {
                 thread.send(
@@ -970,8 +1139,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let server = gemini_acp_server(project.clone(), cx).await;
-        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let thread = gemini_acp_thread(project.clone(), cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
@@ -1039,8 +1207,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let server = gemini_acp_server(project.clone(), cx).await;
-        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let thread = gemini_acp_thread(project.clone(), cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
@@ -1122,10 +1289,10 @@ mod tests {
         }
     }
 
-    pub async fn gemini_acp_server(
+    pub async fn gemini_acp_thread(
         project: Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> Arc<AcpServer> {
+    ) -> Entity<AcpThread> {
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
         let mut command = util::command::new_smol_command("node");
@@ -1143,20 +1310,23 @@ mod tests {
         }
 
         let child = command.spawn().unwrap();
-        let server = cx.update(|cx| AcpServer::stdio(child, project, cx));
-        server.initialize().await.unwrap();
-        server
+        let thread = cx.update(|cx| cx.new(|cx| AcpThread::stdio(child, project, cx)));
+        thread
+            .update(cx, |thread, _| thread.initialize())
+            .await
+            .unwrap();
+        thread
     }
 
-    pub fn fake_acp_server(
+    pub fn fake_acp_thread(
         project: Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> (Arc<AcpServer>, Entity<FakeAcpServer>) {
+    ) -> (Entity<AcpThread>, Entity<FakeAcpServer>) {
         let (stdin_tx, stdin_rx) = async_pipe::pipe();
         let (stdout_tx, stdout_rx) = async_pipe::pipe();
-        let server = cx.update(|cx| AcpServer::fake(stdin_tx, stdout_rx, project, cx));
+        let thread = cx.update(|cx| cx.new(|cx| AcpThread::fake(stdin_tx, stdout_rx, project, cx)));
         let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
-        (server, agent)
+        (thread, agent)
     }
 
     pub struct FakeAcpServer {
@@ -1199,13 +1369,11 @@ mod tests {
             Ok(acp::AuthenticateResponse)
         }
 
-        async fn create_thread(
+        async fn cancel_send_message(
             &self,
-            _request: acp::CreateThreadParams,
-        ) -> Result<acp::CreateThreadResponse> {
-            Ok(acp::CreateThreadResponse {
-                thread_id: acp::ThreadId("test-thread".into()),
-            })
+            _request: acp::CancelSendMessageParams,
+        ) -> Result<acp::CancelSendMessageResponse> {
+            Ok(acp::CancelSendMessageResponse)
         }
 
         async fn send_user_message(
@@ -1258,7 +1426,7 @@ mod tests {
                 }));
         }
 
-        fn send_to_zed<T: acp::ClientRequest>(
+        fn send_to_zed<T: acp::ClientRequest + 'static>(
             &self,
             message: T,
         ) -> BoxedLocal<Result<T::Response, acp::Error>> {
