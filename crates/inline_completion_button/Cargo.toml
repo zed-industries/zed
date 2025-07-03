@@ -25,8 +25,7 @@ indoc.workspace = true
 inline_completion.workspace = true
 language.workspace = true
 language_models.workspace = true
-log.workspace = true
-ollama.workspace = true
+
 paths.workspace = true
 regex.workspace = true
 settings.workspace = true

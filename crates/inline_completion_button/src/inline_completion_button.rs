@@ -1399,7 +1399,7 @@ mod tests {
 
             // Test the model switching function logic
             // This tests the internal logic without actually modifying settings
-            let test_models = vec![
+            let test_models = [
                 language_models::provider::ollama::AvailableModel {
                     name: "llama3.2:3b".to_string(),
                     display_name: Some("Llama 3.2 3B".to_string()),
