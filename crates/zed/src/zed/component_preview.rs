@@ -695,6 +695,7 @@ impl ComponentPreview {
         &mut self,
         component_id: &ComponentId,
         _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let component = self.component_map.get(&component_id);
 
@@ -847,9 +848,9 @@ impl Render for ComponentPreview {
                         PreviewPage::AllComponents => {
                             self.render_all_components(cx).into_any_element()
                         }
-                        PreviewPage::Component(id) => {
-                            self.render_component_page(&id, window).into_any_element()
-                        }
+                        PreviewPage::Component(id) => self
+                            .render_component_page(&id, window, cx)
+                            .into_any_element(),
                         PreviewPage::ActiveThread => {
                             self.render_active_thread(cx).into_any_element()
                         }
