@@ -541,6 +541,16 @@ impl ComponentPreview {
                     .inset(true)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = id.clone();
+                        // If this component is already active and supports restart animations,
+                        // restart the animations instead of setting the page again
+                        if this.active_page == PreviewPage::Component(id.clone()) {
+                            if let Some(component) = this.component_map.get(&id) {
+                                if component.show_restart_animations() {
+                                    this.restart_animations(cx);
+                                    return;
+                                }
+                            }
+                        }
                         this.set_active_page(PreviewPage::Component(id), cx);
                     }))
                     .into_any_element()
