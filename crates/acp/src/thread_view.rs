@@ -467,18 +467,23 @@ impl AcpThreadView {
                         .child(Label::new("Thinking").size(LabelSize::Small)),
                 ),
             )
-            .child(div().relative().rounded_b_lg().mt_2().pl_4().child(
-                div().max_h_20().text_ui_sm(cx).overflow_hidden().child(
-                    // todo! url click
-                    MarkdownElement::new(chunk, default_markdown_style(window, cx)),
-                    // .on_url_click({
-                    //     let workspace = self.workspace.clone();
-                    //     move |text, window, cx| {
-                    //         open_markdown_link(text, workspace.clone(), window, cx);
-                    //     }
-                    // }),
-                ),
-            ))
+            .child(
+                div()
+                    .relative()
+                    .rounded_b_lg()
+                    .mt_2()
+                    .pl_4()
+                    .child(div().text_ui_sm(cx).child(
+                        // todo! url click
+                        MarkdownElement::new(chunk, default_markdown_style(window, cx)),
+                        // .on_url_click({
+                        //     let workspace = self.workspace.clone();
+                        //     move |text, window, cx| {
+                        //         open_markdown_link(text, workspace.clone(), window, cx);
+                        //     }
+                        // }),
+                    )),
+            )
             .into_any_element()
     }
 
