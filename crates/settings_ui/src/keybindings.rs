@@ -254,7 +254,9 @@ impl KeymapEditor {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names());
+        let mut unmapped_action_names =
+            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let action_documentation = cx.action_documentation();
 
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
@@ -280,6 +282,7 @@ impl KeymapEditor {
             let action_input = key_binding
                 .action_input()
                 .map(|input| SyntaxHighlightedText::new(input, json_language.clone()));
+            let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
@@ -288,6 +291,7 @@ impl KeymapEditor {
                 ui_key_binding,
                 action: action_name.into(),
                 action_input,
+                action_docs,
                 context: Some(context),
                 source,
             });
@@ -301,8 +305,9 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
-                action: (*action_name).into(),
+                action: action_name.into(),
                 action_input: None,
+                action_docs: action_documentation.get(action_name).copied(),
                 context: None,
                 source: None,
             });
@@ -537,6 +542,7 @@ struct ProcessedKeybinding {
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
     action_input: Option<SyntaxHighlightedText>,
+    action_docs: Option<&'static str>,
     context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -635,7 +641,26 @@ impl Render for KeymapEditor {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
 
-                                    let action = binding.action.clone().into_any_element();
+                                    let action = div()
+                                        .child(binding.action.clone())
+                                        .id(("keymap action", index))
+                                        .tooltip({
+                                            let action_name = binding.action.clone();
+                                            let action_docs = binding.action_docs;
+                                            move |_, cx| {
+                                                let action_tooltip = Tooltip::new(
+                                                    command_palette::humanize_action_name(
+                                                        &action_name,
+                                                    ),
+                                                );
+                                                let action_tooltip = match action_docs {
+                                                    Some(docs) => action_tooltip.meta(docs),
+                                                    None => action_tooltip,
+                                                };
+                                                cx.new(|_| action_tooltip).into()
+                                            }
+                                        })
+                                        .into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
