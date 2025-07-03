@@ -7,8 +7,6 @@ pub const XAI_API_URL: &str = "https://api.x.ai/v1";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "grok-2-latest")]
-    Grok2,
     #[serde(rename = "grok-2-vision-latest")]
     Grok2Vision,
     #[default]
@@ -38,7 +36,6 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "grok-2" => Ok(Self::Grok2),
             "grok-2-vision" => Ok(Self::Grok2Vision),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
@@ -50,7 +47,6 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Grok2 => "grok-2",
             Self::Grok2Vision => "grok-2-vision",
             Self::Grok3 => "grok-3",
             Self::Grok3Mini => "grok-3-mini",
@@ -62,7 +58,6 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Grok2 => "Grok 2",
             Self::Grok2Vision => "Grok 2 Vision",
             Self::Grok3 => "Grok 3",
             Self::Grok3Mini => "Grok 3 Mini",
@@ -76,9 +71,7 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Grok2 | Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => {
-                131_072
-            }
+            Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
             Self::Grok2Vision => 8_192,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -86,9 +79,7 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::Grok2 | Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => {
-                Some(8_192)
-            }
+            Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
             Self::Grok2Vision => Some(4_096),
             Self::Custom {
                 max_output_tokens, ..
@@ -98,8 +89,7 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::Grok2
-            | Self::Grok2Vision
+            Self::Grok2Vision
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
@@ -110,8 +100,7 @@ impl Model {
 
     pub fn supports_tool(&self) -> bool {
         match self {
-            Self::Grok2
-            | Self::Grok2Vision
+            Self::Grok2Vision
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
