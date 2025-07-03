@@ -422,10 +422,10 @@ impl AcpThreadView {
                     .children(chunks.iter().map(|chunk| match chunk {
                         AssistantMessageChunk::Text { chunk } => {
                             // todo!() open link
-                            MarkdownElement::new(chunk.clone(), style.clone())
+                            MarkdownElement::new(chunk.clone(), style.clone()).into_any_element()
                         }
                         AssistantMessageChunk::Thought { chunk } => {
-                            MarkdownElement::new(chunk.clone(), style.clone())
+                            self.render_thinking_block(chunk.clone(), window, cx)
                         }
                     }))
                     .into_any();
@@ -443,6 +443,42 @@ impl AcpThreadView {
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
         }
+    }
+
+    fn render_thinking_block(
+        &self,
+        chunk: Entity<Markdown>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .mt_neg_2()
+            .mb_1p5()
+            .child(
+                h_flex().group("disclosure-header").justify_between().child(
+                    h_flex()
+                        .gap_1p5()
+                        .child(
+                            Icon::new(IconName::LightBulb)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new("Thinking").size(LabelSize::Small)),
+                ),
+            )
+            .child(div().relative().rounded_b_lg().mt_2().pl_4().child(
+                div().max_h_20().text_ui_sm(cx).overflow_hidden().child(
+                    // todo! url click
+                    MarkdownElement::new(chunk, default_markdown_style(window, cx)),
+                    // .on_url_click({
+                    //     let workspace = self.workspace.clone();
+                    //     move |text, window, cx| {
+                    //         open_markdown_link(text, workspace.clone(), window, cx);
+                    //     }
+                    // }),
+                ),
+            ))
+            .into_any_element()
     }
 
     fn render_tool_call(

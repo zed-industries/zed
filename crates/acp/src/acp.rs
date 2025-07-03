@@ -447,34 +447,41 @@ impl AcpThread {
         {
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
 
-            if let (
-                Some(AssistantMessageChunk::Text { chunk: old_chunk }),
-                acp::AssistantMessageChunk::Text { chunk: new_chunk },
-            ) = (chunks.last_mut(), &chunk)
-            {
-                old_chunk.update(cx, |old_chunk, cx| {
-                    old_chunk.append(&new_chunk, cx);
-                });
-            } else {
-                chunks.push(AssistantMessageChunk::from_acp(
-                    chunk,
-                    self.project.read(cx).languages().clone(),
-                    cx,
-                ));
+            match (chunks.last_mut(), &chunk) {
+                (
+                    Some(AssistantMessageChunk::Text { chunk: old_chunk }),
+                    acp::AssistantMessageChunk::Text { chunk: new_chunk },
+                )
+                | (
+                    Some(AssistantMessageChunk::Thought { chunk: old_chunk }),
+                    acp::AssistantMessageChunk::Thought { chunk: new_chunk },
+                ) => {
+                    old_chunk.update(cx, |old_chunk, cx| {
+                        old_chunk.append(&new_chunk, cx);
+                    });
+                }
+                _ => {
+                    chunks.push(AssistantMessageChunk::from_acp(
+                        chunk,
+                        self.project.read(cx).languages().clone(),
+                        cx,
+                    ));
+                }
             }
+        } else {
+            let chunk = AssistantMessageChunk::from_acp(
+                chunk,
+                self.project.read(cx).languages().clone(),
+                cx,
+            );
 
-            return;
+            self.push_entry(
+                AgentThreadEntryContent::AssistantMessage(AssistantMessage {
+                    chunks: vec![chunk],
+                }),
+                cx,
+            );
         }
-
-        let chunk =
-            AssistantMessageChunk::from_acp(chunk, self.project.read(cx).languages().clone(), cx);
-
-        self.push_entry(
-            AgentThreadEntryContent::AssistantMessage(AssistantMessage {
-                chunks: vec![chunk],
-            }),
-            cx,
-        );
     }
 
     pub fn request_tool_call(
