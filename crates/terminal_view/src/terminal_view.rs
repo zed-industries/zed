@@ -823,6 +823,11 @@ impl TerminalView {
             };
             dispatch_context.set("mouse_format", format);
         };
+
+        if self.terminal.read(cx).last_content.selection.is_some() {
+            dispatch_context.add("selection");
+        }
+
         dispatch_context
     }
 

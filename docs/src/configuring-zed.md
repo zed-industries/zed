@@ -2564,6 +2564,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "keep_selection_on_copy": false,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -2684,6 +2685,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Keep Selection On Copy
+
+- Description: Whether or not to keep the selection in the terminal after copying text.
+- Setting: `keep_selection_on_copy`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "keep_selection_on_copy": true
   }
 }
 ```

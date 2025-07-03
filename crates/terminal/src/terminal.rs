@@ -898,7 +898,13 @@ impl Terminal {
 
             InternalEvent::Copy => {
                 if let Some(txt) = term.selection_to_string() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(txt))
+                    cx.write_to_clipboard(ClipboardItem::new_string(txt));
+
+                    let settings = TerminalSettings::get_global(cx);
+
+                    if !settings.keep_selection_on_copy {
+                        self.events.push_back(InternalEvent::SetSelection(None));
+                    }
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
