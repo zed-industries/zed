@@ -103,6 +103,7 @@ impl Model {
 pub struct GenerateRequest {
     pub model: String,
     pub prompt: String,
+    pub suffix: Option<String>,
     pub stream: bool,
     pub options: Option<GenerateOptions>,
     pub keep_alive: Option<KeepAlive>,
@@ -424,6 +425,33 @@ pub async fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_request_with_suffix_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: Some(vec!["<|endoftext|>".to_string()]),
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+    }
 
     #[test]
     fn parse_completion() {
