@@ -23,7 +23,6 @@ pub use multibuffer_hint::*;
 mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
-mod welcome_ui;
 
 actions!(welcome, [ResetHints]);
 
