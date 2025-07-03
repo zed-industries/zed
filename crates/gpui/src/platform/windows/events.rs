@@ -1159,13 +1159,15 @@ fn handle_system_settings_changed(
     if wparam.0 != 0 {
         let mut lock = state_ptr.state.borrow_mut();
         let display = lock.display;
-        lock.system_settings.update(display, wparam.0, handle);
+        lock.system_settings.update(display, wparam.0);
         lock.click_state.system_update(wparam.0);
         lock.border_offset.update(handle).log_err();
-        drop(lock);
     } else {
         handle_system_theme_changed(handle, lparam, state_ptr)?;
-    }
+    };
+    // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
+    // taskbar correctly.
+    notify_frame_changed(handle);
 
     Some(0)
 }
