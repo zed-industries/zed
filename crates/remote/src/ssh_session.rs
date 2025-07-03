@@ -2093,7 +2093,7 @@ impl SshRemoteConnection {
             rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
         }
 
-        let bin_path = if self.ssh_platform.arch == std::env::consts::ARCH
+        if self.ssh_platform.arch == std::env::consts::ARCH
             && self.ssh_platform.os == std::env::consts::OS
         {
             delegate.set_status(Some("Building remote server binary from source"), cx);
@@ -2114,8 +2114,6 @@ impl SshRemoteConnection {
                     .env("RUSTFLAGS", &rust_flags),
             )
             .await?;
-
-            format!("target/remote_server/{triple}/debug/remote_server")
         } else {
             if build_remote_server.contains("cross") {
                 #[cfg(target_os = "windows")]
@@ -2219,16 +2217,20 @@ impl SshRemoteConnection {
                 )
                 .await?;
             }
-
-            format!("target/remote_server/{triple}/debug/remote_server")
         };
+        let bin_path = Path::new("target")
+            .join("remote_server")
+            .join(&triple)
+            .join("debug")
+            .join("remote_server");
 
         let path = if !build_remote_server.contains("nocompress") {
             delegate.set_status(Some("Compressing binary"), cx);
 
             #[cfg(not(target_os = "windows"))]
             {
-                run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path])).await?;
+                run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path.to_string_lossy()]))
+                    .await?;
             }
             #[cfg(target_os = "windows")]
             {
@@ -2238,12 +2240,20 @@ impl SshRemoteConnection {
                 if smol::fs::metadata(&gz_path).await.is_ok() {
                     smol::fs::remove_file(&gz_path).await?;
                 }
-                run_cmd(Command::new(seven_zip).args(["a", "-tgzip", &gz_path, &bin_path])).await?;
+                run_cmd(Command::new(seven_zip).args([
+                    "a",
+                    "-tgzip",
+                    &gz_path,
+                    &bin_path.to_string_lossy(),
+                ]))
+                .await?;
             }
 
-            std::env::current_dir()?.join(format!("{bin_path}.gz"))
+            let mut archive_path = bin_path;
+            archive_path.set_extension("gz");
+            std::env::current_dir()?.join(archive_path)
         } else {
-            bin_path.into()
+            bin_path
         };
 
         Ok(path)
