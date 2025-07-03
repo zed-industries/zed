@@ -269,6 +269,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 "autoReload": {
                     "default": {},
                     "description": "Configures automatic reload of code on edit.",
+                    "additionalProperties": false,
                     "properties": {
                         "enable": {
                             "default": false,
@@ -335,6 +336,7 @@ impl DebugAdapter for PythonDebugAdapter {
                     "default": [],
                     "items": {
                         "label": "Path mapping",
+                        "additionalProperties": false,
                         "properties": {
                             "localRoot": {
                                 "default": "${ZED_WORKTREE_ROOT}",
@@ -400,6 +402,7 @@ impl DebugAdapter for PythonDebugAdapter {
                         "properties": {
                             "connect": {
                                 "label": "Attach by connecting to debugpy over a socket.",
+                                "additionalProperties": false,
                                 "properties": {
                                     "host": {
                                         "default": "127.0.0.1",
@@ -421,6 +424,7 @@ impl DebugAdapter for PythonDebugAdapter {
                             },
                             "listen": {
                                 "label": "Attach by listening for incoming socket connection from debugpy",
+                                "additionalProperties": false,
                                 "properties": {
                                     "host": {
                                         "default": "127.0.0.1",

@@ -30,7 +30,10 @@ use std::{
     sync::Arc,
 };
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
+    schemars::DefaultDenyUnknownFields,
+};
 
 use crate::PackageJsonData;
 
@@ -272,6 +275,7 @@ impl JsonLspAdapter {
 #[cfg(debug_assertions)]
 fn generate_inspector_style_schema() -> serde_json_lenient::Value {
     let schema = schemars::generate::SchemaSettings::draft2019_09()
+        .with_transform(DefaultDenyUnknownFields)
         .into_generator()
         .root_schema_for::<gpui::StyleRefinement>();
 

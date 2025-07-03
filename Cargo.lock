@@ -17347,6 +17347,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
