@@ -245,9 +245,8 @@ impl ToolCallContent {
 
 #[derive(Debug)]
 pub struct Diff {
-    // todo! show path somewhere
     multibuffer: Entity<MultiBuffer>,
-    _path: PathBuf,
+    path: PathBuf,
     _task: Task<Result<()>>,
 }
 
@@ -320,7 +319,7 @@ impl Diff {
 
         Self {
             multibuffer,
-            _path: path,
+            path,
             _task: task,
         }
     }

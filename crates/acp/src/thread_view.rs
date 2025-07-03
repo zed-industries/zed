@@ -24,8 +24,8 @@ use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
 use crate::{
-    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, MessageChunk, Role, ThreadEntry,
-    ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId, ToolCallStatus,
+    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, Diff, MessageChunk, Role,
+    ThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId, ToolCallStatus,
 };
 
 pub struct AcpThreadView {
@@ -539,7 +539,10 @@ impl AcpThreadView {
                 MarkdownElement::new(markdown.clone(), default_markdown_style(window, cx))
                     .into_any_element()
             }
-            ToolCallContent::Diff { .. } => self.render_diff_editor(entry_ix),
+            ToolCallContent::Diff {
+                diff: Diff { path, .. },
+                ..
+            } => self.render_diff_editor(entry_ix, path),
         }
     }
 
@@ -952,13 +955,20 @@ impl AcpThreadView {
         }
     }
 
-    fn render_diff_editor(&self, entry_ix: usize) -> AnyElement {
-        if let Some(Some(ThreadEntryView::Diff { editor })) = self.thread_entry_views.get(entry_ix)
-        {
-            editor.clone().into_any_element()
-        } else {
-            Empty.into_any()
-        }
+    fn render_diff_editor(&self, entry_ix: usize, path: &Path) -> AnyElement {
+        v_flex()
+            .h_full()
+            .child(path.to_string_lossy().to_string())
+            .child(
+                if let Some(Some(ThreadEntryView::Diff { editor })) =
+                    self.thread_entry_views.get(entry_ix)
+                {
+                    editor.clone().into_any_element()
+                } else {
+                    Empty.into_any()
+                },
+            )
+            .into_any()
     }
 }
 
