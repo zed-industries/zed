@@ -456,6 +456,10 @@ pub enum CompletionSource {
         /// Whether this completion has been resolved, to ensure it happens once per completion.
         resolved: bool,
     },
+    Dap {
+        /// The sort text for this completion.
+        sort_text: String,
+    },
     Custom,
     BufferWord {
         word_range: Range<Anchor>,

@@ -5,7 +5,7 @@ use super::{
 use alacritty_terminal::vte::ansi;
 use anyhow::Result;
 use collections::HashMap;
-use dap::OutputEvent;
+use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -17,6 +17,7 @@ use menu::Confirm;
 use project::{
     Completion, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
+    lsp_store::CompletionDocumentation,
 };
 use settings::Settings;
 use std::{cell::RefCell, ops::Range, rc::Rc, usize};
@@ -693,6 +694,32 @@ impl ConsoleQueryBarCompletionProvider {
         })
     }
 
+    const fn completion_type_score(completion_type: CompletionItemType) -> usize {
+        match completion_type {
+            CompletionItemType::Field | CompletionItemType::Property => 0,
+            CompletionItemType::Variable | CompletionItemType::Value => 1,
+            CompletionItemType::Method
+            | CompletionItemType::Function
+            | CompletionItemType::Constructor => 2,
+            CompletionItemType::Class
+            | CompletionItemType::Interface
+            | CompletionItemType::Module => 3,
+            _ => 4,
+        }
+    }
+
+    fn completion_item_sort_text(completion_item: &CompletionItem) -> String {
+        completion_item.sort_text.clone().unwrap_or_else(|| {
+            format!(
+                "{:03}_{}",
+                Self::completion_type_score(
+                    completion_item.type_.unwrap_or(CompletionItemType::Text)
+                ),
+                completion_item.label.to_ascii_lowercase()
+            )
+        })
+    }
+
     fn client_completions(
         &self,
         console: &Entity<Console>,
@@ -717,6 +744,7 @@ impl ConsoleQueryBarCompletionProvider {
             let completions = completions
                 .into_iter()
                 .map(|completion| {
+                    let sort_text = Self::completion_item_sort_text(&completion);
                     let new_text = completion
                         .text
                         .as_ref()
@@ -749,12 +777,11 @@ impl ConsoleQueryBarCompletionProvider {
                             runs: Vec::new(),
                         },
                         icon_path: None,
-                        documentation: None,
+                        documentation: completion.detail.map(|detail| {
+                            CompletionDocumentation::MultiLineMarkdown(detail.into())
+                        }),
                         confirm: None,
-                        source: project::CompletionSource::BufferWord {
-                            word_range: buffer_position..language::Anchor::MAX,
-                            resolved: false,
-                        },
+                        source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,
                     }
                 })

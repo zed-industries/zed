@@ -222,11 +222,13 @@ message Completion {
     optional Anchor buffer_word_end = 10;
     Anchor old_insert_start = 11;
     Anchor old_insert_end = 12;
+    optional string sort_text = 13;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
         BufferWord = 2;
+        Dap = 3;
     }
 }
 
