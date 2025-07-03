@@ -3469,6 +3469,41 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext) {
+    // This is a regression test for issue #33761
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
+        r#"ˇ#     ingress:
+ˇ#         api:
+ˇ#             enabled: false
+ˇ#             pathType: Prefix
+ˇ#           console:
+ˇ#               enabled: false
+ˇ#               pathType: Prefix
+"#,
+    );
+
+    // Press tab to indent all lines
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(
+        r#"    ˇ#     ingress:
+    ˇ#         api:
+    ˇ#             enabled: false
+    ˇ#             pathType: Prefix
+    ˇ#           console:
+    ˇ#               enabled: false
+    ˇ#               pathType: Prefix
+"#,
+    );
+}
+
+#[gpui::test]
 async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.hard_tabs = Some(true);
