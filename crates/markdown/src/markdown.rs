@@ -141,7 +141,15 @@ pub type CodeBlockRenderFn = Arc<
 pub type CodeBlockTransformFn =
     Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
-actions!(markdown, [Copy, CopyAsMarkdown]);
+actions!(
+    markdown,
+    [
+        /// Copies the selected text to the clipboard.
+        Copy,
+        /// Copies the selected text as markdown to the clipboard.
+        CopyAsMarkdown
+    ]
+);
 
 impl Markdown {
     pub fn new(

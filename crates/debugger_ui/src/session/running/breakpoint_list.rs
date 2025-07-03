@@ -33,7 +33,12 @@ use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 actions!(
     debugger,
-    [PreviousBreakpointProperty, NextBreakpointProperty]
+    [
+        /// Navigates to the previous breakpoint property in the list.
+        PreviousBreakpointProperty,
+        /// Navigates to the next breakpoint property in the list.
+        NextBreakpointProperty
+    ]
 );
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum SelectedBreakpointKind {

@@ -181,6 +181,7 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
+/// Permanently deletes the selected file or directory.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +190,7 @@ struct Delete {
     pub skip_prompt: bool,
 }
 
+/// Moves the selected file or directory to the system trash.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
@@ -200,32 +202,59 @@ struct Trash {
 actions!(
     project_panel,
     [
+        /// Expands the selected entry in the project tree.
         ExpandSelectedEntry,
+        /// Collapses the selected entry in the project tree.
         CollapseSelectedEntry,
+        /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Creates a new directory.
         NewDirectory,
+        /// Creates a new file.
         NewFile,
+        /// Copies the selected file or directory.
         Copy,
+        /// Duplicates the selected file or directory.
         Duplicate,
+        /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Removes the selected folder from the project.
         RemoveFromProject,
+        /// Opens the selected file with the system's default application.
         OpenWithSystem,
+        /// Cuts the selected file or directory.
         Cut,
+        /// Pastes the previously cut or copied item.
         Paste,
+        /// Renames the selected file or directory.
         Rename,
+        /// Opens the selected file in the editor.
         Open,
+        /// Opens the selected file in a permanent tab.
         OpenPermanent,
+        /// Toggles focus on the project panel.
         ToggleFocus,
+        /// Toggles visibility of git-ignored files.
         ToggleHideGitIgnore,
+        /// Starts a new search in the selected directory.
         NewSearchInDirectory,
+        /// Unfolds the selected directory.
         UnfoldDirectory,
+        /// Folds the selected directory.
         FoldDirectory,
+        /// Selects the parent directory.
         SelectParent,
+        /// Selects the next entry with git changes.
         SelectNextGitEntry,
+        /// Selects the previous entry with git changes.
         SelectPrevGitEntry,
+        /// Selects the next entry with diagnostics.
         SelectNextDiagnostic,
+        /// Selects the previous entry with diagnostics.
         SelectPrevDiagnostic,
+        /// Selects the next directory.
         SelectNextDirectory,
+        /// Selects the previous directory.
         SelectPrevDirectory,
     ]
 );

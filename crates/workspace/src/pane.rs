@@ -95,10 +95,12 @@ pub enum SaveIntent {
     Skip,
 }
 
+/// Activates a specific item in the pane by its index.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 pub struct ActivateItem(pub usize);
 
+/// Closes the currently active item in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +111,7 @@ pub struct CloseActiveItem {
     pub close_pinned: bool,
 }
 
+/// Closes all inactive items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +122,7 @@ pub struct CloseInactiveItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +133,7 @@ pub struct CloseAllItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items that have no unsaved changes.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -137,6 +142,7 @@ pub struct CloseCleanItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the right of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +151,7 @@ pub struct CloseItemsToTheRight {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the left of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -153,6 +160,7 @@ pub struct CloseItemsToTheLeft {
     pub close_pinned: bool,
 }
 
+/// Reveals the current item in the project panel.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -161,6 +169,7 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+/// Opens the search interface with the specified configuration.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -176,25 +185,45 @@ pub struct DeploySearch {
 actions!(
     pane,
     [
+        /// Activates the previous item in the pane.
         ActivatePreviousItem,
+        /// Activates the next item in the pane.
         ActivateNextItem,
+        /// Activates the last item in the pane.
         ActivateLastItem,
+        /// Switches to the alternate file.
         AlternateFile,
+        /// Navigates back in history.
         GoBack,
+        /// Navigates forward in history.
         GoForward,
+        /// Joins this pane into the next pane.
         JoinIntoNext,
+        /// Joins all panes into one.
         JoinAll,
+        /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Splits the pane to the left.
         SplitLeft,
+        /// Splits the pane upward.
         SplitUp,
+        /// Splits the pane to the right.
         SplitRight,
+        /// Splits the pane downward.
         SplitDown,
+        /// Splits the pane horizontally.
         SplitHorizontal,
+        /// Splits the pane vertically.
         SplitVertical,
+        /// Swaps the current item with the one to the left.
         SwapItemLeft,
+        /// Swaps the current item with the one to the right.
         SwapItemRight,
+        /// Toggles preview mode for the current tab.
         TogglePreviewTab,
+        /// Toggles pin status for the current tab.
         TogglePinTab,
+        /// Unpins all tabs in the pane.
         UnpinAllTabs,
     ]
 );

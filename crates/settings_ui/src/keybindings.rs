@@ -28,10 +28,26 @@ use crate::{
     ui_components::table::{Table, TableInteractionState},
 };
 
-actions!(zed, [OpenKeymapEditor]);
+actions!(
+    zed,
+    [
+        /// Opens the keymap editor.
+        OpenKeymapEditor
+    ]
+);
 
 const KEYMAP_EDITOR_NAMESPACE: &'static str = "keymap_editor";
-actions!(keymap_editor, [EditBinding, CopyAction, CopyContext]);
+actions!(
+    keymap_editor,
+    [
+        /// Edits the selected key binding.
+        EditBinding,
+        /// Copies the action name to clipboard.
+        CopyAction,
+        /// Copies the context predicate to clipboard.
+        CopyContext
+    ]
+);
 
 pub fn init(cx: &mut App) {
     let keymap_event_channel = KeymapEventChannel::new();

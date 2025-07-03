@@ -23,7 +23,13 @@ use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 
-actions!(console, [WatchExpression]);
+actions!(
+    console,
+    [
+        /// Adds an expression to the watch list.
+        WatchExpression
+    ]
+);
 
 pub struct Console {
     console: Entity<Editor>,

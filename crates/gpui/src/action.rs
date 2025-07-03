@@ -150,6 +150,15 @@ pub trait Action: Any + Send {
     {
         None
     }
+
+    /// The documentation for this action, if any. When using the derive macro for actions
+    /// this will be automatically generated from the doc comments on the action struct.
+    fn documentation() -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 impl std::fmt::Debug for dyn Action {
@@ -254,6 +263,7 @@ pub struct MacroActionData {
     pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
     pub deprecated_aliases: &'static [&'static str],
     pub deprecation_message: Option<&'static str>,
+    pub documentation: Option<&'static str>,
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -276,6 +286,7 @@ impl ActionRegistry {
             json_schema: A::action_json_schema,
             deprecated_aliases: A::deprecated_aliases(),
             deprecation_message: A::deprecation_message(),
+            documentation: A::documentation(),
         });
     }
 
