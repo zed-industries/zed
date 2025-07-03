@@ -3470,11 +3470,6 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext) {
-    // Test for issue #33761: Indenting comments behaves strangely with multiple cursors
-    // When pressing TAB with multiple cursors at the beginning of comment lines,
-    // the indentation should be consistent across all lines, but instead each line
-    // gets indented based on the existing whitespace after the comment character.
-
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -3492,8 +3487,6 @@ async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
 
-    // Set up the test case from the issue
-    // Each line has a cursor at the beginning (position 0)
     cx.set_state(indoc! {"
         ˇ#     ingress:
         ˇ#         api:
@@ -3507,8 +3500,7 @@ async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext
     // Press tab to indent all lines
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
 
-    // Expected behavior: all lines should be indented by the same amount (2 spaces)
-    let _expected = indoc! {"
+    cx.assert_editor_state(indoc! {"
           ˇ#     ingress:
           ˇ#         api:
           ˇ#             enabled: false
@@ -3516,40 +3508,11 @@ async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext
           ˇ#           console:
           ˇ#               enabled: false
           ˇ#               pathType: Prefix
-    "};
-
-    // Actual behavior (BUG): lines are indented by different amounts
-    // The indentation appears to be calculated based on the whitespace
-    // after the comment character, resulting in inconsistent indentation
-
-    // What actually happens:
-    // - Line 1 (#     ingress:) gets 2 spaces added
-    // - Line 2 (#         api:) gets 4 spaces added
-    // - Line 3 (#             enabled: false) gets 6 spaces added
-    // - Line 4 (#             pathType: Prefix) gets 6 spaces added
-    // - Line 5 (#           console:) gets 6 spaces added
-    // - Line 6 (#               enabled: false) gets 8 spaces added
-    // - Line 7 (#               pathType: Prefix) gets 8 spaces added
-
-    cx.assert_editor_state(indoc! {"
-          ˇ#     ingress:
-            ˇ#         api:
-              ˇ#             enabled: false
-              ˇ#             pathType: Prefix
-              ˇ#           console:
-                ˇ#               enabled: false
-                ˇ#               pathType: Prefix
     "});
-
-    // This test demonstrates the bug described in issue #33761
-    // The test currently expects the buggy behavior to pass.
-    // Once the bug is fixed, replace the assertion above with:
-    // cx.assert_editor_state(_expected);
 }
 
 #[gpui::test]
 async fn test_indent_yaml_comments_simple(cx: &mut TestAppContext) {
-    // Simplified test for issue #33761 showing the core problem
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -3567,7 +3530,6 @@ async fn test_indent_yaml_comments_simple(cx: &mut TestAppContext) {
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
 
-    // Simple test with just two lines showing the problem
     cx.set_state(indoc! {"
         ˇ# foo
         ˇ#     bar
@@ -3575,18 +3537,14 @@ async fn test_indent_yaml_comments_simple(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
 
-    // Expected: both lines indented by 2 spaces
-    // Actual: first line indented by 2, second by 4
     cx.assert_editor_state(indoc! {"
           ˇ# foo
-            ˇ#     bar
+          ˇ#     bar
     "});
 }
 
 #[gpui::test]
-async fn test_indent_yaml_comments_expected_behavior(cx: &mut TestAppContext) {
-    // This test shows what the EXPECTED behavior should be for issue #33761
-    // Currently this test will FAIL because of the bug
+async fn test_indent_yaml_comments_full(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -3604,7 +3562,6 @@ async fn test_indent_yaml_comments_expected_behavior(cx: &mut TestAppContext) {
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
 
-    // Set up the test case from the issue
     cx.set_state(indoc! {"
         ˇ#     ingress:
         ˇ#         api:
@@ -3617,7 +3574,6 @@ async fn test_indent_yaml_comments_expected_behavior(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
 
-    // EXPECTED: All lines should be indented by the same amount (2 spaces)
     cx.assert_editor_state(indoc! {"
           ˇ#     ingress:
           ˇ#         api:

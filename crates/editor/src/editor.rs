@@ -9743,6 +9743,14 @@ impl Editor {
         let mut edits = Vec::new();
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
+
+        // Check if we have multiple cursors all at the beginning of their lines (column 0)
+        // This is specifically for fixing the issue where indenting multiple comment lines
+        // results in inconsistent indentation
+        let empty_selections: Vec<_> = selections.iter().filter(|s| s.is_empty()).collect();
+        let multiple_cursors_at_line_start =
+            empty_selections.len() > 1 && empty_selections.iter().all(|s| s.head().column == 0);
+
         for selection in &mut selections {
             if selection.start.row != prev_edited_row {
                 row_delta = 0;
@@ -9761,67 +9769,87 @@ impl Editor {
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
-                // Don't do anything if already at suggested indent
-                // and there is any other cursor which is not
-                if has_some_cursor_in_whitespace
-                    && cursor.column == current_indent.len
-                    && current_indent.len == suggested_indent.len
-                {
-                    continue;
-                }
-
-                // Adjust line and move cursor to suggested indent
-                // if cursor is not at suggested indent
-                if cursor.column < suggested_indent.len
-                    && cursor.column <= current_indent.len
-                    && current_indent.len <= suggested_indent.len
-                {
-                    selection.start = Point::new(cursor.row, suggested_indent.len);
-                    selection.end = selection.start;
-                    if row_delta == 0 {
-                        edits.extend(Buffer::edit_for_indent_size_adjustment(
-                            cursor.row,
-                            current_indent,
-                            suggested_indent,
-                        ));
-                        row_delta = suggested_indent.len - current_indent.len;
+                // Skip suggested indent logic when we have multiple cursors at the beginning
+                // of lines to ensure consistent indentation across multiple lines
+                if !(multiple_cursors_at_line_start && cursor.column == 0) {
+                    // Don't do anything if already at suggested indent
+                    // and there is any other cursor which is not
+                    if has_some_cursor_in_whitespace
+                        && cursor.column == current_indent.len
+                        && current_indent.len == suggested_indent.len
+                    {
+                        continue;
                     }
-                    continue;
-                }
 
-                // If current indent is more than suggested indent
-                // only move cursor to current indent and skip indent
-                if cursor.column < current_indent.len && current_indent.len > suggested_indent.len {
-                    selection.start = Point::new(cursor.row, current_indent.len);
-                    selection.end = selection.start;
-                    continue;
+                    // Adjust line and move cursor to suggested indent
+                    // if cursor is not at suggested indent
+                    if cursor.column < suggested_indent.len
+                        && cursor.column <= current_indent.len
+                        && current_indent.len <= suggested_indent.len
+                    {
+                        selection.start = Point::new(cursor.row, suggested_indent.len);
+                        selection.end = selection.start;
+                        if row_delta == 0 {
+                            edits.extend(Buffer::edit_for_indent_size_adjustment(
+                                cursor.row,
+                                current_indent,
+                                suggested_indent,
+                            ));
+                            row_delta = suggested_indent.len - current_indent.len;
+                        }
+                        continue;
+                    }
+
+                    // If current indent is more than suggested indent
+                    // only move cursor to current indent and skip indent
+                    if cursor.column < current_indent.len
+                        && current_indent.len > suggested_indent.len
+                    {
+                        selection.start = Point::new(cursor.row, current_indent.len);
+                        selection.end = selection.start;
+                        continue;
+                    }
                 }
             }
 
             // Otherwise, insert a hard or soft tab.
             let settings = buffer.language_settings_at(cursor, cx);
-            let tab_size = if settings.hard_tabs {
+            let indent_size = if settings.hard_tabs {
                 IndentSize::tab()
             } else {
                 let tab_size = settings.tab_size.get();
-                let indent_remainder = snapshot
-                    .text_for_range(Point::new(cursor.row, 0)..cursor)
-                    .flat_map(str::chars)
-                    .fold(row_delta % tab_size, |counter: u32, c| {
-                        if c == '\t' {
-                            0
-                        } else {
-                            (counter + 1) % tab_size
-                        }
-                    });
+                // When we have multiple cursors at the beginning of their lines,
+                // don't use row_delta in the calculation to ensure consistent indentation
+                let indent_remainder = if multiple_cursors_at_line_start && cursor.column == 0 {
+                    0
+                } else {
+                    snapshot
+                        .text_for_range(Point::new(cursor.row, 0)..cursor)
+                        .flat_map(str::chars)
+                        .fold(row_delta % tab_size, |counter: u32, c| {
+                            if c == '\t' {
+                                0
+                            } else {
+                                (counter + 1) % tab_size
+                            }
+                        })
+                };
 
                 let chars_to_next_tab_stop = tab_size - indent_remainder;
                 IndentSize::spaces(chars_to_next_tab_stop)
             };
-            selection.start = Point::new(cursor.row, cursor.column + row_delta + tab_size.len);
+
+            // When we have multiple cursors at line start, don't apply row_delta
+            let new_column = if multiple_cursors_at_line_start && cursor.column == 0 {
+                cursor.column + indent_size.len
+            } else {
+                cursor.column + row_delta + indent_size.len
+            };
+
+            selection.start = Point::new(cursor.row, new_column);
             selection.end = selection.start;
-            edits.push((cursor..cursor, tab_size.chars().collect::<String>()));
-            row_delta += tab_size.len;
+            edits.push((cursor..cursor, indent_size.chars().collect::<String>()));
+            row_delta += indent_size.len;
         }
 
         self.transact(window, cx, |this, window, cx| {
