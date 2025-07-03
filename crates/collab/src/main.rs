@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
             let config = envy::from_env::<Config>().expect("error loading config");
             let db_options = db::ConnectOptions::new(config.database_url.clone());
 
-            let mut db = Database::new(db_options, Executor::Production).await?;
+            let mut db = Database::new(db_options).await?;
             db.initialize_notification_kinds().await?;
 
             collab::seed::seed(&config, &db, false).await?;
@@ -253,7 +253,7 @@ async fn main() -> Result<()> {
 
 async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
-    let mut db = Database::new(db_options, Executor::Production).await?;
+    let mut db = Database::new(db_options).await?;
 
     let migrations_path = config.migrations_path.as_deref().unwrap_or_else(|| {
         #[cfg(feature = "sqlite")]

@@ -26,8 +26,8 @@ use project::{
 };
 use settings::{Settings, update_settings_file};
 use ui::{
-    ContextMenu, Disclosure, ElevationIndex, Indicator, PopoverMenu, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
+    Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -172,19 +172,29 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
-            .py_2()
-            .gap_1p5()
-            .border_t_1()
-            .border_color(cx.theme().colors().border.opacity(0.6))
+            .when(is_expanded, |this| this.mb_2())
+            .child(
+                div()
+                    .opacity(0.6)
+                    .px_2()
+                    .child(Divider::horizontal().color(DividerColor::Border)),
+            )
             .child(
                 h_flex()
+                    .map(|this| {
+                        if is_expanded {
+                            this.mt_2().mb_1()
+                        } else {
+                            this.my_2()
+                        }
+                    })
                     .w_full()
-                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
                             .id(provider_id_string.clone())
                             .cursor_pointer()
+                            .px_2()
                             .py_0p5()
                             .w_full()
                             .justify_between()
@@ -247,12 +257,16 @@ impl AgentConfiguration {
                         )
                     }),
             )
-            .when(is_expanded, |parent| match configuration_view {
-                Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(Label::new(format!(
-                    "No configuration view for {provider_name}",
-                ))),
-            })
+            .child(
+                div()
+                    .px_2()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    }),
+            )
     }
 
     fn render_provider_configuration_section(
@@ -262,12 +276,11 @@ impl AgentConfiguration {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
+                    .p(DynamicSpacing::Base16.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .pb_0()
                     .mb_2p5()
                     .gap_0p5()
                     .child(Headline::new("LLM Providers"))
@@ -276,10 +289,15 @@ impl AgentConfiguration {
                             .color(Color::Muted),
                     ),
             )
-            .children(
-                providers
-                    .into_iter()
-                    .map(|provider| self.render_provider_configuration_block(&provider, cx)),
+            .child(
+                div()
+                    .pl(DynamicSpacing::Base08.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .children(
+                        providers.into_iter().map(|provider| {
+                            self.render_provider_configuration_block(&provider, cx)
+                        }),
+                    ),
             )
     }
 

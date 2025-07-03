@@ -13,7 +13,7 @@ impl Database {
         &self,
         params: &CreateProcessedStripeEventParams,
     ) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             processed_stripe_event::Entity::insert(processed_stripe_event::ActiveModel {
                 stripe_event_id: ActiveValue::set(params.stripe_event_id.clone()),
                 stripe_event_type: ActiveValue::set(params.stripe_event_type.clone()),
@@ -35,7 +35,7 @@ impl Database {
         &self,
         event_id: &str,
     ) -> Result<Option<processed_stripe_event::Model>> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             Ok(processed_stripe_event::Entity::find_by_id(event_id)
                 .one(&*tx)
                 .await?)
@@ -48,7 +48,7 @@ impl Database {
         &self,
         event_ids: &[&str],
     ) -> Result<Vec<processed_stripe_event::Model>> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             Ok(processed_stripe_event::Entity::find()
                 .filter(
                     processed_stripe_event::Column::StripeEventId.is_in(event_ids.iter().copied()),

@@ -6,7 +6,7 @@ use crate::{
 };
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ToolId, ToolWorkingSet};
+use assistant_tool::{Tool, ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -537,8 +537,8 @@ impl ThreadStore {
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
-                            tool_working_set.update(cx, |tool_working_set, _| {
-                                tool_working_set.remove(&tool_ids);
+                            tool_working_set.update(cx, |tool_working_set, cx| {
+                                tool_working_set.remove(&tool_ids, cx);
                             });
                         }
                     }
@@ -569,19 +569,17 @@ impl ThreadStore {
                     .log_err()
                 {
                     let tool_ids = tool_working_set
-                        .update(cx, |tool_working_set, _| {
-                            response
-                                .tools
-                                .into_iter()
-                                .map(|tool| {
-                                    log::info!("registering context server tool: {:?}", tool.name);
-                                    tool_working_set.insert(Arc::new(ContextServerTool::new(
+                        .update(cx, |tool_working_set, cx| {
+                            tool_working_set.extend(
+                                response.tools.into_iter().map(|tool| {
+                                    Arc::new(ContextServerTool::new(
                                         context_server_store.clone(),
                                         server.id(),
                                         tool,
-                                    )))
-                                })
-                                .collect::<Vec<_>>()
+                                    )) as Arc<dyn Tool>
+                                }),
+                                cx,
+                            )
                         })
                         .log_err();
 

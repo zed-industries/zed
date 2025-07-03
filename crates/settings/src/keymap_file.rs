@@ -780,10 +780,10 @@ impl KeybindSource {
 
     pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
         match index {
-            _ if index == Self::USER => KeybindSource::User,
-            _ if index == Self::USER => KeybindSource::Base,
-            _ if index == Self::DEFAULT => KeybindSource::Default,
-            _ if index == Self::VIM => KeybindSource::Vim,
+            Self::USER => KeybindSource::User,
+            Self::BASE => KeybindSource::Base,
+            Self::DEFAULT => KeybindSource::Default,
+            Self::VIM => KeybindSource::Vim,
             _ => unreachable!(),
         }
     }

@@ -14,6 +14,7 @@ use crate::{
     state::{Mode, Register},
 };
 
+/// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]

@@ -38,7 +38,13 @@ use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
-actions!(zed, [InstallDevExtension]);
+actions!(
+    zed,
+    [
+        /// Installs an extension from a local directory for development.
+        InstallDevExtension
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {

@@ -32,12 +32,30 @@ pub(crate) struct MouseWheelSettings {
 impl WindowsSystemSettings {
     pub(crate) fn new(display: WindowsDisplay) -> Self {
         let mut settings = Self::default();
-        settings.update(display);
+        settings.init(display);
         settings
     }
 
-    pub(crate) fn update(&mut self, display: WindowsDisplay) {
+    fn init(&mut self, display: WindowsDisplay) {
         self.mouse_wheel_settings.update();
+        self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
+    }
+
+    pub(crate) fn update(&mut self, display: WindowsDisplay, wparam: usize) {
+        match wparam {
+            // SPI_SETWORKAREA
+            47 => self.update_taskbar_position(display),
+            // SPI_GETWHEELSCROLLLINES, SPI_GETWHEELSCROLLCHARS
+            104 | 108 => self.update_mouse_wheel_settings(),
+            _ => {}
+        }
+    }
+
+    fn update_mouse_wheel_settings(&mut self) {
+        self.mouse_wheel_settings.update();
+    }
+
+    fn update_taskbar_position(&mut self, display: WindowsDisplay) {
         self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
     }
 }

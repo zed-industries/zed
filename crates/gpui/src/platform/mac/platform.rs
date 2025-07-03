@@ -2,14 +2,14 @@ use super::{
     BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    is_macos_version_at_least, renderer, screen_capture,
+    renderer,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
     MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
-    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
+    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -22,8 +22,8 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSOperatingSystemVersion,
-        NSProcessInfo, NSRange, NSString, NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
+        NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -572,15 +572,17 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        let min_version = NSOperatingSystemVersion::new(12, 3, 0);
-        is_macos_version_at_least(min_version)
+        let min_version = cocoa::foundation::NSOperatingSystemVersion::new(12, 3, 0);
+        super::is_macos_version_at_least(min_version)
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        screen_capture::get_sources()
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
+        super::screen_capture::get_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
