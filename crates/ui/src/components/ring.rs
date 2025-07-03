@@ -41,7 +41,7 @@ impl Ring {
 }
 
 impl RenderOnce for Ring {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         let border_color = if self.focused && self.active {
             cx.theme().colors().border_focused.opacity(0.48)
         } else if self.focused {

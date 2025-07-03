@@ -20,7 +20,10 @@ use settings::{Settings, SettingsStore};
 use settings_ui::SettingsUiFeatureFlag;
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
-use ui::{KeybindingHint, ListItem, Ring, ToggleState, Vector, VectorName, prelude::*};
+use ui::{
+    CheckboxWithLabel, ContentGroup, KeybindingHint, ListItem, Ring, ToggleState, Vector,
+    VectorName, prelude::*,
+};
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use welcome::BaseKeymap;
@@ -1124,38 +1127,32 @@ impl OnboardingUI {
         v_flex()
             .h_full()
             .w_full()
-            .items_center()
-            .justify_center()
             .gap_4()
             .child(
-                Label::new("AI Assistant Setup")
-                    .size(LabelSize::Large)
-                    .color(Color::Default),
+                h_flex()
+                    .justify_start()
+                    .child(
+                CheckboxWithLabel::new(
+                "disable_ai",
+                Label::new("Enable AI Features"),
+                ToggleState::Selected,
+                |_, _, cx| todo!("implement ai toggle"),
+            )))
+            .child(
+                v_container()
+                    .p_3()
+                    .child(Label::new("We don't use your code to train AI models").weight(FontWeight::MEDIUM))
+                    .child(Label::new("You choose which providers you enable, and they have their own privacy policies.")
+                        .size(LabelSize::Small).color(Color::Muted))
+                    .child(Label::new("Read more about our privacy practices in our Privacy Policy.")
+                        .size(LabelSize::Small).color(Color::Muted))
             )
             .child(
-                v_flex()
-                    .gap_2()
-                    .mt_4()
-                    .child(
-                        Button::new("configure_ai", "Configure AI Provider")
-                            .style(ButtonStyle::Filled)
-                            .when(is_page_focused && focused_item == 0, |this| {
-                                this.color(Color::Accent)
-                            })
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("try_ai_chat", "Try AI Chat")
-                            .style(ButtonStyle::Filled)
-                            .when(is_page_focused && focused_item == 1, |this| {
-                                this.color(Color::Accent)
-                            })
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.notify();
-                            })),
-                    ),
+                h_flex()
+                    .h(px(32.))
+                    .w_full()
+                    .justify_between()
+                    .child(Label::new("Choose your AI Providers")),
             )
             .into_any_element()
     }
