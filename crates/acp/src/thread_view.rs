@@ -454,7 +454,7 @@ impl AcpThreadView {
     ) -> AnyElement {
         v_flex()
             .mt_neg_2()
-            .mb_1p5()
+            .mb_3()
             .child(
                 h_flex().group("disclosure-header").justify_between().child(
                     h_flex()
