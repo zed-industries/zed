@@ -546,7 +546,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        system_appearance().log_err().unwrap_or_default()
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
