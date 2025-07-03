@@ -22,9 +22,7 @@ use preview_support::active_thread::{
 };
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
-use ui::{
-    Button, ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*,
-};
+use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt as _;
 use workspace::{
