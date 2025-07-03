@@ -382,6 +382,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     fn compact_child_session(&self) -> bool {
         false
     }
+
+    fn prefer_thread_name(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

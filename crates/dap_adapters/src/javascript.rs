@@ -538,6 +538,10 @@ impl DebugAdapter for JsDebugAdapter {
     fn compact_child_session(&self) -> bool {
         true
     }
+
+    fn prefer_thread_name(&self) -> bool {
+        true
+    }
 }
 
 fn normalize_task_type(task_type: &mut Value) {
