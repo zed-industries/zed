@@ -104,7 +104,8 @@ use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, FileOpeningBehavior, RestoreOnStartupBehavior,
+    TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
@@ -3228,7 +3229,12 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
-            self.last_active_center_pane.clone().unwrap_or_else(|| {
+            let workspace_settings = WorkspaceSettings::get_global(cx);
+            let target_pane = match workspace_settings.file_opening_behavior {
+                FileOpeningBehavior::ActivePane => self.last_active_center_pane.clone(),
+                FileOpeningBehavior::FirstPane => None,
+            };
+            target_pane.unwrap_or_else(|| {
                 self.panes
                     .first()
                     .expect("There must be an active pane")
