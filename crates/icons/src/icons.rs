@@ -13,6 +13,7 @@ pub enum IconName {
     AiBedrock,
     AiDeepSeek,
     AiEdit,
+    AiGemini,
     AiGoogle,
     AiLmStudio,
     AiMistral,

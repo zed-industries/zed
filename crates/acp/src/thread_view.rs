@@ -8,7 +8,7 @@ use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
     SharedString, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
-    UnderlineStyle, Window, div, list, percentage, prelude::*,
+    UnderlineStyle, Window, div, list, percentage, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::Buffer;
@@ -1022,6 +1022,57 @@ impl AcpThreadView {
             )
             .into_any()
     }
+
+    fn render_empty_state(&self, loading: bool, cx: &App) -> AnyElement {
+        let logo = Icon::new(IconName::AiGemini)
+            .color(Color::Muted)
+            .size(IconSize::XLarge);
+
+        v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .child(
+                if loading {
+                    h_flex()
+                        .justify_center()
+                        .child(logo)
+                        .with_animation(
+                            "pulsating_icon",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 1.0)),
+                            |icon, delta| icon.opacity(delta),
+                        ).into_any()
+                } else {
+                    logo.into_any_element()
+                }
+            )
+            .child(
+                h_flex()
+                    .mt_4()
+                    .mb_1()
+                    .justify_center()
+                    .child(Headline::new(if loading {
+                        "Connecting to Gemini…"
+                    } else {
+                        "Welcome to Gemini"
+                    }).size(HeadlineSize::Medium)),
+            )
+            .child(
+                div()
+                    .max_w_1_2()
+                    .text_sm()
+                    .text_center()
+                    .map(|this| if loading {
+                        this.invisible()
+                    } else {
+                        this.text_color(cx.theme().colors().text_muted)
+                    })
+                    .child("Ask questions, edit files, run commands.\nBe specific for the best results.")
+            )
+            .into_any()
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -1049,40 +1100,42 @@ impl Render for AcpThreadView {
                     .child(Button::new("sign-in", "Sign in via Gemini CLI").on_click(
                         cx.listener(|this, _, window, cx| this.authenticate(window, cx)),
                     )),
-                ThreadState::Loading { .. } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .justify_end()
-                    .child(Label::new("Connecting to Gemini...")),
+                ThreadState::Loading { .. } => {
+                    v_flex().flex_1().child(self.render_empty_state(true, cx))
+                }
                 ThreadState::LoadError(e) => div()
                     .p_2()
                     .flex_1()
                     .justify_end()
                     .child(Label::new(format!("Failed to load: {e}")).into_any_element()),
-                ThreadState::Ready { thread, .. } => v_flex()
-                    .flex_1()
-                    .gap_2()
-                    .pb_2()
-                    .child(
-                        list(self.list_state.clone())
-                            .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                            .flex_grow(),
-                    )
-                    .child(
-                        div().px_3().children(match thread.read(cx).status() {
-                            ThreadStatus::Idle => None,
-                            ThreadStatus::WaitingForToolConfirmation => {
-                                Label::new("Waiting for tool confirmation")
+                ThreadState::Ready { thread, .. } => v_flex().flex_1().gap_2().map(|this| {
+                    if self.list_state.item_count() > 0 {
+                        this.child(
+                            list(self.list_state.clone())
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .flex_grow()
+                                .pb_2()
+                                .into_any(),
+                        )
+                        .child(
+                            div().px_3().children(match thread.read(cx).status() {
+                                ThreadStatus::Idle => None,
+                                ThreadStatus::WaitingForToolConfirmation => {
+                                    Label::new("Waiting for tool confirmation")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small)
+                                        .into()
+                                }
+                                ThreadStatus::Generating => Label::new("Generating...")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small)
-                                    .into()
-                            }
-                            ThreadStatus::Generating => Label::new("Generating...")
-                                .color(Color::Muted)
-                                .size(LabelSize::Small)
-                                .into(),
-                        }),
-                    ),
+                                    .into(),
+                            }),
+                        )
+                    } else {
+                        this.child(self.render_empty_state(false, cx))
+                    }
+                }),
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
