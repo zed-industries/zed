@@ -808,17 +808,29 @@ mod tests {
             fake_server.on_user_message(move |params, server, mut cx| async move {
                 server
                     .update(&mut cx, |server, cx| {
-                        let future =
-                            server
-                                .connection
-                                .request(acp::StreamAssistantMessageChunkParams {
-                                    thread_id: params.thread_id,
-                                    chunk: acp::AssistantMessageChunk::Thought {
-                                        chunk: "Thinking ".into(),
-                                    },
-                                });
-
-                        cx.spawn(async move |_, _| future.await)
+                        server.send_to_zed(
+                            acp::StreamAssistantMessageChunkParams {
+                                thread_id: params.thread_id.clone(),
+                                chunk: acp::AssistantMessageChunk::Thought {
+                                    chunk: "Thinking ".into(),
+                                },
+                            },
+                            cx,
+                        )
+                    })?
+                    .await
+                    .unwrap();
+                server
+                    .update(&mut cx, |server, cx| {
+                        server.send_to_zed(
+                            acp::StreamAssistantMessageChunkParams {
+                                thread_id: params.thread_id,
+                                chunk: acp::AssistantMessageChunk::Thought {
+                                    chunk: "hard!".into(),
+                                },
+                            },
+                            cx,
+                        )
                     })?
                     .await
                     .unwrap();
@@ -1190,6 +1202,15 @@ mod tests {
                 .replace(Rc::new(move |request, server, cx| {
                     handler(request, server, cx).boxed_local()
                 }));
+        }
+
+        fn send_to_zed<T: acp::ClientRequest>(
+            &self,
+            message: T,
+            cx: &Context<Self>,
+        ) -> Task<Result<T::Response, acp::Error>> {
+            let future = self.connection.request(message);
+            cx.foreground_executor().spawn(future)
         }
     }
 }
