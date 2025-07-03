@@ -23,8 +23,7 @@ use preview_support::active_thread::{
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{
-    Button, ButtonLike, ButtonSize, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip,
-    prelude::*,
+    Button, ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt as _;
@@ -108,7 +107,7 @@ enum PreviewPage {
 struct ComponentPreview {
     active_page: PreviewPage,
     active_thread: Option<Entity<ActiveThread>>,
-    animation_key: usize,
+    reset_key: usize,
     component_list: ListState,
     component_map: HashMap<ComponentId, ComponentMetadata>,
     components: Vec<ComponentMetadata>,
@@ -192,7 +191,7 @@ impl ComponentPreview {
         let mut component_preview = Self {
             active_page,
             active_thread: None,
-            animation_key: 0,
+            reset_key: 0,
             component_list,
             component_map: component_registry.component_map(),
             components: sorted_components,
@@ -255,8 +254,8 @@ impl ComponentPreview {
         self
     }
 
-    fn restart_animations(&mut self, cx: &mut Context<Self>) {
-        self.animation_key = self.animation_key.wrapping_add(1);
+    fn reset_preview(&mut self, cx: &mut Context<Self>) {
+        self.reset_key = self.reset_key.wrapping_add(1);
         cx.notify();
     }
 
@@ -541,15 +540,9 @@ impl ComponentPreview {
                     .inset(true)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = id.clone();
-                        // If this component is already active and supports restart animations,
-                        // restart the animations instead of setting the page again
                         if this.active_page == PreviewPage::Component(id.clone()) {
-                            if let Some(component) = this.component_map.get(&id) {
-                                if component.show_restart_animations() {
-                                    this.restart_animations(cx);
-                                    return;
-                                }
-                            }
+                            this.reset_preview(cx);
+                            return;
                         }
                         this.set_active_page(PreviewPage::Component(id), cx);
                     }))
@@ -706,20 +699,10 @@ impl ComponentPreview {
         &mut self,
         component_id: &ComponentId,
         _window: &mut Window,
-        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let component = self.component_map.get(&component_id);
 
         if let Some(component) = component {
-            let entity = cx.entity().downgrade();
-            let restart_animations = Arc::new(move |_window: &mut Window, cx: &mut App| {
-                if let Some(entity) = entity.upgrade() {
-                    entity.update(cx, |this, cx| {
-                        this.restart_animations(cx);
-                    });
-                }
-            });
-
             v_flex()
                 .id("render-component-page")
                 .flex_1()
@@ -727,8 +710,7 @@ impl ComponentPreview {
                     component.clone(),
                     self.workspace.clone(),
                     self.active_thread.clone(),
-                    self.animation_key,
-                    restart_animations,
+                    self.reset_key,
                 ))
                 .into_any_element()
         } else {
@@ -869,9 +851,9 @@ impl Render for ComponentPreview {
                         PreviewPage::AllComponents => {
                             self.render_all_components(cx).into_any_element()
                         }
-                        PreviewPage::Component(id) => self
-                            .render_component_page(&id, window, cx)
-                            .into_any_element(),
+                        PreviewPage::Component(id) => {
+                            self.render_component_page(&id, window).into_any_element()
+                        }
                         PreviewPage::ActiveThread => {
                             self.render_active_thread(cx).into_any_element()
                         }
@@ -1080,8 +1062,7 @@ pub struct ComponentPreviewPage {
     component: ComponentMetadata,
     workspace: WeakEntity<Workspace>,
     active_thread: Option<Entity<ActiveThread>>,
-    animation_key: usize,
-    restart_animations: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+    reset_key: usize,
 }
 
 impl ComponentPreviewPage {
@@ -1089,8 +1070,7 @@ impl ComponentPreviewPage {
         component: ComponentMetadata,
         workspace: WeakEntity<Workspace>,
         active_thread: Option<Entity<ActiveThread>>,
-        animation_key: usize,
-        restart_animations: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
+        reset_key: usize,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
         Self {
@@ -1098,8 +1078,7 @@ impl ComponentPreviewPage {
             component,
             workspace,
             active_thread,
-            animation_key,
-            restart_animations,
+            reset_key,
         }
     }
 
@@ -1141,7 +1120,6 @@ impl ComponentPreviewPage {
     }
 
     fn render_header(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let restart_fn = self.restart_animations.clone();
         v_flex()
             .py_12()
             .px_16()
@@ -1164,19 +1142,7 @@ impl ComponentPreviewPage {
                                 Headline::new(self.component.scopeless_name())
                                     .size(HeadlineSize::XLarge),
                             )
-                            .children(self.render_component_status(cx))
-                            .when(self.component.show_restart_animations(), |this| {
-                                this.child(
-                                    Button::new("restart-animations", "Restart Animations")
-                                        .size(ButtonSize::Compact)
-                                        .on_click({
-                                            let restart_fn = restart_fn.clone();
-                                            move |_event, window, cx| {
-                                                restart_fn(window, cx);
-                                            }
-                                        }),
-                                )
-                            }),
+                            .children(self.render_component_status(cx)),
                     ),
             )
             .when_some(self.component.description(), |this, description| {
@@ -1213,7 +1179,7 @@ impl ComponentPreviewPage {
         };
 
         v_flex()
-            .id(("component-preview", self.animation_key))
+            .id(("component-preview", self.reset_key))
             .size_full()
             .flex_1()
             .px_12()
