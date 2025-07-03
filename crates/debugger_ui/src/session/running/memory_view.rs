@@ -1,4 +1,6 @@
 use std::{
+    cell::OnceCell,
+    rc::{Rc, Weak},
     sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
@@ -19,7 +21,7 @@ use util::ResultExt;
 
 pub(crate) struct MemoryView {
     list_state: ListState,
-    scroll_state: ScrollbarState,
+    scroll_state: Rc<ScrollbarState>,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
@@ -82,19 +84,27 @@ impl ViewState {
 impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let view_state = Arc::new(ViewState::new(0, 16));
-        let mut state = ListState::new(
+        let weak_scroll_state: Rc<OnceCell<Weak<ScrollbarState>>> = Rc::new(OnceCell::new());
+        let state = ListState::new(
             view_state.row_count(),
             gpui::ListAlignment::Top,
             px(100.),
             {
                 let view_state = view_state.clone();
+                let weak_scroll_state = weak_scroll_state.clone();
                 move |ix, _, cx| {
                     let start = view_state.base_row();
 
                     let row_count = view_state.row_count();
-                    if ix == row_count {
+                    let is_dragging = || {
+                        weak_scroll_state.get().map_or(false, |state| {
+                            state.upgrade().map_or(false, |state| state.is_dragging())
+                        })
+                    };
+                    debug_assert!(row_count > 1);
+                    if ix == row_count - 1 && is_dragging() {
                         view_state.schedule_scroll_down();
-                    } else if ix == 0 {
+                    } else if ix == 0 && is_dragging() {
                         view_state.schedule_scroll_up();
                     }
                     let line_width = view_state.line_width();
@@ -134,9 +144,22 @@ impl MemoryView {
                 }
             },
         );
+
+        state.set_scroll_handler({
+            let view_state = view_state.clone();
+            move |range, _, _| {
+                if range.visible_range.start == 0 {
+                    view_state.schedule_scroll_up();
+                } else if range.visible_range.end == view_state.row_count() + 1 {
+                    view_state.schedule_scroll_down();
+                }
+            }
+        });
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let scroll_state = Rc::new(ScrollbarState::new(state.clone()));
+        _ = weak_scroll_state.set(Rc::downgrade(&scroll_state));
         Self {
-            scroll_state: ScrollbarState::new(state.clone()),
+            scroll_state,
             list_state: state,
             show_scrollbar: false,
             hide_scrollbar_task: None,
@@ -194,7 +217,7 @@ impl MemoryView {
                 .bottom_0()
                 .w(px(12.))
                 .cursor_default()
-                .children(Scrollbar::vertical(self.scroll_state.clone())),
+                .children(Scrollbar::vertical((*self.scroll_state).clone())),
         )
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
