@@ -141,6 +141,7 @@ pub enum ToolCallStatus {
         status: acp::ToolCallStatus,
     },
     Rejected,
+    Canceled,
 }
 
 #[derive(Debug)]
@@ -359,11 +360,19 @@ pub struct AcpThread {
     server: Arc<AcpServer>,
     title: SharedString,
     project: Entity<Project>,
+    send_task: Option<Task<()>>,
 }
 
 enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),
+}
+
+#[derive(PartialEq, Eq)]
+pub enum ThreadStatus {
+    Idle,
+    WaitingForToolConfirmation,
+    Generating,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -378,7 +387,7 @@ impl AcpThread {
     ) -> Self {
         let mut next_entry_id = ThreadEntryId(0);
         Self {
-            title: "A new agent2 thread".into(),
+            title: "ACP Thread".into(),
             entries: entries
                 .into_iter()
                 .map(|entry| ThreadEntry {
@@ -390,6 +399,7 @@ impl AcpThread {
             id: thread_id,
             next_entry_id,
             project,
+            send_task: None,
         }
     }
 
@@ -399,6 +409,18 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[ThreadEntry] {
         &self.entries
+    }
+
+    pub fn status(&self) -> ThreadStatus {
+        if self.send_task.is_some() {
+            if self.waiting_for_tool_confirmation() {
+                ThreadStatus::WaitingForToolConfirmation
+            } else {
+                ThreadStatus::Generating
+            }
+        } else {
+            ThreadStatus::Idle
+        }
     }
 
     pub fn push_entry(
@@ -577,6 +599,10 @@ impl AcpThread {
                     ToolCallStatus::Rejected => {
                         anyhow::bail!("Tool call was rejected and therefore can't be updated")
                     }
+                    ToolCallStatus::Canceled => {
+                        // todo! test this case with fake server
+                        call.status = ToolCallStatus::Allowed { status: new_status };
+                    }
                 }
             }
             _ => anyhow::bail!("Entry is not a tool call"),
@@ -597,11 +623,14 @@ impl AcpThread {
 
     /// Returns true if the last turn is awaiting tool authorization
     pub fn waiting_for_tool_confirmation(&self) -> bool {
+        // todo!("should we use a hashmap?")
         for entry in self.entries.iter().rev() {
             match &entry.content {
                 AgentThreadEntryContent::ToolCall(call) => match call.status {
                     ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Allowed { .. } | ToolCallStatus::Rejected => continue,
+                    ToolCallStatus::Allowed { .. }
+                    | ToolCallStatus::Rejected
+                    | ToolCallStatus::Canceled => continue,
                 },
                 AgentThreadEntryContent::Message(_) => {
                     // Reached the beginning of the turn
@@ -612,9 +641,14 @@ impl AcpThread {
         false
     }
 
-    pub fn send(&mut self, message: &str, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn send(
+        &mut self,
+        message: &str,
+        cx: &mut Context<Self>,
+    ) -> impl use<> + Future<Output = Result<()>> {
         let agent = self.server.clone();
         let id = self.id.clone();
+
         let chunk = MessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
         let message = Message {
             role: Role::User,
@@ -622,10 +656,65 @@ impl AcpThread {
         };
         self.push_entry(AgentThreadEntryContent::Message(message.clone()), cx);
         let acp_message = message.into_acp(cx);
-        cx.spawn(async move |_, cx| {
-            agent.send_message(id, acp_message, cx).await?;
-            Ok(())
-        })
+
+        let (tx, rx) = oneshot::channel();
+        let cancel = self.cancel(cx);
+
+        self.send_task = Some(cx.spawn(async move |this, cx| {
+            cancel.await.log_err();
+
+            let result = agent.send_message(id, acp_message, cx).await;
+            tx.send(result).log_err();
+            this.update(cx, |this, _cx| this.send_task.take()).log_err();
+        }));
+
+        async move {
+            match rx.await {
+                Ok(result) => result,
+                Err(_) => Ok(()),
+            }
+        }
+    }
+
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let agent = self.server.clone();
+        let id = self.id.clone();
+
+        if self.send_task.take().is_some() {
+            cx.spawn(async move |this, cx| {
+                agent.cancel_send_message(id, cx).await?;
+
+                this.update(cx, |this, _cx| {
+                    for entry in this.entries.iter_mut() {
+                        if let AgentThreadEntryContent::ToolCall(call) = &mut entry.content {
+                            let cancel = matches!(
+                                call.status,
+                                ToolCallStatus::WaitingForConfirmation { .. }
+                                    | ToolCallStatus::Allowed {
+                                        status: acp::ToolCallStatus::Running
+                                    }
+                            );
+
+                            if cancel {
+                                let curr_status =
+                                    mem::replace(&mut call.status, ToolCallStatus::Canceled);
+
+                                if let ToolCallStatus::WaitingForConfirmation {
+                                    respond_tx, ..
+                                } = curr_status
+                                {
+                                    respond_tx
+                                        .send(acp::ToolCallConfirmationOutcome::Cancel)
+                                        .ok();
+                                }
+                            }
+                        }
+                    }
+                })
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 }
 
@@ -812,6 +901,73 @@ mod tests {
                     md.source()
                 );
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_gemini_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
+        let server = gemini_acp_server(project.clone(), cx).await;
+        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+        let full_turn = thread.update(cx, |thread, cx| {
+            thread.send(r#"Run `echo "Hello, world!"`"#, cx)
+        });
+
+        run_until_tool_call(&thread, cx).await;
+
+        thread.read_with(cx, |thread, _cx| {
+            let AgentThreadEntryContent::ToolCall(ToolCall {
+                id,
+                status:
+                    ToolCallStatus::WaitingForConfirmation {
+                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
+                        ..
+                    },
+                ..
+            }) = &thread.entries()[1].content
+            else {
+                panic!();
+            };
+
+            assert_eq!(root_command, "echo");
+
+            *id
+        });
+
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .unwrap();
+        full_turn.await.unwrap();
+        thread.read_with(cx, |thread, _| {
+            let AgentThreadEntryContent::ToolCall(ToolCall {
+                status: ToolCallStatus::Canceled,
+                ..
+            }) = &thread.entries()[1].content
+            else {
+                panic!();
+            };
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(r#"Stop running and say goodbye to me."#, cx)
+            })
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, _| {
+            let AgentThreadEntryContent::Message(Message {
+                role: Role::Assistant,
+                ..
+            }) = &thread.entries()[3].content
+            else {
+                panic!();
+            };
         });
     }
 

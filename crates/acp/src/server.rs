@@ -20,23 +20,14 @@ pub struct AcpServer {
 }
 
 struct AcpClientDelegate {
-    project: Entity<Project>,
     threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>>,
     cx: AsyncApp,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
 impl AcpClientDelegate {
-    fn new(
-        project: Entity<Project>,
-        threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>>,
-        cx: AsyncApp,
-    ) -> Self {
-        Self {
-            project,
-            threads,
-            cx: cx,
-        }
+    fn new(threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>>, cx: AsyncApp) -> Self {
+        Self { threads, cx: cx }
     }
 
     fn update_thread<R>(
@@ -143,7 +134,7 @@ impl AcpServer {
 
         let threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>> = Default::default();
         let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(project.clone(), threads.clone(), cx.to_async()),
+            AcpClientDelegate::new(threads.clone(), cx.to_async()),
             stdin,
             stdout,
         );
@@ -193,14 +184,14 @@ impl AcpServer {
 
         let thread_id: ThreadId = response.thread_id.into();
         let server = self.clone();
-        let thread = cx.new(|_| AcpThread {
-            // todo!
-            title: "ACP Thread".into(),
-            id: thread_id.clone(), // Either<ErrorState, Id>
-            next_entry_id: ThreadEntryId(0),
-            entries: Vec::default(),
-            project: self.project.clone(),
-            server,
+        let thread = cx.new(|cx| {
+            AcpThread::new(
+                server,
+                thread_id.clone(),
+                Vec::default(),
+                self.project.clone(),
+                cx,
+            )
         })?;
         self.threads.lock().insert(thread_id, thread.downgrade());
         Ok(thread)
@@ -216,6 +207,16 @@ impl AcpServer {
             .request(acp::SendMessageParams {
                 thread_id: thread_id.clone().into(),
                 message,
+            })
+            .await
+            .map_err(to_anyhow)?;
+        Ok(())
+    }
+
+    pub async fn cancel_send_message(&self, thread_id: ThreadId, _cx: &mut AsyncApp) -> Result<()> {
+        self.connection
+            .request(acp::CancelSendMessageParams {
+                thread_id: thread_id.clone().into(),
             })
             .await
             .map_err(to_anyhow)?;

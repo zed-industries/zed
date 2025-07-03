@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
-use anyhow::Result;
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
@@ -25,7 +24,8 @@ use zed_actions::agent::Chat;
 
 use crate::{
     AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, Diff, MessageChunk, Role,
-    ThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId, ToolCallStatus,
+    ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId,
+    ToolCallStatus,
 };
 
 pub struct AcpThreadView {
@@ -36,7 +36,6 @@ pub struct AcpThreadView {
     message_editor: Entity<Editor>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
-    send_task: Option<Task<Result<()>>>,
     auth_task: Option<Task<()>>,
 }
 
@@ -123,7 +122,6 @@ impl AcpThreadView {
             agent,
             message_editor,
             thread_entry_views: Vec::new(),
-            send_task: None,
             list_state: list_state,
             last_error: None,
             auth_task: None,
@@ -203,8 +201,12 @@ impl AcpThreadView {
         }
     }
 
-    pub fn cancel(&mut self) {
-        self.send_task.take();
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.last_error.take();
+
+        if let Some(thread) = self.thread() {
+            thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+        }
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
@@ -217,7 +219,7 @@ impl AcpThreadView {
 
         let task = thread.update(cx, |thread, cx| thread.send(&text, cx));
 
-        self.send_task = Some(cx.spawn(async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
 
             this.update(cx, |this, cx| {
@@ -227,9 +229,9 @@ impl AcpThreadView {
                             Markdown::new(format!("Error: {err}").into(), None, None, cx)
                         }))
                 }
-                this.send_task.take();
             })
-        }));
+        })
+        .detach();
 
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
@@ -467,6 +469,7 @@ impl AcpThreadView {
                 .size(IconSize::Small)
                 .into_any_element(),
             ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled
             | ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::Error,
                 ..
@@ -487,15 +490,17 @@ impl AcpThreadView {
                     cx,
                 ))
             }
-            ToolCallStatus::Allowed { .. } => tool_call.content.as_ref().map(|content| {
-                div()
-                    .border_color(cx.theme().colors().border)
-                    .border_t_1()
-                    .px_2()
-                    .py_1p5()
-                    .child(self.render_tool_call_content(entry_ix, content, window, cx))
-                    .into_any_element()
-            }),
+            ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
+                tool_call.content.as_ref().map(|content| {
+                    div()
+                        .border_color(cx.theme().colors().border)
+                        .border_t_1()
+                        .px_2()
+                        .py_1p5()
+                        .child(self.render_tool_call_content(entry_ix, content, window, cx))
+                        .into_any_element()
+                })
+            }
             ToolCallStatus::Rejected => None,
         };
 
@@ -1016,18 +1021,21 @@ impl Render for AcpThreadView {
                             .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                             .flex_grow(),
                     )
-                    .child(div().px_3().children(if self.send_task.is_none() {
-                        None
-                    } else {
-                        Label::new(if thread.read(cx).waiting_for_tool_confirmation() {
-                            "Waiting for tool confirmation"
-                        } else {
-                            "Generating..."
-                        })
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .into()
-                    })),
+                    .child(
+                        div().px_3().children(match thread.read(cx).status() {
+                            ThreadStatus::Idle => None,
+                            ThreadStatus::WaitingForToolConfirmation => {
+                                Label::new("Waiting for tool confirmation")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .into()
+                            }
+                            ThreadStatus::Generating => Label::new("Generating...")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .into(),
+                        }),
+                    ),
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
@@ -1052,40 +1060,47 @@ impl Render for AcpThreadView {
                     .p_2()
                     .gap_2()
                     .child(self.message_editor.clone())
-                    .child(h_flex().justify_end().child(if self.send_task.is_some() {
-                        IconButton::new("stop-generation", IconName::StopFilled)
-                            .icon_color(Color::Error)
-                            .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action(
-                                    "Stop Generation",
-                                    &editor::actions::Cancel,
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .disabled(is_editor_empty)
-                            .on_click(cx.listener(|this, _event, _, _| this.cancel()))
-                    } else {
-                        IconButton::new("send-message", IconName::Send)
-                            .icon_color(Color::Accent)
-                            .style(ButtonStyle::Filled)
-                            .disabled(is_editor_empty)
-                            .on_click({
-                                let focus_handle = focus_handle.clone();
-                                move |_event, window, cx| {
-                                    focus_handle.dispatch_action(&Chat, window, cx);
-                                }
-                            })
-                            .when(!is_editor_empty, |button| {
-                                button.tooltip(move |window, cx| {
-                                    Tooltip::for_action("Send", &Chat, window, cx)
-                                })
-                            })
-                            .when(is_editor_empty, |button| {
-                                button.tooltip(Tooltip::text("Type a message to submit"))
-                            })
-                    })),
+                    .child({
+                        let thread = self.thread();
+
+                        h_flex().justify_end().child(
+                            if thread.map_or(true, |thread| {
+                                thread.read(cx).status() == ThreadStatus::Idle
+                            }) {
+                                IconButton::new("send-message", IconName::Send)
+                                    .icon_color(Color::Accent)
+                                    .style(ButtonStyle::Filled)
+                                    .disabled(thread.is_none() || is_editor_empty)
+                                    .on_click({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_event, window, cx| {
+                                            focus_handle.dispatch_action(&Chat, window, cx);
+                                        }
+                                    })
+                                    .when(!is_editor_empty, |button| {
+                                        button.tooltip(move |window, cx| {
+                                            Tooltip::for_action("Send", &Chat, window, cx)
+                                        })
+                                    })
+                                    .when(is_editor_empty, |button| {
+                                        button.tooltip(Tooltip::text("Type a message to submit"))
+                                    })
+                            } else {
+                                IconButton::new("stop-generation", IconName::StopFilled)
+                                    .icon_color(Color::Error)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::for_action(
+                                            "Stop Generation",
+                                            &editor::actions::Cancel,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
+                            },
+                        )
+                    }),
             )
     }
 }

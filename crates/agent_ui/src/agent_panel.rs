@@ -753,7 +753,7 @@ impl AgentPanel {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
             ActiveView::AcpThread { thread_view, .. } => {
-                thread_view.update(cx, |thread_element, _cx| thread_element.cancel());
+                thread_view.update(cx, |thread_element, cx| thread_element.cancel(cx));
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
