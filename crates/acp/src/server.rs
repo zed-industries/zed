@@ -7,7 +7,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, Task, WeakEntity};
 use parking_lot::Mutex;
 use project::Project;
 use smol::process::Child;
-use std::{io::Write as _, path::Path, process::ExitStatus, sync::Arc};
+use std::{process::ExitStatus, sync::Arc};
 use util::ResultExt;
 
 pub struct AcpServer {
@@ -56,29 +56,6 @@ impl AcpClientDelegate {
 
 #[async_trait(?Send)]
 impl acp::Client for AcpClientDelegate {
-    async fn stat(&self, params: acp::StatParams) -> Result<acp::StatResponse> {
-        let cx = &mut self.cx.clone();
-        self.project.update(cx, |project, cx| {
-            let path = project
-                .project_path_for_absolute_path(Path::new(&params.path), cx)
-                .context("Failed to get project path")?;
-
-            match project.entry_for_path(&path, cx) {
-                // todo! refresh entry?
-                None => Ok(acp::StatResponse {
-                    exists: false,
-                    is_directory: false,
-                    size: 0,
-                }),
-                Some(entry) => Ok(acp::StatResponse {
-                    exists: entry.is_created(),
-                    is_directory: entry.is_dir(),
-                    size: entry.size,
-                }),
-            }
-        })?
-    }
-
     async fn stream_message_chunk(
         &self,
         params: acp::StreamMessageChunkParams,
@@ -92,92 +69,6 @@ impl acp::Client for AcpClientDelegate {
         })?;
 
         Ok(acp::StreamMessageChunkResponse)
-    }
-
-    async fn read_text_file(
-        &self,
-        request: acp::ReadTextFileParams,
-    ) -> Result<acp::ReadTextFileResponse> {
-        let cx = &mut self.cx.clone();
-        let buffer = self
-            .project
-            .update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(Path::new(&request.path), cx)
-                    .context("Failed to get project path")?;
-                anyhow::Ok(project.open_buffer(path, cx))
-            })??
-            .await?;
-
-        buffer.update(cx, |buffer, _cx| {
-            let start = language::Point::new(request.line_offset.unwrap_or(0), 0);
-            let end = match request.line_limit {
-                None => buffer.max_point(),
-                Some(limit) => start + language::Point::new(limit + 1, 0),
-            };
-
-            let content: String = buffer.text_for_range(start..end).collect();
-
-            acp::ReadTextFileResponse {
-                content,
-                version: acp::FileVersion(0),
-            }
-        })
-    }
-
-    async fn read_binary_file(
-        &self,
-        request: acp::ReadBinaryFileParams,
-    ) -> Result<acp::ReadBinaryFileResponse> {
-        let cx = &mut self.cx.clone();
-        let file = self
-            .project
-            .update(cx, |project, cx| {
-                let (worktree, path) = project
-                    .find_worktree(Path::new(&request.path), cx)
-                    .context("Failed to get project path")?;
-
-                let task = worktree.update(cx, |worktree, cx| worktree.load_binary_file(&path, cx));
-                anyhow::Ok(task)
-            })??
-            .await?;
-
-        // todo! test
-        let content = cx
-            .background_spawn(async move {
-                let start = request.byte_offset.unwrap_or(0) as usize;
-                let end = request
-                    .byte_limit
-                    .map(|limit| (start + limit as usize).min(file.content.len()))
-                    .unwrap_or(file.content.len());
-
-                let range_content = &file.content[start..end];
-
-                let mut base64_content = Vec::new();
-                let mut base64_encoder = base64::write::EncoderWriter::new(
-                    std::io::Cursor::new(&mut base64_content),
-                    &base64::engine::general_purpose::STANDARD,
-                );
-                base64_encoder.write_all(range_content)?;
-                drop(base64_encoder);
-
-                // SAFETY: The base64 encoder should not produce non-UTF8.
-                unsafe { anyhow::Ok(String::from_utf8_unchecked(base64_content)) }
-            })
-            .await?;
-
-        Ok(acp::ReadBinaryFileResponse {
-            content,
-            // todo!
-            version: acp::FileVersion(0),
-        })
-    }
-
-    async fn glob_search(
-        &self,
-        _request: acp::GlobSearchParams,
-    ) -> Result<acp::GlobSearchResponse> {
-        todo!()
     }
 
     async fn request_tool_call_confirmation(
