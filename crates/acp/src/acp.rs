@@ -643,7 +643,7 @@ pub struct ToolCallRequest {
 mod tests {
     use super::*;
     use futures::{FutureExt as _, channel::mpsc, select};
-    use gpui::{AsyncApp, TestAppContext};
+    use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -669,7 +669,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let server = gemini_acp_server(project.clone(), cx.to_async()).unwrap();
+        let server = gemini_acp_server(project.clone(), cx).await;
         let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
         thread
             .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
@@ -708,7 +708,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let server = gemini_acp_server(project.clone(), cx.to_async()).unwrap();
+        let server = gemini_acp_server(project.clone(), cx).await;
         let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
         thread
             .update(cx, |thread, cx| {
@@ -746,7 +746,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let server = gemini_acp_server(project.clone(), cx.to_async()).unwrap();
+        let server = gemini_acp_server(project.clone(), cx).await;
         let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
         let full_turn = thread.update(cx, |thread, cx| {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
@@ -836,7 +836,10 @@ mod tests {
         }
     }
 
-    pub fn gemini_acp_server(project: Entity<Project>, cx: AsyncApp) -> Result<Arc<AcpServer>> {
+    pub async fn gemini_acp_server(
+        project: Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Arc<AcpServer> {
         let cli_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
         let mut command = util::command::new_smol_command("node");
@@ -854,7 +857,8 @@ mod tests {
         }
 
         let child = command.spawn().unwrap();
-
-        cx.update(|cx| AcpServer::stdio(child, project, cx))
+        let server = cx.update(|cx| AcpServer::stdio(child, project, cx));
+        server.initialize().await.unwrap();
+        server
     }
 }
