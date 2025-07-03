@@ -8,8 +8,8 @@ use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
-    Action, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Task, UpdateGlobal,
-    WeakEntity, actions, prelude::*, svg, transparent_black,
+    Action, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, Task,
+    UpdateGlobal, WeakEntity, actions, prelude::*, svg, transparent_black,
 };
 use menu;
 use persistence::ONBOARDING_DB;
@@ -20,7 +20,7 @@ use settings::{Settings, SettingsStore};
 use settings_ui::SettingsUiFeatureFlag;
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
-use ui::{ListItem, ToggleState, Vector, VectorName, prelude::*};
+use ui::{KeybindingHint, ListItem, Ring, ToggleState, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use welcome::BaseKeymap;
@@ -567,7 +567,7 @@ impl OnboardingUI {
                         v_flex()
                             .gap_px()
                             .py(px(16.))
-                            .gap(px(12.))
+                            .gap(px(2.))
                             .child(self.render_nav_item(
                                 OnboardingPage::Basics,
                                 "The Basics",
@@ -604,12 +604,13 @@ impl OnboardingUI {
         shortcut: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
-        let selected = self.current_page == page;
+        let is_selected = self.current_page == page;
         let label = label.into();
         let shortcut = shortcut.into();
         let id = ElementId::Name(label.clone());
+        let corner_radius = px(4.);
 
-        let is_focused = match page {
+        let item_focused = match page {
             OnboardingPage::Basics => self.nav_focus == NavigationFocusItem::Basics,
             OnboardingPage::Editing => self.nav_focus == NavigationFocusItem::Editing,
             OnboardingPage::AiSetup => self.nav_focus == NavigationFocusItem::AiSetup,
@@ -618,35 +619,39 @@ impl OnboardingUI {
 
         let area_focused = self.focus_area == FocusArea::Navigation;
 
-        h_flex()
-            .id(id)
-            .h(rems(1.5))
-            .w_full()
-            .when(is_focused, |this| {
-                this.bg(if area_focused {
-                    cx.theme().colors().border_focused.opacity(0.16)
-                } else {
-                    cx.theme().colors().border.opacity(0.24)
-                })
-            })
-            .child(
-                div()
-                    .w(px(3.))
-                    .h_full()
-                    .when(selected, |this| this.bg(cx.theme().colors().border_focused)),
-            )
+        Ring::new(corner_radius, item_focused)
+            .active(area_focused && item_focused)
             .child(
                 h_flex()
-                    .pl(px(23.))
-                    .flex_1()
-                    .justify_between()
-                    .items_center()
-                    .child(Label::new(label).when(is_focused, |this| this.color(Color::Default)))
-                    .child(Label::new(format!("⌘{}", shortcut.clone())).color(Color::Muted)),
+                    .id(id)
+                    .h(rems(1.625))
+                    .w_full()
+                    .rounded(corner_radius)
+                    .px_3()
+                    .when(is_selected, |this| {
+                        this.bg(cx.theme().colors().border_focused.opacity(0.16))
+                    })
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                Label::new(label)
+                                    .weight(FontWeight::MEDIUM)
+                                    .color(Color::Muted)
+                                    .when(item_focused, |this| this.color(Color::Default)),
+                            )
+                            .child(
+                                Label::new(format!("⌘{}", shortcut.clone()))
+                                    .color(Color::Placeholder)
+                                    .size(LabelSize::XSmall),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.jump_to_page(page, window, cx);
+                    })),
             )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.jump_to_page(page, window, cx);
-            }))
     }
 
     fn render_bottom_controls(
@@ -654,7 +659,7 @@ impl OnboardingUI {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
-        h_flex().w_full().p(px(12.)).pl(px(24.)).child(
+        h_flex().w_full().p(px(12.)).child(
             JuicyButton::new(if self.current_page == OnboardingPage::Welcome {
                 "Get Started"
             } else {

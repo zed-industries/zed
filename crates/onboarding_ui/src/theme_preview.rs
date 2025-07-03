@@ -2,7 +2,7 @@
 use gpui::{Hsla, Length};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
-use ui::{IntoElement, RenderOnce, prelude::*, utils::inner_corner_radius};
+use ui::{IntoElement, RenderOnce, prelude::*, utils::CornerSolver};
 
 /// Shows a preview of a theme as an abstract illustration
 /// of a thumbnail-sized editor.
@@ -37,7 +37,7 @@ impl RenderOnce for ThemePreviewTile {
         let root_padding = px(0.0);
         let child_border = px(1.0);
         let inner_radius =
-            inner_corner_radius(root_radius, root_border, root_padding, child_border);
+            CornerSolver::child_radius(root_radius, root_border, root_padding, child_border);
 
         let item_skeleton = |w: Length, h: Pixels, bg: Hsla| div().w(w).h(h).rounded_full().bg(bg);
 
