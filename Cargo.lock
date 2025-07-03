@@ -14590,6 +14590,7 @@ dependencies = [
  "settings",
  "theme",
  "tree-sitter-json",
+ "tree-sitter-rust",
  "ui",
  "util",
  "workspace",
