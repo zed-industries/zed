@@ -350,7 +350,7 @@ impl AcpThreadView {
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent = self.agent.clone();
-
+        self.last_error.take();
         self.auth_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = agent.authenticate().await;
 
