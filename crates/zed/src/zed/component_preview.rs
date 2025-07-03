@@ -254,11 +254,6 @@ impl ComponentPreview {
         self
     }
 
-    fn reset_preview(&mut self, cx: &mut Context<Self>) {
-        self.reset_key = self.reset_key.wrapping_add(1);
-        cx.notify();
-    }
-
     pub fn active_page_id(&self, _cx: &App) -> ActivePageId {
         match &self.active_page {
             PreviewPage::AllComponents => ActivePageId::default(),
@@ -541,7 +536,8 @@ impl ComponentPreview {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = id.clone();
                         if this.active_page == PreviewPage::Component(id.clone()) {
-                            this.reset_preview(cx);
+                            this.reset_key = this.reset_key.wrapping_add(1);
+                            cx.notify();
                             return;
                         }
                         this.set_active_page(PreviewPage::Component(id), cx);
