@@ -159,6 +159,38 @@ impl AcpServer {
         })
     }
 
+    #[cfg(test)]
+    pub fn fake(
+        stdin: async_pipe::PipeWriter,
+        stdout: async_pipe::PipeReader,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Arc<Self> {
+        let threads: Arc<Mutex<HashMap<ThreadId, WeakEntity<AcpThread>>>> = Default::default();
+        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+            AcpClientDelegate::new(project.clone(), threads.clone(), cx.to_async()),
+            stdin,
+            stdout,
+        );
+
+        let exit_status: Arc<Mutex<Option<ExitStatus>>> = Default::default();
+        let io_task = cx.background_spawn({
+            async move {
+                io_fut.await.log_err();
+                // todo!() exit status?
+            }
+        });
+
+        Arc::new(Self {
+            project,
+            connection: Arc::new(connection),
+            threads,
+            exit_status,
+            _handler_task: cx.foreground_executor().spawn(handler_fut),
+            _io_task: io_task,
+        })
+    }
+
     pub async fn initialize(&self) -> Result<acp::InitializeResponse> {
         self.connection
             .request(acp::InitializeParams)

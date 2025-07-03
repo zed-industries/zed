@@ -771,13 +771,15 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{FutureExt as _, channel::mpsc, select};
-    use gpui::TestAppContext;
+    use async_pipe::{PipeReader, PipeWriter};
+    use async_trait::async_trait;
+    use futures::{FutureExt as _, channel::mpsc, future::LocalBoxFuture, select};
+    use gpui::{AsyncApp, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{env, path::Path, process::Stdio, time::Duration};
+    use std::{env, path::Path, process::Stdio, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -788,6 +790,42 @@ mod tests {
             Project::init_settings(cx);
             language::init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_message_receipt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (server, fake_server) = fake_acp_server(project, cx);
+
+        server.initialize().await.unwrap();
+
+        fake_server.update(cx, |fake_server, _| {
+            fake_server.on_user_message(move |params, server, mut cx| async move {
+                server
+                    .update(&mut cx, |server, cx| {
+                        let future =
+                            server
+                                .connection
+                                .request(acp::StreamAssistantMessageChunkParams {
+                                    thread_id: params.thread_id,
+                                    chunk: acp::AssistantMessageChunk::Thought {
+                                        chunk: "Thinking ".into(),
+                                    },
+                                });
+
+                        cx.spawn(async move |_, _| future.await)
+                    })?
+                    .await
+                    .unwrap();
+
+                Ok(acp::SendUserMessageResponse)
+            })
+        })
     }
 
     #[gpui::test]
@@ -1042,5 +1080,116 @@ mod tests {
         let server = cx.update(|cx| AcpServer::stdio(child, project, cx));
         server.initialize().await.unwrap();
         server
+    }
+
+    pub fn fake_acp_server(
+        project: Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (Arc<AcpServer>, Entity<FakeAcpServer>) {
+        let (stdin_tx, stdin_rx) = async_pipe::pipe();
+        let (stdout_tx, stdout_rx) = async_pipe::pipe();
+        let server = cx.update(|cx| AcpServer::fake(stdin_tx, stdout_rx, project, cx));
+        let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
+        (server, agent)
+    }
+
+    pub struct FakeAcpServer {
+        connection: acp::ClientConnection,
+        _handler_task: Task<()>,
+        _io_task: Task<()>,
+        on_user_message: Option<
+            Rc<
+                dyn Fn(
+                    acp::SendUserMessageParams,
+                    Entity<FakeAcpServer>,
+                    AsyncApp,
+                )
+                    -> LocalBoxFuture<'static, Result<acp::SendUserMessageResponse>>,
+            >,
+        >,
+    }
+
+    #[derive(Clone)]
+    struct FakeAgent {
+        server: Entity<FakeAcpServer>,
+        cx: AsyncApp,
+    }
+
+    #[async_trait(?Send)]
+    impl acp::Agent for FakeAgent {
+        async fn initialize(
+            &self,
+            _request: acp::InitializeParams,
+        ) -> Result<acp::InitializeResponse> {
+            Ok(acp::InitializeResponse {
+                is_authenticated: true,
+            })
+        }
+
+        async fn authenticate(
+            &self,
+            _request: acp::AuthenticateParams,
+        ) -> Result<acp::AuthenticateResponse> {
+            Ok(acp::AuthenticateResponse)
+        }
+
+        async fn create_thread(
+            &self,
+            _request: acp::CreateThreadParams,
+        ) -> Result<acp::CreateThreadResponse> {
+            Ok(acp::CreateThreadResponse {
+                thread_id: acp::ThreadId("test-thread".into()),
+            })
+        }
+
+        async fn send_user_message(
+            &self,
+            request: acp::SendUserMessageParams,
+        ) -> Result<acp::SendUserMessageResponse> {
+            let mut cx = self.cx.clone();
+            let handler = self
+                .server
+                .update(&mut cx, |server, _| server.on_user_message.clone())
+                .ok()
+                .flatten();
+            if let Some(handler) = handler {
+                handler(request, self.server.clone(), self.cx.clone()).await
+            } else {
+                anyhow::bail!("No handler for on_user_message")
+            }
+        }
+    }
+
+    impl FakeAcpServer {
+        fn new(stdin: PipeReader, stdout: PipeWriter, cx: &Context<Self>) -> Self {
+            let agent = FakeAgent {
+                server: cx.entity(),
+                cx: cx.to_async(),
+            };
+
+            let (connection, handler_fut, io_fut) =
+                acp::ClientConnection::connect_to_client(agent.clone(), stdout, stdin);
+            FakeAcpServer {
+                connection: connection,
+                on_user_message: None,
+                _handler_task: cx.foreground_executor().spawn(handler_fut),
+                _io_task: cx.background_spawn(async move {
+                    io_fut.await.log_err();
+                }),
+            }
+        }
+
+        fn on_user_message<F>(
+            &mut self,
+            handler: impl for<'a> Fn(acp::SendUserMessageParams, Entity<FakeAcpServer>, AsyncApp) -> F
+            + 'static,
+        ) where
+            F: Future<Output = Result<acp::SendUserMessageResponse>> + 'static,
+        {
+            self.on_user_message
+                .replace(Rc::new(move |request, server, cx| {
+                    handler(request, server, cx).boxed_local()
+                }));
+        }
     }
 }

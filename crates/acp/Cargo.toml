@@ -42,6 +42,7 @@ workspace-hack.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+async-pipe.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 project = { workspace = true, "features" = ["test-support"] }
