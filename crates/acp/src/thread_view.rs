@@ -448,16 +448,16 @@ impl AcpThreadView {
                     )
                     .into_any();
 
-                div()
+                v_flex()
+                    .px_5()
+                    .py_2()
+                    .gap_2()
                     .text_ui(cx)
-                    .p_5()
-                    .pt_2()
                     .child(message_body)
                     .into_any()
             }
             AgentThreadEntryContent::ToolCall(tool_call) => div()
-                .px_2()
-                .py_4()
+                .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
         }
@@ -475,11 +475,9 @@ impl AcpThreadView {
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
         v_flex()
-            .py_1()
             .child(
                 h_flex()
                     .group("disclosure-header")
-                    .pr_1()
                     .justify_between()
                     .opacity(0.8)
                     .hover(|style| style.opacity(1.))
@@ -605,6 +603,7 @@ impl AcpThreadView {
             .rounded_md()
             .border_1()
             .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
                     .px_2()
@@ -1136,9 +1135,9 @@ impl Render for AcpThreadView {
         let focus_handle = self.message_editor.focus_handle(cx);
 
         v_flex()
+            .size_full()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .h_full()
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated => v_flex()
                     .p_2()
