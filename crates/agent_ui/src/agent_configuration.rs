@@ -436,7 +436,7 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
+        let context_server_ids = self.context_server_store.read(cx).configured_server_ids();
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
