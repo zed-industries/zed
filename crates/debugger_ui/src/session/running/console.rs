@@ -584,7 +584,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         &self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        text: &str,
+        _text: &str,
         _trigger_in_words: bool,
         menu_is_open: bool,
         cx: &mut Context<Editor>,
@@ -594,19 +594,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return false;
         }
 
-        self.0
-            .read_with(cx, |console, cx| {
-                console
-                    .session
-                    .read(cx)
-                    .capabilities()
-                    .completion_trigger_characters
-                    .as_ref()
-                    .map(|triggers| triggers.contains(&text.to_string()))
-            })
-            .ok()
-            .flatten()
-            .unwrap_or(true)
+        true
     }
 }
 
