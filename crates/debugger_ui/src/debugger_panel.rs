@@ -118,7 +118,7 @@ impl DebugPanel {
                 is_zoomed: false,
                 _subscriptions: [focus_subscription],
                 debug_scenario_scheduled_last: true,
-                memory_view: cx.new(MemoryView::new),
+                memory_view: cx.new(|cx| MemoryView::new(window, cx)),
             }
         })
     }
