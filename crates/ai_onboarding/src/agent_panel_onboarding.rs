@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use gpui::{
-    Action, ClickEvent, Entity, IntoElement, ParentElement, linear_color_stop, linear_gradient,
-};
-use ui::{Divider, List, Vector, VectorName, prelude::*};
+use gpui::{Action, ClickEvent, Entity, IntoElement, ParentElement};
+use ui::{Divider, List, prelude::*};
 use zed_actions::agent::OpenConfiguration;
 
-use crate::{BulletItem, ZedAiOnboarding};
+use crate::{BulletItem, OnboardingContainer, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
@@ -66,64 +64,13 @@ impl Render for AgentPanelOnboarding {
                     .on_click(cx.listener(Self::configure_providers)),
             );
 
-        div()
-            .m_4()
-            .p(px(3.))
-            .elevation_2(cx)
-            .rounded_lg()
-            .bg(cx.theme().colors().background.alpha(0.5))
-            .child(
-                v_flex()
-                    .relative()
-                    .size_full()
-                    .px_4()
-                    .py_3()
-                    .gap_2()
-                    .border_1()
-                    .rounded(px(5.))
-                    .border_color(cx.theme().colors().text.alpha(0.1))
-                    .overflow_hidden()
-                    .bg(cx.theme().colors().panel_background)
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(-8.0))
-                            .right_0()
-                            .w(px(400.))
-                            .h(px(92.))
-                            .child(
-                                Vector::new(
-                                    VectorName::AiGrid,
-                                    rems_from_px(400.),
-                                    rems_from_px(92.),
-                                )
-                                .color(Color::Custom(cx.theme().colors().text.alpha(0.32))),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .w(px(660.))
-                            .h(px(401.))
-                            .overflow_hidden()
-                            .bg(linear_gradient(
-                                75.,
-                                linear_color_stop(
-                                    cx.theme().colors().panel_background.alpha(0.01),
-                                    1.0,
-                                ),
-                                linear_color_stop(cx.theme().colors().panel_background, 0.45),
-                            )),
-                    )
-                    .child(ZedAiOnboarding::new(
-                        self.client.clone(),
-                        &self.user_store,
-                        self.continue_with_free_plan.clone(),
-                        cx,
-                    ))
-                    .child(bring_api_keys),
-            )
+        OnboardingContainer::new()
+            .child(ZedAiOnboarding::new(
+                self.client.clone(),
+                &self.user_store,
+                self.continue_with_free_plan.clone(),
+                cx,
+            ))
+            .child(bring_api_keys)
     }
 }

@@ -31,6 +31,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
-use ai_onboarding::{EditPredictionOnboarding, OnboardingSource, ZedAiOnboarding};
+use ai_onboarding::EditPredictionOnboarding;
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::{Settings, update_settings_file};
-use ui::{Checkbox, TintColor, prelude::*};
+use ui::prelude::*;
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::NotifyTaskExt};
 

@@ -1,12 +1,14 @@
 mod agent_panel_onboarding;
 mod edit_prediction_onboarding;
+mod onboarding_container;
+
+pub use agent_panel_onboarding::AgentPanelOnboarding;
+pub use edit_prediction_onboarding::EditPredictionOnboarding;
+pub use onboarding_container::OnboardingContainer;
 
 use std::sync::Arc;
 
-pub use agent_panel_onboarding::AgentPanelOnboarding;
 use client::{Client, UserStore};
-pub use edit_prediction_onboarding::EditPredictionOnboarding;
-
 use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, prelude::*};
 
@@ -36,11 +38,6 @@ impl IntoElement for BulletItem {
             .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
-}
-
-pub enum OnboardingSource {
-    AgentPanel,
-    EditPredictions,
 }
 
 pub enum SignInStatus {
@@ -86,7 +83,7 @@ impl ZedAiOnboarding {
             plan: store.current_plan(),
             account_too_young: store.account_too_young(),
             continue_with_free_plan,
-            sign_in: Arc::new(move |window, cx| {
+            sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
                     let client = client.clone();
                     async move |cx| {
@@ -205,13 +202,14 @@ impl ZedAiOnboarding {
             )
     }
 
-    fn render_sign_in_disclaimer(&self, cx: &mut App) -> Div {
+    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
         const SIGN_IN_DISCLAIMER: &str = "You can start using AI features in Zed by subscribing to a plan, for which you need to sign in.";
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
             .gap_2()
-            .child(div().w_full().child(Label::new(SIGN_IN_DISCLAIMER)))
+            .child(Headline::new("Welcome to Zed AI"))
+            .child(div().w_full().child(Label::new(SIGN_IN_DISCLAIMER)).mt_1())
             .child(
                 Button::new("sign_in", "Sign In with GitHub")
                     .icon(IconName::Github)
