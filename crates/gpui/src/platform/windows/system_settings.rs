@@ -41,10 +41,10 @@ impl WindowsSystemSettings {
         self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
     }
 
-    pub(crate) fn update(&mut self, display: WindowsDisplay, wparam: usize) {
+    pub(crate) fn update(&mut self, display: WindowsDisplay, wparam: usize, handle: HWND) {
         match wparam {
             // SPI_SETWORKAREA
-            47 => self.update_taskbar_position(display),
+            47 => self.update_taskbar_position(display, handle),
             // SPI_GETWHEELSCROLLLINES, SPI_GETWHEELSCROLLCHARS
             104 | 108 => self.update_mouse_wheel_settings(),
             _ => {}
@@ -55,8 +55,11 @@ impl WindowsSystemSettings {
         self.mouse_wheel_settings.update();
     }
 
-    fn update_taskbar_position(&mut self, display: WindowsDisplay) {
+    fn update_taskbar_position(&mut self, display: WindowsDisplay, handle: HWND) {
         self.auto_hide_taskbar_position = AutoHideTaskbarPosition::new(display).log_err().flatten();
+        // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
+        // taskbar correctly.
+        notify_frame_changed(handle);
     }
 }
 

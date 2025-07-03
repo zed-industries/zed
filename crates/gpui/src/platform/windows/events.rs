@@ -1156,34 +1156,17 @@ fn handle_system_settings_changed(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let display = lock.display;
-
     if wparam.0 != 0 {
-        lock.system_settings.update(display, wparam.0);
+        let mut lock = state_ptr.state.borrow_mut();
+        let display = lock.display;
+        lock.system_settings.update(display, wparam.0, handle);
         lock.click_state.system_update(wparam.0);
         lock.border_offset.update(handle).log_err();
-    }
-    drop(lock);
-
-    // lParam is a pointer to a string that indicates the area containing the system parameter
-    // that was changed.
-    let parameter = PCWSTR::from_raw(lparam.0 as _);
-    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
-        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
-            log::info!("System settings changed: {}", parameter_string);
-            match parameter_string.as_str() {
-                "ImmersiveColorSet" => {
-                    handle_system_theme_changed(handle, state_ptr);
-                }
-                _ => {}
-            }
-        }
+        drop(lock);
+    } else {
+        handle_system_theme_changed(handle, lparam, state_ptr)?;
     }
 
-    // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
-    // taskbar correctly.
-    notify_frame_changed(handle);
     Some(0)
 }
 
@@ -1221,6 +1204,7 @@ fn handle_system_theme_changed(
                         drop(lock);
                         callback();
                         state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                        configure_dwm_dark_mode(handle);
                     }
                 }
                 _ => {}
@@ -1482,7 +1466,7 @@ fn get_frame_thickness(dpi: u32) -> i32 {
     resize_frame_thickness + padding_thickness
 }
 
-fn notify_frame_changed(handle: HWND) {
+pub(crate) fn notify_frame_changed(handle: HWND) {
     unsafe {
         SetWindowPos(
             handle,
