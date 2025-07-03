@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use client::UserStore;
+use client::{Client, UserStore};
 use gpui::{ClickEvent, Entity, IntoElement, ParentElement};
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use project::Fs;
@@ -11,13 +11,19 @@ use crate::ZedAiOnboarding;
 
 pub struct EditPredictionOnboarding {
     user_store: Entity<UserStore>,
+    client: Arc<Client>,
     continue_with_free_plan: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl EditPredictionOnboarding {
-    pub fn new(user_store: Entity<UserStore>, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        user_store: Entity<UserStore>,
+        client: Arc<Client>,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             user_store,
+            client,
             continue_with_free_plan: Arc::new(|_window, cx| {
                 set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
             }),
@@ -57,6 +63,7 @@ impl Render for EditPredictionOnboarding {
         v_flex()
             .gap_2()
             .child(ZedAiOnboarding::new(
+                self.client.clone(),
                 &self.user_store,
                 self.continue_with_free_plan.clone(),
                 cx,

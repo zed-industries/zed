@@ -4,7 +4,7 @@ mod edit_prediction_onboarding;
 use std::sync::Arc;
 
 pub use agent_panel_onboarding::AgentPanelOnboarding;
-use client::UserStore;
+use client::{Client, UserStore};
 pub use edit_prediction_onboarding::EditPredictionOnboarding;
 
 use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
@@ -43,29 +43,58 @@ pub enum OnboardingSource {
     EditPredictions,
 }
 
+pub enum SignInStatus {
+    SignedIn,
+    SigningIn,
+    SignedOut,
+}
+
+impl From<client::Status> for SignInStatus {
+    fn from(status: client::Status) -> Self {
+        if status.is_signing_in() {
+            Self::SigningIn
+        } else if status.is_signed_out() {
+            Self::SignedOut
+        } else {
+            Self::SignedIn
+        }
+    }
+}
+
 #[derive(RegisterComponent, IntoElement)]
 pub struct ZedAiOnboarding {
-    pub is_signed_in: bool,
+    pub sign_in_status: SignInStatus,
     pub has_accepted_terms_of_service: bool,
     pub plan: Option<proto::Plan>,
     pub account_too_young: bool,
     pub continue_with_free_plan: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl ZedAiOnboarding {
     pub fn new(
+        client: Arc<Client>,
         user_store: &Entity<UserStore>,
         continue_with_free_plan: Arc<dyn Fn(&mut Window, &mut App)>,
         cx: &mut App,
     ) -> Self {
         let store = user_store.read(cx);
-
+        let status = *client.status().borrow();
         Self {
-            is_signed_in: store.current_user().is_some(),
+            sign_in_status: status.into(),
             has_accepted_terms_of_service: store.current_user_has_accepted_terms().unwrap_or(false),
             plan: store.current_plan(),
             account_too_young: store.account_too_young(),
             continue_with_free_plan,
+            sign_in: Arc::new(move |window, cx| {
+                cx.spawn({
+                    let client = client.clone();
+                    async move |cx| {
+                        client.authenticate_and_connect(true, cx).await;
+                    }
+                })
+                .detach();
+            }),
         }
     }
 
@@ -114,6 +143,12 @@ impl ZedAiOnboarding {
     }
 
     fn render_pro_plan(&self, cx: &mut App) -> impl IntoElement {
+        let button_label = if self.account_too_young {
+            "Start with Pro"
+        } else {
+            "Start Pro Trial"
+        };
+
         v_flex()
             .mt_2()
             .gap_1()
@@ -144,17 +179,10 @@ impl ZedAiOnboarding {
             )
             .map(|this| {
                 this.child(
-                    Button::new(
-                        "pro",
-                        if self.account_too_young {
-                            "Start with Pro"
-                        } else {
-                            "Start Pro Trial"
-                        },
-                    )
-                    .full_width()
-                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(Self::upgrade_plan),
+                    Button::new("pro", button_label)
+                        .full_width()
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(Self::upgrade_plan),
                 )
             })
     }
@@ -176,15 +204,37 @@ impl ZedAiOnboarding {
                     .on_click(Self::view_terms_of_service),
             )
     }
+
+    fn render_sign_in_disclaimer(&self, cx: &mut App) -> Div {
+        const SIGN_IN_DISCLAIMER: &str = "You can start using AI features in Zed by subscribing to a plan, for which you need to sign in.";
+        let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
+
+        v_flex()
+            .gap_2()
+            .child(div().w_full().child(Label::new(SIGN_IN_DISCLAIMER)))
+            .child(
+                Button::new("sign_in", "Sign In with GitHub")
+                    .icon(IconName::Github)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .disabled(signing_in)
+                    .full_width()
+                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                    .on_click({
+                        let callback = self.sign_in.clone();
+                        move |_, window, cx| callback(window, cx)
+                    }),
+            )
+    }
 }
 
 impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         const PLANS_DESCRIPTION: &str = "Choose how you want to start.";
         const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free trial.";
-        const SIGN_IN_DISCLAIMER: &str = "You can start using AI features in Zed by subscribing to a Zed plan, for which you need to sign in";
 
-        if self.is_signed_in {
+        if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             v_flex()
                 .child(Headline::new("Welcome to Zed AI"))
                 .child(
@@ -200,7 +250,7 @@ impl RenderOnce for ZedAiOnboarding {
                 .child(self.render_pro_plan(cx))
                 .child(Self::render_terms_or_service_disclaimer())
         } else {
-            div().child(SIGN_IN_DISCLAIMER)
+            self.render_sign_in_disclaimer(cx)
         }
     }
 }
@@ -212,17 +262,18 @@ impl Component for ZedAiOnboarding {
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn onboarding(
-            is_signed_in: bool,
+            sign_in_status: SignInStatus,
             has_accepted_terms_of_service: bool,
             plan: Option<proto::Plan>,
             account_too_young: bool,
         ) -> AnyElement {
             ZedAiOnboarding {
-                is_signed_in,
+                sign_in_status,
                 has_accepted_terms_of_service,
                 plan,
                 account_too_young,
                 continue_with_free_plan: Arc::new(|_, _| {}),
+                sign_in: Arc::new(|_, _| {}),
             }
             .into_any_element()
         }
@@ -232,20 +283,39 @@ impl Component for ZedAiOnboarding {
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example("Not Signed-In", onboarding(false, false, None, false)),
-                    single_example("Not accepted TOS", onboarding(true, false, None, false)),
-                    single_example("Account too young", onboarding(true, false, None, true)),
+                    single_example(
+                        "Not Signed-In",
+                        onboarding(SignInStatus::SignedOut, false, None, false),
+                    ),
+                    single_example(
+                        "Not accepted TOS",
+                        onboarding(SignInStatus::SignedIn, false, None, false),
+                    ),
+                    single_example(
+                        "Account too young",
+                        onboarding(SignInStatus::SignedIn, false, None, true),
+                    ),
                     single_example(
                         "Current Plan = Free",
-                        onboarding(true, true, Some(proto::Plan::Free), false),
+                        onboarding(SignInStatus::SignedIn, true, Some(proto::Plan::Free), false),
                     ),
                     single_example(
                         "Current Plan = Trial",
-                        onboarding(true, true, Some(proto::Plan::ZedProTrial), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            true,
+                            Some(proto::Plan::ZedProTrial),
+                            false,
+                        ),
                     ),
                     single_example(
                         "Current Plan = Pro",
-                        onboarding(true, true, Some(proto::Plan::ZedPro), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            true,
+                            Some(proto::Plan::ZedPro),
+                            false,
+                        ),
                     ),
                 ])
                 .into_any_element(),

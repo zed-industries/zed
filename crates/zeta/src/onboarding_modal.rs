@@ -49,7 +49,8 @@ impl ZedPredictModal {
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |_window, cx| Self {
-            onboarding: cx.new(|cx| EditPredictionOnboarding::new(user_store.clone(), cx)),
+            onboarding: cx
+                .new(|cx| EditPredictionOnboarding::new(user_store.clone(), client.clone(), cx)),
             user_store,
             client,
             fs,
@@ -412,11 +413,7 @@ impl Render for ZedPredictModal {
         //     .icon_color(Color::Muted)
         //     .on_click(cx.listener(Self::view_blog));
 
-        base.child(
-            div()
-                .pt_2()
-                .child(cx.new(|cx| EditPredictionOnboarding::new(self.user_store.clone(), cx))),
-        )
+        base.child(div().pt_2().child(self.onboarding.clone()))
 
         // if is_signed_in {
         //     let copy = match self.sign_in_status {

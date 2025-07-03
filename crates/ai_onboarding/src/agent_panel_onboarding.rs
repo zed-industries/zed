@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use client::UserStore;
+use client::{Client, UserStore};
 use gpui::{
     Action, ClickEvent, Entity, IntoElement, ParentElement, linear_color_stop, linear_gradient,
 };
@@ -11,16 +11,19 @@ use crate::{BulletItem, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
+    client: Arc<Client>,
     continue_with_free_plan: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl AgentPanelOnboarding {
     pub fn new(
         user_store: Entity<UserStore>,
+        client: Arc<Client>,
         continue_with_free_plan: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             user_store,
+            client,
             continue_with_free_plan: Arc::new(continue_with_free_plan),
         }
     }
@@ -115,6 +118,7 @@ impl Render for AgentPanelOnboarding {
                             )),
                     )
                     .child(ZedAiOnboarding::new(
+                        self.client.clone(),
                         &self.user_store,
                         self.continue_with_free_plan.clone(),
                         cx,

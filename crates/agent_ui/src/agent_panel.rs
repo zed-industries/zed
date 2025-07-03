@@ -530,6 +530,7 @@ impl AgentPanel {
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
+        let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
@@ -663,7 +664,7 @@ impl AgentPanel {
         );
 
         let onboarding = cx.new(|_cx| {
-            AgentPanelOnboarding::new(user_store.clone(), |_window, cx| {
+            AgentPanelOnboarding::new(user_store.clone(), client, |_window, cx| {
                 Upsell::set_dismissed(true, cx);
             })
         });
