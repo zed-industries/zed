@@ -171,6 +171,15 @@ impl ContextServerStore {
         )
     }
 
+    /// Returns all configured context server ids, regardless of enabled state.
+    pub fn configured_server_ids(&self) -> Vec<ContextServerId> {
+        self.context_server_settings
+            .keys()
+            .cloned()
+            .map(ContextServerId)
+            .collect()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(
         registry: Entity<ContextServerDescriptorRegistry>,
