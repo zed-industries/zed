@@ -1156,16 +1156,14 @@ fn handle_system_settings_changed(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!(
-        "System settings changed: wparam: {}, lparam: {}",
-        wparam.0, lparam.0
-    );
     let mut lock = state_ptr.state.borrow_mut();
     let display = lock.display;
-    lock.system_settings.update(display, wparam.0);
-    lock.click_state.system_update(wparam.0);
-    // window border offset
-    lock.border_offset.update(handle).log_err();
+
+    if wparam.0 != 0 {
+        lock.system_settings.update(display, wparam.0);
+        lock.click_state.system_update(wparam.0);
+        lock.border_offset.update(handle).log_err();
+    }
     drop(lock);
 
     // lParam is a pointer to a string that indicates the area containing the system parameter
@@ -1202,17 +1200,33 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
 
 fn handle_system_theme_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut callback = state_ptr
-        .state
-        .borrow_mut()
-        .callbacks
-        .appearance_changed
-        .take()?;
-    callback();
-    state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    configure_dwm_dark_mode(handle);
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    let new_appearance = system_appearance()
+                        .context("unable to get system appearance when handling ImmersiveColorSet")
+                        .log_err()?;
+                    let mut lock = state_ptr.state.borrow_mut();
+                    if new_appearance != lock.appearance {
+                        lock.appearance = new_appearance;
+                        let mut callback = lock.callbacks.appearance_changed.take()?;
+                        drop(lock);
+                        callback();
+                        state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     Some(0)
 }
 
