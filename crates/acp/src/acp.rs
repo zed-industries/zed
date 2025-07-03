@@ -954,7 +954,7 @@ mod tests {
                 ..
             }) = &thread.entries()[1].content
             else {
-                panic!();
+                panic!("{:?}", thread.entries()[1].content);
             };
 
             assert_eq!(root_command, "echo");
@@ -984,13 +984,10 @@ mod tests {
             .await
             .unwrap();
         thread.read_with(cx, |thread, _| {
-            let AgentThreadEntryContent::Message(Message {
-                role: Role::Assistant,
-                ..
-            }) = &thread.entries()[3].content
-            else {
-                panic!();
-            };
+            assert!(matches!(
+                &thread.entries()[3].content,
+                AgentThreadEntryContent::UserMessage(..),
+            ))
         });
     }
 
