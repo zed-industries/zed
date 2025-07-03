@@ -748,6 +748,45 @@ impl AcpThread {
             Task::ready(Ok(()))
         }
     }
+
+    #[cfg(test)]
+    pub fn to_string(&self, cx: &App) -> String {
+        let mut result = String::new();
+        for entry in &self.entries {
+            match &entry.content {
+                AgentThreadEntryContent::UserMessage(user_message) => {
+                    result.push_str("# User\n");
+                    for chunk in &user_message.chunks {
+                        match chunk {
+                            UserMessageChunk::Text { chunk } => {
+                                result.push_str(chunk.read(cx).source());
+                                result.push('\n');
+                            }
+                            _ => unimplemented!(),
+                        }
+                    }
+                }
+                AgentThreadEntryContent::AssistantMessage(assistant_message) => {
+                    result.push_str("# Assistant\n");
+                    for chunk in &assistant_message.chunks {
+                        match chunk {
+                            AssistantMessageChunk::Text { chunk } => {
+                                result.push_str(chunk.read(cx).source());
+                                result.push('\n')
+                            }
+                            AssistantMessageChunk::Thought { chunk } => {
+                                result.push_str("<thinking>\n");
+                                result.push_str(chunk.read(cx).source());
+                                result.push_str("\n</thinking>\n");
+                            }
+                        }
+                    }
+                }
+                AgentThreadEntryContent::ToolCall(_tool_call) => unimplemented!(),
+            }
+        }
+        result
+    }
 }
 
 fn acp_icon_to_ui_icon(icon: acp::Icon) -> IconName {
@@ -775,10 +814,11 @@ mod tests {
     use async_trait::async_trait;
     use futures::{FutureExt as _, channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
+    use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
+    use smol::{future::BoxedLocal, stream::StreamExt as _};
     use std::{env, path::Path, process::Stdio, rc::Rc, time::Duration};
     use util::path;
 
@@ -793,7 +833,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_message_receipt(cx: &mut TestAppContext) {
+    async fn test_thinking_concatenation(cx: &mut TestAppContext) {
         init_test(cx);
 
         cx.executor().allow_parking();
@@ -804,40 +844,54 @@ mod tests {
 
         server.initialize().await.unwrap();
 
+        let thread = server.create_thread(&mut cx.to_async()).await.unwrap();
+
         fake_server.update(cx, |fake_server, _| {
             fake_server.on_user_message(move |params, server, mut cx| async move {
                 server
-                    .update(&mut cx, |server, cx| {
-                        server.send_to_zed(
-                            acp::StreamAssistantMessageChunkParams {
-                                thread_id: params.thread_id.clone(),
-                                chunk: acp::AssistantMessageChunk::Thought {
-                                    chunk: "Thinking ".into(),
-                                },
+                    .update(&mut cx, |server, _| {
+                        server.send_to_zed(acp::StreamAssistantMessageChunkParams {
+                            thread_id: params.thread_id.clone(),
+                            chunk: acp::AssistantMessageChunk::Thought {
+                                chunk: "Thinking ".into(),
                             },
-                            cx,
-                        )
+                        })
                     })?
                     .await
                     .unwrap();
                 server
-                    .update(&mut cx, |server, cx| {
-                        server.send_to_zed(
-                            acp::StreamAssistantMessageChunkParams {
-                                thread_id: params.thread_id,
-                                chunk: acp::AssistantMessageChunk::Thought {
-                                    chunk: "hard!".into(),
-                                },
+                    .update(&mut cx, |server, _| {
+                        server.send_to_zed(acp::StreamAssistantMessageChunkParams {
+                            thread_id: params.thread_id,
+                            chunk: acp::AssistantMessageChunk::Thought {
+                                chunk: "hard!".into(),
                             },
-                            cx,
-                        )
+                        })
                     })?
                     .await
                     .unwrap();
 
                 Ok(acp::SendUserMessageResponse)
             })
-        })
+        });
+
+        thread
+            .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
+            .await
+            .unwrap();
+
+        let output = thread.read_with(cx, |thread, cx| thread.to_string(cx));
+        assert_eq!(
+            output,
+            indoc! {r#"
+            # User
+            Hello from Zed!
+            # Assistant
+            <thinking>
+            Thinking hard!
+            </thinking>
+            "#}
+        );
     }
 
     #[gpui::test]
@@ -1207,10 +1261,8 @@ mod tests {
         fn send_to_zed<T: acp::ClientRequest>(
             &self,
             message: T,
-            cx: &Context<Self>,
-        ) -> Task<Result<T::Response, acp::Error>> {
-            let future = self.connection.request(message);
-            cx.foreground_executor().spawn(future)
+        ) -> BoxedLocal<Result<T::Response, acp::Error>> {
+            self.connection.request(message).boxed_local()
         }
     }
 }
