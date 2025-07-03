@@ -12,7 +12,7 @@ use crate::ZedAiOnboarding;
 pub struct EditPredictionOnboarding {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
-    continue_with_free_plan: Arc<dyn Fn(&mut Window, &mut App)>,
+    continue_with_plan: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl EditPredictionOnboarding {
@@ -24,7 +24,7 @@ impl EditPredictionOnboarding {
         Self {
             user_store,
             client,
-            continue_with_free_plan: Arc::new(|_window, cx| {
+            continue_with_plan: Arc::new(|_window, cx| {
                 set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
             }),
         }
@@ -65,7 +65,7 @@ impl Render for EditPredictionOnboarding {
             .child(ZedAiOnboarding::new(
                 self.client.clone(),
                 &self.user_store,
-                self.continue_with_free_plan.clone(),
+                self.continue_with_plan.clone(),
                 cx,
             ))
             .child(ui::Divider::horizontal())
