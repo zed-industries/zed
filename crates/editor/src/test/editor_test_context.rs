@@ -1,6 +1,6 @@
 use crate::{
-    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
-    display_map::ToDisplayPoint,
+    AnchorRangeExt, DisplayPoint, Editor, MultiBuffer, RowExt,
+    display_map::{HighlightKey, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
@@ -362,7 +362,7 @@ impl EditorTestContext {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update_in(&mut self.cx, |editor, window, cx| {
             editor.set_text(unmarked_text, window, cx);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
@@ -379,7 +379,7 @@ impl EditorTestContext {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update_in(&mut self.cx, |editor, window, cx| {
             assert_eq!(editor.text(cx), unmarked_text);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
@@ -509,10 +509,11 @@ impl EditorTestContext {
             let snapshot = editor.snapshot(window, cx);
             editor
                 .background_highlights
-                .get(&TypeId::of::<Tag>())
-                .into_iter()
-                .flat_map(|highlights| highlights.as_slice())
-                .map(|highlight| highlight.range.to_offset(&snapshot.buffer_snapshot))
+                .get(&HighlightKey::Type(TypeId::of::<Tag>()))
+                .map(|h| h.1.clone())
+                .unwrap_or_default()
+                .iter()
+                .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()
         });
         assert_set_eq!(actual_ranges, expected_ranges);
@@ -524,12 +525,7 @@ impl EditorTestContext {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
             .text_highlight_ranges::<Tag>()
-            .map(|ranges| {
-                ranges
-                    .iter()
-                    .map(|(range, _)| range.clone())
-                    .collect::<Vec<_>>()
-            })
+            .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()
             .map(|range| range.to_offset(&snapshot.buffer_snapshot))

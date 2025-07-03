@@ -153,6 +153,10 @@ impl PlatformWindow for TestWindow {
         crate::Modifiers::default()
     }
 
+    fn capslock(&self) -> crate::Capslock {
+        crate::Capslock::default()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.lock().input_handler = Some(input_handler);
     }
@@ -337,7 +341,7 @@ impl PlatformAtlas for TestAtlas {
             crate::AtlasTile {
                 texture_id: AtlasTextureId {
                     index: texture_id,
-                    kind: crate::AtlasTextureKind::Path,
+                    kind: crate::AtlasTextureKind::Polychrome,
                 },
                 tile_id: TileId(tile_id),
                 padding: 0,

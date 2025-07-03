@@ -918,6 +918,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
+            HashSet::default(),
             cx,
         );
     });
@@ -1715,12 +1716,16 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
     let mut events = cx.events(&project);
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerRemoved(LanguageServerId(0))
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
@@ -1820,7 +1825,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     // The diagnostics are cleared.
@@ -1875,7 +1880,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -2018,7 +2023,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2037,14 +2042,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("JavaScript"),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2988,7 +2993,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         )))
     });
     let mut definitions = project
-        .update(cx, |project, cx| project.definition(&buffer, 22, cx))
+        .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
         .unwrap();
 
@@ -5337,6 +5342,132 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let search_query = "file";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": r#"// Rust file one"#,
+            "one.ts": r#"// TypeScript file one"#,
+            "two.rs": r#"// Rust file two"#,
+            "two.ts": r#"// TypeScript file two"#,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let _buffer = project.update(cx, |project, cx| {
+        let buffer = project.create_local_buffer("file", None, cx);
+        project.mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
+        buffer
+    });
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                false,
+                Default::default(),
+                PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
+        ]),
+        "If no exclusions match, all files should be returned"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                false,
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/one.ts").to_string(), vec![14..18]),
+            (path!("dir/two.ts").to_string(), vec![14..18]),
+        ]),
+        "Rust exclusion search should give only TypeScript files"
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                false,
+                Default::default(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/one.rs").to_string(), vec![8..12]),
+            (path!("dir/two.rs").to_string(), vec![8..12]),
+        ]),
+        "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
+    );
+
+    assert!(
+        search(
+            &project,
+            SearchQuery::text(
+                search_query,
+                false,
+                true,
+                false,
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
+                    .unwrap(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+        "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
+    );
+}
+
+#[gpui::test]
 async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -7371,13 +7502,13 @@ async fn test_staging_random_hunks(
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(true, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(true, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(false, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(false, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }

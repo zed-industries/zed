@@ -41,7 +41,7 @@ pub struct CommandPalette {
 /// Removes subsequent whitespace characters and double colons from the query.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
-fn normalize_query(input: &str) -> String {
+pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
@@ -297,7 +297,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
-            let query = normalize_query(query.as_str());
+            let query = normalize_action_query(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -311,28 +311,17 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .enumerate()
                     .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<_>>();
-                let matches = if query.is_empty() {
-                    candidates
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, candidate)| StringMatch {
-                            candidate_id: index,
-                            string: candidate.string,
-                            positions: Vec::new(),
-                            score: 0.0,
-                        })
-                        .collect()
-                } else {
-                    fuzzy::match_strings(
-                        &candidates,
-                        &query,
-                        true,
-                        10000,
-                        &Default::default(),
-                        executor,
-                    )
-                    .await
-                };
+
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    true,
+                    10000,
+                    &Default::default(),
+                    executor,
+                )
+                .await;
 
                 tx.send((commands, matches)).await.log_err();
             }
@@ -421,8 +410,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let r#match = self.matches.get(ix)?;
-        let command = self.commands.get(r#match.candidate_id)?;
+        let matching_command = self.matches.get(ix)?;
+        let command = self.commands.get(matching_command.candidate_id)?;
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -435,7 +424,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .justify_between()
                         .child(HighlightedLabel::new(
                             command.name.clone(),
-                            r#match.positions.clone(),
+                            matching_command.positions.clone(),
                         ))
                         .children(KeyBinding::for_action_in(
                             &*command.action,
@@ -511,19 +500,28 @@ mod tests {
 
     #[test]
     fn test_normalize_query() {
-        assert_eq!(normalize_query("editor: backspace"), "editor: backspace");
-        assert_eq!(normalize_query("editor:  backspace"), "editor: backspace");
-        assert_eq!(normalize_query("editor:    backspace"), "editor: backspace");
         assert_eq!(
-            normalize_query("editor::GoToDefinition"),
+            normalize_action_query("editor: backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor:  backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor:    backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor::GoToDefinition"),
             "editor:GoToDefinition"
         );
         assert_eq!(
-            normalize_query("editor::::GoToDefinition"),
+            normalize_action_query("editor::::GoToDefinition"),
             "editor:GoToDefinition"
         );
         assert_eq!(
-            normalize_query("editor: :GoToDefinition"),
+            normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
         );
     }

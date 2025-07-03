@@ -509,8 +509,9 @@ impl ContextMenu {
         self
     }
 
-    pub fn disabled_action(
+    pub fn action_disabled_when(
         mut self,
+        disabled: bool,
         label: impl Into<SharedString>,
         action: Box<dyn Action>,
     ) -> Self {
@@ -528,7 +529,7 @@ impl ContextMenu {
             icon_size: IconSize::Small,
             icon_position: IconPosition::End,
             icon_color: None,
-            disabled: true,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,

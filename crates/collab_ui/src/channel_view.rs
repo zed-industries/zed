@@ -7,8 +7,8 @@ use client::{
 };
 use collections::HashMap;
 use editor::{
-    CollaborationHub, DisplayPoint, Editor, EditorEvent, display_map::ToDisplayPoint,
-    scroll::Autoscroll,
+    CollaborationHub, DisplayPoint, Editor, EditorEvent, SelectionEffects,
+    display_map::ToDisplayPoint, scroll::Autoscroll,
 };
 use gpui::{
     AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
@@ -30,7 +30,13 @@ use workspace::{
 };
 use workspace::{item::Dedup, notifications::NotificationId};
 
-actions!(collab, [CopyLink]);
+actions!(
+    collab,
+    [
+        /// Copies a link to the current position in the channel buffer.
+        CopyLink
+    ]
+);
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ChannelView>(cx)
@@ -260,9 +266,16 @@ impl ChannelView {
                 .find(|item| &Channel::slug(&item.text).to_lowercase() == &position)
             {
                 self.editor.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                        s.replace_cursors_with(|map| vec![item.range.start.to_display_point(map)])
-                    })
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::focused()),
+                        window,
+                        cx,
+                        |s| {
+                            s.replace_cursors_with(|map| {
+                                vec![item.range.start.to_display_point(map)]
+                            })
+                        },
+                    )
                 });
                 return;
             }

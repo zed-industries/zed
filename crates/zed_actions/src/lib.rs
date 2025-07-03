@@ -1,4 +1,4 @@
-use gpui::{actions, impl_actions};
+use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,32 +11,44 @@ use serde::{Deserialize, Serialize};
 // https://github.com/mmastrac/rust-ctor/issues/280
 pub fn init() {}
 
-#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+/// Opens a URL in the system's default web browser.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
-#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+/// Opens a zed:// URL within the application.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
 }
 
-impl_actions!(zed, [OpenBrowser, OpenZedUrl]);
-
 actions!(
     zed,
     [
+        /// Opens the settings editor.
         OpenSettings,
+        /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Opens account settings.
         OpenAccountSettings,
+        /// Opens server settings.
         OpenServerSettings,
+        /// Quits the application.
         Quit,
+        /// Opens the user keymap file.
         OpenKeymap,
+        /// Shows information about Zed.
         About,
+        /// Opens the documentation website.
         OpenDocs,
+        /// Views open source licenses.
         OpenLicenses,
+        /// Opens the telemetry log.
         OpenTelemetryLog,
     ]
 );
@@ -53,153 +65,196 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Opens the extensions management interface.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct Extensions {
     /// Filters the extensions page down to extensions that are in the specified category.
     #[serde(default)]
     pub category_filter: Option<ExtensionCategoryFilter>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Decreases the font size in the editor buffer.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct DecreaseBufferFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Increases the font size in the editor buffer.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct IncreaseBufferFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Resets the buffer font size to the default value.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ResetBufferFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Decreases the font size of the user interface.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct DecreaseUiFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Increases the font size of the user interface.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct IncreaseUiFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+/// Resets the UI font size to the default value.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
 pub struct ResetUiFontSize {
     #[serde(default)]
     pub persist: bool,
 }
 
-impl_actions!(
-    zed,
-    [
-        Extensions,
-        DecreaseBufferFontSize,
-        IncreaseBufferFontSize,
-        ResetBufferFontSize,
-        DecreaseUiFontSize,
-        IncreaseUiFontSize,
-        ResetUiFontSize,
-    ]
-);
-
 pub mod dev {
     use gpui::actions;
 
-    actions!(dev, [ToggleInspector]);
+    actions!(
+        dev,
+        [
+            /// Toggles the developer inspector for debugging UI elements.
+            ToggleInspector
+        ]
+    );
 }
 
 pub mod workspace {
-    use gpui::action_with_deprecated_aliases;
+    use gpui::actions;
 
-    action_with_deprecated_aliases!(
+    actions!(
         workspace,
-        CopyPath,
         [
-            "editor::CopyPath",
-            "outline_panel::CopyPath",
-            "project_panel::CopyPath"
-        ]
-    );
-
-    action_with_deprecated_aliases!(
-        workspace,
-        CopyRelativePath,
-        [
-            "editor::CopyRelativePath",
-            "outline_panel::CopyRelativePath",
-            "project_panel::CopyRelativePath"
+            #[action(deprecated_aliases = ["editor::CopyPath", "outline_panel::CopyPath", "project_panel::CopyPath"])]
+            CopyPath,
+            #[action(deprecated_aliases = ["editor::CopyRelativePath", "outline_panel::CopyRelativePath", "project_panel::CopyRelativePath"])]
+            CopyRelativePath
         ]
     );
 }
 
 pub mod git {
-    use gpui::{action_with_deprecated_aliases, actions};
+    use gpui::actions;
 
-    actions!(git, [CheckoutBranch, Switch, SelectRepo]);
-    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
+    actions!(
+        git,
+        [
+            /// Checks out a different git branch.
+            CheckoutBranch,
+            /// Switches to a different git branch.
+            Switch,
+            /// Selects a different repository.
+            SelectRepo,
+            /// Opens the git branch selector.
+            #[action(deprecated_aliases = ["branches::OpenRecent"])]
+            Branch
+        ]
+    );
 }
 
 pub mod jj {
     use gpui::actions;
 
-    actions!(jj, [BookmarkList]);
+    actions!(
+        jj,
+        [
+            /// Opens the Jujutsu bookmark list.
+            BookmarkList
+        ]
+    );
 }
 
 pub mod toast {
     use gpui::actions;
 
-    actions!(toast, [RunAction]);
+    actions!(
+        toast,
+        [
+            /// Runs the action associated with a toast notification.
+            RunAction
+        ]
+    );
 }
 
 pub mod command_palette {
     use gpui::actions;
 
-    actions!(command_palette, [Toggle]);
+    actions!(
+        command_palette,
+        [
+            /// Toggles the command palette.
+            Toggle
+        ]
+    );
 }
 
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [FileBugReport, GiveFeedback]);
+    actions!(
+        feedback,
+        [
+            /// Opens the bug report form.
+            FileBugReport,
+            /// Opens the feedback form.
+            GiveFeedback
+        ]
+    );
 }
 
 pub mod theme_selector {
-    use gpui::impl_actions;
+    use gpui::Action;
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    /// Toggles the theme selector interface.
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = theme_selector)]
     #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
     }
-
-    impl_actions!(theme_selector, [Toggle]);
 }
 
 pub mod icon_theme_selector {
-    use gpui::impl_actions;
+    use gpui::Action;
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    /// Toggles the icon theme selector interface.
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = icon_theme_selector)]
     #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of icon theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
     }
-
-    impl_actions!(icon_theme_selector, [Toggle]);
 }
 
 pub mod agent {
@@ -207,55 +262,83 @@ pub mod agent {
 
     actions!(
         agent,
-        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+        [
+            /// Opens the agent configuration panel.
+            OpenConfiguration,
+            /// Opens the agent onboarding modal.
+            OpenOnboardingModal,
+            /// Resets the agent onboarding state.
+            ResetOnboarding
+        ]
     );
 }
 
 pub mod assistant {
-    use gpui::{
-        action_with_deprecated_aliases, actions, impl_action_with_deprecated_aliases, impl_actions,
-    };
+    use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
     use uuid::Uuid;
 
-    action_with_deprecated_aliases!(agent, ToggleFocus, ["assistant::ToggleFocus"]);
+    actions!(
+        agent,
+        [
+            #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
+            ToggleFocus
+        ]
+    );
 
-    actions!(assistant, [ShowConfiguration]);
+    actions!(
+        assistant,
+        [
+            /// Shows the assistant configuration panel.
+            ShowConfiguration
+        ]
+    );
 
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    /// Opens the rules library for managing agent rules and prompts.
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
     #[serde(deny_unknown_fields)]
     pub struct OpenRulesLibrary {
         #[serde(skip)]
         pub prompt_to_select: Option<Uuid>,
     }
 
-    impl_action_with_deprecated_aliases!(
-        agent,
-        OpenRulesLibrary,
-        [
-            "assistant::OpenRulesLibrary",
-            "assistant::DeployPromptLibrary"
-        ]
-    );
-
-    #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    /// Deploys the assistant interface with the specified configuration.
+    #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]
+    #[action(namespace = assistant)]
     #[serde(deny_unknown_fields)]
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
-
-    impl_actions!(assistant, [InlineAssist]);
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+pub mod debugger {
+    use gpui::actions;
+
+    actions!(
+        debugger,
+        [
+            /// Opens the debugger onboarding modal.
+            OpenOnboardingModal,
+            /// Resets the debugger onboarding state.
+            ResetOnboarding
+        ]
+    );
+}
+
+/// Opens the recent projects interface.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+/// Creates a project from a selected template.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRemote {
     #[serde(default)]
@@ -263,8 +346,6 @@ pub struct OpenRemote {
     #[serde(default)]
     pub create_new_window: bool,
 }
-
-impl_actions!(projects, [OpenRecent, OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -277,8 +358,9 @@ pub enum RevealTarget {
     Dock,
 }
 
-/// Spawn a task with name or open tasks modal.
-#[derive(Debug, PartialEq, Clone, Deserialize, JsonSchema)]
+/// Spawns a task with name or opens tasks modal.
+#[derive(Debug, PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = task)]
 #[serde(untagged)]
 pub enum Spawn {
     /// Spawns a task by the name given.
@@ -309,8 +391,9 @@ impl Spawn {
     }
 }
 
-/// Rerun the last task.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+/// Reruns the last task.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = task)]
 #[serde(deny_unknown_fields)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
@@ -333,19 +416,52 @@ pub struct Rerun {
     pub task_id: Option<String>,
 }
 
-impl_actions!(task, [Spawn, Rerun]);
-
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{AnyView, App, Window, action_as};
+    use gpui::{AnyView, App, Window, actions};
 
-    action_as!(outline, ToggleOutline as Toggle);
+    actions!(
+        outline,
+        [
+            #[action(name = "Toggle")]
+            ToggleOutline
+        ]
+    );
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.
     pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut Window, &mut App)> = OnceLock::new();
 }
 
-actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
-actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
+actions!(
+    zed_predict_onboarding,
+    [
+        /// Opens the Zed Predict onboarding modal.
+        OpenZedPredictOnboarding
+    ]
+);
+actions!(
+    git_onboarding,
+    [
+        /// Opens the git integration onboarding modal.
+        OpenGitIntegrationOnboarding
+    ]
+);
 
-actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);
+actions!(
+    debug_panel,
+    [
+        /// Toggles focus on the debug panel.
+        ToggleFocus
+    ]
+);
+actions!(
+    debugger,
+    [
+        /// Toggles the enabled state of a breakpoint.
+        ToggleEnableBreakpoint,
+        /// Removes a breakpoint.
+        UnsetBreakpoint,
+        /// Opens the project debug tasks configuration.
+        OpenProjectDebugTasks,
+    ]
+);

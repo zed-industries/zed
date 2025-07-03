@@ -22,6 +22,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
+pub mod diff_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -30,7 +31,13 @@ pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
 
-actions!(git, [ResetOnboarding]);
+actions!(
+    git,
+    [
+        /// Resets the git onboarding state to show the tutorial again.
+        ResetOnboarding
+    ]
+);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);

@@ -46,7 +46,13 @@ use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(
+    terminal_panel,
+    [
+        /// Toggles focus on the terminal panel.
+        ToggleFocus
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -1461,27 +1467,10 @@ impl workspace::TerminalProvider for TerminalProvider {
         &self,
         task: SpawnInTerminal,
         window: &mut Window,
-        cx: &mut Context<Workspace>,
+        cx: &mut App,
     ) -> Task<Option<Result<ExitStatus>>> {
         let terminal_panel = self.0.clone();
-        let workspace = cx.weak_entity();
         window.spawn(cx, async move |cx| {
-            if let Some(cwd) = task.cwd.as_deref() {
-                let result = match smol::fs::metadata(cwd).await {
-                    Ok(metadata) if metadata.is_dir() => Ok(()),
-                    Ok(_) => Err(anyhow!("cwd for resolved task is not a directory: {cwd:?}")),
-                    Err(e) => Err(e).context(format!("reading cwd of resolved task: {cwd:?}")),
-                };
-                if let Err(e) = result {
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_error(&e, cx);
-                        })
-                        .ok();
-                    return None;
-                }
-            }
-
             let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
                     terminal_panel.spawn_task(&task, window, cx)

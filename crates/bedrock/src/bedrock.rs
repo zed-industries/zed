@@ -1,9 +1,6 @@
 mod models;
 
-use std::collections::HashMap;
-use std::pin::Pin;
-
-use anyhow::{Context as _, Error, Result, anyhow};
+use anyhow::{Context, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
@@ -24,9 +21,10 @@ pub use bedrock::types::{
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
 };
-use futures::stream::{self, BoxStream, Stream};
+use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value};
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub use crate::models::*;
@@ -34,70 +32,59 @@ pub use crate::models::*;
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-    handle: tokio::runtime::Handle,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
-    handle
-        .spawn(async move {
-            let mut response = bedrock::Client::converse_stream(&client)
-                .model_id(request.model.clone())
-                .set_messages(request.messages.into());
+    let mut response = bedrock::Client::converse_stream(&client)
+        .model_id(request.model.clone())
+        .set_messages(request.messages.into());
 
-            if let Some(Thinking::Enabled {
-                budget_tokens: Some(budget_tokens),
-            }) = request.thinking
-            {
-                response =
-                    response.additional_model_request_fields(Document::Object(HashMap::from([(
-                        "thinking".to_string(),
-                        Document::from(HashMap::from([
-                            ("type".to_string(), Document::String("enabled".to_string())),
-                            (
-                                "budget_tokens".to_string(),
-                                Document::Number(AwsNumber::PosInt(budget_tokens)),
-                            ),
-                        ])),
-                    )])));
-            }
+    if let Some(Thinking::Enabled {
+        budget_tokens: Some(budget_tokens),
+    }) = request.thinking
+    {
+        let thinking_config = HashMap::from([
+            ("type".to_string(), Document::String("enabled".to_string())),
+            (
+                "budget_tokens".to_string(),
+                Document::Number(AwsNumber::PosInt(budget_tokens)),
+            ),
+        ]);
+        response = response.additional_model_request_fields(Document::Object(HashMap::from([(
+            "thinking".to_string(),
+            Document::from(thinking_config),
+        )])));
+    }
 
-            if request.tools.is_some() && !request.tools.as_ref().unwrap().tools.is_empty() {
-                response = response.set_tool_config(request.tools);
-            }
+    if request
+        .tools
+        .as_ref()
+        .map_or(false, |t| !t.tools.is_empty())
+    {
+        response = response.set_tool_config(request.tools);
+    }
 
-            let response = response.send().await;
+    let output = response
+        .send()
+        .await
+        .context("Failed to send API request to Bedrock");
 
-            match response {
-                Ok(output) => {
-                    let stream: Pin<
-                        Box<
-                            dyn Stream<Item = Result<BedrockStreamingResponse, BedrockError>>
-                                + Send,
-                        >,
-                    > = Box::pin(stream::unfold(output.stream, |mut stream| async move {
-                        match stream.recv().await {
-                            Ok(Some(output)) => Some(({ Ok(output) }, stream)),
-                            Ok(None) => None,
-                            Err(err) => {
-                                Some((
-                                    // TODO: Figure out how we can capture Throttling Exceptions
-                                    Err(BedrockError::ClientError(anyhow!(
-                                        "{:?}",
-                                        aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
-                                    ))),
-                                    stream,
-                                ))
-                            }
-                        }
-                    }));
-                    Ok(stream)
-                }
-                Err(err) => Err(anyhow!(
-                    "{:?}",
-                    aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
+    let stream = Box::pin(stream::unfold(
+        output?.stream,
+        move |mut stream| async move {
+            match stream.recv().await {
+                Ok(Some(output)) => Some((Ok(output), stream)),
+                Ok(None) => None,
+                Err(err) => Some((
+                    Err(BedrockError::ClientError(anyhow!(
+                        "{:?}",
+                        aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
+                    ))),
+                    stream,
                 )),
             }
-        })
-        .await
-        .context("spawning a task")?
+        },
+    ));
+
+    Ok(stream)
 }
 
 pub fn aws_document_to_value(document: &Document) -> Value {
@@ -152,7 +139,7 @@ pub enum Thinking {
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
-    pub max_tokens: u32,
+    pub max_tokens: u64,
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,

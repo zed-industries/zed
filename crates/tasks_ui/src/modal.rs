@@ -13,10 +13,9 @@ use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMa
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
-    ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconButtonShape, IconName, IconSize, IconWithIndicator, Indicator, IntoElement,
-    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
-    h_flex, v_flex,
+    ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
+    IntoElement, KeyBinding, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
+    prelude::*,
 };
 
 use util::{ResultExt, truncate_and_trailoff};
@@ -358,6 +357,7 @@ impl PickerDelegate for TasksModalDelegate {
                 &candidates,
                 &query,
                 true,
+                true,
                 1000,
                 &Default::default(),
                 cx.background_executor().clone(),
@@ -659,11 +659,8 @@ impl PickerDelegate for TasksModalDelegate {
         Some(
             h_flex()
                 .w_full()
-                .h_8()
-                .p_2()
+                .p_1p5()
                 .justify_between()
-                .rounded_b_sm()
-                .bg(cx.theme().colors().ghost_element_selected)
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
@@ -672,7 +669,6 @@ impl PickerDelegate for TasksModalDelegate {
                             let keybind = KeyBinding::for_action(&*action, window, cx);
 
                             Button::new("edit-current-task", label)
-                                .label_size(LabelSize::Small)
                                 .when_some(keybind, |this, keybind| this.key_binding(keybind))
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx);
@@ -696,7 +692,6 @@ impl PickerDelegate for TasksModalDelegate {
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
-                                .label_size(LabelSize::Small)
                                 .key_binding(keybind)
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx)
@@ -711,15 +706,14 @@ impl PickerDelegate for TasksModalDelegate {
                                     } else {
                                         "Spawn Without History"
                                     };
-                                    Button::new("spawn", label)
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(keybind)
-                                        .on_click(move |_, window, cx| {
+                                    Button::new("spawn", label).key_binding(keybind).on_click(
+                                        move |_, window, cx| {
                                             window.dispatch_action(
                                                 menu::SecondaryConfirm.boxed_clone(),
                                                 cx,
                                             )
-                                        })
+                                        },
+                                    )
                                 },
                             ),
                         )
@@ -730,7 +724,6 @@ impl PickerDelegate for TasksModalDelegate {
                                     if is_recent_selected { "Rerun" } else { "Spawn" };
 
                                 Button::new("spawn", run_entry_label)
-                                    .label_size(LabelSize::Small)
                                     .key_binding(keybind)
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(menu::Confirm.boxed_clone(), cx);
@@ -758,7 +751,7 @@ fn string_match_candidates<'a>(
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig, LanguageMatcher, Point};
     use project::{ContextProviderWithTasks, FakeFs, Project};
@@ -1035,7 +1028,7 @@ mod tests {
             .update(|_window, cx| second_item.act_as::<Editor>(cx))
             .unwrap();
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
         });

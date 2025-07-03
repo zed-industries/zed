@@ -902,7 +902,7 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active| {
+                        .trigger(move |is_active, _window, _cx| {
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
@@ -955,7 +955,7 @@ pub mod test {
         pub focus_handle: FocusHandle,
         pub size: Pixels,
     }
-    actions!(test, [ToggleTestPanel]);
+    actions!(test_only, [ToggleTestPanel]);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 

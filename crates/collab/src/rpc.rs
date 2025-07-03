@@ -179,7 +179,7 @@ struct Session {
 }
 
 impl Session {
-    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
+    async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -323,6 +323,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
@@ -1036,7 +1037,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
@@ -2007,6 +2008,7 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
+                server_name: Some(language_server.name.clone()),
                 language_server_id: language_server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(

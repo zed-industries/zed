@@ -4,11 +4,11 @@ use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorEvent, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
-    WeakEntity, Window, list,
+    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
+    Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -17,10 +17,9 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
-use crate::OpenPreviewToTheSide;
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::{
-    OpenPreview,
+    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -36,9 +35,9 @@ pub struct MarkdownPreviewView {
     contents: Option<ParsedMarkdown>,
     selected_block: usize,
     list_state: ListState,
-    tab_content_text: Option<SharedString>,
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
+    mode: MarkdownPreviewMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,9 +57,11 @@ impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let view = Self::create_markdown_view(workspace, editor, window, cx);
+                let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
                 workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
+                    {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
@@ -84,7 +85,9 @@ impl MarkdownPreviewView {
                         )
                     });
                 pane.update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                    if let Some(existing_view_idx) =
+                        Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
+                    {
                         pane.activate_item(existing_view_idx, true, true, window, cx);
                     } else {
                         pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
@@ -94,11 +97,49 @@ impl MarkdownPreviewView {
                 cx.notify();
             }
         });
+
+        workspace.register_action(move |workspace, _: &OpenFollowingPreview, window, cx| {
+            if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
+                // Check if there's already a following preview
+                let existing_follow_view_idx = {
+                    let active_pane = workspace.active_pane().read(cx);
+                    active_pane
+                        .items_of_type::<MarkdownPreviewView>()
+                        .find(|view| view.read(cx).mode == MarkdownPreviewMode::Follow)
+                        .and_then(|view| active_pane.index_for_item(&view))
+                };
+
+                if let Some(existing_follow_view_idx) = existing_follow_view_idx {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.activate_item(existing_follow_view_idx, true, true, window, cx);
+                    });
+                } else {
+                    let view =
+                        Self::create_following_markdown_view(workspace, editor.clone(), window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
+                    });
+                }
+                cx.notify();
+            }
+        });
     }
 
-    fn find_existing_preview_item_idx(pane: &Pane) -> Option<usize> {
+    fn find_existing_independent_preview_item_idx(
+        pane: &Pane,
+        editor: &Entity<Editor>,
+        cx: &App,
+    ) -> Option<usize> {
         pane.items_of_type::<MarkdownPreviewView>()
-            .nth(0)
+            .find(|view| {
+                let view_read = view.read(cx);
+                // Only look for independent (Default mode) previews, not Follow previews
+                view_read.mode == MarkdownPreviewMode::Default
+                    && view_read
+                        .active_editor
+                        .as_ref()
+                        .is_some_and(|active_editor| active_editor.editor == *editor)
+            })
             .and_then(|view| pane.index_for_item(&view))
     }
 
@@ -126,11 +167,28 @@ impl MarkdownPreviewView {
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace_handle = workspace.weak_handle();
         MarkdownPreviewView::new(
+            MarkdownPreviewMode::Default,
+            editor,
+            workspace_handle,
+            language_registry,
+            window,
+            cx,
+        )
+    }
+
+    fn create_following_markdown_view(
+        workspace: &mut Workspace,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<MarkdownPreviewView> {
+        let language_registry = workspace.project().read(cx).languages().clone();
+        let workspace_handle = workspace.weak_handle();
+        MarkdownPreviewView::new(
             MarkdownPreviewMode::Follow,
             editor,
             workspace_handle,
             language_registry,
-            None,
             window,
             cx,
         )
@@ -141,7 +199,6 @@ impl MarkdownPreviewView {
         active_editor: Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
-        tab_content_text: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -262,10 +319,10 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 contents: None,
                 list_state,
-                tab_content_text,
                 language_registry,
                 parsing_markdown_task: None,
                 image_cache: RetainAllImageCache::new(cx),
+                mode,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -342,11 +399,6 @@ impl MarkdownPreviewView {
             },
         );
 
-        let tab_content = editor.read(cx).tab_content_text(0, cx);
-        if self.tab_content_text.is_none() {
-            self.tab_content_text = Some(format!("Preview {}", tab_content).into());
-        }
-
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,
@@ -416,9 +468,12 @@ impl MarkdownPreviewView {
     ) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::center()), window, cx, |selections| {
-                    selections.select_ranges(vec![selection])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |selections| selections.select_ranges(vec![selection]),
+                );
                 window.focus(&editor.focus_handle(cx));
             });
         }
@@ -475,6 +530,26 @@ impl MarkdownPreviewView {
     ) -> bool {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
+
+    fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(-viewport_height);
+        cx.notify();
+    }
+
+    fn scroll_page_down(&mut self, _: &MovePageDown, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(viewport_height);
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -483,21 +558,28 @@ impl Focusable for MarkdownPreviewView {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PreviewEvent {}
-
-impl EventEmitter<PreviewEvent> for MarkdownPreviewView {}
+impl EventEmitter<()> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
-    type Event = PreviewEvent;
+    type Event = ();
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        self.tab_content_text
-            .clone()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.active_editor
+            .as_ref()
+            .and_then(|editor_state| {
+                let buffer = editor_state.editor.read(cx).buffer().read(cx);
+                let buffer = buffer.as_singleton()?;
+                let file = buffer.read(cx).file()?;
+                let local_file = file.as_local()?;
+                local_file
+                    .abs_path(cx)
+                    .file_name()
+                    .map(|name| format!("Preview {}", name.to_string_lossy()).into())
+            })
             .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
@@ -518,6 +600,8 @@ impl Render for MarkdownPreviewView {
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

@@ -864,13 +864,16 @@ async fn test_jk(cx: &mut gpui::TestAppContext) {
 fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
+        let highlights = editor
+            .text_highlights::<editor::PendingInput>(cx)
+            .unwrap()
+            .1;
         let (_, ranges) = marked_text_ranges(expected, false);
 
         assert_eq!(
             highlights
                 .iter()
-                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
                 .collect::<Vec<_>>(),
             ranges
         )
@@ -920,12 +923,15 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.assert_state("ˇjhello", Mode::Insert);
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let highlights = editor.text_highlights::<editor::PendingInput>(cx).unwrap();
+        let highlights = editor
+            .text_highlights::<editor::PendingInput>(cx)
+            .unwrap()
+            .1;
 
         assert_eq!(
             highlights
                 .iter()
-                .map(|(highlight, _)| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
                 .collect::<Vec<_>>(),
             vec![0..1]
         )
@@ -2024,4 +2030,83 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     cx.shared_clipboard()
         .await
         .assert_eq("  oth(wow)\n  oth(wow)\n");
+}
+
+#[gpui::test]
+async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        Emacs is
+        ˇa great
+
+        operating system
+
+        all it lacks
+        is a
+
+        decent text editor
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("2 d a p").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        ˇall it lacks
+        is a
+
+        decent text editor
+        "
+    });
+
+    cx.simulate_shared_keystrokes("d a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("all it lacks\nis a\n\n");
+
+    //reset to initial state
+    cx.simulate_shared_keystrokes("2 u").await;
+
+    cx.simulate_shared_keystrokes("4 d a p").await;
+    cx.shared_state().await.assert_eq(indoc! {"ˇ"});
+}
+
+#[gpui::test]
+async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state(
+        indoc! {
+            "
+        oˇne one one
+
+        two two two
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("3 g l s wow escape escape");
+    cx.assert_state(
+        indoc! {
+            "
+        woˇw wow wow
+
+        two two two
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("2 j 3 g l .");
+    cx.assert_state(
+        indoc! {
+            "
+        wow wow wow
+
+        woˇw woˇw woˇw
+        "
+        },
+        Mode::Normal,
+    );
 }

@@ -1,7 +1,7 @@
 use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
@@ -98,21 +98,20 @@ impl ExtensionBuilder {
             log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
-        let debug_adapters_dir = extension_dir.join("debug_adapter_schemas");
-        if !extension_manifest.debug_adapters.is_empty() {
-            ensure!(
-                debug_adapters_dir.exists(),
-                "Expected debug adapter schemas directory to exist"
-            );
-        }
-        for debug_adapter_name in &extension_manifest.debug_adapters {
-            let debug_adapter_schema_path = debug_adapters_dir.join(debug_adapter_name.as_ref());
+        for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
+            let debug_adapter_relative_schema_path =
+                meta.schema_path.clone().unwrap_or_else(|| {
+                    Path::new("debug_adapter_schemas")
+                        .join(Path::new(debug_adapter_name.as_ref()).with_extension("json"))
+                });
+            let debug_adapter_schema_path = extension_dir.join(debug_adapter_relative_schema_path);
+
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {
-                    format!("failed to read debug adapter schema for `{debug_adapter_name}`")
+                    format!("failed to read debug adapter schema for `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`")
                 })?;
             _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
-                format!("Debug adapter schema for `{debug_adapter_name}` is not a valid JSON")
+                format!("Debug adapter schema for `{debug_adapter_name}` (path: `{debug_adapter_schema_path:?}`) is not a valid JSON")
             })?;
         }
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {

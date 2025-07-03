@@ -16,7 +16,7 @@ use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, TextStyle, Window, actions, div, impl_actions,
+    Styled, Subscription, Task, TextStyle, Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -46,7 +46,9 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-#[derive(PartialEq, Clone, Deserialize, JsonSchema)]
+/// Opens the buffer search interface with the specified configuration.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = buffer_search)]
 #[serde(deny_unknown_fields)]
 pub struct Deploy {
     #[serde(default = "util::serde::default_true")]
@@ -57,9 +59,17 @@ pub struct Deploy {
     pub selection_search_enabled: bool,
 }
 
-impl_actions!(buffer_search, [Deploy]);
-
-actions!(buffer_search, [DeployReplace, Dismiss, FocusEditor]);
+actions!(
+    buffer_search,
+    [
+        /// Deploys the search and replace interface.
+        DeployReplace,
+        /// Dismisses the search bar.
+        Dismiss,
+        /// Focuses back on the editor.
+        FocusEditor
+    ]
+);
 
 impl Deploy {
     pub fn find() -> Self {
@@ -102,7 +112,7 @@ pub struct BufferSearchBar {
     search_options: SearchOptions,
     default_options: SearchOptions,
     configured_options: SearchOptions,
-    query_contains_error: bool,
+    query_error: Option<String>,
     dismissed: bool,
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
@@ -218,7 +228,7 @@ impl Render for BufferSearchBar {
         if in_replace {
             key_context.add("in_replace");
         }
-        let editor_border = if self.query_contains_error {
+        let editor_border = if self.query_error.is_some() {
             Color::Error.color(cx)
         } else {
             cx.theme().colors().border
@@ -470,6 +480,14 @@ impl Render for BufferSearchBar {
                 )
         });
 
+        let query_error_line = self.query_error.as_ref().map(|error| {
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error)
+                .mt_neg_1()
+                .ml_2()
+        });
+
         v_flex()
             .id("buffer_search")
             .gap_2()
@@ -525,6 +543,7 @@ impl Render for BufferSearchBar {
                     .w_full()
                 },
             ))
+            .children(query_error_line)
             .children(replace_line)
     }
 }
@@ -729,7 +748,7 @@ impl BufferSearchBar {
             configured_options: search_options,
             search_options,
             pending_search: None,
-            query_contains_error: false,
+            query_error: None,
             dismissed: true,
             search_history: SearchHistory::new(
                 Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
@@ -1231,7 +1250,7 @@ impl BufferSearchBar {
         self.pending_search.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
-            self.query_contains_error = false;
+            self.query_error = None;
             if query.is_empty() {
                 self.clear_active_searchable_item_matches(window, cx);
                 let _ = done_tx.send(());
@@ -1256,8 +1275,8 @@ impl BufferSearchBar {
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
-                            Err(_) => {
-                                self.query_contains_error = true;
+                            Err(e) => {
+                                self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
                                 cx.notify();
                                 return done_rx;
@@ -1275,8 +1294,8 @@ impl BufferSearchBar {
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
-                            Err(_) => {
-                                self.query_contains_error = true;
+                            Err(e) => {
+                                self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
                                 cx.notify();
                                 return done_rx;
@@ -1541,7 +1560,10 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{DisplayPoint, Editor, MultiBuffer, SearchSettings, display_map::DisplayRow};
+    use editor::{
+        DisplayPoint, Editor, MultiBuffer, SearchSettings, SelectionEffects,
+        display_map::DisplayRow,
+    };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
@@ -1678,7 +1700,7 @@ mod tests {
         });
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
                 ])
@@ -1765,7 +1787,7 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the previous match selects
         // the closest match to the left.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
                 ])
@@ -1786,7 +1808,7 @@ mod tests {
         // Park the cursor in between matches and ensure that going to the next match selects the
         // closest match to the right.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
                 ])
@@ -1807,7 +1829,7 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the previous match selects
         // the last match.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
                 ])
@@ -1828,7 +1850,7 @@ mod tests {
         // Park the cursor after the last match and ensure that going to the next match selects the
         // first match.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 60)
                 ])
@@ -1849,7 +1871,7 @@ mod tests {
         // Park the cursor before the first match and ensure that going to the previous match
         // selects the last match.
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
                     DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
                 ])
@@ -2626,7 +2648,7 @@ mod tests {
         });
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges(vec![Point::new(1, 0)..Point::new(2, 4)])
             })
         });
@@ -2709,7 +2731,7 @@ mod tests {
         });
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges(vec![
                     Point::new(1, 0)..Point::new(1, 4),
                     Point::new(5, 3)..Point::new(6, 4),

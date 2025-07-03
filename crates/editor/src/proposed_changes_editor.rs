@@ -1,4 +1,4 @@
-use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
@@ -213,7 +213,9 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(None, window, cx, |selections| selections.refresh());
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.refresh()
+            });
             editor.buffer.update(cx, |buffer, cx| {
                 for diff in new_diffs {
                     buffer.add_diff(diff, cx)
@@ -521,13 +523,5 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &mut App,
     ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
         None
-    }
-
-    fn pull_diagnostics_for_buffer(
-        &self,
-        _: Entity<Buffer>,
-        _: &mut App,
-    ) -> Task<anyhow::Result<()>> {
-        Task::ready(Ok(()))
     }
 }

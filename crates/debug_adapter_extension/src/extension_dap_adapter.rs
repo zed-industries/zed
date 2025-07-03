@@ -26,11 +26,13 @@ impl ExtensionDapAdapter {
     pub(crate) fn new(
         extension: Arc<dyn extension::Extension>,
         debug_adapter_name: Arc<str>,
+        schema_path: &Path,
     ) -> Result<Self> {
-        let schema = std::fs::read_to_string(extension.path_from_extension(
-            &Path::new("debug_adapter_schemas").join(debug_adapter_name.as_ref()),
-        ))
-        .with_context(|| format!("Failed to read debug adapter schema for {debug_adapter_name}"))?;
+        let schema = std::fs::read_to_string(&schema_path).with_context(|| {
+            format!(
+                "Failed to read debug adapter schema for {debug_adapter_name} (from path: `{schema_path:?}`)"
+            )
+        })?;
         let schema = serde_json::Value::from_str(&schema).with_context(|| {
             format!("Debug adapter schema for {debug_adapter_name} is not a valid JSON")
         })?;
@@ -86,6 +88,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        // TODO support user args in the extension API
+        _user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         self.extension

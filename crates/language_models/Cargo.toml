@@ -20,8 +20,10 @@ aws-credential-types = { workspace = true, features = [
 ] }
 aws_http_client.workspace = true
 bedrock.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
+component.workspace = true
 credentials_provider.workspace = true
 copilot.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
@@ -40,8 +42,8 @@ mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
+vercel = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
-project.workspace = true
 proto.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
@@ -55,9 +57,11 @@ thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 zed_llm_client.workspace = true
+language.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
