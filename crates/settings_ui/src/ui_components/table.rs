@@ -472,11 +472,10 @@ pub fn render_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let row = div().w_full().child(
-        div()
+        h_flex()
+            .id("table_row")
+            .tooltip(Tooltip::text("Hit enter to edit"))
             .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
             .justify_between()
             .px_1p5()
             .py_1()
