@@ -41,7 +41,7 @@ pub struct Console {
     variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
-    update_output_task: Task<()>,
+    update_output_task: Option<Task<()>>,
     focus_handle: FocusHandle,
 }
 
@@ -105,7 +105,7 @@ impl Console {
             variable_list,
             _subscriptions,
             stack_frame_list,
-            update_output_task: Task::ready(()),
+            update_output_task: None,
             last_token: OutputToken(0),
             focus_handle,
         }
@@ -136,7 +136,7 @@ impl Console {
         self.session.read(cx).has_new_output(self.last_token)
     }
 
-    pub fn add_messages<'a>(
+    fn add_messages(
         &mut self,
         events: Vec<OutputEvent>,
         window: &mut Window,
@@ -150,18 +150,19 @@ impl Console {
                         let mut all_spans = Vec::new();
                         let mut all_background_spans = Vec::new();
                         let mut to_insert = String::new();
+                        let mut scratch = String::new();
 
                         for event in &events {
+                            scratch.clear();
                             let mut ansi_handler = ConsoleHandler::default();
                             let mut ansi_processor =
                                 ansi::Processor::<ansi::StdSyncHandler>::default();
-                            let curr_length = to_insert.len();
 
                             let trimmed_output = event.output.trim_end();
-                            let _ = writeln!(&mut to_insert, "{trimmed_output}");
-                            let inserted = &to_insert[curr_length..];
-                            ansi_processor.advance(&mut ansi_handler, inserted.as_bytes());
+                            let _ = writeln!(&mut scratch, "{trimmed_output}");
+                            ansi_processor.advance(&mut ansi_handler, scratch.as_bytes());
                             let output = std::mem::take(&mut ansi_handler.output);
+                            to_insert.extend(output.chars());
                             let mut spans = std::mem::take(&mut ansi_handler.spans);
                             let mut background_spans =
                                 std::mem::take(&mut ansi_handler.background_spans);
@@ -374,11 +375,13 @@ impl Console {
         EditorElement::new(&self.query_bar, Self::editor_style(&self.query_bar, cx))
     }
 
-    fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.update_output_task.is_some() {
+            return;
+        }
         let session = self.session.clone();
         let token = self.last_token;
-
-        self.update_output_task = cx.spawn_in(window, async move |this, cx| {
+        self.update_output_task = Some(cx.spawn_in(window, async move |this, cx| {
             let Some((last_processed_token, task)) = session
                 .update_in(cx, |session, window, cx| {
                     let (output, last_processed_token) = session.output(token);
@@ -398,14 +401,17 @@ impl Console {
                 .ok()
                 .flatten()
             else {
+                _ = this.update(cx, |this, _| {
+                    this.update_output_task.take();
+                });
                 return;
             };
             _ = task.await.log_err();
-
             _ = this.update(cx, |this, _| {
                 this.last_token = last_processed_token;
+                this.update_output_task.take();
             });
-        });
+        }));
     }
 }
 

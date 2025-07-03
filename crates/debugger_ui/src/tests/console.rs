@@ -291,6 +291,11 @@ async fn test_escape_code_processing(executor: BackgroundExecutor, cx: &mut Test
     let _running_state =
         active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
             cx.focus_self(window);
+            item.running_state().update(cx, |this, cx| {
+                this.console()
+                    .update(cx, |this, cx| this.update_output(window, cx));
+            });
+
             item.running_state().clone()
         });
 
