@@ -181,6 +181,7 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
+/// Permanently deletes the selected file or directory.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +190,7 @@ struct Delete {
     pub skip_prompt: bool,
 }
 
+/// Moves the selected file or directory to the system trash.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = project_panel)]
 #[serde(deny_unknown_fields)]

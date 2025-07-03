@@ -95,10 +95,12 @@ pub enum SaveIntent {
     Skip,
 }
 
+/// Activates a specific item in the pane by its index.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 pub struct ActivateItem(pub usize);
 
+/// Closes the currently active item in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +111,7 @@ pub struct CloseActiveItem {
     pub close_pinned: bool,
 }
 
+/// Closes all inactive items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -119,6 +122,7 @@ pub struct CloseInactiveItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +133,7 @@ pub struct CloseAllItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items that have no unsaved changes.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -137,6 +142,7 @@ pub struct CloseCleanItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the right of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +151,7 @@ pub struct CloseItemsToTheRight {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the left of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -153,6 +160,7 @@ pub struct CloseItemsToTheLeft {
     pub close_pinned: bool,
 }
 
+/// Reveals the current item in the project panel.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -161,6 +169,7 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+/// Opens the search interface with the specified configuration.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]

@@ -4,6 +4,7 @@ use gpui::{Action, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
 
+/// Selects the next occurrence of the current selection.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -12,6 +13,7 @@ pub struct SelectNext {
     pub replace_newest: bool,
 }
 
+/// Selects the previous occurrence of the current selection.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +22,7 @@ pub struct SelectPrevious {
     pub replace_newest: bool,
 }
 
+/// Moves the cursor to the beginning of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +33,7 @@ pub struct MoveToBeginningOfLine {
     pub stop_at_indent: bool,
 }
 
+/// Selects from the cursor to the beginning of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +44,7 @@ pub struct SelectToBeginningOfLine {
     pub stop_at_indent: bool,
 }
 
+/// Deletes from the cursor to the beginning of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +53,7 @@ pub struct DeleteToBeginningOfLine {
     pub(super) stop_at_indent: bool,
 }
 
+/// Moves the cursor up by one page.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +62,7 @@ pub struct MovePageUp {
     pub(super) center_cursor: bool,
 }
 
+/// Moves the cursor down by one page.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +71,7 @@ pub struct MovePageDown {
     pub(super) center_cursor: bool,
 }
 
+/// Moves the cursor to the end of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +80,7 @@ pub struct MoveToEndOfLine {
     pub stop_at_soft_wraps: bool,
 }
 
+/// Selects from the cursor to the end of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -80,6 +89,7 @@ pub struct SelectToEndOfLine {
     pub(super) stop_at_soft_wraps: bool,
 }
 
+/// Toggles the display of available code actions at the cursor position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +111,7 @@ pub enum CodeActionSource {
     QuickActionBar,
 }
 
+/// Confirms and accepts the currently selected completion suggestion.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +120,7 @@ pub struct ConfirmCompletion {
     pub item_ix: Option<usize>,
 }
 
+/// Composes multiple completion suggestions into a single completion.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +129,7 @@ pub struct ComposeCompletion {
     pub item_ix: Option<usize>,
 }
 
+/// Confirms and applies the currently selected code action.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -125,6 +138,7 @@ pub struct ConfirmCodeAction {
     pub item_ix: Option<usize>,
 }
 
+/// Toggles comment markers for the selected lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +149,7 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
+/// Moves the cursor up by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -143,6 +158,7 @@ pub struct MoveUpByLines {
     pub(super) lines: u32,
 }
 
+/// Moves the cursor down by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -151,6 +167,7 @@ pub struct MoveDownByLines {
     pub(super) lines: u32,
 }
 
+/// Extends selection up by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -159,6 +176,7 @@ pub struct SelectUpByLines {
     pub(super) lines: u32,
 }
 
+/// Extends selection down by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -167,6 +185,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
+/// Expands all excerpts in the editor.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -175,6 +194,7 @@ pub struct ExpandExcerpts {
     pub(super) lines: u32,
 }
 
+/// Expands excerpts above the current position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -183,6 +203,7 @@ pub struct ExpandExcerptsUp {
     pub(super) lines: u32,
 }
 
+/// Expands excerpts below the current position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -191,6 +212,7 @@ pub struct ExpandExcerptsDown {
     pub(super) lines: u32,
 }
 
+/// Shows code completion suggestions at the cursor position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -199,10 +221,12 @@ pub struct ShowCompletions {
     pub(super) trigger: Option<String>,
 }
 
+/// Handles text input in the editor.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 pub struct HandleInput(pub String);
 
+/// Deletes from the cursor to the end of the next word.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -211,6 +235,7 @@ pub struct DeleteToNextWordEnd {
     pub ignore_newlines: bool,
 }
 
+/// Deletes from the cursor to the start of the previous word.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -219,10 +244,12 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_newlines: bool,
 }
 
+/// Folds all code blocks at the specified indentation level.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 pub struct FoldAtLevel(pub u32);
 
+/// Spawns the nearest available task from the current cursor position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -604,7 +631,9 @@ actions!(
         ShowWordCompletions,
         /// Randomly shuffles selected lines.
         ShuffleLines,
+        /// Navigates to the next signature in the signature help popup.
         SignatureHelpNext,
+        /// Navigates to the previous signature in the signature help popup.
         SignatureHelpPrevious,
         /// Sorts selected lines case-insensitively.
         SortLinesCaseInsensitive,

@@ -102,6 +102,7 @@ actions!(
     ]
 );
 
+/// Inserts files that were dragged and dropped into the assistant conversation.
 #[derive(PartialEq, Clone, Action)]
 #[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {

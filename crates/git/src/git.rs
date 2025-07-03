@@ -88,6 +88,7 @@ actions!(
     ]
 );
 
+/// Restores a file to its last committed state, discarding local changes.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = git, deprecated_aliases = ["editor::RevertFile"])]
 #[serde(deny_unknown_fields)]

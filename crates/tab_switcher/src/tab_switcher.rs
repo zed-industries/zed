@@ -25,6 +25,7 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
+/// Toggles the tab switcher interface.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = tab_switcher)]
 #[serde(deny_unknown_fields)]

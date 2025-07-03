@@ -46,6 +46,7 @@ pub enum Object {
     EntireFile,
 }
 
+/// Selects a word text object.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +55,7 @@ struct Word {
     ignore_punctuation: bool,
 }
 
+/// Selects a subword text object.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +63,7 @@ struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
+/// Selects text at the same indentation level.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]

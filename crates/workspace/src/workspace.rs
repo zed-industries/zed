@@ -255,10 +255,12 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
+/// Activates a specific pane by its index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
+/// Moves an item to a specific pane by index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -275,6 +277,7 @@ fn default_1() -> usize {
     1
 }
 
+/// Moves an item to a pane in the specified direction.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -291,6 +294,7 @@ fn default_right() -> SplitDirection {
     SplitDirection::Right
 }
 
+/// Saves all open files in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -299,6 +303,7 @@ pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Saves the current file with the specified options.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -307,6 +312,7 @@ pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all items and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -315,6 +321,7 @@ pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all inactive tabs and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -323,10 +330,12 @@ pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Sends a sequence of keystrokes to the active element.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
+/// Reloads the active item or workspace.
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -343,6 +352,7 @@ actions!(
     ]
 );
 
+/// Toggles the file finder interface.
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
 #[serde(deny_unknown_fields)]
@@ -464,6 +474,7 @@ impl PartialEq for Toast {
     }
 }
 
+/// Opens a new terminal with the specified working directory.
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]

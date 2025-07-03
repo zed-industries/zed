@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 // https://github.com/mmastrac/rust-ctor/issues/280
 pub fn init() {}
 
+/// Opens a URL in the system's default web browser.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +19,7 @@ pub struct OpenBrowser {
     pub url: String,
 }
 
+/// Opens a zed:// URL within the application.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,7 @@ pub enum ExtensionCategoryFilter {
     DebugAdapters,
 }
 
+/// Opens the extensions management interface.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +78,7 @@ pub struct Extensions {
     pub category_filter: Option<ExtensionCategoryFilter>,
 }
 
+/// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +87,7 @@ pub struct DecreaseBufferFontSize {
     pub persist: bool,
 }
 
+/// Increases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -91,6 +96,7 @@ pub struct IncreaseBufferFontSize {
     pub persist: bool,
 }
 
+/// Resets the buffer font size to the default value.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +105,7 @@ pub struct ResetBufferFontSize {
     pub persist: bool,
 }
 
+/// Decreases the font size of the user interface.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +114,7 @@ pub struct DecreaseUiFontSize {
     pub persist: bool,
 }
 
+/// Increases the font size of the user interface.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +123,7 @@ pub struct IncreaseUiFontSize {
     pub persist: bool,
 }
 
+/// Resets the UI font size to the default value.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
@@ -223,6 +232,7 @@ pub mod theme_selector {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
+    /// Toggles the theme selector interface.
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = theme_selector)]
     #[serde(deny_unknown_fields)]
@@ -237,6 +247,7 @@ pub mod icon_theme_selector {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
+    /// Toggles the icon theme selector interface.
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = icon_theme_selector)]
     #[serde(deny_unknown_fields)]
@@ -284,6 +295,7 @@ pub mod assistant {
         ]
     );
 
+    /// Opens the rules library for managing agent rules and prompts.
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
     #[serde(deny_unknown_fields)]
@@ -292,6 +304,7 @@ pub mod assistant {
         pub prompt_to_select: Option<Uuid>,
     }
 
+    /// Deploys the assistant interface with the specified configuration.
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]
     #[action(namespace = assistant)]
     #[serde(deny_unknown_fields)]
@@ -314,6 +327,7 @@ pub mod debugger {
     );
 }
 
+/// Opens the recent projects interface.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = projects)]
 #[serde(deny_unknown_fields)]
@@ -322,6 +336,7 @@ pub struct OpenRecent {
     pub create_new_window: bool,
 }
 
+/// Creates a project from a selected template.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = projects)]
 #[serde(deny_unknown_fields)]
@@ -343,7 +358,7 @@ pub enum RevealTarget {
     Dock,
 }
 
-/// Spawn a task with name or open tasks modal.
+/// Spawns a task with name or opens tasks modal.
 #[derive(Debug, PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = task)]
 #[serde(untagged)]
@@ -376,7 +391,7 @@ impl Spawn {
     }
 }
 
-/// Rerun the last task.
+/// Reruns the last task.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = task)]
 #[serde(deny_unknown_fields)]

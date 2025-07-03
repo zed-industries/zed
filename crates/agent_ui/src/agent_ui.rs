@@ -123,6 +123,7 @@ actions!(
     ]
 );
 
+/// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
@@ -131,6 +132,7 @@ pub struct NewThread {
     from_thread_id: Option<ThreadId>,
 }
 
+/// Opens the profile management interface for configuring agent tools and settings.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]

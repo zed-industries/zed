@@ -176,6 +176,7 @@ enum IndentType {
     Same,
 }
 
+/// Moves to the start of the next word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +185,7 @@ struct NextWordStart {
     ignore_punctuation: bool,
 }
 
+/// Moves to the end of the next word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +194,7 @@ struct NextWordEnd {
     ignore_punctuation: bool,
 }
 
+/// Moves to the start of the previous word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +203,7 @@ struct PreviousWordStart {
     ignore_punctuation: bool,
 }
 
+/// Moves to the end of the previous word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -208,6 +212,7 @@ struct PreviousWordEnd {
     ignore_punctuation: bool,
 }
 
+/// Moves to the start of the next subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +221,7 @@ pub(crate) struct NextSubwordStart {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the end of the next subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -224,6 +230,7 @@ pub(crate) struct NextSubwordEnd {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the start of the previous subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -232,6 +239,7 @@ pub(crate) struct PreviousSubwordStart {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the end of the previous subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -240,6 +248,7 @@ pub(crate) struct PreviousSubwordEnd {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves cursor up by the specified number of lines.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +257,7 @@ pub(crate) struct Up {
     pub(crate) display_lines: bool,
 }
 
+/// Moves cursor down by the specified number of lines.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -256,6 +266,7 @@ pub(crate) struct Down {
     pub(crate) display_lines: bool,
 }
 
+/// Moves to the first non-whitespace character on the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -264,6 +275,7 @@ struct FirstNonWhitespace {
     display_lines: bool,
 }
 
+/// Moves to the end of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -272,6 +284,7 @@ struct EndOfLine {
     display_lines: bool,
 }
 
+/// Moves to the start of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -280,6 +293,7 @@ pub struct StartOfLine {
     pub(crate) display_lines: bool,
 }
 
+/// Moves to the middle of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -288,6 +302,7 @@ struct MiddleOfLine {
     display_lines: bool,
 }
 
+/// Finds the next unmatched bracket or delimiter.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -296,6 +311,7 @@ struct UnmatchedForward {
     char: char,
 }
 
+/// Finds the previous unmatched bracket or delimiter.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]

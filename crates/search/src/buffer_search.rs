@@ -46,6 +46,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
+/// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = buffer_search)]
 #[serde(deny_unknown_fields)]
