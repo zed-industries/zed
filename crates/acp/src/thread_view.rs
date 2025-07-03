@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
@@ -24,9 +23,9 @@ use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
 use crate::{
-    AcpServer, AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage,
-    AssistantMessageChunk, Diff, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation,
-    ToolCallContent, ToolCallId, ToolCallStatus, UserMessageChunk,
+    AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage, AssistantMessageChunk,
+    Diff, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId,
+    ToolCallStatus, UserMessageChunk,
 };
 
 pub struct AcpThreadView {

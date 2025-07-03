@@ -1,4 +1,3 @@
-mod server;
 mod thread_view;
 
 use agentic_coding_protocol::{self as acp};
@@ -17,7 +16,6 @@ use std::{mem, ops::Range, path::PathBuf, process::ExitStatus, sync::Arc};
 use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
 
-pub use server::AcpServer;
 pub use thread_view::AcpThreadView;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -923,7 +921,7 @@ impl acp::Client for AcpClientDelegate {
             .context("Failed to update thread")?;
 
         Ok(acp::RequestToolCallConfirmationResponse {
-            id: id.into(),
+            id: acp::ToolCallId(id.as_u64()),
             outcome: outcome.await?,
         })
     }
@@ -942,7 +940,7 @@ impl acp::Client for AcpClientDelegate {
             .context("Failed to update thread")?;
 
         Ok(acp::PushToolCallResponse {
-            id: entry_id.into(),
+            id: acp::ToolCallId(entry_id.as_u64()),
         })
     }
 
@@ -955,7 +953,7 @@ impl acp::Client for AcpClientDelegate {
         cx.update(|cx| {
             self.thread.update(cx, |thread, cx| {
                 thread.update_tool_call(
-                    request.tool_call_id.into(),
+                    ToolCallId(ThreadEntryId(request.tool_call_id.0)),
                     request.status,
                     request.content,
                     cx,
