@@ -296,10 +296,25 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(next_utf8_char_boundary(
-                    chunk.text,
-                    self.transforms.end(&()).0.0 - self.output_offset.0,
-                ));
+                let desired_bytes = self.transforms.end(&()).0.0 - self.output_offset.0;
+
+                // If we're already at the transform boundary, skip to the next transform
+                if desired_bytes == 0 {
+                    self.inlay_chunks = None;
+                    self.transforms.next(&());
+                    return self.next();
+                }
+
+                // Determine split index handling edge cases
+                let split_index = if desired_bytes >= chunk.text.len() {
+                    chunk.text.len()
+                } else if chunk.text.is_char_boundary(desired_bytes) {
+                    desired_bytes
+                } else {
+                    find_next_utf8_boundary(chunk.text, desired_bytes)
+                };
+
+                let (prefix, suffix) = chunk.text.split_at(split_index);
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
@@ -389,10 +404,24 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                let (chunk, remainder) = inlay_chunk.split_at(next_utf8_char_boundary(
-                    inlay_chunk,
-                    next_inlay_highlight_endpoint,
-                ));
+
+                // Determine split index handling edge cases
+                let split_index = if next_inlay_highlight_endpoint >= inlay_chunk.len() {
+                    inlay_chunk.len()
+                } else if next_inlay_highlight_endpoint == 0 {
+                    // Need to take at least one character to make progress
+                    inlay_chunk
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(1)
+                } else if inlay_chunk.is_char_boundary(next_inlay_highlight_endpoint) {
+                    next_inlay_highlight_endpoint
+                } else {
+                    find_next_utf8_boundary(inlay_chunk, next_inlay_highlight_endpoint)
+                };
+
+                let (chunk, remainder) = inlay_chunk.split_at(split_index);
                 *inlay_chunk = remainder;
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -1143,42 +1172,23 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     }
 }
 
-/// Given a byte offset into a nonempty string slice, returns the byte index of
-/// the previous valid `char` in the string. We look for the *previous* valid
-/// one because if the index is in the middle of a UTF-8 multibyte sequence, we
-/// can always get from there to a valid index by searching backwards, whereas
-/// Finds the nearest UTF-8 char boundary to the given `byte_index`.
-/// Searches forward first, then backward if we hit the end of the string.
-///
+/// Given a byte index that is NOT a UTF-8 boundary, find the next one.
+/// Assumes: 0 < byte_index < text.len() and !text.is_char_boundary(byte_index)
 #[inline(always)]
-fn next_utf8_char_boundary(text: &str, initial_index: usize) -> usize {
+fn find_next_utf8_boundary(text: &str, byte_index: usize) -> usize {
     let bytes = text.as_bytes();
-    let mut search_index = initial_index;
+    let mut idx = byte_index + 1;
 
-    while let Some(&byte) = bytes.get(search_index) {
-        if is_utf8_char_boundary(byte) {
-            return search_index;
+    // Scan forward until we find a boundary
+    while idx < text.len() {
+        if is_utf8_char_boundary(bytes[idx]) {
+            return idx;
         }
-
-        search_index += 1;
+        idx += 1;
     }
 
-    // We ran off the end of the string, so try to find a boundary by going in reverse.
-    search_index = initial_index
-        .saturating_sub(1)
-        .min(text.len().saturating_sub(1));
-
-    while let Some(&byte) = bytes.get(search_index) {
-        if is_utf8_char_boundary(byte) {
-            return search_index;
-        }
-
-        search_index -= 1;
-    }
-
-    // The only way .get() could return None when we're decrementing backwards from an index
-    // that is guaranteed to start out as less than or equal to the length is if len was 0.
-    panic!("next_utf8_char_boundary was called on an empty string, which should never happen.");
+    // Hit the end, return the full length
+    text.len()
 }
 
 // Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
@@ -1977,7 +1987,7 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
 
         // Create highlights that request a split at byte 13, which is in the middle
-        // of the '…' character (bytes 12..14). We should round down to byte 12.
+        // of the '…' character (bytes 12..15). We include the full character.
         let inlay_highlights = create_inlay_highlights(InlayId::Hint(0), 0..13, position);
 
         let highlights = crate::display_map::Highlights {
