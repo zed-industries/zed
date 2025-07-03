@@ -379,3 +379,22 @@ The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name 
   }
 ]
 ```
+
+## Formatters
+
+### `erb-formatter`
+
+To format ERB templates, you can use the `erb-formatter` formatter. This formatter uses the [`erb-formatter`](https://rubygems.org/gems/erb-formatter) gem to format ERB templates.
+
+```jsonc
+{
+  "HTML/ERB": {
+    "formatter": {
+      "external": {
+        "command": "erb-formatter",
+        "arguments": ["--stdin-filename", "{buffer_path}"],
+      },
+    },
+  },
+}
+```
