@@ -16,12 +16,14 @@ use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
     Completion, CompletionResponse,
-    debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
+    debugger::session::{CompletionsQuery, OutputToken, Session},
 };
 use settings::Settings;
+use std::fmt::Write;
 use std::{cell::RefCell, ops::Range, rc::Rc, usize};
 use theme::{Theme, ThemeSettings};
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
+use util::ResultExt;
 
 actions!(
     console,
@@ -39,7 +41,7 @@ pub struct Console {
     variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
-    update_output_task: Task<()>,
+    update_output_task: Option<Task<()>>,
     focus_handle: FocusHandle,
 }
 
@@ -89,11 +91,6 @@ impl Console {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
-                if let SessionEvent::ConsoleOutput = event {
-                    this.update_output(window, cx)
-                }
-            }),
             cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
                     console.query_bar.focus_handle(cx).focus(window);
@@ -108,7 +105,7 @@ impl Console {
             variable_list,
             _subscriptions,
             stack_frame_list,
-            update_output_task: Task::ready(()),
+            update_output_task: None,
             last_token: OutputToken(0),
             focus_handle,
         }
@@ -139,202 +136,116 @@ impl Console {
         self.session.read(cx).has_new_output(self.last_token)
     }
 
-    pub fn add_messages<'a>(
+    fn add_messages(
         &mut self,
-        events: impl Iterator<Item = &'a OutputEvent>,
+        events: Vec<OutputEvent>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        self.console.update(cx, |console, cx| {
-            console.set_read_only(false);
+    ) -> Task<Result<()>> {
+        self.console.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |console, cx| {
+                let mut len = console.update(cx, |this, cx| this.buffer().read(cx).len(cx))?;
+                let (output, spans, background_spans) = cx
+                    .background_spawn(async move {
+                        let mut all_spans = Vec::new();
+                        let mut all_background_spans = Vec::new();
+                        let mut to_insert = String::new();
+                        let mut scratch = String::new();
 
-            for event in events {
-                let to_insert = format!("{}\n", event.output.trim_end());
+                        for event in &events {
+                            scratch.clear();
+                            let mut ansi_handler = ConsoleHandler::default();
+                            let mut ansi_processor =
+                                ansi::Processor::<ansi::StdSyncHandler>::default();
 
-                let mut ansi_handler = ConsoleHandler::default();
-                let mut ansi_processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+                            let trimmed_output = event.output.trim_end();
+                            let _ = writeln!(&mut scratch, "{trimmed_output}");
+                            ansi_processor.advance(&mut ansi_handler, scratch.as_bytes());
+                            let output = std::mem::take(&mut ansi_handler.output);
+                            to_insert.extend(output.chars());
+                            let mut spans = std::mem::take(&mut ansi_handler.spans);
+                            let mut background_spans =
+                                std::mem::take(&mut ansi_handler.background_spans);
+                            if ansi_handler.current_range_start < output.len() {
+                                spans.push((
+                                    ansi_handler.current_range_start..output.len(),
+                                    ansi_handler.current_color,
+                                ));
+                            }
+                            if ansi_handler.current_background_range_start < output.len() {
+                                background_spans.push((
+                                    ansi_handler.current_background_range_start..output.len(),
+                                    ansi_handler.current_background_color,
+                                ));
+                            }
 
-                let len = console.buffer().read(cx).len(cx);
-                ansi_processor.advance(&mut ansi_handler, to_insert.as_bytes());
-                let output = std::mem::take(&mut ansi_handler.output);
-                let mut spans = std::mem::take(&mut ansi_handler.spans);
-                let mut background_spans = std::mem::take(&mut ansi_handler.background_spans);
-                if ansi_handler.current_range_start < output.len() {
-                    spans.push((
-                        ansi_handler.current_range_start..output.len(),
-                        ansi_handler.current_color,
-                    ));
-                }
-                if ansi_handler.current_background_range_start < output.len() {
-                    background_spans.push((
-                        ansi_handler.current_background_range_start..output.len(),
-                        ansi_handler.current_background_color,
-                    ));
-                }
-                console.move_to_end(&editor::actions::MoveToEnd, window, cx);
-                console.insert(&output, window, cx);
-                let buffer = console.buffer().read(cx).snapshot(cx);
+                            for (range, _) in spans.iter_mut() {
+                                let start_offset = len + range.start;
+                                *range = start_offset..len + range.end;
+                            }
 
-                struct ConsoleAnsiHighlight;
+                            for (range, _) in background_spans.iter_mut() {
+                                let start_offset = len + range.start;
+                                *range = start_offset..len + range.end;
+                            }
 
-                for (range, color) in spans {
-                    let Some(color) = color else { continue };
-                    let start_offset = len + range.start;
-                    let range = start_offset..len + range.end;
-                    let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
-                    let style = HighlightStyle {
-                        color: Some(terminal_view::terminal_element::convert_color(
-                            &color,
-                            cx.theme(),
-                        )),
-                        ..Default::default()
-                    };
-                    console.highlight_text_key::<ConsoleAnsiHighlight>(
-                        start_offset,
-                        vec![range],
-                        style,
-                        cx,
-                    );
-                }
+                            len += output.len();
 
-                for (range, color) in background_spans {
-                    let Some(color) = color else { continue };
-                    let start_offset = len + range.start;
-                    let range = start_offset..len + range.end;
-                    let range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
-
-                    let color_fetcher: fn(&Theme) -> Hsla = match color {
-                        // Named and theme defined colors
-                        ansi::Color::Named(n) => match n {
-                            ansi::NamedColor::Black => |theme| theme.colors().terminal_ansi_black,
-                            ansi::NamedColor::Red => |theme| theme.colors().terminal_ansi_red,
-                            ansi::NamedColor::Green => |theme| theme.colors().terminal_ansi_green,
-                            ansi::NamedColor::Yellow => |theme| theme.colors().terminal_ansi_yellow,
-                            ansi::NamedColor::Blue => |theme| theme.colors().terminal_ansi_blue,
-                            ansi::NamedColor::Magenta => {
-                                |theme| theme.colors().terminal_ansi_magenta
-                            }
-                            ansi::NamedColor::Cyan => |theme| theme.colors().terminal_ansi_cyan,
-                            ansi::NamedColor::White => |theme| theme.colors().terminal_ansi_white,
-                            ansi::NamedColor::BrightBlack => {
-                                |theme| theme.colors().terminal_ansi_bright_black
-                            }
-                            ansi::NamedColor::BrightRed => {
-                                |theme| theme.colors().terminal_ansi_bright_red
-                            }
-                            ansi::NamedColor::BrightGreen => {
-                                |theme| theme.colors().terminal_ansi_bright_green
-                            }
-                            ansi::NamedColor::BrightYellow => {
-                                |theme| theme.colors().terminal_ansi_bright_yellow
-                            }
-                            ansi::NamedColor::BrightBlue => {
-                                |theme| theme.colors().terminal_ansi_bright_blue
-                            }
-                            ansi::NamedColor::BrightMagenta => {
-                                |theme| theme.colors().terminal_ansi_bright_magenta
-                            }
-                            ansi::NamedColor::BrightCyan => {
-                                |theme| theme.colors().terminal_ansi_bright_cyan
-                            }
-                            ansi::NamedColor::BrightWhite => {
-                                |theme| theme.colors().terminal_ansi_bright_white
-                            }
-                            ansi::NamedColor::Foreground => {
-                                |theme| theme.colors().terminal_foreground
-                            }
-                            ansi::NamedColor::Background => {
-                                |theme| theme.colors().terminal_background
-                            }
-                            ansi::NamedColor::Cursor => |theme| theme.players().local().cursor,
-                            ansi::NamedColor::DimBlack => {
-                                |theme| theme.colors().terminal_ansi_dim_black
-                            }
-                            ansi::NamedColor::DimRed => {
-                                |theme| theme.colors().terminal_ansi_dim_red
-                            }
-                            ansi::NamedColor::DimGreen => {
-                                |theme| theme.colors().terminal_ansi_dim_green
-                            }
-                            ansi::NamedColor::DimYellow => {
-                                |theme| theme.colors().terminal_ansi_dim_yellow
-                            }
-                            ansi::NamedColor::DimBlue => {
-                                |theme| theme.colors().terminal_ansi_dim_blue
-                            }
-                            ansi::NamedColor::DimMagenta => {
-                                |theme| theme.colors().terminal_ansi_dim_magenta
-                            }
-                            ansi::NamedColor::DimCyan => {
-                                |theme| theme.colors().terminal_ansi_dim_cyan
-                            }
-                            ansi::NamedColor::DimWhite => {
-                                |theme| theme.colors().terminal_ansi_dim_white
-                            }
-                            ansi::NamedColor::BrightForeground => {
-                                |theme| theme.colors().terminal_bright_foreground
-                            }
-                            ansi::NamedColor::DimForeground => {
-                                |theme| theme.colors().terminal_dim_foreground
-                            }
-                        },
-                        // 'True' colors
-                        ansi::Color::Spec(_) => |theme| theme.colors().editor_background,
-                        // 8 bit, indexed colors
-                        ansi::Color::Indexed(i) => {
-                            match i {
-                                // 0-15 are the same as the named colors above
-                                0 => |theme| theme.colors().terminal_ansi_black,
-                                1 => |theme| theme.colors().terminal_ansi_red,
-                                2 => |theme| theme.colors().terminal_ansi_green,
-                                3 => |theme| theme.colors().terminal_ansi_yellow,
-                                4 => |theme| theme.colors().terminal_ansi_blue,
-                                5 => |theme| theme.colors().terminal_ansi_magenta,
-                                6 => |theme| theme.colors().terminal_ansi_cyan,
-                                7 => |theme| theme.colors().terminal_ansi_white,
-                                8 => |theme| theme.colors().terminal_ansi_bright_black,
-                                9 => |theme| theme.colors().terminal_ansi_bright_red,
-                                10 => |theme| theme.colors().terminal_ansi_bright_green,
-                                11 => |theme| theme.colors().terminal_ansi_bright_yellow,
-                                12 => |theme| theme.colors().terminal_ansi_bright_blue,
-                                13 => |theme| theme.colors().terminal_ansi_bright_magenta,
-                                14 => |theme| theme.colors().terminal_ansi_bright_cyan,
-                                15 => |theme| theme.colors().terminal_ansi_bright_white,
-                                // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
-                                // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
-                                // 16..=231 => {
-                                //     let (r, g, b) = rgb_for_index(index as u8);
-                                //     rgba_color(
-                                //         if r == 0 { 0 } else { r * 40 + 55 },
-                                //         if g == 0 { 0 } else { g * 40 + 55 },
-                                //         if b == 0 { 0 } else { b * 40 + 55 },
-                                //     )
-                                // }
-                                // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
-                                // 232..=255 => {
-                                //     let i = index as u8 - 232; // Align index to 0..24
-                                //     let value = i * 10 + 8;
-                                //     rgba_color(value, value, value)
-                                // }
-                                // For compatibility with the alacritty::Colors interface
-                                // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
-                                _ => |_| gpui::black(),
-                            }
+                            all_spans.extend(spans);
+                            all_background_spans.extend(background_spans);
                         }
-                    };
+                        (to_insert, all_spans, all_background_spans)
+                    })
+                    .await;
+                console.update_in(cx, |console, window, cx| {
+                    console.set_read_only(false);
+                    console.move_to_end(&editor::actions::MoveToEnd, window, cx);
+                    console.insert(&output, window, cx);
+                    console.set_read_only(true);
 
-                    console.highlight_background_key::<ConsoleAnsiHighlight>(
-                        start_offset,
-                        &[range],
-                        color_fetcher,
-                        cx,
-                    );
-                }
-            }
+                    struct ConsoleAnsiHighlight;
 
-            console.set_read_only(true);
-            cx.notify();
-        });
+                    let buffer = console.buffer().read(cx).snapshot(cx);
+
+                    for (range, color) in spans {
+                        let Some(color) = color else { continue };
+                        let start_offset = range.start;
+                        let range =
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                        let style = HighlightStyle {
+                            color: Some(terminal_view::terminal_element::convert_color(
+                                &color,
+                                cx.theme(),
+                            )),
+                            ..Default::default()
+                        };
+                        console.highlight_text_key::<ConsoleAnsiHighlight>(
+                            start_offset,
+                            vec![range],
+                            style,
+                            cx,
+                        );
+                    }
+
+                    for (range, color) in background_spans {
+                        let Some(color) = color else { continue };
+                        let start_offset = range.start;
+                        let range =
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
+                        console.highlight_background_key::<ConsoleAnsiHighlight>(
+                            start_offset,
+                            &[range],
+                            color_fetcher(color),
+                            cx,
+                        );
+                    }
+
+                    cx.notify();
+                })?;
+
+                Ok(())
+            })
+        })
     }
 
     pub fn watch_expression(
@@ -464,31 +375,50 @@ impl Console {
         EditorElement::new(&self.query_bar, Self::editor_style(&self.query_bar, cx))
     }
 
-    fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.update_output_task.is_some() {
+            return;
+        }
         let session = self.session.clone();
         let token = self.last_token;
+        self.update_output_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let Some((last_processed_token, task)) = session
+                .update_in(cx, |session, window, cx| {
+                    let (output, last_processed_token) = session.output(token);
 
-        self.update_output_task = cx.spawn_in(window, async move |this, cx| {
-            _ = session.update_in(cx, move |session, window, cx| {
-                let (output, last_processed_token) = session.output(token);
-
-                _ = this.update(cx, |this, cx| {
-                    if last_processed_token == this.last_token {
-                        return;
-                    }
-                    this.add_messages(output, window, cx);
-
-                    this.last_token = last_processed_token;
+                    this.update(cx, |this, cx| {
+                        if last_processed_token == this.last_token {
+                            return None;
+                        }
+                        Some((
+                            last_processed_token,
+                            this.add_messages(output.cloned().collect(), window, cx),
+                        ))
+                    })
+                    .ok()
+                    .flatten()
+                })
+                .ok()
+                .flatten()
+            else {
+                _ = this.update(cx, |this, _| {
+                    this.update_output_task.take();
                 });
+                return;
+            };
+            _ = task.await.log_err();
+            _ = this.update(cx, |this, _| {
+                this.last_token = last_processed_token;
+                this.update_output_task.take();
             });
-        });
+        }));
     }
 }
 
 impl Render for Console {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query_focus_handle = self.query_bar.focus_handle(cx);
-
+        self.update_output(window, cx);
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
@@ -850,4 +780,85 @@ impl ansi::Handler for ConsoleHandler {
             _ => {}
         }
     }
+}
+
+fn color_fetcher(color: ansi::Color) -> fn(&Theme) -> Hsla {
+    let color_fetcher: fn(&Theme) -> Hsla = match color {
+        // Named and theme defined colors
+        ansi::Color::Named(n) => match n {
+            ansi::NamedColor::Black => |theme| theme.colors().terminal_ansi_black,
+            ansi::NamedColor::Red => |theme| theme.colors().terminal_ansi_red,
+            ansi::NamedColor::Green => |theme| theme.colors().terminal_ansi_green,
+            ansi::NamedColor::Yellow => |theme| theme.colors().terminal_ansi_yellow,
+            ansi::NamedColor::Blue => |theme| theme.colors().terminal_ansi_blue,
+            ansi::NamedColor::Magenta => |theme| theme.colors().terminal_ansi_magenta,
+            ansi::NamedColor::Cyan => |theme| theme.colors().terminal_ansi_cyan,
+            ansi::NamedColor::White => |theme| theme.colors().terminal_ansi_white,
+            ansi::NamedColor::BrightBlack => |theme| theme.colors().terminal_ansi_bright_black,
+            ansi::NamedColor::BrightRed => |theme| theme.colors().terminal_ansi_bright_red,
+            ansi::NamedColor::BrightGreen => |theme| theme.colors().terminal_ansi_bright_green,
+            ansi::NamedColor::BrightYellow => |theme| theme.colors().terminal_ansi_bright_yellow,
+            ansi::NamedColor::BrightBlue => |theme| theme.colors().terminal_ansi_bright_blue,
+            ansi::NamedColor::BrightMagenta => |theme| theme.colors().terminal_ansi_bright_magenta,
+            ansi::NamedColor::BrightCyan => |theme| theme.colors().terminal_ansi_bright_cyan,
+            ansi::NamedColor::BrightWhite => |theme| theme.colors().terminal_ansi_bright_white,
+            ansi::NamedColor::Foreground => |theme| theme.colors().terminal_foreground,
+            ansi::NamedColor::Background => |theme| theme.colors().terminal_background,
+            ansi::NamedColor::Cursor => |theme| theme.players().local().cursor,
+            ansi::NamedColor::DimBlack => |theme| theme.colors().terminal_ansi_dim_black,
+            ansi::NamedColor::DimRed => |theme| theme.colors().terminal_ansi_dim_red,
+            ansi::NamedColor::DimGreen => |theme| theme.colors().terminal_ansi_dim_green,
+            ansi::NamedColor::DimYellow => |theme| theme.colors().terminal_ansi_dim_yellow,
+            ansi::NamedColor::DimBlue => |theme| theme.colors().terminal_ansi_dim_blue,
+            ansi::NamedColor::DimMagenta => |theme| theme.colors().terminal_ansi_dim_magenta,
+            ansi::NamedColor::DimCyan => |theme| theme.colors().terminal_ansi_dim_cyan,
+            ansi::NamedColor::DimWhite => |theme| theme.colors().terminal_ansi_dim_white,
+            ansi::NamedColor::BrightForeground => |theme| theme.colors().terminal_bright_foreground,
+            ansi::NamedColor::DimForeground => |theme| theme.colors().terminal_dim_foreground,
+        },
+        // 'True' colors
+        ansi::Color::Spec(_) => |theme| theme.colors().editor_background,
+        // 8 bit, indexed colors
+        ansi::Color::Indexed(i) => {
+            match i {
+                // 0-15 are the same as the named colors above
+                0 => |theme| theme.colors().terminal_ansi_black,
+                1 => |theme| theme.colors().terminal_ansi_red,
+                2 => |theme| theme.colors().terminal_ansi_green,
+                3 => |theme| theme.colors().terminal_ansi_yellow,
+                4 => |theme| theme.colors().terminal_ansi_blue,
+                5 => |theme| theme.colors().terminal_ansi_magenta,
+                6 => |theme| theme.colors().terminal_ansi_cyan,
+                7 => |theme| theme.colors().terminal_ansi_white,
+                8 => |theme| theme.colors().terminal_ansi_bright_black,
+                9 => |theme| theme.colors().terminal_ansi_bright_red,
+                10 => |theme| theme.colors().terminal_ansi_bright_green,
+                11 => |theme| theme.colors().terminal_ansi_bright_yellow,
+                12 => |theme| theme.colors().terminal_ansi_bright_blue,
+                13 => |theme| theme.colors().terminal_ansi_bright_magenta,
+                14 => |theme| theme.colors().terminal_ansi_bright_cyan,
+                15 => |theme| theme.colors().terminal_ansi_bright_white,
+                // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
+                // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
+                // 16..=231 => {
+                //     let (r, g, b) = rgb_for_index(index as u8);
+                //     rgba_color(
+                //         if r == 0 { 0 } else { r * 40 + 55 },
+                //         if g == 0 { 0 } else { g * 40 + 55 },
+                //         if b == 0 { 0 } else { b * 40 + 55 },
+                //     )
+                // }
+                // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
+                // 232..=255 => {
+                //     let i = index as u8 - 232; // Align index to 0..24
+                //     let value = i * 10 + 8;
+                //     rgba_color(value, value, value)
+                // }
+                // For compatibility with the alacritty::Colors interface
+                // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+                _ => |_| gpui::black(),
+            }
+        }
+    };
+    color_fetcher
 }
