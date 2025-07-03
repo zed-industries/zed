@@ -266,19 +266,19 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let buffer = match (
-            self.entry_diff_buffer(entry_ix, cx),
+        let multibuffer = match (
+            self.entry_diff_multibuffer(entry_ix, cx),
             self.thread_entry_views.get(entry_ix),
         ) {
-            (Some(buffer), Some(Some(ThreadEntryView::Diff { editor }))) => {
-                if editor.read(cx).buffer() == &buffer {
+            (Some(multibuffer), Some(Some(ThreadEntryView::Diff { editor }))) => {
+                if editor.read(cx).buffer() == &multibuffer {
                     // same buffer, all synced up
                     return;
                 }
                 // new buffer, replace editor
-                buffer
+                multibuffer
             }
-            (Some(buffer), _) => buffer,
+            (Some(multibuffer), _) => multibuffer,
             (None, Some(Some(ThreadEntryView::Diff { .. }))) => {
                 // no longer displaying a diff, drop editor
                 self.thread_entry_views[entry_ix] = None;
@@ -294,7 +294,7 @@ impl AcpThreadView {
                     show_active_line_background: false,
                     sized_by_content: true,
                 },
-                buffer.clone(),
+                multibuffer.clone(),
                 None,
                 window,
                 cx,
@@ -334,7 +334,7 @@ impl AcpThreadView {
         });
     }
 
-    fn entry_diff_buffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
+    fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
 
         if let AgentThreadEntryContent::ToolCall(ToolCall { status, .. }) = &entry.content {
@@ -347,7 +347,7 @@ impl AcpThreadView {
                 ..
             } = status
             {
-                Some(diff.buffer.clone())
+                Some(diff.multibuffer.clone())
             } else {
                 None
             }

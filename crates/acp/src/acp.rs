@@ -5,10 +5,10 @@ use agentic_coding_protocol::{self as acp, Role};
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use chrono::{DateTime, Utc};
-use editor::MultiBuffer;
+use editor::{MultiBuffer, PathKey};
 use futures::channel::oneshot;
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
-use language::{Buffer, LanguageRegistry};
+use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
 use markdown::Markdown;
 use project::Project;
 use std::{mem, ops::Range, path::PathBuf, sync::Arc};
@@ -231,7 +231,7 @@ pub enum ToolCallContent {
 #[derive(Debug)]
 pub struct Diff {
     // todo! show path somewhere
-    buffer: Entity<MultiBuffer>,
+    multibuffer: Entity<MultiBuffer>,
     _path: PathBuf,
     _task: Task<Result<()>>,
 }
@@ -248,46 +248,65 @@ impl Diff {
             new_text,
         } = diff;
 
-        let buffer = cx.new(|cx| Buffer::local(new_text, cx));
-        let text_snapshot = buffer.read(cx).text_snapshot();
-        let buffer_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+        let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
 
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-            multibuffer.add_diff(buffer_diff.clone(), cx);
-            multibuffer
+        let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
+        let old_buffer = cx.new(|cx| Buffer::local(old_text.unwrap_or("".into()), cx));
+        let new_buffer_snapshot = new_buffer.read(cx).text_snapshot();
+        let old_buffer_snapshot = old_buffer.read(cx).snapshot();
+        let buffer_diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
+        let diff_task = buffer_diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                old_buffer_snapshot,
+                Some(language_registry.clone()),
+                new_buffer_snapshot,
+                cx,
+            )
         });
 
-        Self {
-            buffer: multibuffer,
-            _path: path.clone(),
-            _task: cx.spawn(async move |cx| {
-                let diff_snapshot = BufferDiff::update_diff(
-                    buffer_diff.clone(),
-                    text_snapshot.clone(),
-                    old_text.map(|o| o.into()),
-                    true,
-                    true,
-                    None,
-                    Some(language_registry.clone()),
-                    cx,
-                )
-                .await?;
+        let task = cx.spawn({
+            let multibuffer = multibuffer.clone();
+            let path = path.clone();
+            async move |cx| {
+                diff_task.await?;
 
-                buffer_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
-                })?;
+                multibuffer
+                    .update(cx, |multibuffer, cx| {
+                        let hunk_ranges = {
+                            let buffer = new_buffer.read(cx);
+                            let diff = buffer_diff.read(cx);
+                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
+                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+                                .collect::<Vec<_>>()
+                        };
+
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::for_buffer(&new_buffer, cx),
+                            new_buffer.clone(),
+                            hunk_ranges,
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                    })
+                    .log_err();
 
                 if let Some(language) = language_registry
                     .language_for_file_path(&path)
                     .await
                     .log_err()
                 {
-                    buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
+                    new_buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
                 }
 
                 anyhow::Ok(())
-            }),
+            }
+        });
+
+        Self {
+            multibuffer,
+            _path: path,
+            _task: task,
         }
     }
 }
