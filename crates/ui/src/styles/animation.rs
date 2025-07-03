@@ -282,4 +282,8 @@ impl Component for Animation {
                 .into_any_element(),
         )
     }
+
+    fn show_restart_animations() -> bool {
+        true
+    }
 }

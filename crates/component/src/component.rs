@@ -54,6 +54,7 @@ pub fn register_component<T: Component>() {
         scope: T::scope(),
         sort_name: SharedString::new_static(T::sort_name()),
         status: T::status(),
+        show_restart_animations: T::show_restart_animations(),
     };
 
     let mut data = COMPONENT_DATA.write();
@@ -118,6 +119,7 @@ pub struct ComponentMetadata {
     scope: ComponentScope,
     sort_name: SharedString,
     status: ComponentStatus,
+    show_restart_animations: bool,
 }
 
 impl ComponentMetadata {
@@ -157,6 +159,10 @@ impl ComponentMetadata {
 
     pub fn status(&self) -> ComponentStatus {
         self.status.clone()
+    }
+
+    pub fn show_restart_animations(&self) -> bool {
+        self.show_restart_animations
     }
 }
 
@@ -259,6 +265,16 @@ pub trait Component {
     /// tooltip on hover, or a grid of icons showcasing all the icons available.
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
+    }
+
+    /// Whether to show the "Restart Animations" button in the component preview.
+    ///
+    /// This is useful for components that contain animations that should be
+    /// restarted when the user clicks the button.
+    ///
+    /// Defaults to `false`.
+    fn show_restart_animations() -> bool {
+        false
     }
 }
 

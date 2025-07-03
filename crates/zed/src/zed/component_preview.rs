@@ -1155,16 +1155,18 @@ impl ComponentPreviewPage {
                                     .size(HeadlineSize::XLarge),
                             )
                             .children(self.render_component_status(cx))
-                            .child(
-                                Button::new("restart-animations", "Restart Animations")
-                                    .size(ButtonSize::Compact)
-                                    .on_click({
-                                        let restart_fn = restart_fn.clone();
-                                        move |_event, window, cx| {
-                                            restart_fn(window, cx);
-                                        }
-                                    }),
-                            ),
+                            .when(self.component.show_restart_animations(), |this| {
+                                this.child(
+                                    Button::new("restart-animations", "Restart Animations")
+                                        .size(ButtonSize::Compact)
+                                        .on_click({
+                                            let restart_fn = restart_fn.clone();
+                                            move |_event, window, cx| {
+                                                restart_fn(window, cx);
+                                            }
+                                        }),
+                                )
+                            }),
                     ),
             )
             .when_some(self.component.description(), |this, description| {
