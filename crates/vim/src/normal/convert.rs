@@ -1,11 +1,12 @@
 use collections::HashMap;
-use editor::{SelectionEffects, display_map::ToDisplayPoint};
+use editor::{SelectionEffects, display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
 use crate::{
     Vim,
+    insert::NormalBefore,
     motion::Motion,
     normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToRot47, ConvertToUpperCase},
     object::Object,
@@ -213,7 +214,12 @@ impl Vim {
                     }
 
                     Mode::HelixNormal => {
-                        ranges.push(selection.start..selection.end);
+                        let mut end = selection.end;
+                        if selection.start == selection.end {
+                            end = snapshot.clip_point(end + Point::new(0, 1), Bias::Right);
+                        }
+                        ranges.push(selection.start..end);
+                        cursor_positions.push(selection.start..selection.end);
                     }
                     Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
@@ -242,14 +248,12 @@ impl Vim {
                         .collect::<String>();
                     editor.edit([(range, text)], cx)
                 }
-                if !cursor_positions.is_empty() {
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.select_ranges(cursor_positions)
-                    })
-                }
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(cursor_positions)
+                })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx)
+        self.normal_before(&NormalBefore, window, cx);
     }
 }
 
