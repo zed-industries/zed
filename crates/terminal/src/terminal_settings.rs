@@ -195,7 +195,7 @@ pub struct TerminalSettingsContent {
     pub copy_on_select: Option<bool>,
     /// Whether to keep the text selection after copying it to the clipboard.
     ///
-    /// Default: true
+    /// Default: false
     pub keep_selection_on_copy: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
@@ -291,9 +291,6 @@ impl settings::Settings for TerminalSettings {
         {
             current.line_height = Some(TerminalLineHeight::Custom(height as f32))
         }
-
-        // in vscode the text selection is always removed after copying
-        current.keep_selection_on_copy = Some(false);
 
         #[cfg(target_os = "windows")]
         let platform = "windows";
