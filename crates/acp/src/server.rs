@@ -68,10 +68,12 @@ impl acp::Client for AcpClientDelegate {
                 None => Ok(acp::StatResponse {
                     exists: false,
                     is_directory: false,
+                    size: 0,
                 }),
                 Some(entry) => Ok(acp::StatResponse {
                     exists: entry.is_created(),
                     is_directory: entry.is_dir(),
+                    size: entry.size,
                 }),
             }
         })?
