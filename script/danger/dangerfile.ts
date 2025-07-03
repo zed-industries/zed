@@ -94,3 +94,23 @@ for (const promptPath of modifiedPrompts) {
     );
   }
 }
+
+const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";
+
+const FIXTURES_PATHS = ["crates/assistant_tools/src/edit_agent/evals/fixtures"];
+
+const modifiedFixtures = danger.git.modified_files.filter((file) =>
+  FIXTURES_PATHS.some((fixturePath) => file.includes(fixturePath)),
+);
+
+if (modifiedFixtures.length > 0) {
+  if (!body.includes(FIXTURE_CHANGE_ATTESTATION)) {
+    fail(
+      [
+        `This PR modifies eval or test fixtures (${modifiedFixtures.join(", ")}), which are typically expected to remain unchanged.`,
+        "If these changes are intentional and required, please add the following attestation to your PR description: ",
+        `"${FIXTURE_CHANGE_ATTESTATION}"`,
+      ].join("\n"),
+    );
+  }
+}
