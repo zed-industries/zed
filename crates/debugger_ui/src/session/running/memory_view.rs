@@ -1,7 +1,7 @@
 use std::{
     cell::OnceCell,
     rc::{Rc, Weak},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{Arc, LazyLock, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -13,9 +13,10 @@ use gpui::{
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, Context, Div, Element, FluentBuilder, InteractiveElement, IntoElement,
-    Label, LabelCommon, LineHeightStyle, ParentElement, Render, Scrollbar, ScrollbarState,
-    StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px, v_flex,
+    ActiveTheme, Color, Context, Div, Divider, Element, FluentBuilder, InteractiveElement,
+    IntoElement, Label, LabelCommon, LineHeightStyle, ParentElement, Render, Scrollbar,
+    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, TextSize, Window, div,
+    h_flex, px, v_flex,
 };
 use util::ResultExt;
 
@@ -81,6 +82,9 @@ impl ViewState {
     }
 }
 
+static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
+    LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
+
 impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let view_state = Arc::new(ViewState::new(0, 16));
@@ -108,9 +112,15 @@ impl MemoryView {
                         view_state.schedule_scroll_up();
                     }
                     let line_width = view_state.line_width();
+                    let memory = (0..line_width)
+                        .map(|cell_ix| {
+                            (((start + ix) * line_width + cell_ix) % (u8::MAX as usize)) as u8
+                        })
+                        .collect::<Vec<_>>();
                     h_flex()
+                        .id(("memory-view-row-full", ix * line_width))
                         .size_full()
-                        .gap_2()
+                        .gap_x_2()
                         .child(
                             div()
                                 .child(
@@ -125,21 +135,40 @@ impl MemoryView {
                         )
                         .child(
                             h_flex()
-                                .id(("memory-view-row", ix * line_width))
+                                .id(("memory-view-row-raw-memory", ix * line_width))
                                 .w_full()
                                 .px_1()
                                 .gap_1p5()
-                                .children((0..line_width).map(|cell_ix| {
-                                    Label::new(format!(
-                                        "{:02X}",
-                                        ((start + ix) * line_width + cell_ix) % u8::MAX as usize
-                                    ))
-                                    .buffer_font(cx)
-                                    .size(ui::LabelSize::Small)
-                                    .line_height_style(LineHeightStyle::UiLabel)
-                                }))
-                                .overflow_x_scroll(),
+                                .children(memory.iter().map(|cell| {
+                                    Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
+                                        .buffer_font(cx)
+                                        .size(ui::LabelSize::Small)
+                                        .line_height_style(LineHeightStyle::UiLabel)
+                                })),
                         )
+                        .child(
+                            h_flex()
+                                .id(("memory-view-row-ascii-memory", ix * line_width))
+                                .h_full()
+                                .px_1()
+                                .mr_4()
+                                .gap_x_1p5()
+                                .border_x_1()
+                                .border_color(Color::Muted.color(cx))
+                                .children(memory.iter().map(|cell| {
+                                    let as_character = char::from(*cell);
+                                    let as_visible = if as_character.is_ascii_graphic() {
+                                        as_character
+                                    } else {
+                                        '·'
+                                    };
+                                    Label::new(format!("{as_visible}"))
+                                        .buffer_font(cx)
+                                        .size(ui::LabelSize::Small)
+                                        .line_height_style(LineHeightStyle::UiLabel)
+                                })),
+                        )
+                        .overflow_x_scroll()
                         .into_any()
                 }
             },
@@ -278,6 +307,7 @@ impl Render for MemoryView {
                     .rounded_md()
                     .border_1()
                     .p_0p5()
+                    .mb_0p5()
                     .bg(cx.theme().colors().editor_background)
                     .when_else(
                         self.query_editor
@@ -288,6 +318,7 @@ impl Render for MemoryView {
                     )
                     .child(self.render_query_bar(cx)),
             )
+            .child(Divider::horizontal())
             .child(
                 v_flex()
                     .size_full()
