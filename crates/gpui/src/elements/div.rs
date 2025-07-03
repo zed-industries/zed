@@ -2823,7 +2823,6 @@ where
     }
 }
 
-
 impl<E: InteractiveElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
