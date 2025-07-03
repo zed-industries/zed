@@ -35,7 +35,7 @@ actions!(
         Check,
         /// Dismisses the update error message.
         DismissErrorMessage,
-        /// Opens the release notes for the current version.
+        /// Opens the release notes for the current version in a browser.
         ViewReleaseNotes,
     ]
 );
