@@ -301,7 +301,12 @@ impl DebugTaskFile {
                 .get_mut("properties")
                 .and_then(|value| value.as_object_mut())
             {
-                properties.remove("label");
+                if properties.remove("label").is_none() {
+                    debug_panic!(
+                        "Generated TaskTemplate json schema did not have expected 'label' field. \
+                        Schema of 2nd alternative is: {template_object:?}"
+                    );
+                }
             }
 
             if let Some(arr) = template_object
@@ -311,13 +316,13 @@ impl DebugTaskFile {
                 arr.retain(|v| v.as_str() != Some("label"));
             }
         } else {
-            debug_panic!("Task Template schema in debug scenario's needs to be updated");
+            debug_panic!(
+                "Generated TaskTemplate json schema did not match expectations. \
+                Schema is: {build_task_value:?}"
+            );
         }
 
-        let task_definitions = build_task_value
-            .get("definitions")
-            .cloned()
-            .unwrap_or_default();
+        let task_definitions = build_task_value.get("$defs").cloned().unwrap_or_default();
 
         let adapter_conditions = schemas
             .0
@@ -375,7 +380,7 @@ impl DebugTaskFile {
                 },
                 "allOf": adapter_conditions
             },
-            "definitions": task_definitions
+            "$defs": task_definitions
         })
     }
 }
