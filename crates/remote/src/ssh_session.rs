@@ -2010,9 +2010,7 @@ impl SshRemoteConnection {
             rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
         }
 
-        let bin_path = if platform.arch == std::env::consts::ARCH
-            && platform.os == std::env::consts::OS
-        {
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
             run_cmd(
@@ -2031,8 +2029,6 @@ impl SshRemoteConnection {
                     .env("RUSTFLAGS", &rust_flags),
             )
             .await?;
-
-            format!("target/remote_server/{triple}/debug/remote_server")
         } else {
             smol::fs::create_dir_all("target/remote_server").await?;
 
@@ -2119,17 +2115,22 @@ impl SshRemoteConnection {
                 )
                 .await?;
             }
-
-            format!("target/remote_server/{triple}/debug/remote_server")
         };
+        let bin_path = Path::new("target")
+            .join("remote_server")
+            .join(triple)
+            .join("debug")
+            .join("remote_server");
 
         let path = if !build_remote_server.contains("nocompress") {
             delegate.set_status(Some("Compressing binary"), cx);
-            run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path])).await?;
+            run_cmd(Command::new("gzip").args(["-9", "-f", &bin_path.to_string_lossy()])).await?;
 
-            std::env::current_dir()?.join(format!("{bin_path}.gz"))
+            let mut archive_path = bin_path;
+            archive_path.set_extension("gz");
+            std::env::current_dir()?.join(archive_path)
         } else {
-            bin_path.into()
+            bin_path
         };
 
         Ok(path)
