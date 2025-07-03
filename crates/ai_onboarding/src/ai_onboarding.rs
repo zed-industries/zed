@@ -184,9 +184,16 @@ impl ZedAiOnboarding {
             })
     }
 
+    fn render_young_account_disclaimer() -> impl IntoElement {
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free Pro plan trial.";
+
+        Label::new(YOUNG_ACCOUNT_DISCLAIMER)
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+    }
+
     fn render_terms_or_service_disclaimer() -> impl IntoElement {
         h_flex()
-            .mt_2()
             .child(
                 Label::new("By using any Zed plans, you accept the")
                     .size(LabelSize::Small)
@@ -230,7 +237,6 @@ impl ZedAiOnboarding {
 impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         const PLANS_DESCRIPTION: &str = "Choose how you want to start.";
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free trial.";
 
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             v_flex()
@@ -241,12 +247,17 @@ impl RenderOnce for ZedAiOnboarding {
                         .color(Color::Muted)
                         .mt_1(),
                 )
-                .when(self.account_too_young, |this| {
-                    this.child(YOUNG_ACCOUNT_DISCLAIMER)
-                })
                 .child(self.render_free_plan(cx))
                 .child(self.render_pro_plan(cx))
-                .child(Self::render_terms_or_service_disclaimer())
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .mt_2()
+                        .when(self.account_too_young, |this| {
+                            this.child(Self::render_young_account_disclaimer())
+                        })
+                        .child(Self::render_terms_or_service_disclaimer()),
+                )
         } else {
             self.render_sign_in_disclaimer(cx)
         }
