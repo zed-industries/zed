@@ -8,6 +8,7 @@ pub mod types;
 use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use client::Client;
@@ -17,6 +18,8 @@ use parking_lot::RwLock;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::redact::should_redact;
+
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -33,6 +36,8 @@ pub struct ContextServerCommand {
     pub path: String,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    /// Timeout for tool calls in milliseconds. Defaults to 60000 (60 seconds) if not specified.
+    pub tool_call_timeout_millis: Option<u64>,
 }
 
 impl std::fmt::Debug for ContextServerCommand {
@@ -95,6 +100,7 @@ impl ContextServer {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
+                    tool_call_timeout_millis: command.tool_call_timeout_millis,
                 },
                 cx.clone(),
             )?,
@@ -102,6 +108,7 @@ impl ContextServer {
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
                 transport.clone(),
+                DEFAULT_REQUEST_TIMEOUT, // Default timeout for custom transports
                 cx.clone(),
             )?,
         };
