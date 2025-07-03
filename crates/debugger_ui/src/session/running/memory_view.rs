@@ -114,7 +114,7 @@ impl MemoryView {
                     let line_width = view_state.line_width();
                     let memory = (0..line_width)
                         .map(|cell_ix| {
-                            (((start + ix) * line_width + cell_ix) % (u8::MAX as usize)) as u8
+                            (((start + ix) * line_width + cell_ix) % (u8::MAX as usize + 1)) as u8
                         })
                         .collect::<Vec<_>>();
                     h_flex()
@@ -136,14 +136,18 @@ impl MemoryView {
                         .child(
                             h_flex()
                                 .id(("memory-view-row-raw-memory", ix * line_width))
-                                .w_full()
+                                .size_full()
                                 .px_1()
                                 .gap_1p5()
                                 .children(memory.iter().map(|cell| {
-                                    Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
-                                        .buffer_font(cx)
-                                        .size(ui::LabelSize::Small)
-                                        .line_height_style(LineHeightStyle::UiLabel)
+                                    div()
+                                        .when(cell % 16 == 8, |this| this.bg(gpui::red()))
+                                        .child(
+                                            Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
+                                                .buffer_font(cx)
+                                                .size(ui::LabelSize::Small)
+                                                .line_height_style(LineHeightStyle::UiLabel),
+                                        )
                                 })),
                         )
                         .child(
