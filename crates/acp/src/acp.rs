@@ -1,7 +1,7 @@
 mod server;
 mod thread_view;
 
-use agentic_coding_protocol::{self as acp, Role};
+use agentic_coding_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use chrono::{DateTime, Utc};
@@ -39,15 +39,13 @@ pub struct FileContent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Message {
-    pub role: acp::Role,
-    pub chunks: Vec<MessageChunk>,
+pub struct UserMessage {
+    pub chunks: Vec<UserMessageChunk>,
 }
 
-impl Message {
-    fn into_acp(self, cx: &App) -> acp::Message {
-        acp::Message {
-            role: self.role,
+impl UserMessage {
+    fn into_acp(self, cx: &App) -> acp::UserMessage {
+        acp::UserMessage {
             chunks: self
                 .chunks
                 .into_iter()
@@ -58,7 +56,7 @@ impl Message {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MessageChunk {
+pub enum UserMessageChunk {
     Text {
         chunk: Entity<Markdown>,
     },
@@ -82,33 +80,57 @@ pub enum MessageChunk {
     },
 }
 
-impl MessageChunk {
+impl UserMessageChunk {
+    pub fn into_acp(self, cx: &App) -> acp::UserMessageChunk {
+        match self {
+            Self::Text { chunk } => acp::UserMessageChunk::Text {
+                chunk: chunk.read(cx).source().to_string(),
+            },
+            Self::File { .. } => todo!(),
+            Self::Directory { .. } => todo!(),
+            Self::Symbol { .. } => todo!(),
+            Self::Fetch { .. } => todo!(),
+        }
+    }
+
+    pub fn from_str(chunk: &str, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
+        Self::Text {
+            chunk: cx.new(|cx| {
+                Markdown::new(chunk.to_owned().into(), Some(language_registry), None, cx)
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssistantMessage {
+    pub chunks: Vec<AssistantMessageChunk>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AssistantMessageChunk {
+    Text { chunk: Entity<Markdown> },
+    Thought { chunk: Entity<Markdown> },
+}
+
+impl AssistantMessageChunk {
     pub fn from_acp(
-        chunk: acp::MessageChunk,
+        chunk: acp::AssistantMessageChunk,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         match chunk {
-            acp::MessageChunk::Text { chunk } => MessageChunk::Text {
+            acp::AssistantMessageChunk::Text { chunk } => Self::Text {
+                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            },
+            acp::AssistantMessageChunk::Thought { chunk } => Self::Thought {
                 chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
             },
         }
     }
 
-    pub fn into_acp(self, cx: &App) -> acp::MessageChunk {
-        match self {
-            MessageChunk::Text { chunk } => acp::MessageChunk::Text {
-                chunk: chunk.read(cx).source().to_string(),
-            },
-            MessageChunk::File { .. } => todo!(),
-            MessageChunk::Directory { .. } => todo!(),
-            MessageChunk::Symbol { .. } => todo!(),
-            MessageChunk::Fetch { .. } => todo!(),
-        }
-    }
-
     pub fn from_str(chunk: &str, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
-        MessageChunk::Text {
+        Self::Text {
             chunk: cx.new(|cx| {
                 Markdown::new(chunk.to_owned().into(), Some(language_registry), None, cx)
             }),
@@ -118,7 +140,8 @@ impl MessageChunk {
 
 #[derive(Debug)]
 pub enum AgentThreadEntryContent {
-    Message(Message),
+    UserMessage(UserMessage),
+    AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
 }
 
@@ -434,44 +457,53 @@ impl AcpThread {
         id
     }
 
-    pub fn push_assistant_chunk(&mut self, chunk: acp::MessageChunk, cx: &mut Context<Self>) {
+    pub fn push_assistant_chunk(
+        &mut self,
+        chunk: acp::AssistantMessageChunk,
+        cx: &mut Context<Self>,
+    ) {
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntryContent::Message(Message {
-                ref mut chunks,
-                role: Role::Assistant,
-            }) = last_entry.content
+            && let AgentThreadEntryContent::AssistantMessage(AssistantMessage { ref mut chunks }) =
+                last_entry.content
         {
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
 
-            if let (
-                Some(MessageChunk::Text { chunk: old_chunk }),
-                acp::MessageChunk::Text { chunk: new_chunk },
-            ) = (chunks.last_mut(), &chunk)
-            {
-                old_chunk.update(cx, |old_chunk, cx| {
-                    old_chunk.append(&new_chunk, cx);
-                });
-            } else {
-                chunks.push(MessageChunk::from_acp(
-                    chunk,
-                    self.project.read(cx).languages().clone(),
-                    cx,
-                ));
+            match (chunks.last_mut(), &chunk) {
+                (
+                    Some(AssistantMessageChunk::Text { chunk: old_chunk }),
+                    acp::AssistantMessageChunk::Text { chunk: new_chunk },
+                )
+                | (
+                    Some(AssistantMessageChunk::Thought { chunk: old_chunk }),
+                    acp::AssistantMessageChunk::Thought { chunk: new_chunk },
+                ) => {
+                    old_chunk.update(cx, |old_chunk, cx| {
+                        old_chunk.append(&new_chunk, cx);
+                    });
+                }
+                _ => {
+                    chunks.push(AssistantMessageChunk::from_acp(
+                        chunk,
+                        self.project.read(cx).languages().clone(),
+                        cx,
+                    ));
+                }
             }
+        } else {
+            let chunk = AssistantMessageChunk::from_acp(
+                chunk,
+                self.project.read(cx).languages().clone(),
+                cx,
+            );
 
-            return;
+            self.push_entry(
+                AgentThreadEntryContent::AssistantMessage(AssistantMessage {
+                    chunks: vec![chunk],
+                }),
+                cx,
+            );
         }
-
-        let chunk = MessageChunk::from_acp(chunk, self.project.read(cx).languages().clone(), cx);
-
-        self.push_entry(
-            AgentThreadEntryContent::Message(Message {
-                role: Role::Assistant,
-                chunks: vec![chunk],
-            }),
-            cx,
-        );
     }
 
     pub fn request_tool_call(
@@ -632,7 +664,8 @@ impl AcpThread {
                     | ToolCallStatus::Rejected
                     | ToolCallStatus::Canceled => continue,
                 },
-                AgentThreadEntryContent::Message(_) => {
+                AgentThreadEntryContent::UserMessage(_)
+                | AgentThreadEntryContent::AssistantMessage(_) => {
                     // Reached the beginning of the turn
                     return false;
                 }
@@ -648,13 +681,12 @@ impl AcpThread {
     ) -> impl use<> + Future<Output = Result<()>> {
         let agent = self.server.clone();
         let id = self.id.clone();
-
-        let chunk = MessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
-        let message = Message {
-            role: Role::User,
+        let chunk =
+            UserMessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
+        let message = UserMessage {
             chunks: vec![chunk],
         };
-        self.push_entry(AgentThreadEntryContent::Message(message.clone()), cx);
+        self.push_entry(AgentThreadEntryContent::UserMessage(message.clone()), cx);
         let acp_message = message.into_acp(cx);
 
         let (tx, rx) = oneshot::channel();
@@ -777,17 +809,11 @@ mod tests {
             assert_eq!(thread.entries.len(), 2);
             assert!(matches!(
                 thread.entries[0].content,
-                AgentThreadEntryContent::Message(Message {
-                    role: Role::User,
-                    ..
-                })
+                AgentThreadEntryContent::UserMessage(_)
             ));
             assert!(matches!(
                 thread.entries[1].content,
-                AgentThreadEntryContent::Message(Message {
-                    role: Role::Assistant,
-                    ..
-                })
+                AgentThreadEntryContent::AssistantMessage(_)
             ));
         });
     }
@@ -818,7 +844,7 @@ mod tests {
             .unwrap();
         thread.read_with(cx, |thread, _cx| {
             assert!(matches!(
-                &thread.entries()[1].content,
+                &thread.entries()[2].content,
                 AgentThreadEntryContent::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed { .. },
                     ..
@@ -826,11 +852,8 @@ mod tests {
             ));
 
             assert!(matches!(
-                thread.entries[2].content,
-                AgentThreadEntryContent::Message(Message {
-                    role: Role::Assistant,
-                    ..
-                })
+                thread.entries[3].content,
+                AgentThreadEntryContent::AssistantMessage(_)
             ));
         });
     }
@@ -860,7 +883,7 @@ mod tests {
                         ..
                     },
                 ..
-            }) = &thread.entries()[1].content
+            }) = &thread.entries()[2].content
             else {
                 panic!();
             };
@@ -874,7 +897,7 @@ mod tests {
             thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
 
             assert!(matches!(
-                &thread.entries()[1].content,
+                &thread.entries()[2].content,
                 AgentThreadEntryContent::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed { .. },
                     ..
@@ -889,7 +912,7 @@ mod tests {
                 content: Some(ToolCallContent::Markdown { markdown }),
                 status: ToolCallStatus::Allowed { .. },
                 ..
-            }) = &thread.entries()[1].content
+            }) = &thread.entries()[2].content
             else {
                 panic!();
             };
