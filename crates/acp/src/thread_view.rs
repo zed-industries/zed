@@ -164,7 +164,6 @@ impl AcpThreadView {
                         };
                     }
                     Err(e) => {
-                        dbg!(&e);
                         if let Some(exit_status) = agent.exit_status() {
                             this.thread_state = ThreadState::LoadError(
                                 format!(

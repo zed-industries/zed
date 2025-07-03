@@ -79,7 +79,13 @@ impl acp::Client for AcpClientDelegate {
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
                 self.update_thread(&request.thread_id.into(), cx, |thread, cx| {
-                    thread.request_tool_call(request.label, request.icon, request.content, request.confirmation, cx)
+                    thread.request_tool_call(
+                        request.label,
+                        request.icon,
+                        request.content,
+                        request.confirmation,
+                        cx,
+                    )
                 })
             })?
             .context("Failed to update thread")?;
@@ -217,7 +223,7 @@ impl AcpServer {
     }
 
     pub fn exit_status(&self) -> Option<ExitStatus> {
-        self.exit_status.lock().clone()
+        *self.exit_status.lock()
     }
 }
 
