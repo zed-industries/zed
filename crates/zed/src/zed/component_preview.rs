@@ -269,8 +269,13 @@ impl ComponentPreview {
     }
 
     fn set_active_page(&mut self, page: PreviewPage, cx: &mut Context<Self>) {
-        self.active_page = page;
-        cx.emit(ItemEvent::UpdateTab);
+        if self.active_page == page {
+            // Force the current preview page to render again
+            self.reset_key = self.reset_key.wrapping_add(1);
+        } else {
+            self.active_page = page;
+            cx.emit(ItemEvent::UpdateTab);
+        }
         cx.notify();
     }
 
@@ -535,12 +540,6 @@ impl ComponentPreview {
                     .inset(true)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let id = id.clone();
-                        if this.active_page == PreviewPage::Component(id.clone()) {
-                            // Force the preview to render again
-                            this.reset_key = this.reset_key.wrapping_add(1);
-                            cx.notify();
-                            return;
-                        }
                         this.set_active_page(PreviewPage::Component(id), cx);
                     }))
                     .into_any_element()
