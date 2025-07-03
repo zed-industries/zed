@@ -1,9 +1,5 @@
 use std::{
-    ops::Range,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -22,99 +18,132 @@ use ui::{
 use util::ResultExt;
 
 pub(crate) struct MemoryView {
-    state: ListState,
-    line_width: usize,
+    list_state: ListState,
     scroll_state: ScrollbarState,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
-    base_row_ix: Arc<AtomicUsize>,
-    next_row_ix: Arc<AtomicUsize>,
+    view_state: Arc<ViewState>,
     query_editor: Entity<Editor>,
+}
+
+struct ViewState {
+    /// Uppermost row index
+    base_row: AtomicUsize,
+    /// To implement the infinite scrolling feature, we track two row indices: base (applicable to current frame) and next frame.
+    /// Whenever we render an item at a list boundary, we decrement/increment base index.
+    next_row: AtomicUsize,
+    /// How many cells per row do we have?
+    line_width: AtomicUsize,
+}
+
+impl ViewState {
+    fn new(address: usize, line_width: usize) -> Self {
+        Self {
+            base_row: address.into(),
+            next_row: address.into(),
+            line_width: line_width.into(),
+        }
+    }
+    fn row_count(&self) -> usize {
+        // This was picked fully arbitrarily. There's no incentive for us to care about page sizes other than the fact that it seems to be a good
+        // middle ground for data size.
+        const PAGE_SIZE: usize = 4096;
+        PAGE_SIZE / self.line_width()
+    }
+    fn schedule_scroll_down(&self) {
+        _ = self.next_row.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |ix| ix.checked_add(1),
+        );
+    }
+    fn schedule_scroll_up(&self) {
+        _ = self.next_row.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |ix| ix.checked_sub(1),
+        );
+    }
+    fn perform_scheduled_scroll(&self) {
+        self.base_row.store(
+            self.next_row.load(std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    fn base_row(&self) -> usize {
+        self.base_row.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn line_width(&self) -> usize {
+        self.line_width.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let line_width = 16;
-        let base_row_ix = Arc::new(AtomicUsize::new(0));
-        let next_row_ix = Arc::new(AtomicUsize::new(0));
-        let middle = base_row_ix.clone();
-        let next = next_row_ix.clone();
+        let view_state = Arc::new(ViewState::new(0, 16));
         let mut state = ListState::new(
-            Self::list_rows(line_width),
+            view_state.row_count(),
             gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, _, cx| {
-                let start = middle.load(std::sync::atomic::Ordering::Relaxed);
+            px(100.),
+            {
+                let view_state = view_state.clone();
+                move |ix, _, cx| {
+                    let start = view_state.base_row();
 
-                if ix == 255 {
-                    _ = next.fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |ix| ix.checked_add(1),
-                    );
-                } else if ix == 0 {
-                    _ = next.fetch_update(
-                        std::sync::atomic::Ordering::Relaxed,
-                        std::sync::atomic::Ordering::Relaxed,
-                        |ix| ix.checked_sub(1),
-                    );
-                }
-                h_flex()
-                    .size_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .child(
-                                Label::new(format!("{:08X}", (start + ix) * line_width))
+                    let row_count = view_state.row_count();
+                    if ix == row_count {
+                        view_state.schedule_scroll_down();
+                    } else if ix == 0 {
+                        view_state.schedule_scroll_up();
+                    }
+                    let line_width = view_state.line_width();
+                    h_flex()
+                        .size_full()
+                        .gap_2()
+                        .child(
+                            div()
+                                .child(
+                                    Label::new(format!("{:08X}", (start + ix) * line_width))
+                                        .buffer_font(cx)
+                                        .size(ui::LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .px_1()
+                                .border_r_1()
+                                .border_color(Color::Muted.color(cx)),
+                        )
+                        .child(
+                            h_flex()
+                                .id(("memory-view-row", ix * line_width))
+                                .w_full()
+                                .px_1()
+                                .gap_1p5()
+                                .children((0..line_width).map(|cell_ix| {
+                                    Label::new(format!(
+                                        "{:02X}",
+                                        ((start + ix) * line_width + cell_ix) % u8::MAX as usize
+                                    ))
                                     .buffer_font(cx)
                                     .size(ui::LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .px_1()
-                            .border_r_1()
-                            .border_color(Color::Muted.color(cx)),
-                    )
-                    .child(
-                        h_flex()
-                            .id(("memory-view-row", ix * line_width))
-                            .w_full()
-                            .px_1()
-                            .gap_1p5()
-                            .children((0..line_width).map(|cell_ix| {
-                                Label::new(format!(
-                                    "{:02X}",
-                                    ((start + ix) * line_width + cell_ix) % u8::MAX as usize
-                                ))
-                                .buffer_font(cx)
-                                .size(ui::LabelSize::Small)
-                                .line_height_style(LineHeightStyle::UiLabel)
-                            }))
-                            .overflow_x_scroll(),
-                    )
-                    .into_any()
+                                    .line_height_style(LineHeightStyle::UiLabel)
+                                }))
+                                .overflow_x_scroll(),
+                        )
+                        .into_any()
+                }
             },
         );
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
         Self {
             scroll_state: ScrollbarState::new(state.clone()),
-            state,
-            line_width,
-            base_row_ix,
+            list_state: state,
             show_scrollbar: false,
             hide_scrollbar_task: None,
             focus_handle: cx.focus_handle(),
-            next_row_ix,
+            view_state,
             query_editor,
         }
-    }
-
-    fn list_rows(bytes_per_row: usize) -> usize {
-        4096 / bytes_per_row
-    }
-    fn middle_address_to_range(start: usize) -> Range<usize> {
-        let end = start + 256;
-        start..end
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -206,8 +235,7 @@ impl Render for MemoryView {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        self.base_row_ix
-            .store(self.next_row_ix.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.view_state.perform_scheduled_scroll();
         v_flex()
             .id("Memory-view")
             .p_1()
@@ -240,7 +268,7 @@ impl Render for MemoryView {
             .child(
                 v_flex()
                     .size_full()
-                    .child(list(self.state.clone()).size_full())
+                    .child(list(self.list_state.clone()).size_full())
                     .children(self.render_vertical_scrollbar(cx)),
             )
     }
