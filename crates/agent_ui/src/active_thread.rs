@@ -1026,6 +1026,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
+                self.clear_last_error();
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
@@ -1042,6 +1043,7 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::MessageEdited(message_id) => {
+                self.clear_last_error();
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                         thread.message(*message_id).map(|message| {
