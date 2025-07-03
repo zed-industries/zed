@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,8 +18,8 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::prelude::*;
 use ui::{Button, Tooltip};
+use ui::{Disclosure, prelude::*};
 use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
@@ -37,6 +38,7 @@ pub struct AcpThreadView {
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     auth_task: Option<Task<()>>,
+    expanded_thinking_blocks: HashSet<(usize, usize)>,
 }
 
 #[derive(Debug)]
@@ -125,6 +127,7 @@ impl AcpThreadView {
             list_state: list_state,
             last_error: None,
             auth_task: None,
+            expanded_thinking_blocks: HashSet::new(),
         }
     }
 
@@ -401,18 +404,18 @@ impl AcpThreadView {
                     }
                     _ => todo!(),
                 }));
+
                 div()
                     .p_2()
-                    .pt_5()
                     .child(
                         div()
-                            .text_xs()
                             .p_3()
-                            .bg(cx.theme().colors().editor_background)
                             .rounded_lg()
                             .shadow_md()
+                            .bg(cx.theme().colors().editor_background)
                             .border_1()
                             .border_color(cx.theme().colors().border)
+                            .text_xs()
                             .child(message_body),
                     )
                     .into_any()
@@ -420,15 +423,26 @@ impl AcpThreadView {
             AgentThreadEntryContent::AssistantMessage(AssistantMessage { chunks }) => {
                 let style = default_markdown_style(window, cx);
                 let message_body = div()
-                    .children(chunks.iter().map(|chunk| match chunk {
-                        AssistantMessageChunk::Text { chunk } => {
-                            // todo!() open link
-                            MarkdownElement::new(chunk.clone(), style.clone()).into_any_element()
-                        }
-                        AssistantMessageChunk::Thought { chunk } => {
-                            self.render_thinking_block(chunk.clone(), window, cx)
-                        }
-                    }))
+                    .children(
+                        chunks
+                            .iter()
+                            .enumerate()
+                            .map(|(chunk_ix, chunk)| match chunk {
+                                AssistantMessageChunk::Text { chunk } => {
+                                    // todo!() open link
+                                    MarkdownElement::new(chunk.clone(), style.clone())
+                                        .into_any_element()
+                                }
+                                AssistantMessageChunk::Thought { chunk } => self
+                                    .render_thinking_block(
+                                        index,
+                                        chunk_ix,
+                                        chunk.clone(),
+                                        window,
+                                        cx,
+                                    ),
+                            }),
+                    )
                     .into_any();
 
                 div()
@@ -448,41 +462,72 @@ impl AcpThreadView {
 
     fn render_thinking_block(
         &self,
+        entry_ix: usize,
+        chunk_ix: usize,
         chunk: Entity<Markdown>,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let key = (entry_ix, chunk_ix);
+        let is_open = self.expanded_thinking_blocks.contains(&key);
+
         v_flex()
-            .mt_neg_2()
-            .mb_3()
+            .py_1()
             .child(
-                h_flex().group("disclosure-header").justify_between().child(
-                    h_flex()
-                        .gap_1p5()
-                        .child(
-                            Icon::new(IconName::LightBulb)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(Label::new("Thinking").size(LabelSize::Small)),
-                ),
+                h_flex()
+                    .group("disclosure-header")
+                    .pr_1()
+                    .justify_between()
+                    .opacity(0.8)
+                    .hover(|style| style.opacity(1.))
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(IconName::LightBulb)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new("Thinking").size(LabelSize::Small)),
+                    )
+                    .child(
+                        div().visible_on_hover("disclosure-header").child(
+                            Disclosure::new("thinking-disclosure", is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .on_click(cx.listener({
+                                    move |this, _event, _window, _cx| {
+                                        if is_open {
+                                            this.expanded_thinking_blocks.remove(&key);
+                                        } else {
+                                            this.expanded_thinking_blocks.insert(key);
+                                        }
+                                    }
+                                })),
+                        ),
+                    ),
             )
             .child(
                 div()
                     .relative()
-                    .rounded_b_lg()
-                    .mt_2()
-                    .pl_4()
-                    .child(div().text_ui_sm(cx).child(
-                        // todo! url click
-                        MarkdownElement::new(chunk, default_markdown_style(window, cx)),
-                        // .on_url_click({
-                        //     let workspace = self.workspace.clone();
-                        //     move |text, window, cx| {
-                        //         open_markdown_link(text, workspace.clone(), window, cx);
-                        //     }
-                        // }),
-                    )),
+                    .mt_1p5()
+                    .ml_1p5()
+                    .pl_2p5()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .text_ui_sm(cx)
+                    .when(is_open, |this| {
+                        this.child(
+                            // todo! url click
+                            MarkdownElement::new(chunk, default_markdown_style(window, cx)),
+                            // .on_url_click({
+                            //     let workspace = self.workspace.clone();
+                            //     move |text, window, cx| {
+                            //         open_markdown_link(text, workspace.clone(), window, cx);
+                            //     }
+                            // }),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -556,7 +601,6 @@ impl AcpThreadView {
             .rounded_md()
             .border_1()
             .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
                     .px_2()
@@ -1108,13 +1152,11 @@ impl Render for AcpThreadView {
                     .flex_1()
                     .justify_end()
                     .child(Label::new(format!("Failed to load: {e}")).into_any_element()),
-                ThreadState::Ready { thread, .. } => v_flex().flex_1().gap_2().map(|this| {
                     if self.list_state.item_count() > 0 {
                         this.child(
                             list(self.list_state.clone())
                                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                                 .flex_grow()
-                                .pb_2()
                                 .into_any(),
                         )
                         .child(
