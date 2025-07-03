@@ -1,10 +1,10 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
 pub(crate) mod loaded_source_list;
+pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
