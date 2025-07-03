@@ -29,7 +29,7 @@ use crate::{
 };
 
 pub struct AcpThreadView {
-    agent: Arc<AcpServer>,
+    thread: Entity<AcpThread>,
     thread_state: ThreadState,
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
     thread_entry_views: Vec<Option<ThreadEntryView>>,
@@ -115,11 +115,11 @@ impl AcpThreadView {
             .spawn()
             .unwrap();
 
-        let agent = AcpServer::stdio(child, project, cx);
+        let thread = cx.new(|cx| AcpThread::stdio(child, project, cx));
 
         Self {
-            thread_state: Self::initial_state(agent.clone(), window, cx),
-            agent,
+            thread_state: Self::initial_state(thread.clone(), window, cx),
+            thread,
             message_editor,
             thread_entry_views: Vec::new(),
             list_state: list_state,
@@ -129,12 +129,13 @@ impl AcpThreadView {
     }
 
     fn initial_state(
-        agent: Arc<AcpServer>,
+        thread: Entity<AcpThread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
+        let initialize = thread.read(cx).initialize();
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let result = match agent.initialize().await {
+            let result = match initialize.await {
                 Err(e) => Err(e),
                 Ok(response) => {
                     if !response.is_authenticated {
@@ -143,14 +144,14 @@ impl AcpThreadView {
                         })
                         .ok();
                         return;
-                    }
-                    agent.clone().create_thread(cx).await
+                    };
+                    Ok(())
                 }
             };
 
             this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(thread) => {
+                    Ok(()) => {
                         let subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
                         this.list_state
@@ -162,7 +163,7 @@ impl AcpThreadView {
                         };
                     }
                     Err(e) => {
-                        if let Some(exit_status) = agent.exit_status() {
+                        if let Some(exit_status) = thread.read(cx).exit_status() {
                             this.thread_state = ThreadState::LoadError(
                                 format!(
                                     "Gemini exited with status {}",
@@ -349,10 +350,11 @@ impl AcpThreadView {
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let agent = self.agent.clone();
+        let agent = self.thread.clone();
         self.last_error.take();
+        let authenticate = self.thread.read(cx).authenticate();
         self.auth_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = agent.authenticate().await;
+            let result = authenticate.await;
 
             this.update_in(cx, |this, window, cx| {
                 if let Err(err) = result {
