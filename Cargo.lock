@@ -4830,6 +4830,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "ui",
  "unicode-script",
  "unicode-segmentation",
