@@ -26,7 +26,7 @@ use ui::{
 };
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
-use welcome::BaseKeymap;
+use welcome::{BaseKeymap, WelcomePage};
 use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent, SerializableItem},
@@ -144,6 +144,7 @@ pub struct OnboardingUI {
     workspace: WeakEntity<Workspace>,
     workspace_id: Option<WorkspaceId>,
     client: Arc<Client>,
+    welcome_page: Option<Entity<WelcomePage>>,
 }
 
 impl OnboardingUI {}
@@ -225,6 +226,7 @@ impl OnboardingUI {
             workspace: workspace.weak_handle(),
             workspace_id: workspace.database_id(),
             client,
+            welcome_page: None,
         }
     }
 
@@ -1158,39 +1160,32 @@ impl OnboardingUI {
     }
 
     fn render_welcome_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let page_index = 3; // Welcome page index
-        let focused_item = self.page_focus[page_index].0;
-        let is_page_focused = self.focus_area == FocusArea::PageContent;
+        // Lazy-initialize the welcome page if needed
+        if self.welcome_page.is_none() {
+            if let Some(workspace) = self.workspace.upgrade() {
+                let _ = workspace.update(cx, |workspace, cx| {
+                    self.welcome_page = Some(WelcomePage::new(workspace, cx));
+                });
+            }
+        }
 
-        v_flex()
-            .h_full()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .child(
-                Label::new("Welcome to Zed!")
-                    .size(LabelSize::Large)
-                    .color(Color::Default),
-            )
-            .child(
-                Label::new("You're all set up and ready to code")
-                    .size(LabelSize::Default)
-                    .color(Color::Muted),
-            )
-            .child(
-                Button::new("finish_onboarding", "Start Coding!")
-                    .style(ButtonStyle::Filled)
-                    .size(ButtonSize::Large)
-                    .when(is_page_focused && focused_item == 0, |this| {
-                        this.color(Color::Accent)
-                    })
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        // TODO: Close onboarding and start coding
-                        cx.notify();
-                    })),
-            )
-            .into_any_element()
+        // Render the welcome page if it exists, otherwise show a fallback
+        if let Some(welcome_page) = &self.welcome_page {
+            welcome_page.clone().into_any_element()
+        } else {
+            // Fallback UI if we couldn't create the welcome page
+            v_flex()
+                .h_full()
+                .w_full()
+                .items_center()
+                .justify_center()
+                .child(
+                    Label::new("Unable to load welcome page")
+                        .size(LabelSize::Default)
+                        .color(Color::Error),
+                )
+                .into_any_element()
+        }
     }
 }
 
