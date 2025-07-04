@@ -1117,8 +1117,10 @@ impl RunningState {
             } else {
                 None
             }
-        } else {
+        } else if args.len() > 0 {
             Some(args.remove(0))
+        } else {
+            None
         };
 
         let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
