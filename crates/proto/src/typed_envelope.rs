@@ -252,26 +252,38 @@ mod tests {
 
     #[test]
     fn test_path_proto_interop() {
+        const WINDOWS_PATHS: &[&str] = &[
+            "C:\\Users\\User\\Documents\\file.txt",
+            "C:/Program Files/App/app.exe",
+            "projects\\zed\\crates\\proto\\src\\typed_envelope.rs",
+            "projects/my project/src/main.rs",
+        ];
+        const UNIX_PATHS: &[&str] = &[
+            "/home/user/documents/file.txt",
+            "/usr/local/bin/my app/app",
+            "projects/zed/crates/proto/src/typed_envelope.rs",
+            "projects/my project/src/main.rs",
+        ];
+
         // Windows path to proto and back
-        {
-            let windows_path_str = "C:\\Users\\User\\Documents\\file.txt";
+        for &windows_path_str in WINDOWS_PATHS {
             let windows_path = WindowsPathBuf::from(windows_path_str);
             let proto = windows_path_to_proto(&windows_path);
             let recovered_path = windows_path_from_proto(proto);
-            assert_eq!(recovered_path.to_string_lossy(), windows_path_str);
+            assert_eq!(
+                recovered_path.to_string_lossy(),
+                windows_path_str.replace('/', "\\")
+            );
         }
         // Unix path to proto and back
-        {
-            let unix_path_str = "/home/user/documents/file.txt";
+        for &unix_path_str in UNIX_PATHS {
             let unix_path = UnixPathBuf::from(unix_path_str);
             let proto = unix_path_to_proto(&unix_path);
             let recovered_path = unix_path_from_proto(proto);
             assert_eq!(recovered_path.to_string_lossy(), unix_path_str);
         }
         // Windows host, Unix client, host sends Windows path to client
-        {
-            let windows_path_str = "C:\\Users\\User\\Documents\\file.txt";
-
+        for &windows_path_str in WINDOWS_PATHS {
             let windows_host_path = WindowsPathBuf::from(windows_path_str);
             let proto = windows_path_to_proto(&windows_host_path);
             let unix_client_received_path = unix_path_from_proto(proto);
@@ -280,13 +292,11 @@ mod tests {
             assert_eq!(windows_host_path, windows_host_recovered_path);
             assert_eq!(
                 windows_host_recovered_path.to_string_lossy(),
-                windows_path_str
+                windows_path_str.replace('/', "\\")
             );
         }
         // Unix host, Windows client, host sends Unix path to client
-        {
-            let unix_path_str = "/home/user/documents/file.txt";
-
+        for &unix_path_str in UNIX_PATHS {
             let unix_host_path = UnixPathBuf::from(unix_path_str);
             let proto = unix_path_to_proto(&unix_host_path);
             let windows_client_received_path = windows_path_from_proto(proto);
@@ -295,5 +305,24 @@ mod tests {
             assert_eq!(unix_host_path, unix_host_recovered_path);
             assert_eq!(unix_host_recovered_path.to_string_lossy(), unix_path_str);
         }
+    }
+
+    // todo(zjk)
+    #[test]
+    fn test_unsolved_case() {
+        // Unix host, Windows client
+        // The Windows client receives a Unix path with backslashes in it, then
+        // sends it back to the host.
+        // This currently fails.
+        let unix_path = UnixPathBuf::from("/home/user/projects/my\\project/src/main.rs");
+        let proto = unix_path_to_proto(&unix_path);
+        let windows_client_received_path = windows_path_from_proto(proto);
+        let proto = windows_path_to_proto(&windows_client_received_path);
+        let unix_host_recovered_path = unix_path_from_proto(proto);
+        assert_ne!(unix_path, unix_host_recovered_path);
+        assert_eq!(
+            unix_host_recovered_path.to_string_lossy(),
+            "/home/user/projects/my/project/src/main.rs"
+        );
     }
 }
