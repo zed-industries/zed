@@ -2,8 +2,8 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task, TextStyle,
-    list,
+    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task,
+    TextStyle, list,
 };
 use settings::Settings;
 use theme::ThemeSettings;
@@ -23,30 +23,69 @@ pub(crate) struct MemoryView {
     view_state: ViewState,
     query_editor: Entity<Editor>,
 }
+#[derive(Clone, Debug)]
+struct Drag {
+    start_address: u64,
+    end_address: u64,
+}
+
+impl Drag {
+    fn contains(&self, address: u64) -> bool {
+        let range = if self.start_address < self.end_address {
+            self.start_address..=self.end_address
+        } else {
+            self.end_address..=self.start_address
+        };
+        range.contains(&address)
+    }
+}
+#[derive(Clone, Debug)]
+enum SelectedMemoryRange {
+    DragUnderway(Drag),
+    DragComplete(Drag),
+}
+
+impl SelectedMemoryRange {
+    fn contains(&self, address: u64) -> bool {
+        match self {
+            SelectedMemoryRange::DragUnderway(drag) => drag.contains(address),
+            SelectedMemoryRange::DragComplete(drag) => drag.contains(address),
+        }
+    }
+    fn is_dragging(&self) -> bool {
+        matches!(self, SelectedMemoryRange::DragUnderway(_))
+    }
+}
+
+struct MemoryDrag {
+    start: u64,
+}
 
 #[derive(Clone)]
 struct ViewState {
     /// Uppermost row index
-    base_row: usize,
+    base_row: u64,
     /// To implement the infinite scrolling feature, we track two row indices: base (applicable to current frame) and next frame.
     /// Whenever we render an item at a list boundary, we decrement/increment base index.
-    next_row: usize,
+    next_row: u64,
     /// How many cells per row do we have?
-    line_width: usize,
+    line_width: u64,
+    selection: Option<SelectedMemoryRange>,
 }
 
 impl ViewState {
-    fn new(base_row: usize, line_width: usize) -> Self {
+    fn new(base_row: u64, line_width: u64) -> Self {
         Self {
             base_row,
             next_row: base_row,
             line_width,
+            selection: None,
         }
     }
-    fn row_count(&self) -> usize {
+    fn row_count(&self) -> u64 {
         // This was picked fully arbitrarily. There's no incentive for us to care about page sizes other than the fact that it seems to be a good
         // middle ground for data size.
-        const PAGE_SIZE: usize = 4096;
+        const PAGE_SIZE: u64 = 4096;
         PAGE_SIZE / self.line_width
     }
     fn schedule_scroll_down(&mut self) {
@@ -67,34 +106,49 @@ impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let view_state = ViewState::new(0, 16);
         let state = ListState::new(
-            view_state.row_count(),
+            view_state.row_count() as usize,
             gpui::ListAlignment::Top,
             px(100.),
             {
                 let weak = cx.weak_entity();
                 move |ix, _, cx| {
+                    let ix = ix as u64;
                     let Ok((memory, view_state)) = weak.update(cx, |this, _| {
                         let start = this.view_state.base_row;
 
                         let row_count = this.view_state.row_count();
 
                         debug_assert!(row_count > 1);
-                        if ix == row_count - 1 && this.scroll_state.is_dragging() {
+                        if ix == row_count - 1
+                            && (this.scroll_state.is_dragging()
+                                || this
+                                    .view_state
+                                    .selection
+                                    .as_ref()
+                                    .is_some_and(|selection| selection.is_dragging()))
+                        {
                             this.view_state.schedule_scroll_down();
-                        } else if ix == 0 && this.scroll_state.is_dragging() {
+                        } else if ix == 0
+                            && (this.scroll_state.is_dragging()
+                                || this
+                                    .view_state
+                                    .selection
+                                    .as_ref()
+                                    .is_some_and(|selection| selection.is_dragging()))
+                        {
                             this.view_state.schedule_scroll_up();
                         }
                         let line_width = this.view_state.line_width;
                         let memory = (0..line_width)
                             .map(|cell_ix| {
-                                (((start + ix) * line_width + cell_ix) % (u8::MAX as usize + 1))
-                                    as u8
+                                (((start + ix) * line_width + cell_ix) % (u8::MAX as u64 + 1)) as u8
                             })
                             .collect::<Vec<_>>();
                         (memory, this.view_state.clone())
                     }) else {
                         return div().into_any();
                     };
+                    let base_address = (view_state.base_row + ix) * view_state.line_width;
 
                     h_flex()
                         .id(("memory-view-row-full", ix * view_state.line_width))
@@ -103,13 +157,10 @@ impl MemoryView {
                         .child(
                             div()
                                 .child(
-                                    Label::new(format!(
-                                        "{:08X}",
-                                        (view_state.base_row + ix) * view_state.line_width
-                                    ))
-                                    .buffer_font(cx)
-                                    .size(ui::LabelSize::Small)
-                                    .color(Color::Muted),
+                                    Label::new(format!("{:08X}", base_address))
+                                        .buffer_font(cx)
+                                        .size(ui::LabelSize::Small)
+                                        .color(Color::Muted),
                                 )
                                 .px_1()
                                 .border_r_1()
@@ -120,15 +171,77 @@ impl MemoryView {
                                 .id(("memory-view-row-raw-memory", ix * view_state.line_width))
                                 .size_full()
                                 .px_1()
-                                .gap_1p5()
-                                .children(memory.iter().map(|cell| {
+                                .children(memory.iter().enumerate().map(|(ix, cell)| {
+                                    let weak = weak.clone();
                                     div()
-                                        .when(cell % 16 == 8, |this| this.bg(gpui::red()))
+                                        .id((
+                                            "memory-view-row-raw-memory",
+                                            base_address + ix as u64,
+                                        ))
+                                        .px_0p5()
+                                        .when_some(
+                                            view_state.selection.as_ref(),
+                                            |this, selection| {
+                                                this.when(
+                                                    selection.contains(base_address + ix as u64),
+                                                    |this| this.bg(Color::Accent.color(cx)),
+                                                )
+                                            },
+                                        )
                                         .child(
                                             Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
                                                 .buffer_font(cx)
                                                 .size(ui::LabelSize::Small),
                                         )
+                                        .on_drag(
+                                            Drag {
+                                                start_address: base_address + ix as u64,
+                                                end_address: base_address + ix as u64,
+                                            },
+                                            {
+                                                let weak = weak.clone();
+                                                move |drag, _, _, cx| {
+                                                    _ = weak.update(cx, |this, cx| {
+                                                        this.view_state.selection = Some(
+                                                            SelectedMemoryRange::DragUnderway(
+                                                                drag.clone(),
+                                                            ),
+                                                        );
+                                                        cx.notify();
+                                                    });
+
+                                                    cx.new(|_| Empty)
+                                                }
+                                            },
+                                        )
+                                        .on_drop({
+                                            let weak = weak.clone();
+                                            move |drag: &Drag, _, cx| {
+                                                _ = weak.update(cx, |this, cx| {
+                                                    this.view_state.selection = Some(
+                                                        SelectedMemoryRange::DragComplete(Drag {
+                                                            start_address: drag.start_address,
+                                                            end_address: base_address + ix as u64,
+                                                        }),
+                                                    );
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                        .drag_over(move |style, drag: &Drag, _, cx| {
+                                            _ = weak.update(cx, |this, cx| {
+                                                this.view_state.selection =
+                                                    Some(SelectedMemoryRange::DragUnderway(Drag {
+                                                        start_address: drag.start_address,
+                                                        end_address: base_address + ix as u64,
+                                                    }));
+                                                cx.notify();
+                                            });
+
+                                            style
+                                        })
+
+                                    // .on_hover(listener)
                                 })),
                         )
                         .child(
@@ -164,7 +277,7 @@ impl MemoryView {
                 _ = weak.update(cx, |this, _| {
                     if range.visible_range.start == 0 {
                         this.view_state.schedule_scroll_up();
-                    } else if range.visible_range.end == this.view_state.row_count() + 1 {
+                    } else if range.visible_range.end as u64 == this.view_state.row_count() + 1 {
                         this.view_state.schedule_scroll_down();
                     }
                 });
