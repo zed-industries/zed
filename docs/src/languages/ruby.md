@@ -256,7 +256,7 @@ In order to do that, you need to configure the language server so that it knows 
     "tailwindcss-language-server": {
       "settings": {
         "includeLanguages": {
-          "erb": "html",
+          "html/erb": "html",
           "ruby": "html"
         },
         "experimental": {
