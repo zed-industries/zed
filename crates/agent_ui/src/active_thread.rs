@@ -1,9 +1,7 @@
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
-use crate::ui::{
-    AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
-};
+use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
@@ -1026,6 +1024,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
+                self.clear_last_error();
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
@@ -1042,6 +1041,7 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::MessageEdited(message_id) => {
+                self.clear_last_error();
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                         thread.message(*message_id).map(|message| {
@@ -1818,7 +1818,7 @@ impl ActiveThread {
                 .my_3()
                 .mx_5()
                 .when(is_generating_stale || message.is_hidden, |this| {
-                    this.child(AnimatedLabel::new("").size(LabelSize::Small))
+                    this.child(LoadingLabel::new("").size(LabelSize::Small))
                 })
         });
 
@@ -2584,7 +2584,7 @@ impl ActiveThread {
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
-                                    .child(AnimatedLabel::new("Thinking").size(LabelSize::Small)),
+                                    .child(LoadingLabel::new("Thinking").size(LabelSize::Small)),
                             )
                             .child(
                                 h_flex()
@@ -3153,7 +3153,7 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    AnimatedLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
                                 )
                                 .child(
                                     h_flex()

@@ -2,7 +2,7 @@
 
 use gpui::{Hsla, hsla};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SystemColors {
     pub transparent: Hsla,
     pub mac_os_traffic_light_red: Hsla,

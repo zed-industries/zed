@@ -178,7 +178,13 @@ pub struct ExtensionIndexLanguageEntry {
     pub grammar: Option<Arc<str>>,
 }
 
-actions!(zed, [ReloadExtensions]);
+actions!(
+    zed,
+    [
+        /// Reloads all installed extensions.
+        ReloadExtensions
+    ]
+);
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,

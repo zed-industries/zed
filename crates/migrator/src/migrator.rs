@@ -153,6 +153,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_06_16,
         ),
         (
+            migrations::m_2025_06_25::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_25,
+        ),
+        (
             migrations::m_2025_06_27::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_27,
         ),
@@ -257,6 +261,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_06_16,
     migrations::m_2025_06_16::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_06_25,
+    migrations::m_2025_06_25::SETTINGS_PATTERNS
 );
 define_query!(
     SETTINGS_QUERY_2025_06_27,
@@ -1077,6 +1085,77 @@ mod tests {
                 &SETTINGS_QUERY_2025_06_16,
             )],
             settings,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_remove_version_fields() {
+        assert_migrate_settings(
+            r#"{
+    "language_models": {
+        "anthropic": {
+            "version": "1",
+            "api_url": "https://api.anthropic.com"
+        },
+        "openai": {
+            "version": "1",
+            "api_url": "https://api.openai.com/v1"
+        }
+    },
+    "agent": {
+        "version": "2",
+        "enabled": true,
+        "preferred_completion_mode": "normal",
+        "button": true,
+        "dock": "right",
+        "default_width": 640,
+        "default_height": 320,
+        "default_model": {
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4"
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "language_models": {
+        "anthropic": {
+            "api_url": "https://api.anthropic.com"
+        },
+        "openai": {
+            "api_url": "https://api.openai.com/v1"
+        }
+    },
+    "agent": {
+        "enabled": true,
+        "preferred_completion_mode": "normal",
+        "button": true,
+        "dock": "right",
+        "default_width": 640,
+        "default_height": 320,
+        "default_model": {
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4"
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test that version fields in other contexts are not removed
+        assert_migrate_settings(
+            r#"{
+    "language_models": {
+        "other_provider": {
+            "version": "1",
+            "api_url": "https://api.example.com"
+        }
+    },
+    "other_section": {
+        "version": "1"
+    }
+}"#,
             None,
         );
     }

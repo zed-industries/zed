@@ -6,7 +6,13 @@ use text::SelectionGoal;
 
 use crate::{Vim, motion::Motion, state::Mode};
 
-actions!(vim, [HelixNormalAfter]);
+actions!(
+    vim,
+    [
+        /// Switches to normal mode after the cursor (Helix-style).
+        HelixNormalAfter
+    ]
+);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);

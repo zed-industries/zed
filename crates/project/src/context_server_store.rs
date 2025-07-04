@@ -21,7 +21,13 @@ pub fn init(cx: &mut App) {
     extension::init(cx);
 }
 
-actions!(context_server, [Restart]);
+actions!(
+    context_server,
+    [
+        /// Restarts the context server.
+        Restart
+    ]
+);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextServerStatus {
@@ -812,9 +818,9 @@ mod tests {
         .await;
 
         let executor = cx.executor();
-        let registry = cx.new(|_| {
+        let registry = cx.new(|cx| {
             let mut registry = ContextServerDescriptorRegistry::new();
-            registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1);
+            registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1, cx);
             registry
         });
         let store = cx.new(|cx| {

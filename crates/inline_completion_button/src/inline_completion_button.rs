@@ -37,7 +37,13 @@ use zed_actions::OpenBrowser;
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
-actions!(edit_prediction, [ToggleMenu]);
+actions!(
+    edit_prediction,
+    [
+        /// Toggles the inline completion menu.
+        ToggleMenu
+    ]
+);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
