@@ -13,10 +13,11 @@ use gpui::{
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Buffer, CodeLabel, ToOffset};
-use menu::Confirm;
+use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
+    search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
 use std::fmt::Write;
@@ -43,6 +44,8 @@ pub struct Console {
     last_token: OutputToken,
     update_output_task: Option<Task<()>>,
     focus_handle: FocusHandle,
+    history: SearchHistory,
+    cursor: SearchHistoryCursor,
 }
 
 impl Console {
@@ -108,6 +111,11 @@ impl Console {
             update_output_task: None,
             last_token: OutputToken(0),
             focus_handle,
+            history: SearchHistory::new(
+                None,
+                project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
+            ),
+            cursor: Default::default(),
         }
     }
 
@@ -262,7 +270,8 @@ impl Console {
 
             expression
         });
-
+        self.history.add(&mut self.cursor, expression.clone());
+        self.cursor.reset();
         self.session.update(cx, |session, cx| {
             session
                 .evaluate(
@@ -282,7 +291,28 @@ impl Console {
         });
     }
 
-    pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    fn previous_query(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        let prev = self.history.previous(&mut self.cursor);
+        if let Some(prev) = prev {
+            self.query_bar.update(cx, |editor, cx| {
+                editor.set_text(prev, window, cx);
+            });
+        }
+    }
+
+    fn next_query(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        let next = self.history.next(&mut self.cursor);
+        let query = next.unwrap_or_else(|| {
+            self.cursor.reset();
+            ""
+        });
+
+        self.query_bar.update(cx, |editor, cx| {
+            editor.set_text(query, window, cx);
+        });
+    }
+
+    fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
             cx.defer_in(window, |editor, window, cx| {
@@ -292,6 +322,8 @@ impl Console {
             expression
         });
 
+        self.history.add(&mut self.cursor, expression.clone());
+        self.cursor.reset();
         self.session.update(cx, |session, cx| {
             session
                 .evaluate(
@@ -429,6 +461,8 @@ impl Render for Console {
             .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal()).child(
                     h_flex()
+                        .on_action(cx.listener(Self::previous_query))
+                        .on_action(cx.listener(Self::next_query))
                         .gap_1()
                         .bg(cx.theme().colors().editor_background)
                         .child(self.render_query_bar(cx))
