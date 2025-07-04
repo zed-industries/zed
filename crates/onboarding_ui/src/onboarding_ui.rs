@@ -1,4 +1,5 @@
 #![allow(unused, dead_code)]
+mod components;
 mod juicy_button;
 mod persistence;
 mod theme_preview;

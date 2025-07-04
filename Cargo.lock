@@ -10831,6 +10831,7 @@ dependencies = [
  "serde_json",
  "settings",
  "settings_ui",
+ "smallvec",
  "theme",
  "ui",
  "util",
