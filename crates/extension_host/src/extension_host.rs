@@ -1639,6 +1639,23 @@ impl ExtensionStore {
                 }
             }
 
+            for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
+                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+
+                if fs.is_file(&src_dir.join(schema_path)).await {
+                    match schema_path.parent() {
+                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
+                        None => {}
+                    }
+                    fs.copy_file(
+                        &src_dir.join(schema_path),
+                        &tmp_dir.join(schema_path),
+                        fs::CopyOptions::default(),
+                    )
+                    .await?
+                }
+            }
+
             Ok(())
         })
     }
