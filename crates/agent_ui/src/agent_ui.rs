@@ -1,3 +1,4 @@
+mod acp;
 mod active_thread;
 mod agent_configuration;
 mod agent_diff;

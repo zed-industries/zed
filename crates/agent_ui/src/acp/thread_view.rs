@@ -21,7 +21,7 @@ use ui::{Disclosure, Tooltip, prelude::*};
 use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
-use crate::{
+use ::acp::{
     AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage, AssistantMessageChunk,
     Diff, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId,
     ToolCallStatus, UserMessageChunk,
@@ -85,7 +85,7 @@ impl AcpThreadView {
             cx.processor({
                 move |this: &mut Self, index: usize, window, cx| {
                     let Some((entry, len)) = this.thread().and_then(|thread| {
-                        let entries = &thread.read(cx).entries;
+                        let entries = &thread.read(cx).entries();
                         Some((entries.get(index)?, entries.len()))
                     }) else {
                         return Empty.into_any();
@@ -252,7 +252,7 @@ impl AcpThreadView {
         let count = self.list_state.item_count();
         match event {
             AcpThreadEvent::NewEntry => {
-                self.sync_thread_entry_view(thread.read(cx).entries.len() - 1, window, cx);
+                self.sync_thread_entry_view(thread.read(cx).entries().len() - 1, window, cx);
                 self.list_state.splice(count..count, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {

@@ -168,6 +168,7 @@ dependencies = [
  "acp",
  "agent",
  "agent_settings",
+ "agentic-coding-protocol",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",

@@ -1,5 +1,3 @@
-mod thread_view;
-
 use agentic_coding_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -14,8 +12,6 @@ use smol::process::Child;
 use std::{mem, path::PathBuf, process::ExitStatus, sync::Arc};
 use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
-
-pub use thread_view::AcpThreadView;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
@@ -135,11 +131,11 @@ pub enum AgentThreadEntryContent {
 
 #[derive(Debug)]
 pub struct ToolCall {
-    id: ToolCallId,
-    label: Entity<Markdown>,
-    icon: IconName,
-    content: Option<ToolCallContent>,
-    status: ToolCallStatus,
+    pub id: ToolCallId,
+    pub label: Entity<Markdown>,
+    pub icon: IconName,
+    pub content: Option<ToolCallContent>,
+    pub status: ToolCallStatus,
 }
 
 #[derive(Debug)]
@@ -257,8 +253,8 @@ impl ToolCallContent {
 
 #[derive(Debug)]
 pub struct Diff {
-    multibuffer: Entity<MultiBuffer>,
-    path: PathBuf,
+    pub multibuffer: Entity<MultiBuffer>,
+    pub path: PathBuf,
     _task: Task<Result<()>>,
 }
 
@@ -377,7 +373,7 @@ pub struct AcpThread {
     _io_task: Task<()>,
 }
 
-enum AcpThreadEvent {
+pub enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),
 }

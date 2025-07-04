@@ -14,6 +14,7 @@ use crate::{
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
     NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
     ResetTrialUpsell, ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    acp::AcpThreadView,
     active_thread::{self, ActiveThread, ActiveThreadEvent},
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     agent_diff::AgentDiff,
@@ -197,7 +198,7 @@ enum ActiveView {
         _subscriptions: Vec<gpui::Subscription>,
     },
     AcpThread {
-        thread_view: Entity<acp::AcpThreadView>,
+        thread_view: Entity<AcpThreadView>,
     },
     TextThread {
         context_editor: Entity<TextThreadEditor>,
@@ -892,8 +893,9 @@ impl AgentPanel {
         let project = self.project.clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            let thread_view =
-                cx.new_window_entity(|window, cx| acp::AcpThreadView::new(project, window, cx))?;
+            let thread_view = cx.new_window_entity(|window, cx| {
+                crate::acp::AcpThreadView::new(project, window, cx)
+            })?;
             this.update_in(cx, |this, window, cx| {
                 this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
             })
