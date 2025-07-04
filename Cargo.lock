@@ -5290,7 +5290,6 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "remote",
- "remote_path",
  "reqwest_client",
  "schemars",
  "semantic_version",
@@ -5493,7 +5492,6 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
- "remote_path",
  "schemars",
  "search",
  "serde",
@@ -12285,7 +12283,6 @@ dependencies = [
  "regex",
  "release_channel",
  "remote",
- "remote_path",
  "rpc",
  "schemars",
  "serde",
@@ -12548,7 +12545,6 @@ dependencies = [
  "collections",
  "prost 0.9.0",
  "prost-build 0.9.0",
- "remote_path",
  "serde",
  "typed-path",
  "workspace-hack",
@@ -12988,7 +12984,6 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
- "remote_path",
  "schemars",
  "serde",
  "serde_json",
@@ -13176,7 +13171,6 @@ dependencies = [
  "paths",
  "prost 0.9.0",
  "release_channel",
- "remote_path",
  "rpc",
  "schemars",
  "serde",
@@ -13188,13 +13182,6 @@ dependencies = [
  "urlencoding",
  "util",
  "which 6.0.3",
- "workspace-hack",
-]
-
-[[package]]
-name = "remote_path"
-version = "0.1.0"
-dependencies = [
  "workspace-hack",
 ]
 

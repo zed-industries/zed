@@ -25,7 +25,6 @@ use itertools::Itertools;
 use parking_lot::Mutex;
 
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
-use remote_path::{PathStyle, RemotePathBuf};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
@@ -50,7 +49,10 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::TempDir;
-use util::ResultExt;
+use util::{
+    ResultExt,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -2569,8 +2571,8 @@ mod fake {
     };
     use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
-    use remote_path::{PathStyle, RemotePathBuf};
     use rpc::proto::Envelope;
+    use util::paths::{PathStyle, RemotePathBuf};
 
     use super::{
         ChannelClient, RemoteConnection, SshArgs, SshClientDelegate, SshConnectionOptions,

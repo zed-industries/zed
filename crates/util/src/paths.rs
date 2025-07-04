@@ -223,6 +223,26 @@ impl RemotePathBuf {
         Self::new(path_buf, style)
     }
 
+    pub fn to_string(&self) -> String {
+        self.string.clone()
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.to_string(),
+            PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
+            PathStyle::Windows => self.to_string(),
+        }
+    }
+
     pub fn as_path(&self) -> &Path {
         &self.inner
     }
@@ -235,12 +255,6 @@ impl RemotePathBuf {
         self.inner
             .parent()
             .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
-    }
-}
-
-impl RemotePathBuf {
-    pub fn to_string(&self) -> String {
-        self.string.clone()
     }
 }
 

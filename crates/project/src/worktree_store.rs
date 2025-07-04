@@ -16,7 +16,6 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
 use postage::oneshot;
-use remote_path::{PathStyle, RemotePathBuf};
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
@@ -26,7 +25,10 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{ResultExt, paths::SanitizedPath};
+use util::{
+    ResultExt,
+    paths::{PathStyle, RemotePathBuf, SanitizedPath},
+};
 use worktree::{
     Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
     WorktreeSettings,

@@ -9,11 +9,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::ExtensionProvides;
-use client::{
-    Client, ExtensionMetadata, GetExtensionsResponse,
-    proto::{self, ToProto},
-    telemetry::Telemetry,
-};
+use client::{Client, ExtensionMetadata, GetExtensionsResponse, proto, telemetry::Telemetry};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -46,7 +42,6 @@ use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use remote::SshRemoteClient;
-use remote_path::RemotePathBuf;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -59,7 +54,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
-use util::ResultExt;
+use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},

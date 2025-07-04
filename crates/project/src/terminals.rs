@@ -5,7 +5,6 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEnt
 use itertools::Itertools;
 use language::LanguageName;
 use remote::ssh_session::SshArgs;
-use remote_path::{PathStyle, RemotePathBuf};
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
@@ -19,7 +18,10 @@ use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, TerminalSettings, VenvSettings},
 };
-use util::ResultExt;
+use util::{
+    ResultExt,
+    paths::{PathStyle, RemotePathBuf},
+};
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,

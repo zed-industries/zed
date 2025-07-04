@@ -30,7 +30,6 @@ use project::Fs;
 use project::Project;
 use remote::ssh_session::ConnectionIdentifier;
 use remote::{SshConnectionOptions, SshRemoteClient};
-use remote_path::{PathStyle, RemotePathBuf};
 use settings::Settings;
 use settings::SettingsStore;
 use settings::update_settings_file;
@@ -42,7 +41,10 @@ use ui::{
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar, ScrollbarState,
     Section, Tooltip, prelude::*,
 };
-use util::ResultExt;
+use util::{
+    ResultExt,
+    paths::{PathStyle, RemotePathBuf},
+};
 use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::notifications::NotificationId;

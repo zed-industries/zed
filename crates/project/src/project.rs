@@ -28,7 +28,6 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
-use remote_path::{PathStyle, RemotePathBuf};
 pub mod search_history;
 mod yarn;
 
@@ -118,7 +117,7 @@ use text::{Anchor, BufferId, Point};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
-    paths::{SanitizedPath, compare_paths},
+    paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{

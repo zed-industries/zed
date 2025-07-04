@@ -5,7 +5,6 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
-use remote_path::PathStyle;
 use settings::Settings;
 use std::{
     path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
@@ -16,7 +15,10 @@ use std::{
 };
 use ui::{Context, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
-use util::{maybe, paths::compare_paths};
+use util::{
+    maybe,
+    paths::{PathStyle, compare_paths},
+};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
