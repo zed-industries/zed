@@ -2,9 +2,9 @@ use std::{ops::Range, rc::Rc, time::Duration};
 
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
-    AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length,
-    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Task, UniformListScrollHandle,
-    WeakEntity, transparent_black, uniform_list,
+    AppContext, Axis, Context, Entity, FocusHandle, Length, ListHorizontalSizingBehavior,
+    ListSizingBehavior, MouseButton, Task, UniformListScrollHandle, WeakEntity, transparent_black,
+    uniform_list,
 };
 use settings::Settings as _;
 use ui::{
@@ -471,11 +471,9 @@ pub fn render_row<const COLS: usize>(
         .map_or([None; COLS], |widths| widths.map(Some));
 
     let row = div().w_full().child(
-        div()
+        h_flex()
+            .id("table_row")
             .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
             .justify_between()
             .px_1p5()
             .py_1()
@@ -518,11 +516,12 @@ pub fn render_header<const COLS: usize>(
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .children(headers.into_iter().zip(column_widths).map(|(h, width)| {
-            base_cell_style(width, cx)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(h)
-        }))
+        .children(
+            headers
+                .into_iter()
+                .zip(column_widths)
+                .map(|(h, width)| base_cell_style(width, cx).child(h)),
+        )
 }
 
 #[derive(Clone)]

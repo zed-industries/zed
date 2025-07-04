@@ -7561,6 +7561,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
+/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -7569,8 +7570,9 @@ pub fn client_side_decorations(
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
 
-    if matches!(decorations, Decorations::Client { .. }) {
-        window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    match decorations {
+        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
+        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);
