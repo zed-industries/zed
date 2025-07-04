@@ -57,10 +57,6 @@ impl SelectedMemoryRange {
     }
 }
 
-struct MemoryDrag {
-    start: u64,
-}
-
 #[derive(Clone)]
 struct ViewState {
     /// Uppermost row index
@@ -201,13 +197,12 @@ impl MemoryView {
                                             {
                                                 let weak = weak.clone();
                                                 move |drag, _, _, cx| {
-                                                    _ = weak.update(cx, |this, cx| {
+                                                    _ = weak.update(cx, |this, _| {
                                                         this.view_state.selection = Some(
                                                             SelectedMemoryRange::DragUnderway(
                                                                 drag.clone(),
                                                             ),
                                                         );
-                                                        cx.notify();
                                                     });
 
                                                     cx.new(|_| Empty)
@@ -217,31 +212,29 @@ impl MemoryView {
                                         .on_drop({
                                             let weak = weak.clone();
                                             move |drag: &Drag, _, cx| {
-                                                _ = weak.update(cx, |this, cx| {
+                                                _ = weak.update(cx, |this, _| {
                                                     this.view_state.selection = Some(
                                                         SelectedMemoryRange::DragComplete(Drag {
                                                             start_address: drag.start_address,
                                                             end_address: base_address + ix as u64,
                                                         }),
                                                     );
-                                                    cx.notify();
                                                 });
                                             }
                                         })
                                         .drag_over(move |style, drag: &Drag, _, cx| {
-                                            _ = weak.update(cx, |this, cx| {
+                                            _ = weak.update(cx, |this, _| {
                                                 this.view_state.selection =
                                                     Some(SelectedMemoryRange::DragUnderway(Drag {
                                                         start_address: drag.start_address,
                                                         end_address: base_address + ix as u64,
                                                     }));
-                                                cx.notify();
+
+                                                // this.list_state.scroll_by(distance);
                                             });
 
                                             style
                                         })
-
-                                    // .on_hover(listener)
                                 })),
                         )
                         .child(
