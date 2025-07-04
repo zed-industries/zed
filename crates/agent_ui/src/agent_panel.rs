@@ -1069,8 +1069,8 @@ impl AgentPanel {
                         ActiveView::Thread { message_editor, .. } => {
                             message_editor.focus_handle(cx).focus(window);
                         }
-                        ActiveView::AcpThread { .. } => {
-                            todo!()
+                        ActiveView::AcpThread { thread_view } => {
+                            thread_view.focus_handle(cx).focus(window);
                         }
                         ActiveView::TextThread { context_editor, .. } => {
                             context_editor.focus_handle(cx).focus(window);
