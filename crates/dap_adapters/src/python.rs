@@ -40,12 +40,7 @@ impl PythonDebugAdapter {
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
-            vec![
-                user_installed_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-            ]
+            vec![user_installed_path.to_string_lossy().to_string()]
         } else if installed_in_venv {
             log::debug!("Using venv-installed debugpy");
             vec!["-m".to_string(), "debugpy.adapter".to_string()]
