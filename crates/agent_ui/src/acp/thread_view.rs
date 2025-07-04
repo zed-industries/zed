@@ -449,6 +449,7 @@ impl AcpThreadView {
             AgentThreadEntryContent::AssistantMessage(AssistantMessage { chunks }) => {
                 let style = default_markdown_style(window, cx);
                 let message_body = v_flex()
+                    .w_full()
                     .gap_2p5()
                     .children(
                         chunks
@@ -476,6 +477,7 @@ impl AcpThreadView {
                     .px_5()
                     .py_1()
                     .when(index + 1 == total_entries, |this| this.pb_4())
+                    .w_full()
                     .text_ui(cx)
                     .child(message_body)
                     .into_any()
@@ -496,13 +498,17 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let header_id = SharedString::from(format!("thinking-block-header-{}", entry_ix));
         let key = (entry_ix, chunk_ix);
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
         v_flex()
             .child(
                 h_flex()
+                    .debug_bg_cyan()
+                    .id(header_id)
                     .group("disclosure-header")
+                    .w_full()
                     .justify_between()
                     .opacity(0.8)
                     .hover(|style| style.opacity(1.))
@@ -532,7 +538,17 @@ impl AcpThreadView {
                                     }
                                 })),
                         ),
-                    ),
+                    )
+                    .on_click(cx.listener({
+                        move |this, _event, _window, cx| {
+                            if is_open {
+                                this.expanded_thinking_blocks.remove(&key);
+                            } else {
+                                this.expanded_thinking_blocks.insert(key);
+                            }
+                            cx.notify();
+                        }
+                    })),
             )
             .when(is_open, |this| {
                 this.child(
@@ -573,6 +589,8 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let header_id = SharedString::from(format!("tool-call-header-{}", entry_ix));
+
         let status_icon = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { .. } => None,
             ToolCallStatus::Allowed {
@@ -660,6 +678,9 @@ impl AcpThreadView {
             })
             .child(
                 h_flex()
+                    .debug_bg_blue()
+                    .id(header_id)
+                    .w_full()
                     .gap_1()
                     .justify_between()
                     .map(|this| {
@@ -672,10 +693,6 @@ impl AcpThreadView {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
                         }
                     })
-                    // .when(is_open && !is_collapsible, |this| {
-                    //     this.border_b_1()
-                    //         .border_color(cx.theme().colors().border_variant)
-                    // })
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -693,12 +710,12 @@ impl AcpThreadView {
                         h_flex()
                             .gap_0p5()
                             .when(is_collapsible, |this| {
-                                let id = tool_call.id;
                                 this.child(
                                     Disclosure::new(("expand", tool_call.id.as_u64()), is_open)
                                         .opened_icon(IconName::ChevronUp)
                                         .closed_icon(IconName::ChevronDown)
-                                        .on_click(cx.listener(
+                                        .on_click(cx.listener({
+                                            let id = tool_call.id;
                                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
                                                 if is_open {
                                                     this.expanded_tool_calls.remove(&id);
@@ -706,12 +723,23 @@ impl AcpThreadView {
                                                     this.expanded_tool_calls.insert(id);
                                                 }
                                                 cx.notify();
-                                            },
-                                        )),
+                                            }
+                                        })),
                                 )
                             })
                             .children(status_icon),
-                    ),
+                    )
+                    .on_click(cx.listener({
+                        let id = tool_call.id;
+                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                            if is_open {
+                                this.expanded_tool_calls.remove(&id);
+                            } else {
+                                this.expanded_tool_calls.insert(id);
+                            }
+                            cx.notify();
+                        }
+                    })),
             )
             .when(is_open, |this| {
                 this.child(
