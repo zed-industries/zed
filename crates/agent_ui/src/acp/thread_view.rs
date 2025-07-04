@@ -1,18 +1,22 @@
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
 use collections::HashSet;
-use editor::{Editor, EditorElement, EditorMode, EditorStyle, MinimapVisibility, MultiBuffer};
+use editor::{
+    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
+    MinimapVisibility, MultiBuffer,
+};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListState,
     SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, Window, div, list, percentage, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
-use language::Buffer;
 use language::language_settings::SoftWrap;
+use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings as _;
@@ -26,6 +30,8 @@ use ::acp::{
     Diff, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId,
     ToolCallStatus, UserMessageChunk,
 };
+
+use crate::message_editor::ContextCreasesAddon;
 
 pub struct AcpThreadView {
     thread: Entity<AcpThread>,
@@ -59,8 +65,16 @@ enum ThreadState {
 
 impl AcpThreadView {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let language = Language::new(
+            language::LanguageConfig {
+                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
+                ..Default::default()
+            },
+            None,
+        );
+
         let message_editor = cx.new(|cx| {
-            let buffer = cx.new(|cx| Buffer::local("", cx));
+            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(
@@ -73,8 +87,16 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            editor.set_placeholder_text("Message the agent", cx);
+            editor.set_placeholder_text("Message the agent - @ to include files", cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
+            editor.set_use_modal_editing(true);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: Some(ContextMenuPlacement::Above),
+            });
+            editor.register_addon(ContextCreasesAddon::new());
             editor
         });
 
