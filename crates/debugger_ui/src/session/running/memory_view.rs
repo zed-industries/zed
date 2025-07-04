@@ -22,63 +22,47 @@ use util::ResultExt;
 
 pub(crate) struct MemoryView {
     list_state: ListState,
-    scroll_state: Rc<ScrollbarState>,
+    scroll_state: ScrollbarState,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
-    view_state: Arc<ViewState>,
+    view_state: ViewState,
     query_editor: Entity<Editor>,
 }
 
+#[derive(Clone, Copy)]
 struct ViewState {
     /// Uppermost row index
-    base_row: AtomicUsize,
+    base_row: usize,
     /// To implement the infinite scrolling feature, we track two row indices: base (applicable to current frame) and next frame.
     /// Whenever we render an item at a list boundary, we decrement/increment base index.
-    next_row: AtomicUsize,
+    next_row: usize,
     /// How many cells per row do we have?
-    line_width: AtomicUsize,
+    line_width: usize,
 }
 
 impl ViewState {
-    fn new(address: usize, line_width: usize) -> Self {
+    fn new(base_row: usize, line_width: usize) -> Self {
         Self {
-            base_row: address.into(),
-            next_row: address.into(),
-            line_width: line_width.into(),
+            base_row,
+            next_row: base_row,
+            line_width,
         }
     }
     fn row_count(&self) -> usize {
         // This was picked fully arbitrarily. There's no incentive for us to care about page sizes other than the fact that it seems to be a good
         // middle ground for data size.
         const PAGE_SIZE: usize = 4096;
-        PAGE_SIZE / self.line_width()
+        PAGE_SIZE / self.line_width
     }
-    fn schedule_scroll_down(&self) {
-        _ = self.next_row.fetch_update(
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
-            |ix| ix.checked_add(1),
-        );
+    fn schedule_scroll_down(&mut self) {
+        self.next_row = self.next_row.saturating_add(1)
     }
-    fn schedule_scroll_up(&self) {
-        _ = self.next_row.fetch_update(
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
-            |ix| ix.checked_sub(1),
-        );
+    fn schedule_scroll_up(&mut self) {
+        self.next_row = self.next_row.saturating_sub(1);
     }
-    fn perform_scheduled_scroll(&self) {
-        self.base_row.store(
-            self.next_row.load(std::sync::atomic::Ordering::Relaxed),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-    }
-    fn base_row(&self) -> usize {
-        self.base_row.load(std::sync::atomic::Ordering::Relaxed)
-    }
-    fn line_width(&self) -> usize {
-        self.line_width.load(std::sync::atomic::Ordering::Relaxed)
+    fn perform_scheduled_scroll(&mut self) {
+        self.base_row = self.next_row;
     }
 }
 
@@ -87,47 +71,51 @@ static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
 
 impl MemoryView {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let view_state = Arc::new(ViewState::new(0, 16));
-        let weak_scroll_state: Rc<OnceCell<Weak<ScrollbarState>>> = Rc::new(OnceCell::new());
+        let view_state = ViewState::new(0, 16);
         let state = ListState::new(
             view_state.row_count(),
             gpui::ListAlignment::Top,
             px(100.),
             {
-                let view_state = view_state.clone();
-                let weak_scroll_state = weak_scroll_state.clone();
+                let weak = cx.weak_entity();
                 move |ix, _, cx| {
-                    let start = view_state.base_row();
+                    let Ok((memory, view_state)) = weak.update(cx, |this, _| {
+                        let start = this.view_state.base_row;
 
-                    let row_count = view_state.row_count();
-                    let is_dragging = || {
-                        weak_scroll_state.get().map_or(false, |state| {
-                            state.upgrade().map_or(false, |state| state.is_dragging())
-                        })
+                        let row_count = this.view_state.row_count();
+
+                        debug_assert!(row_count > 1);
+                        if ix == row_count - 1 && this.scroll_state.is_dragging() {
+                            this.view_state.schedule_scroll_down();
+                        } else if ix == 0 && this.scroll_state.is_dragging() {
+                            this.view_state.schedule_scroll_up();
+                        }
+                        let line_width = this.view_state.line_width;
+                        let memory = (0..line_width)
+                            .map(|cell_ix| {
+                                (((start + ix) * line_width + cell_ix) % (u8::MAX as usize + 1))
+                                    as u8
+                            })
+                            .collect::<Vec<_>>();
+                        (memory, this.view_state)
+                    }) else {
+                        return div().into_any();
                     };
-                    debug_assert!(row_count > 1);
-                    if ix == row_count - 1 && is_dragging() {
-                        view_state.schedule_scroll_down();
-                    } else if ix == 0 && is_dragging() {
-                        view_state.schedule_scroll_up();
-                    }
-                    let line_width = view_state.line_width();
-                    let memory = (0..line_width)
-                        .map(|cell_ix| {
-                            (((start + ix) * line_width + cell_ix) % (u8::MAX as usize + 1)) as u8
-                        })
-                        .collect::<Vec<_>>();
+
                     h_flex()
-                        .id(("memory-view-row-full", ix * line_width))
+                        .id(("memory-view-row-full", ix * view_state.line_width))
                         .size_full()
                         .gap_x_2()
                         .child(
                             div()
                                 .child(
-                                    Label::new(format!("{:08X}", (start + ix) * line_width))
-                                        .buffer_font(cx)
-                                        .size(ui::LabelSize::Small)
-                                        .color(Color::Muted),
+                                    Label::new(format!(
+                                        "{:08X}",
+                                        (view_state.base_row + ix) * view_state.line_width
+                                    ))
+                                    .buffer_font(cx)
+                                    .size(ui::LabelSize::Small)
+                                    .color(Color::Muted),
                                 )
                                 .px_1()
                                 .border_r_1()
@@ -135,7 +123,7 @@ impl MemoryView {
                         )
                         .child(
                             h_flex()
-                                .id(("memory-view-row-raw-memory", ix * line_width))
+                                .id(("memory-view-row-raw-memory", ix * view_state.line_width))
                                 .size_full()
                                 .px_1()
                                 .gap_1p5()
@@ -151,7 +139,7 @@ impl MemoryView {
                         )
                         .child(
                             h_flex()
-                                .id(("memory-view-row-ascii-memory", ix * line_width))
+                                .id(("memory-view-row-ascii-memory", ix * view_state.line_width))
                                 .h_full()
                                 .px_1()
                                 .mr_4()
@@ -177,18 +165,19 @@ impl MemoryView {
         );
 
         state.set_scroll_handler({
-            let view_state = view_state.clone();
-            move |range, _, _| {
-                if range.visible_range.start == 0 {
-                    view_state.schedule_scroll_up();
-                } else if range.visible_range.end == view_state.row_count() + 1 {
-                    view_state.schedule_scroll_down();
-                }
+            let weak = cx.weak_entity();
+            move |range, _, cx| {
+                weak.update(cx, |this, _| {
+                    if range.visible_range.start == 0 {
+                        this.view_state.schedule_scroll_up();
+                    } else if range.visible_range.end == this.view_state.row_count() + 1 {
+                        this.view_state.schedule_scroll_down();
+                    }
+                });
             }
         });
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
-        let scroll_state = Rc::new(ScrollbarState::new(state.clone()));
-        _ = weak_scroll_state.set(Rc::downgrade(&scroll_state));
+        let scroll_state = ScrollbarState::new(state.clone());
         Self {
             scroll_state,
             list_state: state,
@@ -248,7 +237,7 @@ impl MemoryView {
                 .bottom_0()
                 .w(px(12.))
                 .cursor_default()
-                .children(Scrollbar::vertical((*self.scroll_state).clone())),
+                .children(Scrollbar::vertical(self.scroll_state.clone())),
         )
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
