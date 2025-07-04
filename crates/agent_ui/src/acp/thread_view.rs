@@ -10,9 +10,10 @@ use editor::{
     EditorStyle, MinimapVisibility, MultiBuffer,
 };
 use gpui::{
-    Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListState,
-    SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity, Window, div, list, percentage, prelude::*, pulsating_between,
+    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, Focusable, Hsla,
+    Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage, prelude::*,
+    pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
@@ -1586,6 +1587,20 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
                 right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
             },
+            margin: EdgesRefinement {
+                top: Some(Length::Definite(Pixels(8.).into())),
+                left: Some(Length::Definite(Pixels(0.).into())),
+                right: Some(Length::Definite(Pixels(0.).into())),
+                bottom: Some(Length::Definite(Pixels(12.).into())),
+            },
+            border_style: Some(BorderStyle::Solid),
+            border_widths: EdgesRefinement {
+                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+            },
+            border_color: Some(colors.border_variant.into()),
             background: Some(colors.editor_background.into()),
             text: Some(TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
