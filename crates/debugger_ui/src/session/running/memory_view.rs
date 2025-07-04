@@ -30,7 +30,7 @@ pub(crate) struct MemoryView {
     query_editor: Entity<Editor>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ViewState {
     /// Uppermost row index
     base_row: usize,
@@ -97,7 +97,7 @@ impl MemoryView {
                                     as u8
                             })
                             .collect::<Vec<_>>();
-                        (memory, this.view_state)
+                        (memory, this.view_state.clone())
                     }) else {
                         return div().into_any();
                     };
