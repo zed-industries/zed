@@ -1,19 +1,20 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
+use anyhow::Context as _;
 use collections::HashSet;
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
     EditorStyle, MinimapVisibility, MultiBuffer,
 };
 use gpui::{
-    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, Focusable, Hsla,
-    Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage, prelude::*,
-    pulsating_between,
+    Animation, AnimationExt, App, AsyncApp, BorderStyle, EdgesRefinement, Empty, Entity, Focusable,
+    Hsla, Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage,
+    prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
@@ -38,7 +39,7 @@ use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSe
 
 pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
-    thread: Entity<AcpThread>,
+    project: Entity<Project>,
     thread_state: ThreadState,
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
     thread_entry_views: Vec<Option<ThreadEntryView>>,
@@ -65,7 +66,9 @@ enum ThreadState {
         _subscription: Subscription,
     },
     LoadError(SharedString),
-    Unauthenticated,
+    Unauthenticated {
+        thread: Entity<AcpThread>,
+    },
 }
 
 impl AcpThreadView {
@@ -133,33 +136,10 @@ impl AcpThreadView {
             }),
         );
 
-        let root_dir = project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path())
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
-
-        let cli_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-
-        let child = util::command::new_smol_command("node")
-            .arg(cli_path)
-            .arg("--acp")
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-
-        let thread = cx.new(|cx| AcpThread::stdio(child, project, cx));
-
         Self {
             workspace,
-            thread_state: Self::initial_state(thread.clone(), window, cx),
-            thread,
+            project: project.clone(),
+            thread_state: Self::initial_state(project, window, cx),
             message_editor,
             mention_set,
             thread_entry_views: Vec::new(),
@@ -172,18 +152,36 @@ impl AcpThreadView {
     }
 
     fn initial_state(
-        thread: Entity<AcpThread>,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
-        let initialize = thread.read(cx).initialize();
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let result = match initialize.await {
+            let thread = match Self::spawn_thread(project, cx).await {
+                Ok(thread) => thread,
+                Err(err) => {
+                    this.update(cx, |this, cx| {
+                        this.thread_state = ThreadState::LoadError(err.to_string().into());
+                        cx.notify();
+                    })
+                    .log_err();
+                    return;
+                }
+            };
+
+            let init_response = async {
+                let resp = thread
+                    .read_with(cx, |thread, _cx| thread.initialize())?
+                    .await?;
+                anyhow::Ok(resp)
+            };
+
+            let result = match init_response.await {
                 Err(e) => Err(e),
                 Ok(response) => {
                     if !response.is_authenticated {
                         this.update(cx, |this, _| {
-                            this.thread_state = ThreadState::Unauthenticated;
+                            this.thread_state = ThreadState::Unauthenticated { thread };
                         })
                         .ok();
                         return;
@@ -227,12 +225,75 @@ impl AcpThreadView {
         ThreadState::Loading { _task: load_task }
     }
 
+    async fn spawn_thread(
+        project: Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<Entity<AcpThread>> {
+        let (env_task, root_dir) = project.update(cx, |project, cx| {
+            let worktree = project.visible_worktrees(cx).next();
+            match worktree {
+                Some(worktree) => {
+                    let env_task = project.environment().update(cx, |env, cx| {
+                        env.get_worktree_environment(worktree.clone(), cx)
+                    });
+
+                    let path = worktree.read(cx).abs_path();
+                    (env_task, path)
+                }
+                None => {
+                    let path: Arc<Path> = paths::home_dir().as_path().into();
+                    let env_task = project.environment().update(cx, |env, cx| {
+                        env.get_directory_environment(path.clone(), cx)
+                    });
+                    (env_task, path)
+                }
+            }
+        })?;
+
+        const BIN_NAME: &str = "gemini";
+
+        // todo! remove ZED_GEMINI_LOCAL
+        let mut command = if std::env::var("ZED_GEMINI_LOCAL").is_ok() {
+            let cli_path =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
+
+            let mut command = util::command::new_smol_command("node");
+            command.arg(cli_path);
+            command
+        } else {
+            let gemini_path = if cfg!(windows) {
+                which::which(BIN_NAME)
+            } else {
+                let env = env_task.await.unwrap_or_default();
+                let shell_path = env.get("PATH").cloned();
+                which::which_in(BIN_NAME, shell_path.as_ref(), root_dir.as_ref())
+            }
+            .context(format!("Failed to find `{}` in your PATH", BIN_NAME))?;
+
+            util::command::new_smol_command(gemini_path)
+        };
+
+        let child = command
+            .arg("--acp")
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
+        let thread = cx.new(|cx| AcpThread::stdio(child, project, cx))?;
+
+        Ok(thread)
+    }
+
     fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
-            ThreadState::Ready { thread, .. } => Some(thread),
-            ThreadState::Loading { .. }
-            | ThreadState::LoadError(..)
-            | ThreadState::Unauthenticated => None,
+            ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => {
+                Some(thread)
+            }
+            ThreadState::Loading { .. } | ThreadState::LoadError(..) => None,
         }
     }
 
@@ -241,7 +302,7 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => thread.read(cx).title(),
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
-            ThreadState::Unauthenticated => "Not authenticated".into(),
+            ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
         }
     }
 
@@ -427,24 +488,29 @@ impl AcpThreadView {
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let agent = self.thread.clone();
-        self.last_error.take();
-        let authenticate = self.thread.read(cx).authenticate();
-        self.auth_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = authenticate.await;
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
 
-            this.update_in(cx, |this, window, cx| {
-                if let Err(err) = result {
-                    this.last_error =
-                        Some(cx.new(|cx| {
+        self.last_error.take();
+        let authenticate = thread.read(cx).authenticate();
+        self.auth_task = Some(cx.spawn_in(window, {
+            let project = self.project.clone();
+            async move |this, cx| {
+                let result = authenticate.await;
+
+                this.update_in(cx, |this, window, cx| {
+                    if let Err(err) = result {
+                        this.last_error = Some(cx.new(|cx| {
                             Markdown::new(format!("Error: {err}").into(), None, None, cx)
                         }))
-                } else {
-                    this.thread_state = Self::initial_state(agent, window, cx)
-                }
-                this.auth_task.take()
-            })
-            .ok();
+                    } else {
+                        this.thread_state = Self::initial_state(project.clone(), window, cx)
+                    }
+                    this.auth_task.take()
+                })
+                .ok();
+            }
         }));
     }
 
@@ -1431,7 +1497,7 @@ impl Render for AcpThreadView {
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated => v_flex()
+                ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()
                     .flex_1()
                     .items_center()
