@@ -1,5 +1,5 @@
 [package]
-name = "windows_net"
+name = "net"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/windows_net.rs"
+path = "src/net.rs"
 doctest = false
 
 [dependencies]
@@ -23,6 +23,3 @@ windows.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[package.metadata.docs.rs]
-targets = ["x86_64-pc-windows-msvc"]

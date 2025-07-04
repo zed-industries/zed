@@ -204,7 +204,7 @@ pub fn main(socket: &str) {
     use std::io::{self, Read, Write};
     use std::process::exit;
 
-    use windows_net::UnixStream;
+    use net::UnixStream;
 
     let mut stream = match UnixStream::connect(socket) {
         Ok(stream) => stream,
@@ -260,7 +260,7 @@ impl AskPassSession {
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
     ) -> anyhow::Result<Self> {
-        use windows_net::async_net::UnixListener;
+        use net::async_net::UnixListener;
 
         let secrete = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;

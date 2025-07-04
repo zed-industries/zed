@@ -99,6 +99,7 @@ members = [
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/net",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
@@ -174,7 +175,6 @@ members = [
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
-    "crates/windows_net",
     "crates/workspace",
     "crates/worktree",
     "crates/zed",
@@ -313,6 +313,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
@@ -389,7 +390,6 @@ watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
-windows_net = { path = "crates/windows_net" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }

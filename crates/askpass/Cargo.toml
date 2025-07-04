@@ -15,10 +15,8 @@ path = "src/askpass.rs"
 anyhow.workspace = true
 futures.workspace = true
 gpui.workspace = true
+net.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows_net.workspace = true
