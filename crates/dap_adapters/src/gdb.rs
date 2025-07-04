@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::OsStr};
+use std::{borrow::Cow, collections::HashMap, ffi::OsStr};
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
@@ -63,8 +63,8 @@ impl DebugAdapter for GdbDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        json!({
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(json!({
             "oneOf": [
                 {
                     "allOf": [
@@ -151,7 +151,7 @@ impl DebugAdapter for GdbDebugAdapter {
                     ]
                 }
             ]
-        })
+        }))
     }
 
     async fn get_binary(

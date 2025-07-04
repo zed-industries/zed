@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::fs::File;
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     ffi::OsStr,
     fmt::Debug,
     net::Ipv4Addr,
@@ -268,9 +268,10 @@ pub async fn download_adapter_from_github(
     adapter_name: DebugAdapterName,
     github_version: AdapterVersion,
     file_type: DownloadedFileType,
+    base_path: &Path,
     delegate: &dyn DapDelegate,
 ) -> Result<PathBuf> {
-    let adapter_path = paths::debug_adapters_dir().join(&adapter_name.as_ref());
+    let adapter_path = base_path.join(&adapter_name.as_ref());
     let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
 
@@ -373,7 +374,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
     }
 
-    fn dap_schema(&self) -> serde_json::Value;
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value>;
 
     fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
         None
@@ -399,8 +400,8 @@ impl DebugAdapter for FakeAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        serde_json::Value::Null
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(serde_json::Value::Null)
     }
 
     async fn request_kind(

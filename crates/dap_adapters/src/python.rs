@@ -6,6 +6,7 @@ use gpui::{AppContext, AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::net::Ipv4Addr;
 use std::{
     collections::HashMap,
@@ -126,6 +127,7 @@ impl PythonDebugAdapter {
             adapter_name,
             version,
             adapters::DownloadedFileType::GzipTar,
+            paths::debug_adapters_dir(),
             delegate.as_ref(),
         )
         .await?;
@@ -258,8 +260,8 @@ impl DebugAdapter for PythonDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        json!({
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(json!({
             "properties": {
                 "request": {
                     "type": "string",
@@ -588,7 +590,7 @@ impl DebugAdapter for PythonDebugAdapter {
                     }
                 }
             ]
-        })
+        }))
     }
 
     async fn get_binary(

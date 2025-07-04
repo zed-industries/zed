@@ -16,6 +16,7 @@ use task::TcpArgumentsTemplate;
 use util;
 
 use std::{
+    borrow::Cow,
     env::consts,
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -26,7 +27,7 @@ use std::{
 use crate::*;
 
 #[derive(Default, Debug)]
-pub(crate) struct GoDebugAdapter {
+pub struct GoDebugAdapter {
     shim_path: OnceLock<PathBuf>,
 }
 
@@ -81,6 +82,7 @@ impl GoDebugAdapter {
             "delve-shim-dap".into(),
             asset.clone(),
             ty,
+            paths::debug_adapters_dir(),
             delegate.as_ref(),
         )
         .await?;
@@ -105,7 +107,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
         // Create common properties shared between launch and attach
         let common_properties = json!({
             "debugAdapter": {
@@ -307,7 +309,7 @@ impl DebugAdapter for GoDebugAdapter {
         });
 
         // Create the final schema
-        json!({
+        Cow::Owned(json!({
             "oneOf": [
                 {
                     "allOf": [
@@ -358,7 +360,7 @@ impl DebugAdapter for GoDebugAdapter {
                     ]
                 }
             ]
-        })
+        }))
     }
 
     async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {

@@ -6,6 +6,7 @@ use dap::StartDebuggingRequestArgumentsRequest;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
+use std::borrow::Cow;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -125,8 +126,8 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
-    fn dap_schema(&self) -> serde_json::Value {
-        json!({
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(json!({
             "properties": {
                 "request": {
                     "type": "string",
@@ -294,7 +295,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 }
             },
             "required": ["request", "program"]
-        })
+        }))
     }
 
     fn name(&self) -> DebugAdapterName {
@@ -350,6 +351,7 @@ impl DebugAdapter for PhpDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::Vsix,
+                    paths::debug_adapters_dir(),
                     delegate.as_ref(),
                 )
                 .await?;

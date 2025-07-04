@@ -1,8 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use dap::adapters::{DebugTaskDefinition, latest_github_release};
+use dap::adapters::{DapDelegate, DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
@@ -132,8 +132,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        json!({
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(json!({
             "properties": {
                 "request": {
                     "type": "string",
@@ -320,7 +320,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     }
                 }
             ]
-        })
+        }))
     }
 
     async fn get_binary(
@@ -344,6 +344,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         self.name(),
                         version.clone(),
                         adapters::DownloadedFileType::Vsix,
+                        paths::debug_adapters_dir(),
                         delegate.as_ref(),
                     )
                     .await?;
