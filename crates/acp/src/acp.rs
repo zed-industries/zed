@@ -4,39 +4,18 @@ use agentic_coding_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use buffer_diff::BufferDiff;
-use chrono::{DateTime, Utc};
 use editor::{MultiBuffer, PathKey};
-use futures::channel::oneshot;
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
 use markdown::Markdown;
 use project::Project;
 use smol::process::Child;
-use std::{mem, ops::Range, path::PathBuf, process::ExitStatus, sync::Arc};
+use std::{mem, path::PathBuf, process::ExitStatus, sync::Arc};
 use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
 
 pub use thread_view::AcpThreadView;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ThreadId(SharedString);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct FileVersion(u64);
-
-#[derive(Debug)]
-pub struct AgentThreadSummary {
-    pub id: ThreadId,
-    pub title: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileContent {
-    pub path: PathBuf,
-    pub version: FileVersion,
-    pub content: SharedString,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
@@ -44,12 +23,16 @@ pub struct UserMessage {
 }
 
 impl UserMessage {
-    fn into_acp(self, cx: &App) -> acp::UserMessage {
-        acp::UserMessage {
-            chunks: self
+    pub fn from_acp(
+        message: acp::UserMessage,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        Self {
+            chunks: message
                 .chunks
                 .into_iter()
-                .map(|chunk| chunk.into_acp(cx))
+                .map(|chunk| UserMessageChunk::from_acp(chunk, language_registry.clone(), cx))
                 .collect(),
         }
     }
@@ -57,27 +40,8 @@ impl UserMessage {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UserMessageChunk {
-    Text {
-        chunk: Entity<Markdown>,
-    },
-    File {
-        content: FileContent,
-    },
-    Directory {
-        path: PathBuf,
-        contents: Vec<FileContent>,
-    },
-    Symbol {
-        path: PathBuf,
-        range: Range<u64>,
-        version: FileVersion,
-        name: SharedString,
-        content: SharedString,
-    },
-    Fetch {
-        url: SharedString,
-        content: SharedString,
-    },
+    Text { chunk: Entity<Markdown> },
+    Path { path: PathBuf },
 }
 
 impl UserMessageChunk {
@@ -86,18 +50,20 @@ impl UserMessageChunk {
             Self::Text { chunk } => acp::UserMessageChunk::Text {
                 chunk: chunk.read(cx).source().to_string(),
             },
-            Self::File { .. } => todo!(),
-            Self::Directory { .. } => todo!(),
-            Self::Symbol { .. } => todo!(),
-            Self::Fetch { .. } => todo!(),
+            Self::Path { path } => acp::UserMessageChunk::Path { path },
         }
     }
 
-    pub fn from_str(chunk: &str, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
-        Self::Text {
-            chunk: cx.new(|cx| {
-                Markdown::new(chunk.to_owned().into(), Some(language_registry), None, cx)
-            }),
+    pub fn from_acp(
+        chunk: acp::UserMessageChunk,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        match chunk {
+            acp::UserMessageChunk::Text { chunk } => Self::Text {
+                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            },
+            acp::UserMessageChunk::Path { path } => Self::Path { path },
         }
     }
 }
@@ -738,17 +704,19 @@ impl AcpThread {
 
     pub fn send(
         &mut self,
-        message: &str,
+        message: impl Into<acp::UserMessage>,
         cx: &mut Context<Self>,
-    ) -> impl use<> + Future<Output = Result<()>> {
+    ) -> BoxFuture<'static, Result<()>> {
         let agent = self.connection.clone();
-        let chunk =
-            UserMessageChunk::from_str(message, self.project.read(cx).languages().clone(), cx);
-        let message = UserMessage {
-            chunks: vec![chunk],
-        };
-        self.push_entry(AgentThreadEntryContent::UserMessage(message.clone()), cx);
-        let acp_message = message.into_acp(cx);
+        let message = message.into();
+        self.push_entry(
+            AgentThreadEntryContent::UserMessage(UserMessage::from_acp(
+                message.clone(),
+                self.project.read(cx).languages().clone(),
+                cx,
+            )),
+            cx,
+        );
 
         let (tx, rx) = oneshot::channel();
         let cancel = self.cancel(cx);
@@ -756,11 +724,7 @@ impl AcpThread {
         self.send_task = Some(cx.spawn(async move |this, cx| {
             cancel.await.log_err();
 
-            let result = agent
-                .request(acp::SendUserMessageParams {
-                    message: acp_message,
-                })
-                .await;
+            let result = agent.request(acp::SendUserMessageParams { message }).await;
             tx.send(result).log_err();
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
@@ -771,6 +735,7 @@ impl AcpThread {
                 _ => Ok(()),
             }
         }
+        .boxed()
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -989,7 +954,7 @@ mod tests {
     use super::*;
     use async_pipe::{PipeReader, PipeWriter};
     use async_trait::async_trait;
-    use futures::{FutureExt as _, channel::mpsc, future::LocalBoxFuture, select};
+    use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
     use indoc::indoc;
     use project::FakeFs;
