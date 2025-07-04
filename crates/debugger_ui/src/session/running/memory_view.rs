@@ -167,19 +167,20 @@ impl MemoryView {
                                 .id(("memory-view-row-raw-memory", ix * view_state.line_width))
                                 .size_full()
                                 .px_1()
-                                .children(memory.iter().enumerate().map(|(ix, cell)| {
+                                .children(memory.iter().enumerate().map(|(cell_ix, cell)| {
                                     let weak = weak.clone();
                                     div()
                                         .id((
                                             "memory-view-row-raw-memory",
-                                            base_address + ix as u64,
+                                            base_address + cell_ix as u64,
                                         ))
                                         .px_0p5()
                                         .when_some(
                                             view_state.selection.as_ref(),
                                             |this, selection| {
                                                 this.when(
-                                                    selection.contains(base_address + ix as u64),
+                                                    selection
+                                                        .contains(base_address + cell_ix as u64),
                                                     |this| this.bg(Color::Accent.color(cx)),
                                                 )
                                             },
@@ -191,8 +192,8 @@ impl MemoryView {
                                         )
                                         .on_drag(
                                             Drag {
-                                                start_address: base_address + ix as u64,
-                                                end_address: base_address + ix as u64,
+                                                start_address: base_address + cell_ix as u64,
+                                                end_address: base_address + cell_ix as u64,
                                             },
                                             {
                                                 let weak = weak.clone();
@@ -216,7 +217,8 @@ impl MemoryView {
                                                     this.view_state.selection = Some(
                                                         SelectedMemoryRange::DragComplete(Drag {
                                                             start_address: drag.start_address,
-                                                            end_address: base_address + ix as u64,
+                                                            end_address: base_address
+                                                                + cell_ix as u64,
                                                         }),
                                                     );
                                                 });
@@ -227,7 +229,7 @@ impl MemoryView {
                                                 this.view_state.selection =
                                                     Some(SelectedMemoryRange::DragUnderway(Drag {
                                                         start_address: drag.start_address,
-                                                        end_address: base_address + ix as u64,
+                                                        end_address: base_address + cell_ix as u64,
                                                     }));
 
                                                 // this.list_state.scroll_by(distance);
