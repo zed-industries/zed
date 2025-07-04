@@ -48,7 +48,7 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
-    secrete: std::sync::Arc<std::sync::Mutex<String>>,
+    secret: std::sync::Arc<std::sync::Mutex<String>>,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -68,7 +68,7 @@ impl AskPassSession {
         use util::fs::make_file_executable;
 
         #[cfg(target_os = "windows")]
-        let secrete = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let secret = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
@@ -85,7 +85,7 @@ impl AskPassSession {
         let mut kill_tx = Some(askpass_kill_master_tx);
 
         #[cfg(target_os = "windows")]
-        let askpass_secret = secrete.clone();
+        let askpass_secret = secret.clone();
         let askpass_task = executor.spawn(async move {
             let mut askpass_opened_tx = Some(askpass_opened_tx);
 
@@ -148,7 +148,7 @@ impl AskPassSession {
             Ok(Self {
                 askpass_helper,
                 _askpass_task: askpass_task,
-                secrete,
+                secret,
                 askpass_kill_master_rx: Some(askpass_kill_master_rx),
                 askpass_opened_rx: Some(askpass_opened_rx),
             })
@@ -193,8 +193,8 @@ impl AskPassSession {
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
     pub fn get_password(&self) -> String {
-        let secrete = self.secrete.lock().unwrap();
-        secrete.clone()
+        let secret = self.secret.lock().unwrap();
+        secret.clone()
     }
 }
 
