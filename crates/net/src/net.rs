@@ -90,7 +90,7 @@ mod tests {
             });
 
             // Client
-            let mut client = UnixStream::connect(&socket)?;
+            let mut client = UnixStream::connect(&socket).await?;
             client.write_all(CLIENT_MESSAGE.as_bytes()).await?;
 
             // Read the response from the server

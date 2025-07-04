@@ -34,7 +34,7 @@ pub mod windows {
     pub struct UnixStream(Async<crate::UnixStream>);
 
     impl UnixStream {
-        pub fn connect<P: AsRef<Path>>(path: P) -> Result<Self> {
+        pub async fn connect<P: AsRef<Path>>(path: P) -> Result<Self> {
             Ok(UnixStream(Async::new(crate::UnixStream::connect(path)?)?))
         }
     }
