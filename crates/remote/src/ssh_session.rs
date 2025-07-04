@@ -2054,6 +2054,7 @@ impl SshRemoteConnection {
         cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         use smol::process::{Command, Stdio};
+        use std::env::VarError;
 
         async fn run_cmd(command: &mut Command) -> Result<()> {
             let output = command
@@ -2072,29 +2073,46 @@ impl SshRemoteConnection {
             "{}-{}",
             self.ssh_platform.arch,
             match self.ssh_platform.os {
-                "linux" => "unknown-linux-gnu",
+                "linux" => "unknown-linux-musl",
                 "macos" => "apple-darwin",
                 _ => anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform),
             }
         );
+        let mut rust_flags = match std::env::var("RUSTFLAGS") {
+            Ok(val) => val,
+            Err(VarError::NotPresent) => String::new(),
+            Err(e) => {
+                log::error!("Failed to get env var `RUSTFLAGS` value: {e}");
+                String::new()
+            }
+        };
+        if self.ssh_platform.os == "linux" {
+            rust_flags.push_str(" -C target-feature=+crt-static");
+        }
 
         let bin_path = if self.ssh_platform.arch == std::env::consts::ARCH
             && self.ssh_platform.os == std::env::consts::OS
         {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-            ]))
+            run_cmd(
+                Command::new("cargo")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env("RUSTFLAGS", &rust_flags),
+            )
             .await?;
 
-            "target/remote_server/debug/remote_server".into()
+            format!("target/remote_server/{triple}/debug/remote_server")
         } else {
             if build_remote_server.contains("cross") {
                 #[cfg(target_os = "windows")]
@@ -2141,7 +2159,8 @@ impl SshRemoteConnection {
                         .env(
                             "CROSS_CONTAINER_OPTS",
                             format!("--mount type=bind,src={src},dst=/app/target"),
-                        ),
+                        )
+                        .env("RUSTFLAGS", &rust_flags),
                 )
                 .await?;
             } else {
@@ -2180,17 +2199,21 @@ impl SshRemoteConnection {
                     cx,
                 );
                 log::info!("building remote binary from source for {triple} with Zig");
-                run_cmd(Command::new("cargo").args([
-                    "zigbuild",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ]))
+                run_cmd(
+                    Command::new("cargo")
+                        .args([
+                            "zigbuild",
+                            "--package",
+                            "remote_server",
+                            "--features",
+                            "debug-embed",
+                            "--target-dir",
+                            "target/remote_server",
+                            "--target",
+                            &triple,
+                        ])
+                        .env("RUSTFLAGS", &rust_flags),
+                )
                 .await?;
             }
 
