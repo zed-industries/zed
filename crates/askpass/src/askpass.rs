@@ -170,7 +170,8 @@ impl AskPassSession {
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
     pub async fn run(&mut self) -> AskPassResult {
-        let connection_timeout = Duration::from_secs(10);
+        // This is the default timeout setting used by VSCode.
+        let connection_timeout = Duration::from_secs(17);
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
