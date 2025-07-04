@@ -1,9 +1,4 @@
-use std::{
-    cell::OnceCell,
-    rc::{Rc, Weak},
-    sync::{Arc, LazyLock, atomic::AtomicUsize},
-    time::Duration,
-};
+use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -14,9 +9,8 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, Context, Div, Divider, Element, FluentBuilder, InteractiveElement,
-    IntoElement, Label, LabelCommon, LineHeightStyle, ParentElement, Render, Scrollbar,
-    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, TextSize, Window, div,
-    h_flex, px, v_flex,
+    IntoElement, Label, LabelCommon, ParentElement, Render, Scrollbar, ScrollbarState,
+    SharedString, StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 
@@ -167,7 +161,7 @@ impl MemoryView {
         state.set_scroll_handler({
             let weak = cx.weak_entity();
             move |range, _, cx| {
-                weak.update(cx, |this, _| {
+                _ = weak.update(cx, |this, _| {
                     if range.visible_range.start == 0 {
                         this.view_state.schedule_scroll_up();
                     } else if range.visible_range.end == this.view_state.row_count() + 1 {
