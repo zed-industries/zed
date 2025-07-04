@@ -946,14 +946,14 @@ impl acp::Client for AcpClientDelegate {
 
 fn acp_icon_to_ui_icon(icon: acp::Icon) -> IconName {
     match icon {
-        acp::Icon::FileSearch => IconName::FileSearch,
-        acp::Icon::Folder => IconName::Folder,
-        acp::Icon::Globe => IconName::Globe,
-        acp::Icon::Hammer => IconName::Hammer,
-        acp::Icon::LightBulb => IconName::LightBulb,
-        acp::Icon::Pencil => IconName::Pencil,
-        acp::Icon::Regex => IconName::Regex,
-        acp::Icon::Terminal => IconName::Terminal,
+        acp::Icon::FileSearch => IconName::ToolSearch,
+        acp::Icon::Folder => IconName::ToolFolder,
+        acp::Icon::Globe => IconName::ToolWeb,
+        acp::Icon::Hammer => IconName::ToolHammer,
+        acp::Icon::LightBulb => IconName::ToolBulb,
+        acp::Icon::Pencil => IconName::ToolPencil,
+        acp::Icon::Regex => IconName::ToolRegex,
+        acp::Icon::Terminal => IconName::ToolWeb,
     }
 }
 
