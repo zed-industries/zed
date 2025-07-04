@@ -13,12 +13,12 @@ path = "src/net.rs"
 doctest = false
 
 [dependencies]
+smol.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
 async-io = "2.4"
-smol.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
