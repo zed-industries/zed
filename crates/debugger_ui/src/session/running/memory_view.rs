@@ -381,6 +381,7 @@ impl Render for MemoryView {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         self.view_state.perform_scheduled_scroll();
+        let this = cx.weak_entity();
         v_flex()
             .id("Memory-view")
             .p_1()
@@ -416,7 +417,44 @@ impl Render for MemoryView {
                 v_flex()
                     .size_full()
                     .child(list(self.list_state.clone()).size_full())
-                    .children(self.render_vertical_scrollbar(cx)),
+                    .children(self.render_vertical_scrollbar(cx))
+                    .child(
+                        div()
+                            .absolute()
+                            .h_1_6()
+                            .w_full()
+                            .bg(gpui::red())
+                            .opacity(0.5)
+                            .top_0()
+                            .right_1()
+                            .left_1(),
+                    )
+                    .child(
+                        div()
+                            .id("ayylmaojesus")
+                            .absolute()
+                            .h_1_6()
+                            .w_full()
+                            .bg(gpui::blue())
+                            .opacity(0.5)
+                            .bottom_0()
+                            .right_1()
+                            .left_1()
+                            .on_mouse_move(move |evt, _, cx| {
+                                dbg!("Hey");
+                                _ = this.update(cx, |this, cx| {
+                                    if this
+                                        .view_state
+                                        .selection
+                                        .as_ref()
+                                        .is_some_and(|selection| selection.is_dragging())
+                                    {
+                                        this.list_state.scroll_by(px(100.));
+                                    }
+                                });
+                                // style
+                            }),
+                    ),
             )
     }
 }
