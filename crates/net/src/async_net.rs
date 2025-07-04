@@ -26,7 +26,7 @@ pub mod windows {
         }
 
         pub async fn accept(&self) -> Result<(UnixStream, ())> {
-            let sock = self.0.read_with(|listener| listener.accept()).await?;
+            let (sock, _) = self.0.read_with(|listener| listener.accept()).await?;
             Ok((UnixStream(Async::new(sock)?), ()))
         }
     }

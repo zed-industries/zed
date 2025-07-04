@@ -29,8 +29,7 @@ mod tests {
 
     #[test]
     fn test_windows_listener() -> std::io::Result<()> {
-        use crate::listener::UnixListener;
-        use crate::stream::UnixStream;
+        use crate::{UnixListener, UnixStream};
 
         let temp = tempfile::tempdir()?;
         let socket = temp.path().join("socket.sock");
@@ -38,7 +37,7 @@ mod tests {
 
         // Server
         let server = std::thread::spawn(move || {
-            let mut stream = listener.accept().unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
 
             // Read data from the client
             let mut buffer = [0; BUFFER_SIZE];

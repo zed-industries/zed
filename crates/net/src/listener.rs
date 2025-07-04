@@ -30,11 +30,11 @@ impl UnixListener {
         Ok(Self(socket))
     }
 
-    pub fn accept(&self) -> Result<UnixStream> {
+    pub fn accept(&self) -> Result<(UnixStream, ())> {
         let mut storage = SOCKADDR_UN::default();
         let mut len = std::mem::size_of_val(&storage) as i32;
         let raw = self.0.accept(&mut storage as *mut _ as *mut _, &mut len)?;
-        Ok(UnixStream::new(raw))
+        Ok((UnixStream::new(raw), ()))
     }
 }
 
