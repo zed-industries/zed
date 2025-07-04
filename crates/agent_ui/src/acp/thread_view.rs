@@ -458,6 +458,25 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn render_context_pill(&self, label: impl Into<SharedString>, cx: &App) -> AnyElement {
+        h_flex()
+            .py_0p5()
+            .px_1p5()
+            .bg(cx.theme().colors().element_background)
+            .border_1()
+            .border_color(cx.theme().colors().border.opacity(0.5))
+            .rounded_sm()
+            .child(
+                div().max_w_64().child(
+                    Label::new(label)
+                        .size(LabelSize::XSmall)
+                        .buffer_font(cx)
+                        .truncate(),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn render_entry(
         &self,
         index: usize,
@@ -469,30 +488,45 @@ impl AcpThreadView {
         match &entry.content {
             AgentThreadEntryContent::UserMessage(message) => {
                 let style = user_message_markdown_style(window, cx);
-                let message_body = div().children(message.chunks.iter().map(|chunk| match chunk {
-                    UserMessageChunk::Text { chunk } => {
-                        // todo!() open link
-                        MarkdownElement::new(chunk.clone(), style.clone()).into_any()
-                    }
-                    UserMessageChunk::Path { path } => {
-                        // todo! danilo make it nice
-                        Label::new(path.to_string_lossy().to_string()).into_any_element()
-                    }
-                }));
+                let user_text: Vec<_> = message
+                    .chunks
+                    .iter()
+                    .filter_map(|chunk| match chunk {
+                        UserMessageChunk::Text { chunk } => {
+                            // todo!() open link
+                            Some(MarkdownElement::new(chunk.clone(), style.clone()).into_any())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                let user_context: Vec<_> = message
+                    .chunks
+                    .iter()
+                    .filter_map(|chunk| match chunk {
+                        UserMessageChunk::Path { path } => {
+                            let label = path.to_string_lossy().to_string();
+                            Some(self.render_context_pill(label, cx))
+                        }
+                        _ => None,
+                    })
+                    .collect();
 
                 div()
                     .py_4()
                     .px_2()
                     .child(
-                        div()
+                        v_flex()
                             .p_3()
+                            .gap_1p5()
                             .rounded_lg()
                             .shadow_md()
                             .bg(cx.theme().colors().editor_background)
                             .border_1()
                             .border_color(cx.theme().colors().border)
                             .text_xs()
-                            .child(message_body),
+                            .child(h_flex().flex_wrap().gap_1().children(user_context))
+                            .children(user_text),
                     )
                     .into_any()
             }
