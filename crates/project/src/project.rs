@@ -1156,7 +1156,7 @@ impl Project {
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
             let (ssh_proto, path_style) =
-                ssh.update(cx, |cx, _| (cx.proto_client(), cx.path_style()));
+                ssh.read_with(cx, |ssh, _| (ssh.proto_client(), ssh.path_style()));
             let worktree_store = cx.new(|_| {
                 WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID, path_style)
             });

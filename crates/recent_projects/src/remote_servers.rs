@@ -592,7 +592,7 @@ impl RemoteServerProjects {
                         });
                     };
 
-                    let path_style = session.update(cx, |cx, _| cx.path_style())?;
+                    let path_style = session.read(cx).path_style();
                     let project = cx.update(|_, cx| {
                         project::Project::ssh(
                             session,
