@@ -30,13 +30,14 @@ use zed_actions::agent::Chat;
 
 use ::acp::{
     AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage, AssistantMessageChunk,
-    Diff, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallId,
-    ToolCallStatus, UserMessageChunk,
+    Diff, MentionPath, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent,
+    ToolCallId, ToolCallStatus,
 };
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 
 pub struct AcpThreadView {
+    workspace: WeakEntity<Workspace>,
     thread: Entity<AcpThread>,
     thread_state: ThreadState,
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
@@ -104,7 +105,7 @@ impl AcpThreadView {
             editor.set_use_modal_editing(true);
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 mention_set.clone(),
-                workspace,
+                workspace.clone(),
                 cx.weak_entity(),
             ))));
             editor.set_context_menu_options(ContextMenuOptions {
@@ -156,6 +157,7 @@ impl AcpThreadView {
         let thread = cx.new(|cx| AcpThread::stdio(child, project, cx));
 
         Self {
+            workspace,
             thread_state: Self::initial_state(thread.clone(), window, cx),
             thread,
             message_editor,
@@ -458,25 +460,6 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_context_pill(&self, label: impl Into<SharedString>, cx: &App) -> AnyElement {
-        h_flex()
-            .py_0p5()
-            .px_1p5()
-            .bg(cx.theme().colors().element_background)
-            .border_1()
-            .border_color(cx.theme().colors().border.opacity(0.5))
-            .rounded_sm()
-            .child(
-                div().max_w_64().child(
-                    Label::new(label)
-                        .size(LabelSize::XSmall)
-                        .buffer_font(cx)
-                        .truncate(),
-                ),
-            )
-            .into_any_element()
-    }
-
     fn render_entry(
         &self,
         index: usize,
@@ -486,50 +469,33 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match &entry.content {
-            AgentThreadEntryContent::UserMessage(message) => {
-                let style = user_message_markdown_style(window, cx);
-                let user_text: Vec<_> = message
-                    .chunks
-                    .iter()
-                    .filter_map(|chunk| match chunk {
-                        UserMessageChunk::Text { chunk } => {
-                            // todo!() open link
-                            Some(MarkdownElement::new(chunk.clone(), style.clone()).into_any())
-                        }
-                        _ => None,
-                    })
-                    .collect();
-
-                let user_context: Vec<_> = message
-                    .chunks
-                    .iter()
-                    .filter_map(|chunk| match chunk {
-                        UserMessageChunk::Path { path } => {
-                            let label = path.to_string_lossy().to_string();
-                            Some(self.render_context_pill(label, cx))
-                        }
-                        _ => None,
-                    })
-                    .collect();
-
-                div()
-                    .py_4()
-                    .px_2()
-                    .child(
-                        v_flex()
-                            .p_3()
-                            .gap_1p5()
-                            .rounded_lg()
-                            .shadow_md()
-                            .bg(cx.theme().colors().editor_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .text_xs()
-                            .child(h_flex().flex_wrap().gap_1().children(user_context))
-                            .children(user_text),
-                    )
-                    .into_any()
-            }
+            AgentThreadEntryContent::UserMessage(message) => div()
+                .py_4()
+                .px_2()
+                .child(
+                    v_flex()
+                        .p_3()
+                        .gap_1p5()
+                        .rounded_lg()
+                        .shadow_md()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .text_xs()
+                        .child(
+                            MarkdownElement::new(
+                                message.content.clone(),
+                                user_message_markdown_style(window, cx),
+                            )
+                            .on_url_click({
+                                let workspace = self.workspace.clone();
+                                move |url, window, cx| {
+                                    Self::open_markdown_link(url, &workspace, window, cx);
+                                }
+                            }),
+                        ),
+                )
+                .into_any(),
             AgentThreadEntryContent::AssistantMessage(AssistantMessage { chunks }) => {
                 let style = default_markdown_style(false, window, cx);
                 let message_body = v_flex()
@@ -1406,6 +1372,43 @@ impl AcpThreadView {
         )
         .into_any()
     }
+
+    fn open_markdown_link(
+        url: SharedString,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = workspace.upgrade() else {
+            cx.open_url(&url);
+            return;
+        };
+
+        if let Some(mention_path) = MentionPath::try_parse(&url) {
+            workspace.update(cx, |workspace, cx| {
+                let project = workspace.project();
+                let Some((path, entry)) = project.update(cx, |project, cx| {
+                    let path = project.find_project_path(mention_path.path(), cx)?;
+                    let entry = project.entry_for_path(&path, cx)?;
+                    Some((path, entry))
+                }) else {
+                    return;
+                };
+
+                if entry.is_dir() {
+                    project.update(cx, |_, cx| {
+                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                    });
+                } else {
+                    workspace
+                        .open_path(path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+        } else {
+            cx.open_url(&url);
+        }
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -1548,6 +1551,17 @@ fn user_message_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     });
 
     style.base_text_style = text_style;
+    style.link_callback = Some(Rc::new(move |url, cx| {
+        if MentionPath::try_parse(url).is_some() {
+            let colors = cx.theme().colors();
+            Some(TextStyleRefinement {
+                background_color: Some(colors.element_background),
+                ..Default::default()
+            })
+        } else {
+            None
+        }
+    }));
     style
 }
 
@@ -1662,18 +1676,6 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
             }),
             ..Default::default()
         },
-        link_callback: Some(Rc::new(move |_url, _cx| {
-            // todo!()
-            // if MentionLink::is_valid(url) {
-            //     let colors = cx.theme().colors();
-            //     Some(TextStyleRefinement {
-            //         background_color: Some(colors.element_background),
-            //         ..Default::default()
-            //     })
-            // } else {
-            None
-            // }
-        })),
         ..Default::default()
     }
 }

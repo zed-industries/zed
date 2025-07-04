@@ -1,4 +1,4 @@
-use agentic_coding_protocol::{self as acp};
+use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use buffer_diff::BufferDiff;
@@ -9,13 +9,20 @@ use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _
 use markdown::Markdown;
 use project::Project;
 use smol::process::Child;
-use std::{mem, path::PathBuf, process::ExitStatus, sync::Arc};
+use std::fmt::Write;
+use std::{
+    fmt::Display,
+    mem,
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    sync::Arc,
+};
 use ui::{App, IconName};
 use util::{ResultExt, debug_panic};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
-    pub chunks: Vec<UserMessageChunk>,
+    pub content: Entity<Markdown>,
 }
 
 impl UserMessage {
@@ -24,43 +31,49 @@ impl UserMessage {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
+        let mut md_source = String::new();
+
+        for chunk in message.chunks {
+            match chunk {
+                UserMessageChunk::Text { chunk } => md_source.push_str(&chunk),
+                UserMessageChunk::Path { path } => {
+                    write!(&mut md_source, "{}", MentionPath(&path)).unwrap()
+                }
+            }
+        }
+
         Self {
-            chunks: message
-                .chunks
-                .into_iter()
-                .map(|chunk| UserMessageChunk::from_acp(chunk, language_registry.clone(), cx))
-                .collect(),
+            content: cx
+                .new(|cx| Markdown::new(md_source.into(), Some(language_registry), None, cx)),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UserMessageChunk {
-    Text { chunk: Entity<Markdown> },
-    Path { path: PathBuf },
-}
+#[derive(Debug)]
+pub struct MentionPath<'a>(&'a Path);
 
-impl UserMessageChunk {
-    pub fn into_acp(self, cx: &App) -> acp::UserMessageChunk {
-        match self {
-            Self::Text { chunk } => acp::UserMessageChunk::Text {
-                chunk: chunk.read(cx).source().to_string(),
-            },
-            Self::Path { path } => acp::UserMessageChunk::Path { path },
-        }
+impl<'a> MentionPath<'a> {
+    const PREFIX: &'static str = "@file:";
+
+    pub fn try_parse(url: &'a str) -> Option<Self> {
+        let path = url.strip_prefix(Self::PREFIX)?;
+        Some(MentionPath(Path::new(path)))
     }
 
-    pub fn from_acp(
-        chunk: acp::UserMessageChunk,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        match chunk {
-            acp::UserMessageChunk::Text { chunk } => Self::Text {
-                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
-            },
-            acp::UserMessageChunk::Path { path } => Self::Path { path },
-        }
+    pub fn path(&self) -> &Path {
+        self.0
+    }
+}
+
+impl Display for MentionPath<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[@{}]({}{})",
+            self.0.file_name().unwrap_or_default().display(),
+            Self::PREFIX,
+            self.0.display()
+        )
     }
 }
 
