@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
 use collections::HashSet;
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
+use editor::{Editor, EditorElement, EditorMode, EditorStyle, MinimapVisibility, MultiBuffer};
 use gpui::{
     Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListState,
-    SharedString, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
+    SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, Window, div, list, percentage, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
@@ -73,7 +73,7 @@ impl AcpThreadView {
                 window,
                 cx,
             );
-            editor.set_placeholder_text("Send a message", cx);
+            editor.set_placeholder_text("Message the agent", cx);
             editor.set_soft_wrap();
             editor
         });
@@ -1195,6 +1195,36 @@ impl AcpThreadView {
             )
             .into_any()
     }
+
+    fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let settings = ThemeSettings::get_global(cx);
+        let font_size = TextSize::Small
+            .rems(cx)
+            .to_pixels(settings.agent_font_size(cx));
+        let line_height = settings.buffer_line_height.value() * font_size;
+
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: font_size.into(),
+            line_height: line_height.into(),
+            ..Default::default()
+        };
+
+        EditorElement::new(
+            &self.message_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                syntax: cx.theme().syntax().clone(),
+                ..Default::default()
+            },
+        )
+        .into_any()
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -1276,8 +1306,9 @@ impl Render for AcpThreadView {
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .p_2()
+                    .pt_3()
                     .gap_2()
-                    .child(self.message_editor.clone())
+                    .child(self.render_message_editor(cx))
                     .child({
                         let thread = self.thread();
 
