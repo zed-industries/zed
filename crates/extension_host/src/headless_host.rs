@@ -198,6 +198,13 @@ impl HeadlessExtensionStore {
                     );
                 })?;
             }
+
+            for debug_adapter in manifest.debug_locators.keys() {
+                this.update(cx, |this, _cx| {
+                    this.proxy
+                        .register_debug_locator(wasm_extension.clone(), debug_adapter.clone());
+                })?;
+            }
         }
 
         Ok(())
