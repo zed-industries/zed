@@ -12550,6 +12550,7 @@ dependencies = [
  "prost-build 0.9.0",
  "remote_path",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -17044,6 +17045,12 @@ dependencies = [
  "thiserror 2.0.12",
  "utf-8",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
 
 [[package]]
 name = "typeid"

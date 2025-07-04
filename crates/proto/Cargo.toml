@@ -28,3 +28,4 @@ prost-build.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
+typed-path = "0.11"

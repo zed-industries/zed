@@ -128,45 +128,46 @@ pub trait ToProto {
     fn to_proto(self) -> String;
 }
 
-impl FromProto for PathBuf {
+#[inline]
+fn from_proto_path(proto: String) -> PathBuf {
     #[cfg(target_os = "windows")]
-    fn from_proto(proto: String) -> Self {
-        proto.replace('/', "\\").into()
-    }
+    let proto = proto.replace('/', "\\");
+
+    PathBuf::from(proto)
+}
+
+#[inline]
+fn to_proto_path(path: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    let proto = path.to_string_lossy().replace('\\', "/");
 
     #[cfg(not(target_os = "windows"))]
+    let proto = path.to_string_lossy().to_string();
+
+    proto
+}
+
+impl FromProto for PathBuf {
     fn from_proto(proto: String) -> Self {
-        PathBuf::from(proto)
+        from_proto_path(proto)
     }
 }
 
 impl FromProto for Arc<Path> {
     fn from_proto(proto: String) -> Self {
-        PathBuf::from_proto(proto).into()
+        from_proto_path(proto).into()
     }
 }
 
 impl ToProto for PathBuf {
-    #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
-        self.to_string_lossy().replace('\\', "/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
+        to_proto_path(&self)
     }
 }
 
 impl ToProto for &Path {
-    #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
-        self.to_string_lossy().replace('\\', "/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
+        to_proto_path(self)
     }
 }
 
@@ -224,6 +225,75 @@ impl<T: RequestMessage> TypedEnvelope<T> {
             sender_id: self.sender_id,
             message_id: self.message_id,
             payload_type: PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use typed_path::{UnixPath, UnixPathBuf, WindowsPath, WindowsPathBuf};
+
+    fn windows_path_from_proto(proto: String) -> WindowsPathBuf {
+        let proto = proto.replace('/', "\\");
+        WindowsPathBuf::from(proto)
+    }
+
+    fn unix_path_from_proto(proto: String) -> UnixPathBuf {
+        UnixPathBuf::from(proto)
+    }
+
+    fn windows_path_to_proto(path: &WindowsPath) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn unix_path_to_proto(path: &UnixPath) -> String {
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn test_path_proto_interop() {
+        // Windows path to proto and back
+        {
+            let windows_path_str = "C:\\Users\\User\\Documents\\file.txt";
+            let windows_path = WindowsPathBuf::from(windows_path_str);
+            let proto = windows_path_to_proto(&windows_path);
+            let recovered_path = windows_path_from_proto(proto);
+            assert_eq!(recovered_path.to_string_lossy(), windows_path_str);
+        }
+        // Unix path to proto and back
+        {
+            let unix_path_str = "/home/user/documents/file.txt";
+            let unix_path = UnixPathBuf::from(unix_path_str);
+            let proto = unix_path_to_proto(&unix_path);
+            let recovered_path = unix_path_from_proto(proto);
+            assert_eq!(recovered_path.to_string_lossy(), unix_path_str);
+        }
+        // Windows host, Unix client, host sends Windows path to client
+        {
+            let windows_path_str = "C:\\Users\\User\\Documents\\file.txt";
+
+            let windows_host_path = WindowsPathBuf::from(windows_path_str);
+            let proto = windows_path_to_proto(&windows_host_path);
+            let unix_client_received_path = unix_path_from_proto(proto);
+            let proto = unix_path_to_proto(&unix_client_received_path);
+            let windows_host_recovered_path = windows_path_from_proto(proto);
+            assert_eq!(windows_host_path, windows_host_recovered_path);
+            assert_eq!(
+                windows_host_recovered_path.to_string_lossy(),
+                windows_path_str
+            );
+        }
+        // Unix host, Windows client, host sends Unix path to client
+        {
+            let unix_path_str = "/home/user/documents/file.txt";
+
+            let unix_host_path = UnixPathBuf::from(unix_path_str);
+            let proto = unix_path_to_proto(&unix_host_path);
+            let windows_client_received_path = windows_path_from_proto(proto);
+            let proto = windows_path_to_proto(&windows_client_received_path);
+            let unix_host_recovered_path = unix_path_from_proto(proto);
+            assert_eq!(unix_host_path, unix_host_recovered_path);
+            assert_eq!(unix_host_recovered_path.to_string_lossy(), unix_path_str);
         }
     }
 }
