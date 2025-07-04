@@ -150,6 +150,11 @@ fn scroll_editor(
         cx,
         |s| {
             s.move_with(|map, selection| {
+                // TODO: Improve the logic and function calls below to be dependent on
+                // the `amount`. If the amount is vertical, we don't care about
+                // columns, while if it's horizontal, we don't care about rows,
+                // so we don't need to calculate both and deal with logic for
+                // both.
                 let mut head = selection.head();
                 let top = top_anchor.to_display_point(map);
                 let max_point = map.max_point();
@@ -224,8 +229,9 @@ fn scroll_editor(
                 // column position, or the right-most column in the current
                 // line, seeing as the cursor might be in a short line, in which
                 // case we don't want to go past its last column.
+                let max_row_column = map.max_column(new_row);
                 let max_column = match min_column + visible_column_count as u32 {
-                    max_column if max_column >= max_point.column() => max_point.column(),
+                    max_column if max_column >= max_row_column => max_row_column,
                     max_column => max_column,
                 };
 
