@@ -6,7 +6,7 @@ use agentic_coding_protocol::{self as acp};
 use collections::HashSet;
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer};
 use gpui::{
-    Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, ListState,
+    Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListState,
     SharedString, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
     UnderlineStyle, Window, div, list, percentage, prelude::*, pulsating_between,
 };
@@ -17,8 +17,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{Button, Tooltip};
-use ui::{Disclosure, prelude::*};
+use ui::{Disclosure, Tooltip, prelude::*};
 use util::{ResultExt, paths};
 use zed_actions::agent::Chat;
 
@@ -84,14 +83,14 @@ impl AcpThreadView {
             gpui::ListAlignment::Bottom,
             px(2048.0),
             cx.processor({
-                move |this: &mut Self, item: usize, window, cx| {
-                    let Some(entry) = this
-                        .thread()
-                        .and_then(|thread| thread.read(cx).entries.get(item))
-                    else {
+                move |this: &mut Self, index: usize, window, cx| {
+                    let Some((entry, len)) = this.thread().and_then(|thread| {
+                        let entries = &thread.read(cx).entries;
+                        Some((entries.get(index)?, entries.len()))
+                    }) else {
                         return Empty.into_any();
                     };
-                    this.render_entry(item, entry, window, cx)
+                    this.render_entry(index, len, entry, window, cx)
                 }
             }),
         );
@@ -393,6 +392,7 @@ impl AcpThreadView {
     fn render_entry(
         &self,
         index: usize,
+        total_entries: usize,
         entry: &ThreadEntry,
         window: &mut Window,
         cx: &Context<Self>,
@@ -409,7 +409,8 @@ impl AcpThreadView {
                 }));
 
                 div()
-                    .p_2()
+                    .py_4()
+                    .px_2()
                     .child(
                         div()
                             .p_3()
@@ -425,7 +426,8 @@ impl AcpThreadView {
             }
             AgentThreadEntryContent::AssistantMessage(AssistantMessage { chunks }) => {
                 let style = default_markdown_style(window, cx);
-                let message_body = div()
+                let message_body = v_flex()
+                    .gap_2p5()
                     .children(
                         chunks
                             .iter()
@@ -450,13 +452,14 @@ impl AcpThreadView {
 
                 v_flex()
                     .px_5()
-                    .py_2()
-                    .gap_2()
+                    .py_1p5()
+                    .when(index + 1 == total_entries, |this| this.pb_4())
                     .text_ui(cx)
                     .child(message_body)
                     .into_any()
             }
             AgentThreadEntryContent::ToolCall(tool_call) => div()
+                .py_1p5()
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
@@ -497,28 +500,29 @@ impl AcpThreadView {
                                 .opened_icon(IconName::ChevronUp)
                                 .closed_icon(IconName::ChevronDown)
                                 .on_click(cx.listener({
-                                    move |this, _event, _window, _cx| {
+                                    move |this, _event, _window, cx| {
                                         if is_open {
                                             this.expanded_thinking_blocks.remove(&key);
                                         } else {
                                             this.expanded_thinking_blocks.insert(key);
                                         }
+                                        cx.notify();
                                     }
                                 })),
                         ),
                     ),
             )
-            .child(
-                div()
-                    .relative()
-                    .mt_1p5()
-                    .ml_1p5()
-                    .pl_2p5()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .text_ui_sm(cx)
-                    .when(is_open, |this| {
-                        this.child(
+            .when(is_open, |this| {
+                this.child(
+                    div()
+                        .relative()
+                        .mt_1p5()
+                        .ml_1p5()
+                        .pl_2p5()
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .text_ui_sm(cx)
+                        .child(
                             // todo! url click
                             MarkdownElement::new(chunk, default_markdown_style(window, cx)),
                             // .on_url_click({
@@ -527,10 +531,17 @@ impl AcpThreadView {
                             //         open_markdown_link(text, workspace.clone(), window, cx);
                             //     }
                             // }),
-                        )
-                    }),
-            )
+                        ),
+                )
+            })
             .into_any_element()
+    }
+
+    fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025))
     }
 
     fn render_tool_call(
@@ -573,57 +584,121 @@ impl AcpThreadView {
             ),
         };
 
-        let content = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
-                Some(self.render_tool_call_confirmation(
-                    entry_ix,
-                    tool_call.id,
-                    confirmation,
-                    tool_call.content.as_ref(),
-                    window,
-                    cx,
-                ))
+        let needs_confirmation = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { .. } => true,
+            _ => tool_call
+                .content
+                .iter()
+                .any(|content| matches!(content, ToolCallContent::Diff { .. })),
+        };
+
+        // todo! consider cleaning up these conditions. maybe break it into a few variants?
+
+        let has_content = tool_call.content.is_some();
+        let is_collapsible = has_content && !needs_confirmation;
+        let is_open =
+            has_content && (!is_collapsible || self.expanded_tool_calls.contains(&tool_call.id));
+
+        let content = if is_open {
+            match &tool_call.status {
+                ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
+                    Some(self.render_tool_call_confirmation(
+                        entry_ix,
+                        tool_call.id,
+                        confirmation,
+                        tool_call.content.as_ref(),
+                        window,
+                        cx,
+                    ))
+                }
+                ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
+                    tool_call.content.as_ref().map(|content| {
+                        div()
+                            .px_2()
+                            .py_1p5()
+                            .child(self.render_tool_call_content(entry_ix, content, window, cx))
+                            .into_any_element()
+                    })
+                }
+                ToolCallStatus::Rejected => None,
             }
-            ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
-                tool_call.content.as_ref().map(|content| {
-                    div()
-                        .border_color(cx.theme().colors().border)
-                        .border_t_1()
-                        .px_2()
-                        .py_1p5()
-                        .child(self.render_tool_call_content(entry_ix, content, window, cx))
-                        .into_any_element()
-                })
-            }
-            ToolCallStatus::Rejected => None,
+        } else {
+            None
         };
 
         v_flex()
             .text_xs()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
+            .when(needs_confirmation, |this| {
+                this.rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+            })
             .child(
                 h_flex()
-                    .px_2()
-                    .py_1p5()
-                    .w_full()
-                    .gap_1p5()
+                    .gap_1()
+                    .justify_between()
+                    .map(|this| {
+                        if needs_confirmation {
+                            this.px_2().py_1().bg(self.tool_card_header_bg(cx))
+                        } else {
+                            this.opacity(0.8).hover(|style| style.opacity(1.))
+                        }
+                    })
+                    .when(is_open && !is_collapsible, |this| {
+                        this.border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
                     .child(
-                        Icon::new(tool_call.icon)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(tool_call.icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(MarkdownElement::new(
+                                tool_call.label.clone(),
+                                default_markdown_style(window, cx),
+                            )),
                     )
-                    // todo! danilo please help
-                    .child(MarkdownElement::new(
-                        tool_call.label.clone(),
-                        default_markdown_style(window, cx),
-                    ))
-                    .child(div().w_full())
-                    .children(status_icon),
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .when(is_collapsible, |this| {
+                                let id = tool_call.id;
+                                this.child(
+                                    Disclosure::new(("expand", tool_call.id.as_u64()), is_open)
+                                        .opened_icon(IconName::ChevronUp)
+                                        .closed_icon(IconName::ChevronDown)
+                                        .on_click(cx.listener(
+                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                                if is_open {
+                                                    this.expanded_tool_calls.remove(&id);
+                                                } else {
+                                                    this.expanded_tool_calls.insert(id);
+                                                }
+                                                cx.notify();
+                                            },
+                                        )),
+                                )
+                            })
+                            .children(status_icon),
+                    ),
             )
-            .children(content)
+            .when(is_open, |this| {
+                this.child(
+                    div()
+                        .when(is_collapsible, |this| {
+                            this.mt_1()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .rounded_lg()
+                        })
+                        .children(content),
+                )
+            })
     }
 
     fn render_tool_call_content(
@@ -1164,19 +1239,16 @@ impl Render for AcpThreadView {
                                 .into_any(),
                         )
                         .child(
-                            div().px_3().children(match thread.read(cx).status() {
-                                ThreadStatus::Idle => None,
-                                ThreadStatus::WaitingForToolConfirmation => {
-                                    Label::new("Waiting for tool confirmation")
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small)
-                                        .into()
-                                }
-                                ThreadStatus::Generating => Label::new("Generating...")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small)
-                                    .into(),
-                            }),
+                            div()
+                                .px_3()
+                                .py_2()
+                                .children(match thread.read(cx).status() {
+                                    ThreadStatus::Idle
+                                    | ThreadStatus::WaitingForToolConfirmation => None,
+                                    ThreadStatus::Generating => {
+                                        Label::new("Generating…").size(LabelSize::Small).into()
+                                    }
+                                }),
                         )
                     } else {
                         this.child(self.render_empty_state(false, cx))
