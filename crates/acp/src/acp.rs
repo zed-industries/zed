@@ -953,7 +953,7 @@ fn acp_icon_to_ui_icon(icon: acp::Icon) -> IconName {
         acp::Icon::LightBulb => IconName::ToolBulb,
         acp::Icon::Pencil => IconName::ToolPencil,
         acp::Icon::Regex => IconName::ToolRegex,
-        acp::Icon::Terminal => IconName::ToolWeb,
+        acp::Icon::Terminal => IconName::ToolTerminal,
     }
 }
 

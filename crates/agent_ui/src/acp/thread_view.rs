@@ -619,7 +619,7 @@ impl AcpThreadView {
                         .relative()
                         .mt_1p5()
                         .ml_1p5()
-                        .pl_2p5()
+                        .pl_5()
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)
                         .text_ui_sm(cx)
@@ -940,84 +940,78 @@ impl AcpThreadView {
                 command,
                 root_command,
                 description,
-            } => {
-                confirmation_container
-                    .child(
-                        v_flex()
-                            .px_2()
-                            .pb_1p5()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(command.clone())
-                            .children(description.clone().map(|description| {
-                                MarkdownElement::new(
-                                    description,
-                                    default_markdown_style(false, window, cx),
-                                )
-                            })),
-                    )
-                    .children(content.map(|content| {
+            } => confirmation_container
+                .child(v_flex().px_2().pb_1p5().child(command.clone()).children(
+                    description.clone().map(|description| {
+                        MarkdownElement::new(description, default_markdown_style(false, window, cx))
+                    }),
+                ))
+                .children(
+                    content.map(|content| {
                         self.render_tool_call_content(entry_ix, content, window, cx)
-                    }))
-                    .child(
-                        button_container
-                            .child(
-                                Button::new(
-                                    ("always_allow", tool_call_id.as_u64()),
-                                    format!("Always Allow {root_command}"),
-                                )
-                                .icon(IconName::CheckDouble)
+                    }),
+                )
+                .child(
+                    button_container
+                        .child(
+                            Button::new(
+                                ("always_allow", tool_call_id.as_u64()),
+                                format!("Always Allow {root_command}"),
+                            )
+                            .icon(IconName::CheckDouble)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Success)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener({
+                                let id = tool_call_id;
+                                move |this, _, _, cx| {
+                                    this.authorize_tool_call(
+                                        id,
+                                        acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                        cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            Button::new(("allow", tool_call_id.as_u64()), "Allow")
+                                .icon(IconName::Check)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
                                         this.authorize_tool_call(
                                             id,
-                                            acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                                            acp::ToolCallConfirmationOutcome::Allow,
                                             cx,
                                         );
                                     }
                                 })),
-                            )
-                            .child(
-                                Button::new(("allow", tool_call_id.as_u64()), "Allow")
-                                    .icon(IconName::Check)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Success)
-                                    .on_click(cx.listener({
-                                        let id = tool_call_id;
-                                        move |this, _, _, cx| {
-                                            this.authorize_tool_call(
-                                                id,
-                                                acp::ToolCallConfirmationOutcome::Allow,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new(("reject", tool_call_id.as_u64()), "Reject")
-                                    .icon(IconName::X)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Error)
-                                    .on_click(cx.listener({
-                                        let id = tool_call_id;
-                                        move |this, _, _, cx| {
-                                            this.authorize_tool_call(
-                                                id,
-                                                acp::ToolCallConfirmationOutcome::Reject,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            ),
-                    )
-                    .into_any()
-            }
+                        )
+                        .child(
+                            Button::new(("reject", tool_call_id.as_u64()), "Reject")
+                                .icon(IconName::X)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Error)
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener({
+                                    let id = tool_call_id;
+                                    move |this, _, _, cx| {
+                                        this.authorize_tool_call(
+                                            id,
+                                            acp::ToolCallConfirmationOutcome::Reject,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any(),
             ToolCallConfirmation::Mcp {
                 server_name,
                 tool_name: _,
@@ -1029,8 +1023,6 @@ impl AcpThreadView {
                         v_flex()
                             .px_2()
                             .pb_1p5()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
                             .child(format!("{server_name} - {tool_display_name}"))
                             .children(description.clone().map(|description| {
                                 MarkdownElement::new(
@@ -1053,6 +1045,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1073,6 +1066,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1090,6 +1084,7 @@ impl AcpThreadView {
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Success)
+                                    .label_size(LabelSize::Small)
                                     .on_click(cx.listener({
                                         let id = tool_call_id;
                                         move |this, _, _, cx| {
@@ -1105,8 +1100,9 @@ impl AcpThreadView {
                                 Button::new(("reject", tool_call_id.as_u64()), "Reject")
                                     .icon(IconName::X)
                                     .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
+                                    .icon_size(IconSize::XSmall)
                                     .icon_color(Color::Error)
+                                    .label_size(LabelSize::Small)
                                     .on_click(cx.listener({
                                         let id = tool_call_id;
                                         move |this, _, _, cx| {
@@ -1122,20 +1118,11 @@ impl AcpThreadView {
                     .into_any()
             }
             ToolCallConfirmation::Fetch { description, urls } => confirmation_container
-                .child(
-                    v_flex()
-                        .px_2()
-                        .pb_1p5()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .children(urls.clone())
-                        .children(description.clone().map(|description| {
-                            MarkdownElement::new(
-                                description,
-                                default_markdown_style(false, window, cx),
-                            )
-                        })),
-                )
+                .child(v_flex().px_2().pb_1p5().children(urls.clone()).children(
+                    description.clone().map(|description| {
+                        MarkdownElement::new(description, default_markdown_style(false, window, cx))
+                    }),
+                ))
                 .children(
                     content.map(|content| {
                         self.render_tool_call_content(entry_ix, content, window, cx)
@@ -1149,6 +1136,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1166,6 +1154,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1183,6 +1172,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Error)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1197,17 +1187,10 @@ impl AcpThreadView {
                 )
                 .into_any(),
             ToolCallConfirmation::Other { description } => confirmation_container
-                .child(
-                    v_flex()
-                        .px_2()
-                        .pb_1p5()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .child(MarkdownElement::new(
-                            description.clone(),
-                            default_markdown_style(false, window, cx),
-                        )),
-                )
+                .child(v_flex().px_2().pb_1p5().child(MarkdownElement::new(
+                    description.clone(),
+                    default_markdown_style(false, window, cx),
+                )))
                 .children(
                     content.map(|content| {
                         self.render_tool_call_content(entry_ix, content, window, cx)
@@ -1221,6 +1204,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1238,6 +1222,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Success)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
@@ -1255,6 +1240,7 @@ impl AcpThreadView {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Error)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener({
                                     let id = tool_call_id;
                                     move |this, _, _, cx| {
