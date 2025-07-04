@@ -1,6 +1,6 @@
 mod completion_provider;
 mod fetch_context_picker;
-mod file_context_picker;
+pub(crate) mod file_context_picker;
 mod rules_context_picker;
 mod symbol_context_picker;
 mod thread_context_picker;

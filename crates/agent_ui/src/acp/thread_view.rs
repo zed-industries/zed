@@ -91,13 +91,21 @@ impl AcpThreadView {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
+            // editor.register_addon(ContextCreasesAddon::new());
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
-            editor.register_addon(ContextCreasesAddon::new());
             editor
+        });
+
+        let editor_entity = editor.downgrade();
+        editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                workspace,
+                editor_entity,
+            ))));
         });
 
         let list_state = ListState::new(
