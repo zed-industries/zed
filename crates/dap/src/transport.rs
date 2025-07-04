@@ -99,12 +99,6 @@ pub(crate) struct TransportDelegate {
     tasks: Mutex<Vec<Task<()>>>,
 }
 
-impl Drop for TransportDelegate {
-    fn drop(&mut self) {
-        self.transport.lock().kill()
-    }
-}
-
 impl TransportDelegate {
     pub(crate) async fn start(binary: &DebugAdapterBinary, cx: &mut AsyncApp) -> Result<Self> {
         let log_handlers: LogHandlers = Default::default();
