@@ -505,7 +505,6 @@ impl AcpThreadView {
         v_flex()
             .child(
                 h_flex()
-                    .debug_bg_cyan()
                     .id(header_id)
                     .group("disclosure-header")
                     .w_full()
@@ -678,7 +677,6 @@ impl AcpThreadView {
             })
             .child(
                 h_flex()
-                    .debug_bg_blue()
                     .id(header_id)
                     .w_full()
                     .gap_1()
