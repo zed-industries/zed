@@ -18,10 +18,10 @@ use serde::{
 
 use settings::{
     ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
-    replace_subschema,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
+use util::schemars::replace_subschema;
 use util::serde::default_true;
 
 /// Initializes the language settings.

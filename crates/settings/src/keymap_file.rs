@@ -427,6 +427,10 @@ impl KeymapFile {
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
+        // instead of using DefaultDenyUnknownFields, actions typically use
+        // `#[serde(deny_unknown_fields)]` so that these cases are reported as parse failures. This
+        // is because the rest of the keymap will still load in these cases, whereas other settings
+        // files would not.
         let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
