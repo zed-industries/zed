@@ -1008,6 +1008,21 @@ impl Vim {
         });
     }
 
+    pub fn switch_to_normal_mode(
+        &mut self,
+        leave_selections: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mode = if HelixModeSetting::get_global(cx).0 {
+            Mode::HelixNormal
+        } else {
+            Mode::Normal
+        };
+
+        self.switch_mode(mode, leave_selections, window, cx);
+    }
+
     pub fn take_count(cx: &mut App) -> Option<usize> {
         let global_state = cx.global_mut::<VimGlobals>();
         if global_state.dot_replaying {

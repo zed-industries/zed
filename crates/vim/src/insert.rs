@@ -13,7 +13,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    pub fn normal_before(
+    fn normal_before(
         &mut self,
         action: &NormalBefore,
         window: &mut Window,

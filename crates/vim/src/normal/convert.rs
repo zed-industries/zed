@@ -6,7 +6,6 @@ use multi_buffer::MultiBufferRow;
 
 use crate::{
     Vim,
-    insert::NormalBefore,
     motion::Motion,
     normal::{ChangeCase, ConvertToLowerCase, ConvertToRot13, ConvertToRot47, ConvertToUpperCase},
     object::Object,
@@ -253,13 +252,19 @@ impl Vim {
                 })
             });
         });
-        self.normal_before(&NormalBefore, window, cx);
+        self.switch_to_normal_mode(true, window, cx);
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{state::Mode, test::NeovimBackedTestContext};
+    use settings::SettingsStore;
+    use vim_mode_setting::HelixModeSetting;
+
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_change_case(cx: &mut gpui::TestAppContext) {
@@ -295,6 +300,24 @@ mod test {
         cx.set_state("aˇßcdˇe\n", Mode::Normal);
         cx.simulate_keystrokes("~");
         cx.assert_state("aSSˇcdˇE\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_change_case_helix(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<HelixModeSetting>(cx, |s| *s = Some(true));
+        });
+
+        // works with multiple cursors
+        cx.set_state("ˇabˇC\n", Mode::HelixNormal);
+        cx.simulate_keystroke("~");
+        cx.assert_state("ˇAbˇc\n", Mode::HelixNormal);
+
+        // works with selections
+        cx.set_state("a«a bb cˇ»c", Mode::HelixNormal);
+        cx.simulate_keystroke("~");
+        cx.assert_state("a«A BB Cˇ»c", Mode::HelixNormal);
     }
 
     #[gpui::test]
