@@ -6,23 +6,25 @@ use std::time::Duration;
 use agentic_coding_protocol::{self as acp};
 use collections::HashSet;
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode, EditorStyle,
-    MinimapVisibility, MultiBuffer,
+    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
+    EditorStyle, MinimapVisibility, MultiBuffer,
 };
 use gpui::{
-    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, Focusable, Hsla,
-    ListState, SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, Window, div, list, percentage, prelude::*, pulsating_between,
+    Animation, AnimationExt, App, EdgesRefinement, Empty, Entity, Focusable, Hsla, ListState,
+    SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement, Transformation,
+    UnderlineStyle, WeakEntity, Window, div, list, percentage, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
+use parking_lot::Mutex;
 use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{ResultExt, paths};
+use workspace::Workspace;
 use zed_actions::agent::Chat;
 
 use ::acp::{
@@ -31,7 +33,7 @@ use ::acp::{
     ToolCallStatus, UserMessageChunk,
 };
 
-use crate::message_editor::ContextCreasesAddon;
+use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 
 pub struct AcpThreadView {
     thread: Entity<AcpThread>,
@@ -39,6 +41,7 @@ pub struct AcpThreadView {
     // todo! reconsider structure. currently pretty sparse, but easy to clean up if we need to delete entries.
     thread_entry_views: Vec<Option<ThreadEntryView>>,
     message_editor: Entity<Editor>,
+    mention_set: Arc<Mutex<MentionSet>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -64,7 +67,12 @@ enum ThreadState {
 }
 
 impl AcpThreadView {
-    pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let language = Language::new(
             language::LanguageConfig {
                 completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
@@ -72,6 +80,8 @@ impl AcpThreadView {
             },
             None,
         );
+
+        let mention_set = Arc::new(Mutex::new(MentionSet::default()));
 
         let message_editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
@@ -91,21 +101,17 @@ impl AcpThreadView {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            // editor.register_addon(ContextCreasesAddon::new());
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                mention_set.clone(),
+                workspace,
+                cx.weak_entity(),
+            ))));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
                 placement: Some(ContextMenuPlacement::Above),
             });
             editor
-        });
-
-        let editor_entity = editor.downgrade();
-        editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
-                workspace,
-                editor_entity,
-            ))));
         });
 
         let list_state = ListState::new(
@@ -152,6 +158,7 @@ impl AcpThreadView {
             thread_state: Self::initial_state(thread.clone(), window, cx),
             thread,
             message_editor,
+            mention_set,
             thread_entry_views: Vec::new(),
             list_state: list_state,
             last_error: None,
@@ -245,13 +252,44 @@ impl AcpThreadView {
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
         self.last_error.take();
-        let text = self.message_editor.read(cx).text(cx);
-        if text.is_empty() {
+
+        let mut ix = 0;
+        let mut chunks: Vec<acp::UserMessageChunk> = Vec::new();
+        self.message_editor.update(cx, |editor, cx| {
+            let text = editor.text(cx);
+            editor.display_map.update(cx, |map, cx| {
+                let snapshot = map.snapshot(cx);
+                for (crease_id, crease) in snapshot.crease_snapshot.creases() {
+                    if let Some(project_path) =
+                        self.mention_set.lock().path_for_crease_id(crease_id)
+                    {
+                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                        if crease_range.start > ix {
+                            chunks.push(text[ix..crease_range.start].into());
+                        }
+                        chunks.push(project_path.path.to_path_buf().into());
+                        ix = crease_range.end;
+                    }
+                }
+
+                if ix < text.len() {
+                    let last_chunk = text[ix..].trim();
+                    if !last_chunk.is_empty() {
+                        chunks.push(last_chunk.into());
+                    }
+                }
+            })
+        });
+
+        if chunks.is_empty() {
             return;
         }
+
         let Some(thread) = self.thread() else { return };
 
-        let task = thread.update(cx, |thread, cx| thread.send(&text, cx));
+        let task = thread.update(cx, |thread, cx| {
+            thread.send(acp::UserMessage { chunks }, cx)
+        });
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -433,9 +471,12 @@ impl AcpThreadView {
                 let message_body = div().children(message.chunks.iter().map(|chunk| match chunk {
                     UserMessageChunk::Text { chunk } => {
                         // todo!() open link
-                        MarkdownElement::new(chunk.clone(), style.clone())
+                        MarkdownElement::new(chunk.clone(), style.clone()).into_any()
                     }
-                    _ => todo!(),
+                    UserMessageChunk::Path { path } => {
+                        // todo! danilo make it nice
+                        Label::new(path.to_string_lossy().to_string()).into_any_element()
+                    }
                 }));
 
                 div()

@@ -1,50 +1,50 @@
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent::context_store::ContextStore;
 use anyhow::Result;
 use collections::HashMap;
 use editor::display_map::CreaseId;
-use editor::{CompletionProvider, Editor, ExcerptId, ToOffset as _};
+use editor::{CompletionProvider, Editor, ExcerptId};
 use file_icons::FileIcons;
-use fuzzy::StringMatch;
 use gpui::{App, Entity, Task, WeakEntity};
-use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
+use parking_lot::Mutex;
+use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, WorktreeId};
 use rope::Point;
-use text::{Anchor, OffsetRangeExt, ToPoint};
+use text::{Anchor, ToPoint};
 use ui::prelude::*;
-use util::ResultExt as _;
 use workspace::Workspace;
 
-use agent::context::{AgentContextHandle, AgentContextKey};
-
 use crate::context_picker::MentionLink;
-use crate::context_picker::file_context_picker::{self, FileMatch, search_files};
-use crate::message_editor::ContextCreasesAddon;
+use crate::context_picker::file_context_picker::{extract_file_name_and_directory, search_files};
 
-pub struct Mention {
-    range: Range<editor::Anchor>,
-    path: PathBuf,
+#[derive(Default)]
+pub struct MentionSet {
+    paths_by_crease_id: HashMap<CreaseId, ProjectPath>,
 }
 
-pub struct MentionSet {
-    mentions_by_crease_id: HashMap<CreaseId, Mention>,
+impl MentionSet {
+    pub fn insert(&mut self, crease_id: CreaseId, path: ProjectPath) {
+        self.paths_by_crease_id.insert(crease_id, path);
+    }
+
+    pub fn path_for_crease_id(&self, crease_id: CreaseId) -> Option<ProjectPath> {
+        self.paths_by_crease_id.get(&crease_id).cloned()
+    }
 }
 
 pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     editor: WeakEntity<Editor>,
-    mention_set: Rc<RefCell<MentionSet>>,
+    mention_set: Arc<Mutex<MentionSet>>,
 }
 
 impl ContextPickerCompletionProvider {
     pub fn new(
-        mention_set: Rc<RefCell<MentionSet>>,
+        mention_set: Arc<Mutex<MentionSet>>,
         workspace: WeakEntity<Workspace>,
         editor: WeakEntity<Editor>,
     ) -> Self {
@@ -63,10 +63,11 @@ impl ContextPickerCompletionProvider {
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
+        mention_set: Arc<Mutex<MentionSet>>,
         cx: &App,
     ) -> Completion {
         let (file_name, directory) =
-            file_context_picker::extract_file_name_and_directory(&project_path.path, path_prefix);
+            extract_file_name_and_directory(&project_path.path, path_prefix);
 
         let label =
             build_code_label_for_full_path(&file_name, directory.as_ref().map(|s| s.as_ref()), cx);
@@ -101,28 +102,12 @@ impl ContextPickerCompletionProvider {
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
                 file_name,
+                project_path,
                 excerpt_id,
                 source_range.start,
                 new_text_len - 1,
                 editor,
-                context_store.clone(),
-                move |_, cx| {
-                    if is_directory {
-                        Task::ready(
-                            context_store
-                                .update(cx, |context_store, cx| {
-                                    context_store.add_directory(&project_path, false, cx)
-                                })
-                                .log_err()
-                                .flatten(),
-                        )
-                    } else {
-                        let result = context_store.update(cx, |context_store, cx| {
-                            context_store.add_file_from_path(project_path.clone(), false, cx)
-                        });
-                        cx.spawn(async move |_| result.await.log_err().flatten())
-                    }
-                },
+                mention_set,
             )),
         }
     }
@@ -175,8 +160,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ..snapshot.anchor_after(state.source_range.end);
 
         let editor = self.editor.clone();
-        let http_client = workspace.read(cx).client().http_client();
-
+        let mention_set = self.mention_set.clone();
         let MentionCompletion { argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
@@ -206,6 +190,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             excerpt_id,
                             source_range.clone(),
                             editor.clone(),
+                            mention_set.clone(),
                             cx,
                         )
                     })
@@ -259,23 +244,19 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 fn confirm_completion_callback(
     crease_icon_path: SharedString,
     crease_text: SharedString,
+    project_path: ProjectPath,
     excerpt_id: ExcerptId,
     start: Anchor,
     content_len: usize,
     editor: Entity<Editor>,
-    context_store: Entity<ContextStore>,
-    add_context_fn: impl Fn(&mut Window, &mut App) -> Task<Option<AgentContextHandle>>
-    + Send
-    + Sync
-    + 'static,
+    mention_set: Arc<Mutex<MentionSet>>,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
-        let context = add_context_fn(window, cx);
-
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        let context_store = context_store.clone();
+        let project_path = project_path.clone();
+        let mention_set = mention_set.clone();
         window.defer(cx, move |window, cx| {
             let crease_id = crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
@@ -287,23 +268,9 @@ fn confirm_completion_callback(
                 window,
                 cx,
             );
-            cx.spawn(async move |cx| {
-                let crease_id = crease_id?;
-                let context = context.await?;
-                editor
-                    .update(cx, |editor, cx| {
-                        if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
-                            addon.add_creases(
-                                &context_store,
-                                AgentContextKey(context),
-                                [(crease_id, crease_text)],
-                                cx,
-                            );
-                        }
-                    })
-                    .ok()
-            })
-            .detach();
+            if let Some(crease_id) = crease_id {
+                mention_set.lock().insert(crease_id, project_path);
+            }
         });
         false
     })
@@ -350,7 +317,6 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::AnchorRangeExt;
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -367,53 +333,7 @@ mod tests {
             MentionCompletion::try_parse("Lorem @", 0),
             Some(MentionCompletion {
                 source_range: 6..7,
-                mode: None,
                 argument: None,
-            })
-        );
-
-        assert_eq!(
-            MentionCompletion::try_parse("Lorem @file", 0),
-            Some(MentionCompletion {
-                source_range: 6..11,
-                mode: Some(ContextPickerMode::File),
-                argument: None,
-            })
-        );
-
-        assert_eq!(
-            MentionCompletion::try_parse("Lorem @file ", 0),
-            Some(MentionCompletion {
-                source_range: 6..12,
-                mode: Some(ContextPickerMode::File),
-                argument: None,
-            })
-        );
-
-        assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs", 0),
-            Some(MentionCompletion {
-                source_range: 6..19,
-                mode: Some(ContextPickerMode::File),
-                argument: Some("main.rs".to_string()),
-            })
-        );
-
-        assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs ", 0),
-            Some(MentionCompletion {
-                source_range: 6..19,
-                mode: Some(ContextPickerMode::File),
-                argument: Some("main.rs".to_string()),
-            })
-        );
-
-        assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
-            Some(MentionCompletion {
-                source_range: 6..19,
-                mode: Some(ContextPickerMode::File),
-                argument: Some("main.rs".to_string()),
             })
         );
 
@@ -421,7 +341,6 @@ mod tests {
             MentionCompletion::try_parse("Lorem @main", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
-                mode: None,
                 argument: Some("main".to_string()),
             })
         );
@@ -560,28 +479,15 @@ mod tests {
             editor
         });
 
-        let context_store = cx.new(|_| ContextStore::new(project.downgrade(), None));
+        let mention_set = Arc::new(Mutex::new(MentionSet::default()));
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
-            let last_opened_buffer = opened_editors.last().and_then(|editor| {
-                editor
-                    .downcast::<Editor>()?
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .as_ref()
-                    .map(Entity::downgrade)
-            });
             window.focus(&editor.focus_handle(cx));
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
+                mention_set.clone(),
                 workspace.downgrade(),
-                context_store.downgrade(),
-                None,
-                None,
                 editor_entity,
-                last_opened_buffer,
             ))));
         });
 
@@ -600,13 +506,26 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
+                    "eight.txt dir/b/",
                     "seven.txt dir/b/",
                     "six.txt dir/b/",
                     "five.txt dir/b/",
                     "four.txt dir/a/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Fetch"
+                    "three.txt dir/a/",
+                    "two.txt dir/a/",
+                    "one.txt dir/a/",
+                    "dir ",
+                    "a dir/",
+                    "four.txt dir/a/",
+                    "one.txt dir/a/",
+                    "three.txt dir/a/",
+                    "two.txt dir/a/",
+                    "b dir/",
+                    "eight.txt dir/b/",
+                    "five.txt dir/b/",
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "editor dir/"
                 ]
             );
         });
@@ -624,141 +543,8 @@ mod tests {
         cx.run_until_parked();
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file ");
-            assert!(editor.has_visible_completions_menu());
+            assert_eq!(editor.text(cx), "Lorem [@four.txt](@file:dir/a/four.txt) ");
         });
-
-        cx.simulate_input("one");
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file one");
-            assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
-        });
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            assert!(editor.has_visible_completions_menu());
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ");
-            assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
-            );
-        });
-
-        cx.simulate_input(" ");
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)  ");
-            assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
-            );
-        });
-
-        cx.simulate_input("Ipsum ");
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum ",
-            );
-            assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
-            );
-        });
-
-        cx.simulate_input("@file ");
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum @file ",
-            );
-            assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![Point::new(0, 6)..Point::new(0, 37)]
-            );
-        });
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
-
-        cx.run_until_parked();
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) "
-            );
-            assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
-                ]
-            );
-        });
-
-        cx.simulate_input("\n@");
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n@"
-            );
-            assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80)
-                ]
-            );
-        });
-
-        editor.update_in(&mut cx, |editor, window, cx| {
-            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
-        });
-
-        cx.run_until_parked();
-
-        editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n[@six.txt](@file:dir/b/six.txt) "
-            );
-            assert!(!editor.has_visible_completions_menu());
-            assert_eq!(
-                fold_ranges(editor, cx),
-                vec![
-                    Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 45)..Point::new(0, 80),
-                    Point::new(1, 0)..Point::new(1, 31)
-                ]
-            );
-        });
-    }
-
-    fn fold_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        editor.display_map.update(cx, |display_map, cx| {
-            display_map
-                .snapshot(cx)
-                .folds_in_range(0..snapshot.len())
-                .map(|fold| fold.range.to_point(&snapshot))
-                .collect()
-        })
     }
 
     fn current_completion_labels(editor: &Editor) -> Vec<String> {

@@ -890,11 +890,12 @@ impl AgentPanel {
     }
 
     fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
         let project = self.project.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let thread_view = cx.new_window_entity(|window, cx| {
-                crate::acp::AcpThreadView::new(project, window, cx)
+                crate::acp::AcpThreadView::new(workspace, project, window, cx)
             })?;
             this.update_in(cx, |this, window, cx| {
                 this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
