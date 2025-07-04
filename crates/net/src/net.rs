@@ -13,7 +13,7 @@ pub use listener::*;
 #[cfg(target_os = "windows")]
 pub use socket::*;
 #[cfg(not(target_os = "windows"))]
-pub use std::os::unix::net::{UnixListener, UnixSocket, UnixStream};
+pub use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(target_os = "windows")]
 pub use stream::*;
 
@@ -78,7 +78,7 @@ mod tests {
 
             // Server
             let server = smol::spawn(async move {
-                let mut stream = listener.accept().await.unwrap();
+                let (mut stream, _) = listener.accept().await.unwrap();
 
                 // Read data from the client
                 let mut buffer = [0; BUFFER_SIZE];

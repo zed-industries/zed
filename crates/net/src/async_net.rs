@@ -25,9 +25,9 @@ pub mod windows {
             Ok(UnixListener(Async::new(crate::UnixListener::bind(path)?)?))
         }
 
-        pub async fn accept(&self) -> Result<UnixStream> {
+        pub async fn accept(&self) -> Result<(UnixStream, ())> {
             let sock = self.0.read_with(|listener| listener.accept()).await?;
-            Ok(UnixStream(Async::new(sock)?))
+            Ok((UnixStream(Async::new(sock)?), ()))
         }
     }
 
