@@ -145,8 +145,7 @@ impl MemoryView {
                                         .child(
                                             Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
                                                 .buffer_font(cx)
-                                                .size(ui::LabelSize::Small)
-                                                .line_height_style(LineHeightStyle::UiLabel),
+                                                .size(ui::LabelSize::Small),
                                         )
                                 })),
                         )
@@ -169,7 +168,6 @@ impl MemoryView {
                                     Label::new(format!("{as_visible}"))
                                         .buffer_font(cx)
                                         .size(ui::LabelSize::Small)
-                                        .line_height_style(LineHeightStyle::UiLabel)
                                 })),
                         )
                         .overflow_x_scroll()
