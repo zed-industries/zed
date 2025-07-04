@@ -263,7 +263,7 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
-    let uri = format!("{api_url}/v1/chat/completions");
+    let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
