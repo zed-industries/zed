@@ -492,10 +492,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            match path_style {
-                                PathStyle::Posix => "/",
-                                PathStyle::Windows => "\\",
-                            }
+                            path_style.separator()
                         } else {
                             ""
                         }
@@ -505,10 +502,7 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         candidate.path.string,
                         if candidate.is_dir {
-                            match path_style {
-                                PathStyle::Posix => "/",
-                                PathStyle::Windows => "\\",
-                            }
+                            path_style.separator()
                         } else {
                             ""
                         }

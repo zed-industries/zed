@@ -273,7 +273,6 @@ async fn test_open_path_prompt_on_windows_with_remote(cx: &mut TestAppContext) {
 
     let (picker, cx) = build_open_path_prompt(project, false, PathStyle::Posix, cx);
 
-    // Support both forward and backward slashes.
     let query = "/root/";
     insert_query(query, &picker, cx).await;
     assert_eq!(

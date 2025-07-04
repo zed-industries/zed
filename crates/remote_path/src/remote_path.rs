@@ -16,6 +16,14 @@ impl PathStyle {
     pub const fn current() -> Self {
         PathStyle::Posix
     }
+
+    #[inline]
+    pub fn separator(&self) -> &str {
+        match self {
+            PathStyle::Posix => "/",
+            PathStyle::Windows => "\\",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

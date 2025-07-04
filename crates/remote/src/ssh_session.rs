@@ -63,7 +63,7 @@ pub struct SshSocket {
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
     #[cfg(target_os = "windows")]
-    askpass_content: String,
+    askpass_script: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
@@ -366,13 +366,13 @@ impl SshSocket {
             secrete = secrete
         );
         std::fs::write(&pwsh_script_path, pwsh_script_content)?;
-        let askpass_content = format!(
+        let askpass_script = format!(
             "powershell.exe -ExecutionPolicy Bypass -File {}",
             pwsh_script_path.display()
         );
         Ok(Self {
             connection_options: options,
-            askpass_content,
+            askpass_script,
         })
     }
 
@@ -430,7 +430,7 @@ impl SshSocket {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &self.askpass_content)
+            .env("SSH_ASKPASS", &self.askpass_script)
     }
 
     // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
@@ -453,7 +453,7 @@ impl SshSocket {
     fn ssh_args(&self) -> SshArgs {
         SshArgs {
             arguments: vec![self.connection_options.ssh_url()],
-            askpass: Some(self.askpass_content.clone()),
+            askpass: Some(self.askpass_script.clone()),
         }
     }
 
@@ -2146,8 +2146,7 @@ impl SshRemoteConnection {
             let src = smol::fs::canonicalize("./target")
                 .await?
                 .to_string_lossy()
-                .strip_prefix("\\\\?\\")
-                .unwrap()
+                .trim_start_matches("\\\\?\\")
                 .replace('\\', "/");
             #[cfg(not(target_os = "windows"))]
             let src = "./target";
@@ -2166,7 +2165,7 @@ impl SshRemoteConnection {
                     ])
                     .env(
                         "CROSS_CONTAINER_OPTS",
-                        format!("--mount type=bind,src={},dst=/app/target", src),
+                        format!("--mount type=bind,src={src},dst=/app/target"),
                     ),
             )
             .await?;
@@ -2226,11 +2225,12 @@ impl SshRemoteConnection {
             #[cfg(target_os = "windows")]
             {
                 // On Windows, we use 7z to compress the binary
+                let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, we use 7zip to create the tar file, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
                 let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
                 if smol::fs::metadata(&gz_path).await.is_ok() {
                     smol::fs::remove_file(&gz_path).await?;
                 }
-                run_cmd(Command::new("7z.exe").args([
+                run_cmd(Command::new(seven_zip).args([
                     "a",
                     "-tgzip",
                     &gz_path,

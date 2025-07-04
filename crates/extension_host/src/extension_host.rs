@@ -1671,7 +1671,7 @@ impl ExtensionStore {
                     .request(proto::SyncExtensions { extensions })
             })?
             .await?;
-        let path_style = client.update(cx, |client, _| client.path_style())?;
+        let path_style = client.read_with(cx, |client, _| client.path_style())?;
 
         for missing_extension in response.missing_extensions.into_iter() {
             let tmp_dir = tempfile::tempdir()?;
