@@ -150,7 +150,6 @@ impl DebugAdapter for GoDebugAdapter {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "additionalProperties": false,
                     "properties": {
                         "from": {
                             "type": "string",

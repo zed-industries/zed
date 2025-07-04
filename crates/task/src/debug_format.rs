@@ -362,7 +362,13 @@ impl DebugTaskFile {
             "items": {
                 "type": "object",
                 "required": ["adapter", "label"],
-                "unevaluatedProperties": false,
+                // TODO: Uncommenting this will cause json-language-server to provide warnings for
+                // unrecognized properties. It should be enabled if/when there's an adapter JSON
+                // schema that's comprehensive. In order to not get warnings for the other schemas,
+                // `additionalProperties` or `unevaluatedProperties` (to handle "allOf" etc style
+                // schema combinations) could be set to `true` for that schema.
+                //
+                // "unevaluatedProperties": false,
                 "properties": {
                     "adapter": {
                         "type": "string",

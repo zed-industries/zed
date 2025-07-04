@@ -216,7 +216,6 @@ impl DebugAdapter for PhpDebugAdapter {
                 "proxy": {
                     "type": "object",
                     "description": "DBGp Proxy settings",
-                    "additionalProperties": false,
                     "properties": {
                         "enable": {
                             "type": "boolean",
@@ -253,7 +252,6 @@ impl DebugAdapter for PhpDebugAdapter {
                 "xdebugSettings": {
                     "type": "object",
                     "description": "Allows you to override Xdebug's remote debugging settings to fine tune Xdebug to your needs",
-                    "additionalProperties": false,
                     "properties": {
                         "max_children": {
                             "type": "integer",
@@ -285,7 +283,6 @@ impl DebugAdapter for PhpDebugAdapter {
                 "stream": {
                     "type": "object",
                     "description": "Allows to influence DBGp streams. Xdebug only supports stdout",
-                    "additionalProperties": false,
                     "properties": {
                         "stdout": {
                             "type": "integer",
