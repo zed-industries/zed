@@ -460,72 +460,114 @@ fn compare_chars(a: char, b: char) -> Ordering {
     }
 }
 
-/// Parse a consecutive sequence of ASCII digits from a peekable character iterator.
+/// Compares two sequences of consecutive digits for natural sorting.
 ///
-/// This function reads ASCII digits (`'0'` through `'9'`) from the iterator until it
-/// encounters a non-digit character or reaches the end of the iterator. The digits
-/// are parsed into a `u64` number, and the function also tracks how many digits
-/// were consumed.
-///
-/// # Arguments
-/// * `iter` - A mutable reference to a peekable iterator over characters. The iterator
-///           will be advanced by the number of digits parsed.
-///
-/// # Returns
-/// A tuple `(number, digit_count)` where:
-/// * `number` - The parsed numeric value as a `u64`
-/// * `digit_count` - The number of consecutive digits that were consumed from the iterator
+/// This function is a core component of natural sorting that handles numeric comparison
+/// in a way that feels natural to humans. It extracts and compares consecutive digit
+/// sequences from two iterators, handling various cases like leading zeros and very large numbers.
 ///
 /// # Behavior
-/// * Only ASCII digits (`'0'` to `'9'`) are considered valid digits
-/// * Parsing stops at the first non-digit character
-/// * If no digits are found, returns `(0, 0)`
-/// * The iterator position is advanced past all consumed digits
-/// * If overflow would occur, the result saturates at `u64::MAX`
-fn parse_number<I>(iter: &mut std::iter::Peekable<I>) -> (u64, usize)
+///
+/// The function implements the following comparison rules:
+/// 1. Different numeric values: Compares by actual numeric value (e.g., "2" < "10")
+/// 2. Leading zeros: When values are equal, longer sequence wins (e.g., "002" > "2")
+/// 3. Large numbers: Falls back to string comparison for numbers that would overflow u128
+///
+/// # Examples
+///
+/// ```text
+/// "1" vs "2"      -> Less       (different values)
+/// "2" vs "10"     -> Less       (numeric comparison)
+/// "002" vs "2"    -> Greater    (leading zeros)
+/// "10" vs "010"   -> Less       (leading zeros)
+/// "999..." vs "1000..." -> Less (large number comparison)
+/// ```
+///
+/// # Implementation Details
+///
+/// 1. Extracts consecutive digits into strings
+/// 2. Compares sequence lengths for leading zero handling
+/// 3. For equal lengths, compares digit by digit
+/// 4. For different lengths:
+///    - Attempts numeric comparison first (for numbers up to 2^128 - 1)
+///    - Falls back to string comparison if numbers would overflow
+///
+/// The function advances both iterators past their respective numeric sequences,
+/// regardless of the comparison result.
+fn compare_numeric_segments<I>(
+    a_iter: &mut std::iter::Peekable<I>,
+    b_iter: &mut std::iter::Peekable<I>,
+) -> Ordering
 where
     I: Iterator<Item = char>,
 {
-    let mut number = 0u64;
-    let mut count = 0;
+    // Collect all consecutive digits into strings
+    let mut a_num_str = String::new();
+    let mut b_num_str = String::new();
 
-    while let Some(&c) = iter.peek() {
+    while let Some(&c) = a_iter.peek() {
         if !c.is_ascii_digit() {
             break;
         }
 
-        let digit = c as u64 - '0' as u64;
+        a_num_str.push(c);
+        a_iter.next();
+    }
 
-        // Use checked arithmetic to prevent overflow
-        match number.checked_mul(10).and_then(|n| n.checked_add(digit)) {
-            Some(new_number) => number = new_number,
-            None => {
-                // Overflow detected, saturate at u64::MAX
-                number = u64::MAX;
-                count += 1;
-                iter.next(); // consume the digit
+    while let Some(&c) = b_iter.peek() {
+        if !c.is_ascii_digit() {
+            break;
+        }
 
-                // Continue consuming remaining digits but don't update number
-                while let Some(&c) = iter.peek() {
-                    if !c.is_ascii_digit() {
-                        break;
-                    }
+        b_num_str.push(c);
+        b_iter.next();
+    }
 
-                    count += 1;
-                    iter.next();
-                }
-
-                break;
+    // First compare lengths (handle leading zeros)
+    match a_num_str.len().cmp(&b_num_str.len()) {
+        Ordering::Equal => {
+            // Same length, compare digit by digit
+            match a_num_str.cmp(&b_num_str) {
+                Ordering::Equal => Ordering::Equal,
+                ordering => ordering,
             }
         }
 
-        count += 1;
-        iter.next(); // consume the digit
+        // Different lengths but same value means leading zeros
+        ordering => {
+            // Try parsing as numbers first
+            if let (Ok(a_val), Ok(b_val)) = (a_num_str.parse::<u128>(), b_num_str.parse::<u128>()) {
+                match a_val.cmp(&b_val) {
+                    Ordering::Equal => ordering, // Same value, longer one is greater (leading zeros)
+                    ord => ord,
+                }
+            } else {
+                // If parsing fails (overflow), compare as strings
+                a_num_str.cmp(&b_num_str)
+            }
+        }
     }
-
-    (number, count)
 }
 
+/// Performs natural sorting comparison between two strings.
+///
+/// Natural sorting is an ordering that handles numeric sequences in a way that matches human expectations.
+/// For example, "file2" comes before "file10" (unlike standard lexicographic sorting).
+///
+/// # Characteristics
+///
+/// * Case-sensitive with lowercase priority: When comparing same letters, lowercase comes before uppercase
+/// * Numbers are compared by numeric value, not character by character
+/// * Leading zeros affect ordering when numeric values are equal
+/// * Can handle numbers larger than u128::MAX (falls back to string comparison)
+///
+/// # Algorithm
+///
+/// The function works by:
+/// 1. Processing strings character by character
+/// 2. When encountering digits, treating consecutive digits as a single number
+/// 3. Comparing numbers by their numeric value rather than lexicographically
+/// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
 fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
@@ -537,14 +579,8 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
             (_, None) => return Ordering::Greater,
             (Some(&a_char), Some(&b_char)) => {
                 if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
-                    let (a_num, a_digits) = parse_number(&mut a_iter);
-                    let (b_num, b_digits) = parse_number(&mut b_iter);
-
-                    match a_num.cmp(&b_num) {
-                        Ordering::Equal => match a_digits.cmp(&b_digits) {
-                            Ordering::Equal => continue,
-                            ordering => return ordering,
-                        },
+                    match compare_numeric_segments(&mut a_iter, &mut b_iter) {
+                        Ordering::Equal => continue,
                         ordering => return ordering,
                     }
                 } else {
@@ -553,7 +589,6 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
                             a_iter.next();
                             b_iter.next();
                         }
-
                         ordering => return ordering,
                     }
                 }
@@ -1060,5 +1095,336 @@ mod tests {
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
+    }
+
+    #[test]
+    fn test_compare_numeric_segments() {
+        // Helper function to create peekable iterators and test
+        fn compare(a: &str, b: &str) -> Ordering {
+            let mut a_iter = a.chars().peekable();
+            let mut b_iter = b.chars().peekable();
+
+            let result = compare_numeric_segments(&mut a_iter, &mut b_iter);
+
+            // Verify iterators advanced correctly
+            assert!(
+                !a_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                "Iterator a should have consumed all digits"
+            );
+            assert!(
+                !b_iter.next().map_or(false, |c| c.is_ascii_digit()),
+                "Iterator b should have consumed all digits"
+            );
+
+            result
+        }
+
+        // Basic numeric comparisons
+        assert_eq!(compare("0", "0"), Ordering::Equal);
+        assert_eq!(compare("1", "2"), Ordering::Less);
+        assert_eq!(compare("9", "10"), Ordering::Less);
+        assert_eq!(compare("10", "9"), Ordering::Greater);
+        assert_eq!(compare("99", "100"), Ordering::Less);
+
+        // Leading zeros
+        assert_eq!(compare("0", "00"), Ordering::Less);
+        assert_eq!(compare("00", "0"), Ordering::Greater);
+        assert_eq!(compare("01", "1"), Ordering::Greater);
+        assert_eq!(compare("001", "1"), Ordering::Greater);
+        assert_eq!(compare("001", "01"), Ordering::Greater);
+
+        // Same value different representation
+        assert_eq!(compare("000100", "100"), Ordering::Greater);
+        assert_eq!(compare("100", "0100"), Ordering::Less);
+        assert_eq!(compare("0100", "00100"), Ordering::Less);
+
+        // Large numbers
+        assert_eq!(compare("9999999999", "10000000000"), Ordering::Less);
+        assert_eq!(
+            compare(
+                "340282366920938463463374607431768211455", // u128::MAX
+                "340282366920938463463374607431768211456"
+            ),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare(
+                "340282366920938463463374607431768211456", // > u128::MAX
+                "340282366920938463463374607431768211455"
+            ),
+            Ordering::Greater
+        );
+
+        // Iterator advancement verification
+        let mut a_iter = "123abc".chars().peekable();
+        let mut b_iter = "456def".chars().peekable();
+
+        compare_numeric_segments(&mut a_iter, &mut b_iter);
+
+        assert_eq!(a_iter.collect::<String>(), "abc");
+        assert_eq!(b_iter.collect::<String>(), "def");
+    }
+
+    #[test]
+    fn test_natural_sort() {
+        // Basic alphanumeric
+        assert_eq!(natural_sort("a", "b"), Ordering::Less);
+        assert_eq!(natural_sort("b", "a"), Ordering::Greater);
+        assert_eq!(natural_sort("a", "a"), Ordering::Equal);
+
+        // Case sensitivity
+        assert_eq!(natural_sort("a", "A"), Ordering::Less);
+        assert_eq!(natural_sort("A", "a"), Ordering::Greater);
+        assert_eq!(natural_sort("aA", "aa"), Ordering::Greater);
+        assert_eq!(natural_sort("aa", "aA"), Ordering::Less);
+
+        // Numbers
+        assert_eq!(natural_sort("1", "2"), Ordering::Less);
+        assert_eq!(natural_sort("2", "10"), Ordering::Less);
+        assert_eq!(natural_sort("02", "10"), Ordering::Less);
+        assert_eq!(natural_sort("02", "2"), Ordering::Greater);
+
+        // Mixed alphanumeric
+        assert_eq!(natural_sort("a1", "a2"), Ordering::Less);
+        assert_eq!(natural_sort("a2", "a10"), Ordering::Less);
+        assert_eq!(natural_sort("a02", "a2"), Ordering::Greater);
+        assert_eq!(natural_sort("a1b", "a1c"), Ordering::Less);
+
+        // Multiple numeric segments
+        assert_eq!(natural_sort("1a2", "1a10"), Ordering::Less);
+        assert_eq!(natural_sort("1a10", "1a2"), Ordering::Greater);
+        assert_eq!(natural_sort("2a1", "10a1"), Ordering::Less);
+
+        // Special characters
+        assert_eq!(natural_sort("a-1", "a-2"), Ordering::Less);
+        assert_eq!(natural_sort("a_1", "a_2"), Ordering::Less);
+        assert_eq!(natural_sort("a.1", "a.2"), Ordering::Less);
+
+        // Unicode
+        assert_eq!(natural_sort("文1", "文2"), Ordering::Less);
+        assert_eq!(natural_sort("文2", "文10"), Ordering::Less);
+        assert_eq!(natural_sort("🔤1", "🔤2"), Ordering::Less);
+
+        // Empty and special cases
+        assert_eq!(natural_sort("", ""), Ordering::Equal);
+        assert_eq!(natural_sort("", "a"), Ordering::Less);
+        assert_eq!(natural_sort("a", ""), Ordering::Greater);
+        assert_eq!(natural_sort(" ", "  "), Ordering::Less);
+
+        // Mixed everything
+        assert_eq!(natural_sort("File-1.txt", "File-2.txt"), Ordering::Less);
+        assert_eq!(natural_sort("File-02.txt", "File-2.txt"), Ordering::Greater);
+        assert_eq!(natural_sort("File-2.txt", "File-10.txt"), Ordering::Less);
+        assert_eq!(natural_sort("File_A1", "File_A2"), Ordering::Less);
+        assert_eq!(natural_sort("File_a1", "File_A1"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_paths() {
+        // Helper function for cleaner tests
+        fn compare(a: &str, is_a_file: bool, b: &str, is_b_file: bool) -> Ordering {
+            compare_paths((Path::new(a), is_a_file), (Path::new(b), is_b_file))
+        }
+
+        // Basic path comparison
+        assert_eq!(compare("a", true, "b", true), Ordering::Less);
+        assert_eq!(compare("b", true, "a", true), Ordering::Greater);
+        assert_eq!(compare("a", true, "a", true), Ordering::Equal);
+
+        // Files vs Directories
+        assert_eq!(compare("a", true, "a", false), Ordering::Greater);
+        assert_eq!(compare("a", false, "a", true), Ordering::Less);
+        assert_eq!(compare("b", false, "a", true), Ordering::Less);
+
+        // Extensions
+        assert_eq!(compare("a.txt", true, "a.md", true), Ordering::Greater);
+        assert_eq!(compare("a.md", true, "a.txt", true), Ordering::Less);
+        assert_eq!(compare("a", true, "a.txt", true), Ordering::Less);
+
+        // Nested paths
+        assert_eq!(compare("dir/a", true, "dir/b", true), Ordering::Less);
+        assert_eq!(compare("dir1/a", true, "dir2/a", true), Ordering::Less);
+        assert_eq!(compare("dir/sub/a", true, "dir/a", true), Ordering::Less);
+
+        // Case sensitivity in paths
+        assert_eq!(
+            compare("Dir/file", true, "dir/file", true),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare("dir/File", true, "dir/file", true),
+            Ordering::Greater
+        );
+        assert_eq!(compare("dir/file", true, "Dir/File", true), Ordering::Less);
+
+        // Hidden files and special names
+        assert_eq!(compare(".hidden", true, "visible", true), Ordering::Less);
+        assert_eq!(compare("_special", true, "normal", true), Ordering::Less);
+        assert_eq!(compare(".config", false, ".data", false), Ordering::Less);
+
+        // Mixed numeric paths
+        assert_eq!(
+            compare("dir1/file", true, "dir2/file", true),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare("dir2/file", true, "dir10/file", true),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare("dir02/file", true, "dir2/file", true),
+            Ordering::Greater
+        );
+
+        // Root paths
+        assert_eq!(compare("/a", true, "/b", true), Ordering::Less);
+        assert_eq!(compare("/", false, "/a", true), Ordering::Less);
+
+        // Complex real-world examples
+        assert_eq!(
+            compare("project/src/main.rs", true, "project/src/lib.rs", true),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare(
+                "project/tests/test_1.rs",
+                true,
+                "project/tests/test_2.rs",
+                true
+            ),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare(
+                "project/v1.0.0/README.md",
+                true,
+                "project/v1.10.0/README.md",
+                true
+            ),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_natural_sort_case_sensitivity() {
+        // Same letter different case - lowercase should come first
+        assert_eq!(natural_sort("a", "A"), Ordering::Less);
+        assert_eq!(natural_sort("A", "a"), Ordering::Greater);
+        assert_eq!(natural_sort("a", "a"), Ordering::Equal);
+        assert_eq!(natural_sort("A", "A"), Ordering::Equal);
+
+        // Mixed case strings
+        assert_eq!(natural_sort("aaa", "AAA"), Ordering::Less);
+        assert_eq!(natural_sort("AAA", "aaa"), Ordering::Greater);
+        assert_eq!(natural_sort("aAa", "AaA"), Ordering::Less);
+
+        // Different letters
+        assert_eq!(natural_sort("a", "b"), Ordering::Less);
+        assert_eq!(natural_sort("A", "b"), Ordering::Less);
+        assert_eq!(natural_sort("a", "B"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_natural_sort_with_numbers() {
+        // Basic number ordering
+        assert_eq!(natural_sort("file1", "file2"), Ordering::Less);
+        assert_eq!(natural_sort("file2", "file10"), Ordering::Less);
+        assert_eq!(natural_sort("file10", "file2"), Ordering::Greater);
+
+        // Numbers in different positions
+        assert_eq!(natural_sort("1file", "2file"), Ordering::Less);
+        assert_eq!(natural_sort("file1text", "file2text"), Ordering::Less);
+        assert_eq!(natural_sort("text1file", "text2file"), Ordering::Less);
+
+        // Multiple numbers in string
+        assert_eq!(natural_sort("file1-2", "file1-10"), Ordering::Less);
+        assert_eq!(natural_sort("2-1file", "10-1file"), Ordering::Less);
+
+        // Leading zeros
+        assert_eq!(natural_sort("file002", "file2"), Ordering::Greater);
+        assert_eq!(natural_sort("file002", "file10"), Ordering::Less);
+
+        // Very large numbers
+        assert_eq!(
+            natural_sort("file999999999999999999999", "file999999999999999999998"),
+            Ordering::Greater
+        );
+
+        // u128 edge cases
+
+        // Numbers near u128::MAX (340,282,366,920,938,463,463,374,607,431,768,211,455)
+        assert_eq!(
+            natural_sort(
+                "file340282366920938463463374607431768211454",
+                "file340282366920938463463374607431768211455"
+            ),
+            Ordering::Less
+        );
+
+        // Equal length numbers that overflow u128
+        assert_eq!(
+            natural_sort(
+                "file340282366920938463463374607431768211456",
+                "file340282366920938463463374607431768211455"
+            ),
+            Ordering::Greater
+        );
+
+        // Different length numbers that overflow u128
+        assert_eq!(
+            natural_sort(
+                "file3402823669209384634633746074317682114560",
+                "file340282366920938463463374607431768211455"
+            ),
+            Ordering::Greater
+        );
+
+        // Leading zeros with numbers near u128::MAX
+        assert_eq!(
+            natural_sort(
+                "file0340282366920938463463374607431768211455",
+                "file340282366920938463463374607431768211455"
+            ),
+            Ordering::Greater
+        );
+
+        // Very large numbers with different lengths (both overflow u128)
+        assert_eq!(
+            natural_sort(
+                "file999999999999999999999999999999999999999999999999",
+                "file9999999999999999999999999999999999999999999999999"
+            ),
+            Ordering::Less
+        );
+
+        // Mixed case with numbers
+        assert_eq!(natural_sort("File1", "file2"), Ordering::Greater);
+        assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_natural_sort_edge_cases() {
+        // Empty strings
+        assert_eq!(natural_sort("", ""), Ordering::Equal);
+        assert_eq!(natural_sort("", "a"), Ordering::Less);
+        assert_eq!(natural_sort("a", ""), Ordering::Greater);
+
+        // Special characters
+        assert_eq!(natural_sort("file-1", "file_1"), Ordering::Less);
+        assert_eq!(natural_sort("file.1", "file_1"), Ordering::Less);
+        assert_eq!(natural_sort("file 1", "file_1"), Ordering::Less);
+
+        // Unicode characters
+        // 9312 vs 9313
+        assert_eq!(natural_sort("file①", "file②"), Ordering::Less);
+        // 9321 vs 9313
+        assert_eq!(natural_sort("file⑩", "file②"), Ordering::Greater);
+        // 28450 vs 23383
+        assert_eq!(natural_sort("file漢", "file字"), Ordering::Greater);
+
+        // Mixed alphanumeric with special chars
+        assert_eq!(natural_sort("file-1a", "file-1b"), Ordering::Less);
+        assert_eq!(natural_sort("file-1.2", "file-1.10"), Ordering::Less);
+        assert_eq!(natural_sort("file-1.10", "file-1.2"), Ordering::Greater);
     }
 }
