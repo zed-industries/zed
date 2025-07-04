@@ -28,6 +28,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "tempfile",
  "theme",
  "ui",
  "util",

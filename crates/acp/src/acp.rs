@@ -73,6 +73,15 @@ pub struct AssistantMessage {
     pub chunks: Vec<AssistantMessageChunk>,
 }
 
+impl AssistantMessage {
+    pub fn to_string(&self, cx: &App) -> String {
+        self.chunks
+            .iter()
+            .map(|chunk| chunk.to_string(cx))
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AssistantMessageChunk {
     Text { chunk: Entity<Markdown> },
@@ -100,6 +109,19 @@ impl AssistantMessageChunk {
             chunk: cx.new(|cx| {
                 Markdown::new(chunk.to_owned().into(), Some(language_registry), None, cx)
             }),
+        }
+    }
+
+    pub fn to_string(&self, cx: &App) -> String {
+        match self {
+            Self::Text { chunk } => chunk.read(cx).source().to_string(),
+            Self::Thought { chunk } => {
+                let mut result = String::new();
+                result.push_str("<thinking>\n");
+                result.push_str(chunk.read(cx).source());
+                result.push_str("\n</thinking>");
+                result
+            }
         }
     }
 }
@@ -798,27 +820,22 @@ impl AcpThread {
                                 result.push_str(chunk.read(cx).source());
                                 result.push('\n');
                             }
-                            _ => unimplemented!(),
+                            UserMessageChunk::Path { path } => {
+                                result.push_str(&format!("Path: {}", path.to_string_lossy()));
+                                result.push('\n');
+                            }
                         }
                     }
                 }
                 AgentThreadEntryContent::AssistantMessage(assistant_message) => {
                     result.push_str("# Assistant\n");
-                    for chunk in &assistant_message.chunks {
-                        match chunk {
-                            AssistantMessageChunk::Text { chunk } => {
-                                result.push_str(chunk.read(cx).source());
-                                result.push('\n')
-                            }
-                            AssistantMessageChunk::Thought { chunk } => {
-                                result.push_str("<thinking>\n");
-                                result.push_str(chunk.read(cx).source());
-                                result.push_str("\n</thinking>\n");
-                            }
-                        }
-                    }
+                    result.push_str(&assistant_message.to_string(cx));
                 }
-                AgentThreadEntryContent::ToolCall(_tool_call) => unimplemented!(),
+                AgentThreadEntryContent::ToolCall(tool_call) => {
+                    result.push_str("# Tool Call\n");
+                    result.push_str(&format!("Tool: {}", tool_call.label.read(cx).source()));
+                    result.push('\n');
+                }
             }
         }
         result
@@ -1038,7 +1055,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let thread = gemini_acp_thread(project.clone(), cx).await;
+        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
             .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
             .await
@@ -1058,6 +1075,62 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_gemini_path_mentions(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tempdir.path().join("foo.rs"),
+            indoc! {"
+                fn main() {
+                    println!(\"Hello, world!\");
+                }
+            "},
+        )
+        .expect("failed to write file");
+        let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
+        let thread = gemini_acp_thread(project.clone(), tempdir.path(), cx).await;
+        thread
+            .update(cx, |thread, cx| {
+                thread.send(
+                    acp::UserMessage {
+                        chunks: vec![
+                            "Read the file ".into(),
+                            Path::new("foo.rs").into(),
+                            " and tell me what the content of the println! is".into(),
+                        ],
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 3);
+            assert!(matches!(
+                thread.entries[0].content,
+                AgentThreadEntryContent::UserMessage(_)
+            ));
+            assert!(matches!(
+                thread.entries[1].content,
+                AgentThreadEntryContent::ToolCall(_)
+            ));
+            let AgentThreadEntryContent::AssistantMessage(assistant_message) =
+                &thread.entries[2].content
+            else {
+                panic!("Expected AssistantMessage")
+            };
+            assert!(
+                assistant_message.to_string(cx).contains("Hello, world!"),
+                "unexpected assistant message: {:?}",
+                assistant_message.to_string(cx)
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_gemini_tool_call(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1070,7 +1143,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), cx).await;
+        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
             .update(cx, |thread, cx| {
                 thread.send(
@@ -1104,7 +1177,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), cx).await;
+        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
@@ -1172,7 +1245,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), cx).await;
+        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
             thread.send(r#"Run `echo "Hello, world!"`"#, cx)
         });
@@ -1256,6 +1329,7 @@ mod tests {
 
     pub async fn gemini_acp_thread(
         project: Entity<Project>,
+        current_dir: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> Entity<AcpThread> {
         let cli_path =
@@ -1264,7 +1338,7 @@ mod tests {
         command
             .arg(cli_path)
             .arg("--acp")
-            .current_dir("/private/tmp")
+            .current_dir(current_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
