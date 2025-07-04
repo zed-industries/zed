@@ -308,8 +308,11 @@ impl AcpThreadView {
         })
         .detach();
 
+        let mention_set = self.mention_set.clone();
+
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
+            editor.remove_creases(mention_set.lock().drain(), cx)
         });
     }
 

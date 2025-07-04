@@ -34,6 +34,10 @@ impl MentionSet {
     pub fn path_for_crease_id(&self, crease_id: CreaseId) -> Option<ProjectPath> {
         self.paths_by_crease_id.get(&crease_id).cloned()
     }
+
+    pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
+        self.paths_by_crease_id.drain().map(|(id, _)| id)
+    }
 }
 
 pub struct ContextPickerCompletionProvider {
