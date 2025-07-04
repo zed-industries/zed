@@ -379,6 +379,7 @@
       "h": "vim::WrappingLeft",
       "l": "vim::WrappingRight",
       "y": "editor::Copy",
+      "alt-;": "vim::OtherEnd",
       "ctrl-r": "vim::Redo",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
       "t": ["vim::PushFindForward", { "before": true, "multiline": true }],
