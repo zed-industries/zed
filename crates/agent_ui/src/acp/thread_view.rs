@@ -635,8 +635,7 @@ impl AcpThreadView {
 
         let has_content = tool_call.content.is_some();
         let is_collapsible = has_content && !needs_confirmation;
-        let is_open =
-            has_content && (!is_collapsible || self.expanded_tool_calls.contains(&tool_call.id));
+        let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
 
         let content = if is_open {
             match &tool_call.status {
