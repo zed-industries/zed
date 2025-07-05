@@ -45,6 +45,7 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+const MAX_STRETCH_LINES: usize = 5;
 
 /// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
@@ -238,10 +239,10 @@ impl Render for BufferSearchBar {
         let input_width = SearchInputWidth::calc_width(container_width);
 
         let input_base_styles = || {
-            h_flex()
+            div()
                 .min_w_32()
                 .w(input_width)
-                .h_8()
+                .min_h_8()
                 .pl_2()
                 .pr_1()
                 .py_1()
@@ -252,6 +253,7 @@ impl Render for BufferSearchBar {
 
         let search_line = h_flex()
             .gap_2()
+            .items_start()
             .when(supported_options.find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
@@ -259,49 +261,67 @@ impl Render for BufferSearchBar {
                 input_base_styles()
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
-                    .child(self.render_text_input(&self.query_editor, color_override, cx))
-                    .when(!hide_inline_icons, |div| {
-                        div.child(
-                            h_flex()
-                                .gap_1()
-                                .children(supported_options.case.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::CASE_SENSITIVE,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_case_sensitive(
-                                                &ToggleCaseSensitive,
-                                                window,
-                                                cx,
+                    .flex_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_start()
+                            .w_full()
+                            .child(div().flex_1().child(self.render_text_input(
+                                &self.query_editor,
+                                color_override,
+                                cx,
+                            )))
+                            .when(!hide_inline_icons, |div| {
+                                div.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .children(supported_options.case.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::CASE_SENSITIVE,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_case_sensitive(
+                                                        &ToggleCaseSensitive,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
                                             )
-                                        }),
-                                    )
-                                }))
-                                .children(supported_options.word.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::WHOLE_WORD,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_whole_word(&ToggleWholeWord, window, cx)
-                                        }),
-                                    )
-                                }))
-                                .children(supported_options.regex.then(|| {
-                                    self.render_search_option_button(
-                                        SearchOptions::REGEX,
-                                        focus_handle.clone(),
-                                        cx.listener(|this, _, window, cx| {
-                                            this.toggle_regex(&ToggleRegex, window, cx)
-                                        }),
-                                    )
-                                })),
-                        )
-                    }),
+                                        }))
+                                        .children(supported_options.word.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::WHOLE_WORD,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_whole_word(
+                                                        &ToggleWholeWord,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }),
+                                            )
+                                        }))
+                                        .children(supported_options.regex.then(|| {
+                                            self.render_search_option_button(
+                                                SearchOptions::REGEX,
+                                                focus_handle.clone(),
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.toggle_regex(&ToggleRegex, window, cx)
+                                                }),
+                                            )
+                                        })),
+                                )
+                            }),
+                    ),
             )
             .child(
                 h_flex()
                     .gap_1()
                     .min_w_64()
+                    .h_8()
+                    .items_center()
                     .when(supported_options.replacement, |this| {
                         this.child(
                             IconButton::new(
@@ -430,6 +450,7 @@ impl Render for BufferSearchBar {
         let replace_line = should_show_replace_input.then(|| {
             h_flex()
                 .gap_2()
+                .items_start()
                 .child(input_base_styles().child(self.render_text_input(
                     &self.replacement_editor,
                     None,
@@ -439,6 +460,8 @@ impl Render for BufferSearchBar {
                     h_flex()
                         .min_w_64()
                         .gap_1()
+                        .h_8()
+                        .items_center()
                         .child(
                             IconButton::new("search-replace-next", ui::IconName::ReplaceNext)
                                 .shape(IconButtonShape::Square)
@@ -529,16 +552,27 @@ impl Render for BufferSearchBar {
                 !narrow_mode && !supported_options.find_in_results,
                 |div| {
                     div.child(
-                        h_flex().absolute().right_0().child(
-                            IconButton::new(SharedString::from("Close"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
-                                })
-                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                    this.dismiss(&Dismiss, window, cx)
-                                })),
-                        ),
+                        h_flex()
+                            .absolute()
+                            .right_0()
+                            .top_0()
+                            .h_8()
+                            .items_center()
+                            .child(
+                                IconButton::new(SharedString::from("Close"), IconName::Close)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::for_action(
+                                            "Close Search Bar",
+                                            &Dismiss,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                        this.dismiss(&Dismiss, window, cx)
+                                    })),
+                            ),
                     )
                     .w_full()
                 },
@@ -700,10 +734,10 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let query_editor = cx.new(|cx| Editor::auto_height(1, MAX_STRETCH_LINES, window, cx));
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let replacement_editor = cx.new(|cx| Editor::auto_height(1, MAX_STRETCH_LINES, window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
