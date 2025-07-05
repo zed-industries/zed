@@ -1,5 +1,6 @@
+use crate::serde_helpers::non_empty_string_vec;
 use anyhow::{Context as _, Result};
-use collections::FxHashMap;
+use collections::{FxHashMap, HashMap};
 use gpui::SharedString;
 use log as _;
 use schemars::JsonSchema;
@@ -7,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{borrow::Cow, net::Ipv4Addr};
 use util::schemars::add_new_subschema;
+use util::serde::default_true;
+use zed_actions::RevealTarget;
 
-use crate::TaskTemplate;
+use crate::{HideStrategy, RevealStrategy, Shell, TaskTemplate};
 
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 /// Optional TCP connection information for connecting to an already running debug adapter
@@ -179,12 +182,75 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
+fn build_task_template_default_label() -> String {
+    "debug-build".to_owned()
+}
+
+/// Copy of TaskTemplate for which label is optional, for use in build tasks.
+///
+/// The serde(remote) helper checks at compile time that this is in sync with the original TaskTemplate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(remote = "TaskTemplate")]
+struct BuildTaskTemplate {
+    /// Human readable name of the task to display in the UI.
+    #[serde(default = "build_task_template_default_label")]
+    pub label: String,
+    /// Executable command to spawn.
+    pub command: String,
+    /// Arguments to the command.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Env overrides for the command, will be appended to the terminal's environment from the settings.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Current working directory to spawn the command into, defaults to current project root.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
+    #[serde(default)]
+    pub use_new_terminal: bool,
+    /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
+    #[serde(default)]
+    pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started:
+    /// * `always` — always show the task's pane, and focus the corresponding tab in it (default)
+    /// * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    /// * `never` — do not alter focus, but still add/reuse the task's tab in its pane
+    #[serde(default)]
+    pub reveal: RevealStrategy,
+    /// Where to place the task's terminal item after starting the task.
+    /// * `dock` — in the terminal dock, "regular" terminal items' place (default).
+    /// * `center` — in the central pane group, "main" editor area.
+    #[serde(default)]
+    pub reveal_target: RevealTarget,
+    /// What to do with the terminal pane and tab, after the command had finished:
+    /// * `never` — do nothing when the command finishes (default)
+    /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
+    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
+    #[serde(default)]
+    pub hide: HideStrategy,
+    /// Represents the tags which this template attaches to.
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(length(min = 1))]
+    pub tags: Vec<String>,
+    /// Which shell to use when spawning the task.
+    #[serde(default)]
+    pub shell: Shell,
+    /// Whether to show the task line in the task output.
+    #[serde(default = "default_true")]
+    pub show_summary: bool,
+    /// Whether to show the command line in the task output.
+    #[serde(default = "default_true")]
+    pub show_command: bool,
+}
+
 #[derive(Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
     Template {
-        #[serde(flatten)]
+        #[serde(flatten, with = "BuildTaskTemplate")]
         task_template: TaskTemplate,
         #[serde(skip)]
         locator_name: Option<SharedString>,

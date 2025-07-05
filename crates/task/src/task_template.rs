@@ -43,8 +43,8 @@ pub struct TaskTemplate {
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started:
     /// * `always` — always show the task's pane, and focus the corresponding tab in it (default)
-    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
-    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
+    /// * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    /// * `never` — do not alter focus, but still add/reuse the task's tab in its pane
     #[serde(default)]
     pub reveal: RevealStrategy,
     /// Where to place the task's terminal item after starting the task.
