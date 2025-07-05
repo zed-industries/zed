@@ -7,29 +7,25 @@ mod python;
 
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 pub use codelldb::CodeLldbDebugAdapter;
-use collections::HashMap;
 use dap::{
     DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
-        DownloadedFileType, GithubRepo,
+        GithubRepo,
     },
     configure_tcp_connection,
 };
-use fs::Fs as _;
 use gdb::GdbDebugAdapter;
 pub use go::GoDebugAdapter;
-use gpui::{App, BorrowAppContext, http_client::github::GithubRelease};
+use gpui::{App, BorrowAppContext};
 pub use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 pub use python::PythonDebugAdapter;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-use task::{DebugScenario, EnvVariableReplacer, VariableName, ZedDebugConfig};
-use tempfile::TempDir;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
@@ -59,8 +55,8 @@ pub struct UpdateSchemasDapDelegate {
 impl UpdateSchemasDapDelegate {
     pub fn new() -> Self {
         let executor = gpui::background_executor();
-        // FIXME
-        let client = Arc::new(reqwest_client::ReqwestClient::user_agent("Cole").unwrap());
+        let client =
+            Arc::new(reqwest_client::ReqwestClient::user_agent("Zed DAP schema updater").unwrap());
         let fs = Arc::new(fs::RealFs::new(None, executor.clone()));
         Self {
             client,
@@ -106,7 +102,7 @@ impl dap::adapters::DapDelegate for UpdateSchemasDapDelegate {
 }
 
 #[cfg(feature = "update-schemas")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PackageJsonConfigurationAttributes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     launch: Option<serde_json::Value>,
@@ -115,7 +111,7 @@ struct PackageJsonConfigurationAttributes {
 }
 
 #[cfg(feature = "update-schemas")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PackageJsonDebugger {
     r#type: String,
@@ -123,23 +119,28 @@ struct PackageJsonDebugger {
 }
 
 #[cfg(feature = "update-schemas")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PackageJsonContributes {
     debuggers: Vec<PackageJsonDebugger>,
 }
 
 #[cfg(feature = "update-schemas")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PackageJson {
     contributes: PackageJsonContributes,
 }
 
+#[cfg(feature = "update-schemas")]
 fn get_vsix_package_json(
-    temp_dir: &TempDir,
+    temp_dir: &tempfile::TempDir,
     repo: &str,
-    asset_name: impl FnOnce(&GithubRelease) -> anyhow::Result<String>,
+    asset_name: impl FnOnce(&gpui::http_client::github::GithubRelease) -> anyhow::Result<String>,
     delegate: UpdateSchemasDapDelegate,
 ) -> anyhow::Result<(String, Option<String>)> {
+    use anyhow::Context as _;
+    use dap::adapters::DownloadedFileType;
+    use fs::Fs as _;
+
     let temp_dir = std::fs::canonicalize(temp_dir.path())?;
     let fs = delegate.fs.clone();
     let client = delegate.client.clone();
@@ -179,10 +180,14 @@ fn get_vsix_package_json(
     })
 }
 
+#[cfg(feature = "update-schemas")]
 fn parse_package_json(
     package_json: String,
     package_nls_json: Option<String>,
 ) -> anyhow::Result<PackageJson> {
+    use collections::HashMap;
+    use task::{EnvVariableReplacer, VariableName};
+
     let package_nls_json = package_nls_json
         .map(|package_nls_json| {
             let package_nls_json =
@@ -244,6 +249,7 @@ fn parse_package_json(
     Ok(package_json)
 }
 
+#[cfg(feature = "update-schemas")]
 fn schema_for_configuration_attributes(
     attrs: PackageJsonConfigurationAttributes,
 ) -> serde_json::Value {

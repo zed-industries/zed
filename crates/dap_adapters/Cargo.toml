@@ -6,8 +6,6 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-# FIXME
-default = ["update-schemas"]
 test-support = [
     "dap/test-support",
     "gpui/test-support",

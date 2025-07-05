@@ -10,7 +10,6 @@ use std::{
     sync::{LazyLock, OnceLock},
 };
 use task::DebugRequest;
-use tempfile::TempDir;
 use util::{ResultExt, maybe};
 
 use crate::*;
@@ -279,7 +278,7 @@ impl DebugAdapter for JsDebugAdapter {
 #[cfg(feature = "update-schemas")]
 impl JsDebugAdapter {
     pub fn get_schema(
-        temp_dir: &TempDir,
+        temp_dir: &tempfile::TempDir,
         delegate: UpdateSchemasDapDelegate,
     ) -> anyhow::Result<serde_json::Value> {
         let (package_json, package_nls_json) = get_vsix_package_json(

@@ -100,7 +100,7 @@ impl GoDebugAdapter {
 #[cfg(feature = "update-schemas")]
 impl GoDebugAdapter {
     pub fn get_schema(
-        temp_dir: &TempDir,
+        temp_dir: &tempfile::TempDir,
         delegate: UpdateSchemasDapDelegate,
     ) -> anyhow::Result<serde_json::Value> {
         let (package_json, package_nls_json) = get_vsix_package_json(

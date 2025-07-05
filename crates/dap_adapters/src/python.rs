@@ -358,6 +358,8 @@ impl PythonDebugAdapter {
         temp_dir: &TempDir,
         delegate: UpdateSchemasDapDelegate,
     ) -> anyhow::Result<serde_json::Value> {
+        use fs::Fs as _;
+
         let temp_dir = std::fs::canonicalize(temp_dir.path())?;
         let fs = delegate.fs.clone();
         let executor = delegate.executor.clone();

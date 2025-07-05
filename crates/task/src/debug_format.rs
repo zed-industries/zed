@@ -352,37 +352,6 @@ impl DebugTaskFile {
     ) -> serde_json::Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
 
-        // FIXME what is this doing
-        // if let Some(template_object) = build_task_schema
-        //     .get_mut("anyOf")
-        //     .and_then(|array| array.as_array_mut())
-        //     .and_then(|array| array.get_mut(1))
-        // {
-        //     if let Some(properties) = template_object
-        //         .get_mut("properties")
-        //         .and_then(|value| value.as_object_mut())
-        //     {
-        //         if properties.remove("label").is_none() {
-        //             debug_panic!(
-        //                 "Generated TaskTemplate json schema did not have expected 'label' field. \
-        //                 Schema of 2nd alternative is: {template_object:?}"
-        //             );
-        //         }
-        //     }
-
-        //     if let Some(arr) = template_object
-        //         .get_mut("required")
-        //         .and_then(|array| array.as_array_mut())
-        //     {
-        //         arr.retain(|v| v.as_str() != Some("label"));
-        //     }
-        // } else {
-        //     debug_panic!(
-        //         "Generated TaskTemplate json schema did not match expectations. \
-        //         Schema is: {build_task_schema:?}"
-        //     );
-        // }
-
         let adapter_names = adapter_schemas
             .iter()
             .map(|(adapter_name, _)| adapter_name.clone())
