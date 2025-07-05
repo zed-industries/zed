@@ -1,7 +1,7 @@
 use component::{example_group_with_title, single_example};
 use gpui::{ClickEvent, transparent_black};
 use smallvec::SmallVec;
-use ui::{prelude::*, utils::CornerSolver};
+use ui::{Vector, VectorName, prelude::*, utils::CornerSolver};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct SelectableTile {
@@ -15,11 +15,15 @@ pub struct SelectableTile {
 }
 
 impl SelectableTile {
-    pub fn new(id: impl Into<ElementId>) -> Self {
+    pub fn new(
+        id: impl Into<ElementId>,
+        width: impl Into<DefiniteLength>,
+        height: impl Into<DefiniteLength>,
+    ) -> Self {
         Self {
             id: id.into(),
-            width: px(120.).into(),
-            height: px(120.).into(),
+            width: width.into(),
+            height: height.into(),
             parent_focused: false,
             selected: false,
             children: SmallVec::new(),
@@ -77,9 +81,9 @@ impl RenderOnce for SelectableTile {
             .rounded(ring_corner_radius)
             .border(ring_width)
             .border_color(if self.selected && self.parent_focused {
-                cx.theme().colors().border
-            } else if self.selected {
                 cx.theme().status().info
+            } else if self.selected {
+                cx.theme().colors().border
             } else {
                 transparent_black()
             })
@@ -117,53 +121,44 @@ impl Component for SelectableTile {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let states = example_group_with_title(
-            "SelectableTile States",
-            vec![
-                single_example(
-                    "Default",
-                    SelectableTile::new("default")
-                        .w(px(120.))
-                        .h(px(120.))
-                        .parent_focused(false)
-                        .selected(false)
-                        .child(
-                            div()
-                                .p_4()
-                                .child(Icon::new(IconName::Check).size(IconSize::Medium)),
-                        )
-                        .into_any_element(),
-                ),
-                single_example(
-                    "Selected",
-                    SelectableTile::new("selected")
-                        .w(px(120.))
-                        .h(px(120.))
-                        .parent_focused(false)
-                        .selected(true)
-                        .child(
-                            div()
-                                .p_4()
-                                .child(Icon::new(IconName::Check).size(IconSize::Medium)),
-                        )
-                        .into_any_element(),
-                ),
-                single_example(
-                    "Selected & Parent Focused",
-                    SelectableTile::new("selected_focused")
-                        .w(px(120.))
-                        .h(px(120.))
-                        .parent_focused(true)
-                        .selected(true)
-                        .child(
-                            div()
-                                .p_4()
-                                .child(Icon::new(IconName::Check).size(IconSize::Medium)),
-                        )
-                        .into_any_element(),
-                ),
-            ],
-        );
+        let states = example_group(vec![
+            single_example(
+                "Default",
+                SelectableTile::new("default", px(40.), px(40.))
+                    .parent_focused(false)
+                    .selected(false)
+                    .child(div().p_4().child(Vector::new(
+                        VectorName::ZedLogo,
+                        rems(18. / 16.),
+                        rems(18. / 16.),
+                    )))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Selected",
+                SelectableTile::new("selected", px(40.), px(40.))
+                    .parent_focused(false)
+                    .selected(true)
+                    .child(div().p_4().child(Vector::new(
+                        VectorName::ZedLogo,
+                        rems(18. / 16.),
+                        rems(18. / 16.),
+                    )))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Selected & Parent Focused",
+                SelectableTile::new("selected_focused", px(40.), px(40.))
+                    .parent_focused(true)
+                    .selected(true)
+                    .child(div().p_4().child(Vector::new(
+                        VectorName::ZedLogo,
+                        rems(18. / 16.),
+                        rems(18. / 16.),
+                    )))
+                    .into_any_element(),
+            ),
+        ]);
 
         Some(v_flex().p_4().gap_4().child(states).into_any_element())
     }
