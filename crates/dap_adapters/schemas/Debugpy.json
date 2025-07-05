@@ -1,0 +1,281 @@
+{
+  "allOf": [
+    {
+      "if": { "properties": { "request": { "const": "launch" } }, "required": ["request"] },
+      "then": {
+        "properties": {
+          "args": {
+            "default": [],
+            "description": "Command line arguments passed to the program. For string type arguments, it will pass through the shell as is, and therefore all shell variable expansions will apply. But for the array type, the values will be shell-escaped.",
+            "items": { "type": "string" },
+            "anyOf": [
+              { "default": "${command:pickArgs}", "enum": ["${command:pickArgs}"] },
+              { "type": ["array", "string"] }
+            ]
+          },
+          "autoReload": {
+            "default": {},
+            "description": "Configures automatic reload of code on edit.",
+            "properties": {
+              "enable": { "default": false, "description": "Automatically reload code on edit.", "type": "boolean" },
+              "exclude": {
+                "default": [
+                  "**/.git/**",
+                  "**/.metadata/**",
+                  "**/__pycache__/**",
+                  "**/node_modules/**",
+                  "**/site-packages/**"
+                ],
+                "description": "Glob patterns of paths to exclude from auto reload.",
+                "items": { "type": "string" },
+                "type": "array"
+              },
+              "include": {
+                "default": ["**/*.py", "**/*.pyw"],
+                "description": "Glob patterns of paths to include in auto reload.",
+                "items": { "type": "string" },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "console": {
+            "default": "integratedTerminal",
+            "description": "Where to launch the debug target: internal console, integrated terminal, or external terminal.",
+            "enum": ["externalTerminal", "integratedTerminal", "internalConsole"]
+          },
+          "cwd": {
+            "default": "${ZED_WORKTREE_ROOT}",
+            "description": "Absolute path to the working directory of the program being debugged. Default is the root directory of the file (leave empty).",
+            "type": "string"
+          },
+          "debugAdapterPath": {
+            "description": "Path (fully qualified) to the Python debug adapter executable.",
+            "type": "string"
+          },
+          "autoStartBrowser": {
+            "default": false,
+            "description": "Open external browser to launch the application",
+            "type": "boolean"
+          },
+          "django": { "default": false, "description": "Django debugging.", "type": "boolean" },
+          "env": {
+            "additionalProperties": { "type": "string" },
+            "default": {},
+            "description": "Environment variables defined as a key value pair. Property ends up being the Environment Variable and the value of the property ends up being the value of the Env Variable.",
+            "type": "object"
+          },
+          "envFile": {
+            "default": "${ZED_WORKTREE_ROOT}/.env",
+            "description": "Absolute path to a file containing environment variable definitions.",
+            "type": "string"
+          },
+          "gevent": {
+            "default": false,
+            "description": "Enable debugging of gevent monkey-patched code.",
+            "type": "boolean"
+          },
+          "jinja": {
+            "default": null,
+            "description": "Jinja template debugging (e.g. Flask).",
+            "enum": [false, null, true]
+          },
+          "justMyCode": { "default": true, "description": "Debug only user-written code.", "type": "boolean" },
+          "logToFile": {
+            "default": false,
+            "description": "Enable logging of debugger events to a log file. This file can be found in the debugpy extension install folder.",
+            "type": "boolean"
+          },
+          "module": { "default": "", "description": "Name of the module to be debugged.", "type": "string" },
+          "pathMappings": {
+            "default": [],
+            "items": {
+              "label": "Path mapping",
+              "properties": {
+                "localRoot": { "default": "${ZED_WORKTREE_ROOT}", "label": "Local source root.", "type": "string" },
+                "remoteRoot": { "default": "", "label": "Remote source root.", "type": "string" }
+              },
+              "required": ["localRoot", "remoteRoot"],
+              "type": "object"
+            },
+            "label": "Path mappings.",
+            "type": "array"
+          },
+          "program": { "default": "${file}", "description": "Absolute path to the program.", "type": "string" },
+          "purpose": {
+            "default": [],
+            "description": "Tells extension to use this configuration for test debugging, or when using debug-in-terminal command.",
+            "items": {
+              "enum": ["debug-test", "debug-in-terminal"],
+              "enumDescriptions": [
+                "Use this configuration while debugging tests using test view or test debug commands.",
+                "Use this configuration while debugging a file using debug in terminal button in the editor."
+              ]
+            },
+            "type": "array"
+          },
+          "pyramid": { "default": false, "description": "Whether debugging Pyramid applications.", "type": "boolean" },
+          "python": {
+            "default": "${command:python.interpreterPath}",
+            "description": "Absolute path to the Python interpreter executable; overrides workspace configuration if set.",
+            "type": "string"
+          },
+          "pythonArgs": {
+            "default": [],
+            "description": "Command-line arguments passed to the Python interpreter. To pass arguments to the debug target, use \"args\".",
+            "items": { "type": "string" },
+            "type": "array"
+          },
+          "redirectOutput": { "default": true, "description": "Redirect output.", "type": "boolean" },
+          "showReturnValue": {
+            "default": true,
+            "description": "Show return value of functions when stepping.",
+            "type": "boolean"
+          },
+          "stopOnEntry": { "default": false, "description": "Automatically stop after launch.", "type": "boolean" },
+          "subProcess": {
+            "default": false,
+            "description": "Whether to enable Sub Process debugging.",
+            "type": "boolean"
+          },
+          "sudo": {
+            "default": false,
+            "description": "Running debug program under elevated permissions (on Unix).",
+            "type": "boolean"
+          },
+          "guiEventLoop": {
+            "default": "matplotlib",
+            "description": "The GUI event loop that's going to run. Possible values: \"matplotlib\", \"wx\", \"qt\", \"none\", or a custom function that'll be imported and run.",
+            "type": "string"
+          },
+          "consoleName": {
+            "default": "Python Debug Console",
+            "description": "Display name of the debug console or terminal",
+            "type": "string"
+          },
+          "clientOS": { "default": null, "description": "OS that VS code is using.", "enum": ["windows", null, "unix"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "request": { "const": "attach" } }, "required": ["request"] },
+      "then": {
+        "properties": {
+          "autoReload": {
+            "default": {},
+            "description": "Configures automatic reload of code on edit.",
+            "properties": {
+              "enable": { "default": false, "description": "Automatically reload code on edit.", "type": "boolean" },
+              "exclude": {
+                "default": [
+                  "**/.git/**",
+                  "**/.metadata/**",
+                  "**/__pycache__/**",
+                  "**/node_modules/**",
+                  "**/site-packages/**"
+                ],
+                "description": "Glob patterns of paths to exclude from auto reload.",
+                "items": { "type": "string" },
+                "type": "array"
+              },
+              "include": {
+                "default": ["**/*.py", "**/*.pyw"],
+                "description": "Glob patterns of paths to include in auto reload.",
+                "items": { "type": "string" },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "connect": {
+            "label": "Attach by connecting to debugpy over a socket.",
+            "properties": {
+              "host": {
+                "default": "127.0.0.1",
+                "description": "Hostname or IP address to connect to.",
+                "type": "string"
+              },
+              "port": { "description": "Port to connect to.", "type": ["number", "string"] }
+            },
+            "required": ["port"],
+            "type": "object"
+          },
+          "debugAdapterPath": {
+            "description": "Path (fully qualified) to the python debug adapter executable.",
+            "type": "string"
+          },
+          "django": { "default": false, "description": "Django debugging.", "type": "boolean" },
+          "jinja": {
+            "default": null,
+            "description": "Jinja template debugging (e.g. Flask).",
+            "enum": [false, null, true]
+          },
+          "justMyCode": {
+            "default": true,
+            "description": "If true, show and debug only user-written code. If false, show and debug all code, including library calls.",
+            "type": "boolean"
+          },
+          "listen": {
+            "label": "Attach by listening for incoming socket connection from debugpy",
+            "properties": {
+              "host": {
+                "default": "127.0.0.1",
+                "description": "Hostname or IP address of the interface to listen on.",
+                "type": "string"
+              },
+              "port": { "description": "Port to listen on.", "type": ["number", "string"] }
+            },
+            "required": ["port"],
+            "type": "object"
+          },
+          "logToFile": {
+            "default": false,
+            "description": "Enable logging of debugger events to a log file. This file can be found in the debugpy extension install folder.",
+            "type": "boolean"
+          },
+          "pathMappings": {
+            "default": [],
+            "items": {
+              "label": "Path mapping",
+              "properties": {
+                "localRoot": { "default": "${ZED_WORKTREE_ROOT}", "label": "Local source root.", "type": "string" },
+                "remoteRoot": { "default": "", "label": "Remote source root.", "type": "string" }
+              },
+              "required": ["localRoot", "remoteRoot"],
+              "type": "object"
+            },
+            "label": "Path mappings.",
+            "type": "array"
+          },
+          "processId": {
+            "anyOf": [
+              {
+                "default": "${command:pickProcess}",
+                "description": "Use process picker to select a process to attach, or Process ID as integer.",
+                "enum": ["${command:pickProcess}"]
+              },
+              { "description": "ID of the local process to attach to.", "type": "integer" }
+            ]
+          },
+          "redirectOutput": { "default": true, "description": "Redirect output.", "type": "boolean" },
+          "showReturnValue": {
+            "default": true,
+            "description": "Show return value of functions when stepping.",
+            "type": "boolean"
+          },
+          "subProcess": {
+            "default": false,
+            "description": "Whether to enable Sub Process debugging",
+            "type": "boolean"
+          },
+          "consoleName": {
+            "default": "Python Debug Console",
+            "description": "Display name of the debug console or terminal",
+            "type": "string"
+          },
+          "clientOS": { "default": null, "description": "OS that VS code is using.", "enum": ["windows", null, "unix"] }
+        }
+      }
+    }
+  ]
+}

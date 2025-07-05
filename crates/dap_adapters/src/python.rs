@@ -8,21 +8,24 @@ use language::{LanguageName, Toolchain};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::net::Ipv4Addr;
+use std::sync::LazyLock;
 use std::{
     collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
+#[cfg(feature = "update-schemas")]
+use tempfile::TempDir;
 use util::ResultExt;
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter {
+pub struct PythonDebugAdapter {
     checked: OnceLock<()>,
 }
 
 impl PythonDebugAdapter {
-    const ADAPTER_NAME: &'static str = "Debugpy";
+    pub const ADAPTER_NAME: &'static str = "Debugpy";
     const DEBUG_ADAPTER_NAME: DebugAdapterName =
         DebugAdapterName(SharedString::new_static(Self::ADAPTER_NAME));
     const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
@@ -106,6 +109,7 @@ impl PythonDebugAdapter {
             request,
         })
     }
+
     async fn fetch_latest_adapter_version(
         &self,
         delegate: &Arc<dyn DapDelegate>,
@@ -124,7 +128,7 @@ impl PythonDebugAdapter {
         delegate: Arc<dyn DapDelegate>,
     ) -> Result<()> {
         let version_path = adapters::download_adapter_from_github(
-            adapter_name,
+            adapter_name.as_ref(),
             version,
             adapters::DownloadedFileType::GzipTar,
             paths::debug_adapters_dir(),
@@ -261,336 +265,11 @@ impl DebugAdapter for PythonDebugAdapter {
     }
 
     fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
-        Cow::Owned(json!({
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "enum": ["attach", "launch"],
-                    "description": "Debug adapter request type"
-                },
-                "autoReload": {
-                    "default": {},
-                    "description": "Configures automatic reload of code on edit.",
-                    "properties": {
-                        "enable": {
-                            "default": false,
-                            "description": "Automatically reload code on edit.",
-                            "type": "boolean"
-                        },
-                        "exclude": {
-                            "default": [
-                                "**/.git/**",
-                                "**/.metadata/**",
-                                "**/__pycache__/**",
-                                "**/node_modules/**",
-                                "**/site-packages/**"
-                            ],
-                            "description": "Glob patterns of paths to exclude from auto reload.",
-                            "items": {
-                                "type": "string"
-                            },
-                            "type": "array"
-                        },
-                        "include": {
-                            "default": [
-                                "**/*.py",
-                                "**/*.pyw"
-                            ],
-                            "description": "Glob patterns of paths to include in auto reload.",
-                            "items": {
-                                "type": "string"
-                            },
-                            "type": "array"
-                        }
-                    },
-                    "type": "object"
-                },
-                "debugAdapterPath": {
-                    "description": "Path (fully qualified) to the python debug adapter executable.",
-                    "type": "string"
-                },
-                "django": {
-                    "default": false,
-                    "description": "Django debugging.",
-                    "type": "boolean"
-                },
-                "jinja": {
-                    "default": null,
-                    "description": "Jinja template debugging (e.g. Flask).",
-                    "enum": [
-                        false,
-                        null,
-                        true
-                    ]
-                },
-                "justMyCode": {
-                    "default": true,
-                    "description": "If true, show and debug only user-written code. If false, show and debug all code, including library calls.",
-                    "type": "boolean"
-                },
-                "logToFile": {
-                    "default": false,
-                    "description": "Enable logging of debugger events to a log file. This file can be found in the debugpy extension install folder.",
-                    "type": "boolean"
-                },
-                "pathMappings": {
-                    "default": [],
-                    "items": {
-                        "label": "Path mapping",
-                        "properties": {
-                            "localRoot": {
-                                "default": "${ZED_WORKTREE_ROOT}",
-                                "label": "Local source root.",
-                                "type": "string"
-                            },
-                            "remoteRoot": {
-                                "default": "",
-                                "label": "Remote source root.",
-                                "type": "string"
-                            }
-                        },
-                        "required": [
-                            "localRoot",
-                            "remoteRoot"
-                        ],
-                        "type": "object"
-                    },
-                    "label": "Path mappings.",
-                    "type": "array"
-                },
-                "redirectOutput": {
-                    "default": true,
-                    "description": "Redirect output.",
-                    "type": "boolean"
-                },
-                "showReturnValue": {
-                    "default": true,
-                    "description": "Show return value of functions when stepping.",
-                    "type": "boolean"
-                },
-                "subProcess": {
-                    "default": false,
-                    "description": "Whether to enable Sub Process debugging",
-                    "type": "boolean"
-                },
-                "consoleName": {
-                    "default": "Python Debug Console",
-                    "description": "Display name of the debug console or terminal",
-                    "type": "string"
-                },
-                "clientOS": {
-                    "default": null,
-                    "description": "OS that VS code is using.",
-                    "enum": [
-                        "windows",
-                        null,
-                        "unix"
-                    ]
-                }
-            },
-            "required": ["request"],
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {
-                            "request": {
-                                "enum": ["attach"]
-                            }
-                        }
-                    },
-                    "then": {
-                        "properties": {
-                            "connect": {
-                                "label": "Attach by connecting to debugpy over a socket.",
-                                "properties": {
-                                    "host": {
-                                        "default": "127.0.0.1",
-                                        "description": "Hostname or IP address to connect to.",
-                                        "type": "string"
-                                    },
-                                    "port": {
-                                        "description": "Port to connect to.",
-                                        "type": [
-                                            "number",
-                                            "string"
-                                        ]
-                                    }
-                                },
-                                "required": [
-                                    "port"
-                                ],
-                                "type": "object"
-                            },
-                            "listen": {
-                                "label": "Attach by listening for incoming socket connection from debugpy",
-                                "properties": {
-                                    "host": {
-                                        "default": "127.0.0.1",
-                                        "description": "Hostname or IP address of the interface to listen on.",
-                                        "type": "string"
-                                    },
-                                    "port": {
-                                        "description": "Port to listen on.",
-                                        "type": [
-                                            "number",
-                                            "string"
-                                        ]
-                                    }
-                                },
-                                "required": [
-                                    "port"
-                                ],
-                                "type": "object"
-                            },
-                            "processId": {
-                                "anyOf": [
-                                    {
-                                        "default": "${command:pickProcess}",
-                                        "description": "Use process picker to select a process to attach, or Process ID as integer.",
-                                        "enum": [
-                                            "${command:pickProcess}"
-                                        ]
-                                    },
-                                    {
-                                        "description": "ID of the local process to attach to.",
-                                        "type": "integer"
-                                    }
-                                ]
-                            }
-                        }
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {
-                            "request": {
-                                "enum": ["launch"]
-                            }
-                        }
-                    },
-                    "then": {
-                        "properties": {
-                            "args": {
-                                "default": [],
-                                "description": "Command line arguments passed to the program. For string type arguments, it will pass through the shell as is, and therefore all shell variable expansions will apply. But for the array type, the values will be shell-escaped.",
-                                "items": {
-                                    "type": "string"
-                                },
-                                "anyOf": [
-                                    {
-                                        "default": "${command:pickArgs}",
-                                        "enum": [
-                                            "${command:pickArgs}"
-                                        ]
-                                    },
-                                    {
-                                        "type": [
-                                            "array",
-                                            "string"
-                                        ]
-                                    }
-                                ]
-                            },
-                            "console": {
-                                "default": "integratedTerminal",
-                                "description": "Where to launch the debug target: internal console, integrated terminal, or external terminal.",
-                                "enum": [
-                                    "externalTerminal",
-                                    "integratedTerminal",
-                                    "internalConsole"
-                                ]
-                            },
-                            "cwd": {
-                                "default": "${ZED_WORKTREE_ROOT}",
-                                "description": "Absolute path to the working directory of the program being debugged. Default is the root directory of the file (leave empty).",
-                                "type": "string"
-                            },
-                            "autoStartBrowser": {
-                                "default": false,
-                                "description": "Open external browser to launch the application",
-                                "type": "boolean"
-                            },
-                            "env": {
-                                "additionalProperties": {
-                                    "type": "string"
-                                },
-                                "default": {},
-                                "description": "Environment variables defined as a key value pair. Property ends up being the Environment Variable and the value of the property ends up being the value of the Env Variable.",
-                                "type": "object"
-                            },
-                            "envFile": {
-                                "default": "${ZED_WORKTREE_ROOT}/.env",
-                                "description": "Absolute path to a file containing environment variable definitions.",
-                                "type": "string"
-                            },
-                            "gevent": {
-                                "default": false,
-                                "description": "Enable debugging of gevent monkey-patched code.",
-                                "type": "boolean"
-                            },
-                            "module": {
-                                "default": "",
-                                "description": "Name of the module to be debugged.",
-                                "type": "string"
-                            },
-                            "program": {
-                                "default": "${ZED_FILE}",
-                                "description": "Absolute path to the program.",
-                                "type": "string"
-                            },
-                            "purpose": {
-                                "default": [],
-                                "description": "Tells extension to use this configuration for test debugging, or when using debug-in-terminal command.",
-                                "items": {
-                                    "enum": [
-                                        "debug-test",
-                                        "debug-in-terminal"
-                                    ],
-                                    "enumDescriptions": [
-                                        "Use this configuration while debugging tests using test view or test debug commands.",
-                                        "Use this configuration while debugging a file using debug in terminal button in the editor."
-                                    ]
-                                },
-                                "type": "array"
-                            },
-                            "pyramid": {
-                                "default": false,
-                                "description": "Whether debugging Pyramid applications.",
-                                "type": "boolean"
-                            },
-                            "python": {
-                                "default": "${command:python.interpreterPath}",
-                                "description": "Absolute path to the Python interpreter executable; overrides workspace configuration if set.",
-                                "type": "string"
-                            },
-                            "pythonArgs": {
-                                "default": [],
-                                "description": "Command-line arguments passed to the Python interpreter. To pass arguments to the debug target, use \"args\".",
-                                "items": {
-                                    "type": "string"
-                                },
-                                "type": "array"
-                            },
-                            "stopOnEntry": {
-                                "default": false,
-                                "description": "Automatically stop after launch.",
-                                "type": "boolean"
-                            },
-                            "sudo": {
-                                "default": false,
-                                "description": "Running debug program under elevated permissions (on Unix).",
-                                "type": "boolean"
-                            },
-                            "guiEventLoop": {
-                                "default": "matplotlib",
-                                "description": "The GUI event loop that's going to run. Possible values: \"matplotlib\", \"wx\", \"qt\", \"none\", or a custom function that'll be imported and run.",
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            ]
-        }))
+        static SCHEMA: LazyLock<serde_json::Value> = LazyLock::new(|| {
+            const RAW_SCHEMA: &str = include_str!("../schemas/Debugpy.json");
+            serde_json::from_str(RAW_SCHEMA).unwrap()
+        });
+        Cow::Borrowed(&*SCHEMA)
     }
 
     async fn get_binary(
@@ -670,6 +349,86 @@ impl DebugAdapter for PythonDebugAdapter {
             .as_str()
             .filter(|label| !label.is_empty())?;
         Some(label.to_owned())
+    }
+}
+
+#[cfg(feature = "update-schemas")]
+impl PythonDebugAdapter {
+    pub fn get_schema(
+        temp_dir: &TempDir,
+        delegate: UpdateSchemasDapDelegate,
+    ) -> anyhow::Result<serde_json::Value> {
+        let temp_dir = std::fs::canonicalize(temp_dir.path())?;
+        let fs = delegate.fs.clone();
+        let executor = delegate.executor.clone();
+
+        let (package_json, package_nls_json) = executor.block(async move {
+            let version = fetch_latest_adapter_version_from_github(
+                GithubRepo {
+                    repo_name: "vscode-python-debugger".into(),
+                    repo_owner: "microsoft".into(),
+                },
+                &delegate,
+            )
+            .await?;
+
+            let path = adapters::download_adapter_from_github(
+                "schemas",
+                version,
+                adapters::DownloadedFileType::GzipTar,
+                &temp_dir,
+                &delegate,
+            )
+            .await?;
+
+            let path = util::fs::find_file_name_in_dir(path.as_path(), |file_name| {
+                file_name.starts_with("microsoft-vscode-python-debugger-")
+            })
+            .await
+            .context("find python debugger extension in download")?;
+
+            let package_json = fs.load(&path.join("package.json")).await?;
+            let package_nls_json = fs.load(&path.join("package.nls.json")).await.ok();
+
+            anyhow::Ok((package_json, package_nls_json))
+        })?;
+
+        let package_json = parse_package_json(package_json, package_nls_json)?;
+
+        let [debugger] =
+            <[_; 1]>::try_from(package_json.contributes.debuggers).map_err(|debuggers| {
+                anyhow::anyhow!("unexpected number of python debuggers: {}", debuggers.len())
+            })?;
+
+        let configuration_attributes = debugger.configuration_attributes;
+        let conjuncts = configuration_attributes
+            .launch
+            .map(|schema| ("launch", schema))
+            .into_iter()
+            .chain(
+                configuration_attributes
+                    .attach
+                    .map(|schema| ("attach", schema)),
+            )
+            .map(|(request, schema)| {
+                json!({
+                    "if": {
+                        "properties": {
+                            "request": {
+                                "const": request
+                            }
+                        },
+                        "required": ["request"]
+                    },
+                    "then": schema
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let schema = json!({
+            "allOf": conjuncts
+        });
+        Ok(schema)
     }
 }
 

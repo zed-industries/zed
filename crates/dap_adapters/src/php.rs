@@ -348,7 +348,7 @@ impl DebugAdapter for PhpDebugAdapter {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
             if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
                 adapters::download_adapter_from_github(
-                    self.name(),
+                    Self::ADAPTER_NAME,
                     version,
                     adapters::DownloadedFileType::Vsix,
                     paths::debug_adapters_dir(),

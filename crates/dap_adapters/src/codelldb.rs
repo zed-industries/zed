@@ -341,7 +341,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             let version_path =
                 if let Ok(version) = self.fetch_latest_adapter_version(delegate).await {
                     adapters::download_adapter_from_github(
-                        self.name(),
+                        Self::ADAPTER_NAME,
                         version.clone(),
                         adapters::DownloadedFileType::Vsix,
                         paths::debug_adapters_dir(),
