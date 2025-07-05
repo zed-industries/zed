@@ -3,7 +3,7 @@ use std::ops::Range;
 use gpui::{AnyElement, App, Context, Entity, Render, UniformListSticky, Window};
 use smallvec::SmallVec;
 
-pub trait StickyEntry {
+pub trait StickyCandidate {
     fn depth(&self) -> usize;
     fn should_skip(&self) -> bool;
 }
@@ -26,7 +26,7 @@ pub fn sticky_items<V, T>(
 ) -> StickyItems<T>
 where
     V: Render,
-    T: StickyEntry + Clone + 'static,
+    T: StickyCandidate + Clone + 'static,
 {
     let entity_compute = entity.clone();
     let entity_render = entity.clone();
@@ -49,7 +49,7 @@ where
 
 impl<T> UniformListSticky for StickyItems<T>
 where
-    T: StickyEntry + Clone + 'static,
+    T: StickyCandidate + Clone + 'static,
 {
     fn compute(
         &self,
@@ -77,7 +77,7 @@ where
     }
 }
 
-pub fn calculate_sticky_marker<E: StickyEntry + Clone>(
+pub fn calculate_sticky_marker<E: StickyCandidate + Clone>(
     entries: &[E],
     range_start: usize,
     skip_predicate: impl Fn(&E) -> bool,
@@ -117,7 +117,6 @@ pub fn calculate_sticky_marker<E: StickyEntry + Clone>(
             current_depth = next_depth;
         }
 
-        // Final check for the last entry
         if found_marker.is_none() {
             let index_in_range = ix;
             if current_depth < index_in_range {
@@ -150,7 +149,7 @@ mod tests {
         should_skip: bool,
     }
 
-    impl StickyEntry for TestEntry {
+    impl StickyCandidate for TestEntry {
         fn depth(&self) -> usize {
             self.depth
         }

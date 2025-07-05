@@ -56,7 +56,7 @@ use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
     IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, StickyEntry, Tooltip, prelude::*, v_flex,
+    ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -4795,55 +4795,64 @@ impl ProjectPanel {
         None
     }
 
-    fn sticky_entries_for_range(
+    fn candidate_entries_in_range_for_sticky(
         &self,
         range: Range<usize>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> Vec<StickyProjectPanelEntry> {
+    ) -> Vec<StickyProjectPanelCandidate> {
+        let mut result = Vec::new();
         let mut current_offset = 0;
+
         for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
             let worktree_len = visible_worktree_entries.len();
             let worktree_end_offset = current_offset + worktree_len;
+
             if current_offset >= range.end {
                 break;
             }
+
             if worktree_end_offset > range.start {
                 let local_start = range.start.saturating_sub(current_offset);
                 let local_end = range.end.saturating_sub(current_offset).min(worktree_len);
+
                 let paths = entries_paths.get_or_init(|| {
                     visible_worktree_entries
                         .iter()
                         .map(|e| e.path.clone())
                         .collect()
                 });
-                return visible_worktree_entries[local_start..local_end]
+
+                let entries_from_this_worktree = visible_worktree_entries[local_start..local_end]
                     .iter()
                     .enumerate()
                     .map(|(i, entry)| {
                         let (depth, _) = Self::calculate_depth_and_difference(&entry.entry, paths);
-                        StickyProjectPanelEntry {
+                        StickyProjectPanelCandidate {
                             index: current_offset + local_start + i,
                             depth,
                             should_skip: self.ancestors.contains_key(&entry.entry.id),
                         }
-                    })
-                    .collect();
+                    });
+
+                result.extend(entries_from_this_worktree);
             }
+
             current_offset = worktree_end_offset;
         }
-        Vec::new()
+
+        result
     }
 
     fn render_sticky_entries(
         &self,
-        marker_entry: StickyProjectPanelEntry,
+        child: StickyProjectPanelCandidate,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> SmallVec<[AnyElement; 8]> {
         let project = self.project.read(cx);
 
-        let Some((worktree_id, entry_ref)) = self.entry_at_index(marker_entry.index) else {
+        let Some((worktree_id, entry_ref)) = self.entry_at_index(child.index) else {
             return SmallVec::new();
         };
 
@@ -4919,13 +4928,13 @@ impl ProjectPanel {
 }
 
 #[derive(Clone)]
-struct StickyProjectPanelEntry {
+struct StickyProjectPanelCandidate {
     index: usize,
     depth: usize,
     should_skip: bool,
 }
 
-impl StickyEntry for StickyProjectPanelEntry {
+impl StickyCandidate for StickyProjectPanelCandidate {
     fn depth(&self) -> usize {
         self.depth
     }
@@ -5150,7 +5159,7 @@ impl Render for ProjectPanel {
                         list.with_sticky(ui::sticky_items(
                             cx.entity().clone(),
                             |this, range, window, cx| {
-                                this.sticky_entries_for_range(range, window, cx)
+                                this.candidate_entries_in_range_for_sticky(range, window, cx)
                             },
                             |this, marker_entry, window, cx| {
                                 this.render_sticky_entries(marker_entry, window, cx)
