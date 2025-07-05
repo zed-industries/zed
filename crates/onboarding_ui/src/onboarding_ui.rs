@@ -4,6 +4,7 @@ mod juicy_button;
 mod persistence;
 mod theme_preview;
 
+use self::components::{CalloutRow, CheckboxRow, HeaderRow, SelectableTile, SelectableTileRow};
 use self::juicy_button::JuicyButton;
 use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
@@ -708,31 +709,38 @@ impl OnboardingUI {
             .id("theme-selector")
             .h_full()
             .w_full()
-            .gap_6()
             .overflow_y_scroll()
+            .child({
+                let vim_enabled = VimModeSetting::get_global(cx).0;
+                CheckboxRow::new("Enable Vim Mode")
+                    .checked(vim_enabled)
+                    .on_click(move |_window, cx| {
+                        let current = VimModeSetting::get_global(cx).0;
+                        SettingsStore::update_global(cx, move |store, cx| {
+                            let mut settings = store.raw_user_settings().clone();
+                            settings["vim_mode"] = serde_json::json!(!current);
+                            store.set_user_settings(&settings.to_string(), cx).ok();
+                        });
+                    })
+            })
             // Theme selector section
             .child(
                 v_flex()
                     .w_full()
                     .overflow_hidden()
                     .child(
-                        h_flex()
-                            .h(px(32.))
-                            .w_full()
-                            .justify_between()
-                            .child(Label::new("Pick a Theme"))
-                            .child(
-                                Button::new("more_themes", "More Themes")
-                                    .style(ButtonStyle::Subtle)
-                                    .color(Color::Muted)
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        window.dispatch_action(
-                                            zed_actions::theme_selector::Toggle::default()
-                                                .boxed_clone(),
-                                            cx,
-                                        );
-                                    })),
-                            ),
+                        HeaderRow::new("Pick a Theme").end_slot(
+                            Button::new("more_themes", "More Themes")
+                                .style(ButtonStyle::Subtle)
+                                .color(Color::Muted)
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::theme_selector::Toggle::default()
+                                            .boxed_clone(),
+                                        cx,
+                                    );
+                                })),
+                        ),
                     )
                     .child(
                         h_flex().w_full().overflow_hidden().gap_3().children(
@@ -810,15 +818,8 @@ impl OnboardingUI {
             // Keymap selector section
             .child(
                 v_flex()
-                    .gap_3()
-                    .mt_4()
-                    .child(
-                        h_flex()
-                            .h(px(32.))
-                            .w_full()
-                            .justify_between()
-                            .child(Label::new("Pick a Keymap")),
-                    )
+                    .gap_1()
+                    .child(HeaderRow::new("Pick a Keymap"))
                     .child(
                         h_flex().gap_2().children(
                             vec![
@@ -923,88 +924,31 @@ impl OnboardingUI {
             // Settings checkboxes
             .child(
                 v_flex()
-                    .gap_3()
-                    .mt_6()
+                    .gap_1()
+                    .child(HeaderRow::new("Help Improve Zed"))
                     .child({
-                        let vim_enabled = VimModeSetting::get_global(cx).0;
-                        h_flex()
-                            .id("vim_mode_container")
-                            .gap_2()
-                            .items_center()
-                            .p_1()
-                            .rounded_md()
-                            .when(is_page_focused && focused_item == 11, |this| {
-                                this.border_2()
-                                    .border_color(cx.theme().colors().border_focused)
-                            })
-                            .child(
-                                div()
-                                    .id("vim_mode_checkbox")
-                                    .w_4()
-                                    .h_4()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .when(vim_enabled, |this| {
-                                        this.bg(cx.theme().colors().element_selected)
-                                            .border_color(cx.theme().colors().border_selected)
-                                    })
-                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(div().when(vim_enabled, |this| {
-                                        this.size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(Icon::new(IconName::Check))
-                                    })),
-                            )
-                            .child(Label::new("Enable Vim Mode"))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                let current = VimModeSetting::get_global(cx).0;
+                        let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
+                        CheckboxRow::new("Send Telemetry")
+                            .description("Help improve Zed by sending anonymous usage data")
+                            .checked(telemetry_enabled)
+                            .on_click(move |_window, cx| {
+                                let current = TelemetrySettings::get_global(cx).metrics;
                                 SettingsStore::update_global(cx, move |store, cx| {
                                     let mut settings = store.raw_user_settings().clone();
-                                    settings["vim_mode"] = serde_json::json!(!current);
+                                    if settings.get("telemetry").is_none() {
+                                        settings["telemetry"] = serde_json::json!({});
+                                    }
+                                    settings["telemetry"]["metrics"] = serde_json::json!(!current);
                                     store.set_user_settings(&settings.to_string(), cx).ok();
                                 });
-                            }))
+                            })
                     })
                     .child({
                         let crash_reports_enabled = TelemetrySettings::get_global(cx).diagnostics;
-                        h_flex()
-                            .id("crash_reports_container")
-                            .gap_2()
-                            .items_center()
-                            .p_1()
-                            .rounded_md()
-                            .when(is_page_focused && focused_item == 12, |this| {
-                                this.border_2()
-                                    .border_color(cx.theme().colors().border_focused)
-                            })
-                            .child(
-                                div()
-                                    .id("crash_reports_checkbox")
-                                    .w_4()
-                                    .h_4()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .when(crash_reports_enabled, |this| {
-                                        this.bg(cx.theme().colors().element_selected)
-                                            .border_color(cx.theme().colors().border_selected)
-                                    })
-                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(div().when(crash_reports_enabled, |this| {
-                                        this.size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(Icon::new(IconName::Check))
-                                    })),
-                            )
-                            .child(Label::new("Send Crash Reports"))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
+                        CheckboxRow::new("Send Crash Reports")
+                            .description("We use crash reports to help us fix issues")
+                            .checked(crash_reports_enabled)
+                            .on_click(move |_window, cx| {
                                 let current = TelemetrySettings::get_global(cx).diagnostics;
                                 SettingsStore::update_global(cx, move |store, cx| {
                                     let mut settings = store.raw_user_settings().clone();
@@ -1015,54 +959,7 @@ impl OnboardingUI {
                                         serde_json::json!(!current);
                                     store.set_user_settings(&settings.to_string(), cx).ok();
                                 });
-                            }))
-                    })
-                    .child({
-                        let telemetry_enabled = TelemetrySettings::get_global(cx).metrics;
-                        h_flex()
-                            .id("telemetry_container")
-                            .gap_2()
-                            .items_center()
-                            .p_1()
-                            .rounded_md()
-                            .when(is_page_focused && focused_item == 13, |this| {
-                                this.border_2()
-                                    .border_color(cx.theme().colors().border_focused)
                             })
-                            .child(
-                                div()
-                                    .id("telemetry_checkbox")
-                                    .w_4()
-                                    .h_4()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .when(telemetry_enabled, |this| {
-                                        this.bg(cx.theme().colors().element_selected)
-                                            .border_color(cx.theme().colors().border_selected)
-                                    })
-                                    .hover(|this| this.bg(cx.theme().colors().element_hover))
-                                    .child(div().when(telemetry_enabled, |this| {
-                                        this.size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(Icon::new(IconName::Check))
-                                    })),
-                            )
-                            .child(Label::new("Send Telemetry"))
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                let current = TelemetrySettings::get_global(cx).metrics;
-                                SettingsStore::update_global(cx, move |store, cx| {
-                                    let mut settings = store.raw_user_settings().clone();
-                                    if settings.get("telemetry").is_none() {
-                                        settings["telemetry"] = serde_json::json!({});
-                                    }
-                                    settings["telemetry"]["metrics"] = serde_json::json!(!current);
-                                    store.set_user_settings(&settings.to_string(), cx).ok();
-                                });
-                            }))
                     }),
             )
             .into_any_element()
@@ -1142,20 +1039,12 @@ impl OnboardingUI {
                 |_, _, cx| todo!("implement ai toggle"),
             )))
             .child(
-                v_container()
-                    .p_3()
-                    .child(Label::new("We don't use your code to train AI models").weight(FontWeight::MEDIUM))
-                    .child(Label::new("You choose which providers you enable, and they have their own privacy policies.")
-                        .size(LabelSize::Small).color(Color::Muted))
-                    .child(Label::new("Read more about our privacy practices in our Privacy Policy.")
-                        .size(LabelSize::Small).color(Color::Muted))
+                CalloutRow::new("We don't use your code to train AI models")
+                    .line("You choose which providers you enable, and they have their own privacy policies.")
+                    .line("Read more about our privacy practices in our Privacy Policy.")
             )
             .child(
-                h_flex()
-                    .h(px(32.))
-                    .w_full()
-                    .justify_between()
-                    .child(Label::new("Choose your AI Providers")),
+                HeaderRow::new("Choose your AI Providers")
             )
             .into_any_element()
     }
