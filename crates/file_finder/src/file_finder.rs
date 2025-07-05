@@ -47,7 +47,14 @@ use workspace::{
 
 actions!(
     file_finder,
-    [SelectPrevious, ToggleFilterMenu, ToggleSplitMenu]
+    [
+        /// Selects the previous item in the file finder.
+        SelectPrevious,
+        /// Toggles the file filter menu.
+        ToggleFilterMenu,
+        /// Toggles the split direction menu.
+        ToggleSplitMenu
+    ]
 );
 
 impl ModalView for FileFinder {

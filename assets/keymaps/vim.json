@@ -478,6 +478,13 @@
     }
   },
   {
+    "context": "vim_mode == insert && showing_signature_help && !showing_completions",
+    "bindings": {
+      "ctrl-p": "editor::SignatureHelpPrevious",
+      "ctrl-n": "editor::SignatureHelpNext"
+    }
+  },
+  {
     "context": "vim_mode == replace",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",

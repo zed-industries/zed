@@ -379,6 +379,14 @@ impl ConfigureContextServerModal {
         };
 
         self.state = State::Waiting;
+
+        let existing_server = self.context_server_store.read(cx).get_running_server(&id);
+        if existing_server.is_some() {
+            self.context_server_store.update(cx, |store, cx| {
+                store.stop_server(&id, cx).log_err();
+            });
+        }
+
         let wait_for_context_server_task =
             wait_for_context_server(&self.context_server_store, id.clone(), cx);
         cx.spawn({
@@ -399,13 +407,21 @@ impl ConfigureContextServerModal {
         })
         .detach();
 
-        // When we write the settings to the file, the context server will be restarted.
-        workspace.update(cx, |workspace, cx| {
-            let fs = workspace.app_state().fs.clone();
-            update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                project_settings.context_servers.insert(id.0, settings);
+        let settings_changed =
+            ProjectSettings::get_global(cx).context_servers.get(&id.0) != Some(&settings);
+
+        if settings_changed {
+            // When we write the settings to the file, the context server will be restarted.
+            workspace.update(cx, |workspace, cx| {
+                let fs = workspace.app_state().fs.clone();
+                update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
+                    project_settings.context_servers.insert(id.0, settings);
+                });
             });
-        });
+        } else if let Some(existing_server) = existing_server {
+            self.context_server_store
+                .update(cx, |store, cx| store.start_server(existing_server, cx));
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut Context<Self>) {

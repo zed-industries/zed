@@ -178,7 +178,13 @@ pub struct ExtensionIndexLanguageEntry {
     pub grammar: Option<Arc<str>>,
 }
 
-actions!(zed, [ReloadExtensions]);
+actions!(
+    zed,
+    [
+        /// Reloads all installed extensions.
+        ReloadExtensions
+    ]
+);
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -1627,6 +1633,23 @@ impl ExtensionStore {
                     fs.copy_file(
                         &src_dir.join(language_path).join(CONFIG_TOML),
                         &tmp_dir.join(language_path).join(CONFIG_TOML),
+                        fs::CopyOptions::default(),
+                    )
+                    .await?
+                }
+            }
+
+            for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
+                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+
+                if fs.is_file(&src_dir.join(schema_path)).await {
+                    match schema_path.parent() {
+                        Some(parent) => fs.create_dir(&tmp_dir.join(parent)).await?,
+                        None => {}
+                    }
+                    fs.copy_file(
+                        &src_dir.join(schema_path),
+                        &tmp_dir.join(schema_path),
                         fs::CopyOptions::default(),
                     )
                     .await?

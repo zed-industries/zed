@@ -71,7 +71,13 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-actions!(chat_panel, [ToggleFocus]);
+actions!(
+    chat_panel,
+    [
+        /// Toggles focus on the chat panel.
+        ToggleFocus
+    ]
+);
 
 impl ChatPanel {
     pub fn new(
