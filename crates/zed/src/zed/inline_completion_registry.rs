@@ -3,14 +3,18 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
+
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use settings::SettingsStore;
+use language_models::AllLanguageModelSettings;
+use ollama::OllamaCompletionProvider;
+use settings::{Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use util::ResultExt;
 use workspace::Workspace;
+use zed_actions;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -129,9 +133,13 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         }
                         EditPredictionProvider::None
                         | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        | EditPredictionProvider::Supermaven
+                        | EditPredictionProvider::Ollama => {}
                     }
                 }
+            } else if provider == EditPredictionProvider::Ollama {
+                // Update Ollama providers when settings change but provider stays the same
+                update_ollama_providers(&editors, &client, user_store.clone(), cx);
             }
         }
     })
@@ -141,6 +149,46 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
+    }
+}
+
+fn update_ollama_providers(
+    editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
+    client: &Arc<Client>,
+    user_store: Entity<UserStore>,
+    cx: &mut App,
+) {
+    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+    let _current_model = settings
+        .available_models
+        .first()
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| "codellama:7b".to_string());
+
+    for (editor, window) in editors.borrow().iter() {
+        _ = window.update(cx, |_window, window, cx| {
+            _ = editor.update(cx, |editor, cx| {
+                if let Some(provider) = editor.edit_prediction_provider() {
+                    // Check if this is an Ollama provider by comparing names
+                    if provider.name() == "ollama" {
+                        // Recreate the provider with the new model
+                        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+                        let _api_url = settings.api_url.clone();
+
+                        // Get client from the registry context (need to pass it)
+                        // For now, we'll trigger a full reassignment
+                        assign_edit_prediction_provider(
+                            editor,
+                            EditPredictionProvider::Ollama,
+                            &client,
+                            user_store.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            })
+        });
     }
 }
 
@@ -282,6 +330,21 @@ fn assign_edit_prediction_provider(
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
+        }
+        EditPredictionProvider::Ollama => {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            let api_url = settings.api_url.clone();
+
+            // Use first available model or default
+            let model = settings
+                .available_models
+                .first()
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| "codellama:7b".to_string());
+
+            let provider =
+                cx.new(|_| OllamaCompletionProvider::new(client.http_client(), api_url, model));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
     }
 }
