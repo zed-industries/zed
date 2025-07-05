@@ -214,12 +214,15 @@ You can also modify the `api_url` to use a custom endpoint if needed.
 
 You can use GitHub Copilot Chat with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
+
 1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
 2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
 
 Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
+
+To use Copilot Enterprise with Zed (for both agent and inline completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
 
 ### Google AI {#google-ai}
 

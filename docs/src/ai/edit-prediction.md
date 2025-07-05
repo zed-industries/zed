@@ -267,6 +267,24 @@ To use GitHub Copilot as your provider, set this within `settings.json`:
 
 You should be able to sign-in to GitHub Copilot by clicking on the Copilot icon in the status bar and following the setup instructions.
 
+### Using GitHub Copilot Enterprise {#github-copilot-enterprise}
+
+If your organization uses GitHub Copilot Enterprise, you can configure Zed to use your enterprise instance by specifying the enterprise URI in your `settings.json`:
+
+```json
+{
+  "edit_predictions": {
+    "copilot": {
+      "enterprise_uri": "https://your.enterprise.domain"
+    }
+  }
+}
+```
+
+Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
+
+Once set, Zed will route Copilot requests through your enterprise endpoint. When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication. All other Copilot features and usage remain the same.
+
 Copilot can provide multiple completion alternatives, and these can be navigated with the following actions:
 
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
