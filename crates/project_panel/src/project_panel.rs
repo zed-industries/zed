@@ -4819,10 +4819,11 @@ impl ProjectPanel {
                 });
                 return visible_worktree_entries[local_start..local_end]
                     .iter()
-                    .map(|entry| {
+                    .enumerate()
+                    .map(|(i, entry)| {
                         let (depth, _) = Self::calculate_depth_and_difference(&entry.entry, paths);
                         StickyProjectPanelEntry {
-                            entry: entry.clone(),
+                            index: current_offset + local_start + i,
                             depth,
                             should_skip: self.ancestors.contains_key(&entry.entry.id),
                         }
@@ -4841,20 +4842,8 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) -> SmallVec<[AnyElement; 8]> {
         let project = self.project.read(cx);
-        let entry_path = &marker_entry.entry.path;
 
-        let mut worktree_id = None;
-        let mut visible_worktree_entries = Vec::new();
-
-        for (worktree_id, entries, _) in &self.visible_entries {
-            if entries.iter().any(|e| e.path == *entry_path) {
-                worktree_id = Some(*worktree_id);
-                visible_worktree_entries = entries.clone();
-                break;
-            }
-        }
-
-        let Some(worktree_id) = worktree_id else {
+        let Some((worktree_id, entry_ref)) = self.entry_at_index(marker_entry.index) else {
             return SmallVec::new();
         };
 
@@ -4865,9 +4854,7 @@ impl ProjectPanel {
         let worktree = worktree.read(cx).snapshot();
         let root_name = OsStr::new(worktree.root_name());
 
-        let mut parent_ids = marker_entry
-            .entry
-            .entry
+        let mut parent_ids = entry_ref
             .path
             .ancestors()
             .skip(1)
@@ -4880,19 +4867,29 @@ impl ProjectPanel {
         }
 
         let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
+        let visible_worktree_entries = self
+            .visible_entries
+            .iter()
+            .find(|(id, _, _)| *id == worktree_id);
+
         let git_summaries_by_id = if git_status_enabled {
-            visible_worktree_entries
-                .iter()
-                .map(|e| (e.id, e.git_summary))
-                .collect::<HashMap<_, _>>()
+            if let Some((_, entries, _)) = visible_worktree_entries {
+                entries
+                    .iter()
+                    .map(|e| (e.id, e.git_summary))
+                    .collect::<HashMap<_, _>>()
+            } else {
+                Default::default()
+            }
         } else {
             Default::default()
         };
 
-        let paths: HashSet<Arc<Path>> = visible_worktree_entries
-            .iter()
-            .map(|e| e.path.clone())
-            .collect();
+        let paths: HashSet<Arc<Path>> = if let Some((_, entries, _)) = visible_worktree_entries {
+            entries.iter().map(|e| e.path.clone()).collect()
+        } else {
+            Default::default()
+        };
 
         parent_ids
             .iter()
@@ -4923,7 +4920,7 @@ impl ProjectPanel {
 
 #[derive(Clone)]
 struct StickyProjectPanelEntry {
-    entry: GitEntry,
+    index: usize,
     depth: usize,
     should_skip: bool,
 }
