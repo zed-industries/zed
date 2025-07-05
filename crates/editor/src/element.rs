@@ -7933,6 +7933,7 @@ impl Element for EditorElement {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
+                        editor.set_visible_column_count(editor_content_width / em_advance);
 
                         if matches!(
                             editor.mode,
@@ -8438,6 +8439,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                window,
                                 cx,
                             )
                         } else {
@@ -8592,6 +8594,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                window,
                                 cx,
                             )
                         } else {

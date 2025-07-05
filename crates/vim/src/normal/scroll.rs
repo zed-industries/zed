@@ -26,7 +26,11 @@ actions!(
         /// Scrolls up by one page.
         PageUp,
         /// Scrolls down by one page.
-        PageDown
+        PageDown,
+        /// Scrolls right by half a page's width.
+        HalfPageRight,
+        /// Scrolls left by half a page's width.
+        HalfPageLeft,
     ]
 );
 
@@ -50,6 +54,16 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &PageUp, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
+    });
+    Vim::action(editor, cx, |vim, _: &HalfPageRight, window, cx| {
+        vim.scroll(false, window, cx, |c| {
+            ScrollAmount::PageWidth(c.unwrap_or(0.5))
+        })
+    });
+    Vim::action(editor, cx, |vim, _: &HalfPageLeft, window, cx| {
+        vim.scroll(false, window, cx, |c| {
+            ScrollAmount::PageWidth(-c.unwrap_or(0.5))
+        })
     });
     Vim::action(editor, cx, |vim, _: &ScrollDown, window, cx| {
         vim.scroll(true, window, cx, |c| {
@@ -123,6 +137,10 @@ fn scroll_editor(
         return;
     };
 
+    let Some(visible_column_count) = editor.visible_column_count() else {
+        return;
+    };
+
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
 
@@ -132,8 +150,14 @@ fn scroll_editor(
         cx,
         |s| {
             s.move_with(|map, selection| {
+                // TODO: Improve the logic and function calls below to be dependent on
+                // the `amount`. If the amount is vertical, we don't care about
+                // columns, while if it's horizontal, we don't care about rows,
+                // so we don't need to calculate both and deal with logic for
+                // both.
                 let mut head = selection.head();
                 let top = top_anchor.to_display_point(map);
+                let max_point = map.max_point();
                 let starting_column = head.column();
 
                 let vertical_scroll_margin =
@@ -163,9 +187,8 @@ fn scroll_editor(
                     (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
                 );
                 // scroll off the end.
-                let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0
-                {
-                    map.max_point().row()
+                let max_row = if top.row().0 + visible_line_count as u32 >= max_point.row().0 {
+                    max_point.row()
                 } else {
                     DisplayRow(
                         (top.row().0 + visible_line_count as u32)
@@ -185,8 +208,43 @@ fn scroll_editor(
                 } else {
                     head.row()
                 };
-                let new_head =
-                    map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
+
+                // The minimum column position that the cursor position can be
+                // at is either the scroll manager's anchor column, which is the
+                // left-most column in the visible area, or the scroll manager's
+                // old anchor column, in case the cursor position is being
+                // preserved. This is necessary for motions like `ctrl-d` in
+                // case there's not enough content to scroll half page down, in
+                // which case the scroll manager's anchor column will be the
+                // maximum column for the current line, so the minimum column
+                // would end up being the same as the maximum column.
+                let min_column = match preserve_cursor_position {
+                    true => old_top_anchor.to_display_point(map).column(),
+                    false => top.column(),
+                };
+
+                // As for the maximum column position, that should be either the
+                // right-most column in the visible area, which we can easily
+                // calculate by adding the visible column count to the minimum
+                // column position, or the right-most column in the current
+                // line, seeing as the cursor might be in a short line, in which
+                // case we don't want to go past its last column.
+                let max_row_column = map.max_column(new_row);
+                let max_column = match min_column + visible_column_count as u32 {
+                    max_column if max_column >= max_row_column => max_row_column,
+                    max_column => max_column,
+                };
+
+                // Ensure that the cursor's column stays within the visible
+                // area, otherwise clip it at either the left or right edge of
+                // the visible area.
+                let new_column = match (min_column, max_column) {
+                    (min_column, _) if starting_column < min_column => min_column,
+                    (_, max_column) if starting_column > max_column => max_column,
+                    _ => starting_column,
+                };
+
+                let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
 
                 if selection.is_empty() {
                     selection.collapse_to(new_head, selection.goal)

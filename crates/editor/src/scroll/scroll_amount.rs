@@ -23,6 +23,8 @@ pub enum ScrollAmount {
     Page(f32),
     // Scroll N columns (positive is towards the right of the document)
     Column(f32),
+    // Scroll N page width (positive is towards the right of the document)
+    PageWidth(f32),
 }
 
 impl ScrollAmount {
@@ -37,14 +39,16 @@ impl ScrollAmount {
                 (visible_line_count * count).trunc()
             }
             Self::Column(_count) => 0.0,
+            Self::PageWidth(_count) => 0.0,
         }
     }
 
-    pub fn columns(&self) -> f32 {
+    pub fn columns(&self, visible_column_count: f32) -> f32 {
         match self {
             Self::Line(_count) => 0.0,
             Self::Page(_count) => 0.0,
             Self::Column(count) => *count,
+            Self::PageWidth(count) => (visible_column_count * count).trunc(),
         }
     }
 
@@ -58,6 +62,7 @@ impl ScrollAmount {
             // so I'm leaving this at 0.0 for now to try and make it clear that
             // this should not have an impact on that?
             ScrollAmount::Column(_) => px(0.0),
+            ScrollAmount::PageWidth(_) => px(0.0),
         }
     }
 

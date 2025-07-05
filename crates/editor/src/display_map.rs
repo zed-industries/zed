@@ -906,6 +906,11 @@ impl DisplaySnapshot {
         DisplayPoint(self.block_snapshot.max_point())
     }
 
+    /// Returns the maximum column value for the given row.
+    pub fn max_column(&self, row: DisplayRow) -> u32 {
+        self.line_len(row)
+    }
+
     /// Returns text chunks starting at the given display row until the end of the file
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         self.block_snapshot
