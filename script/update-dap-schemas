@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+cargo run --package dap_adapters --features update-schemas --bin update-schemas
