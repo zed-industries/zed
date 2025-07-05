@@ -98,6 +98,7 @@ CREATE TABLE "worktree_entries" (
     "is_deleted" BOOL NOT NULL,
     "git_status" INTEGER,
     "is_fifo" BOOL NOT NULL,
+    "is_symlink_broken" BOOL NOT NULL,
     PRIMARY KEY (project_id, worktree_id, id),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );

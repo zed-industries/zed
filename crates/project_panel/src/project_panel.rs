@@ -179,6 +179,7 @@ struct EntryDetails {
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+    is_symlink_broken: bool,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -566,6 +567,20 @@ impl ProjectPanel {
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
                             let is_via_ssh = project.read(cx).is_via_ssh();
+
+                            if entry.is_symlink_broken {
+                                let _ = window.prompt(
+                                    gpui::PromptLevel::Critical,
+                                    "Broken Symlink",
+                                    Some(&format!(
+                                        "The file '{}' is a symlink that points to a missing or inaccessible target. Please check that the target file exists and you have permission to access it.",
+                                        entry.path.display()
+                                    )),
+                                    &[gpui::PromptButton::ok("OK")],
+                                    cx,
+                                );
+                                return;
+                            }
 
                             workspace
                                 .open_path_preview(
@@ -1452,7 +1467,6 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
-
         cx: &mut Context<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
@@ -2837,6 +2851,7 @@ impl ProjectPanel {
                 canonical_path: parent_entry.canonical_path.clone(),
                 char_bag: parent_entry.char_bag,
                 is_fifo: parent_entry.is_fifo,
+                is_symlink_broken: parent_entry.is_symlink_broken,
             },
             git_summary,
         }
@@ -3467,6 +3482,7 @@ impl ProjectPanel {
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
                         canonical_path: entry.canonical_path.clone(),
+                        is_symlink_broken: entry.is_symlink_broken,
                     };
 
                     if let Some(edit_state) = &self.edit_state {
@@ -3910,6 +3926,7 @@ impl ProjectPanel {
             .canonical_path
             .as_ref()
             .map(|f| f.to_string_lossy().to_string());
+        let is_symlink_broken = details.is_symlink_broken;
         let path = details.path.clone();
         let path_for_external_paths = path.clone();
         let path_for_dragged_selection = path.clone();
@@ -4227,14 +4244,14 @@ impl ProjectPanel {
                         }
                     })
                     .selectable(false)
-                    .when_some(canonical_path, |this, path| {
+                    .when(canonical_path.is_some() || is_symlink_broken, |this| {
                         this.end_slot::<AnyElement>(
                             div()
                                 .id("symlink_icon")
                                 .pr_3()
                                 .tooltip(move |window, cx| {
                                     Tooltip::with_meta(
-                                        path.to_string(),
+                                        canonical_path.clone().unwrap_or_else(|| "Failed to find symlink path for".to_string()),
                                         None,
                                         "Symbolic Link",
                                         window,
