@@ -17,7 +17,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
-        MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, MinimapSize,
+        MinimapSize, MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
         ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
