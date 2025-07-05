@@ -1,19 +1,5 @@
 mod outline_panel_settings;
 
-use std::{
-    cmp,
-    collections::BTreeMap,
-    hash::Hash,
-    ops::Range,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
-    sync::{
-        Arc, OnceLock,
-        atomic::{self, AtomicBool},
-    },
-    time::Duration,
-    u32,
-};
-
 use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
@@ -36,8 +22,21 @@ use gpui::{
     uniform_list,
 };
 use itertools::Itertools;
-use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
+use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use std::{
+    cmp,
+    collections::BTreeMap,
+    hash::Hash,
+    ops::Range,
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    sync::{
+        Arc, OnceLock,
+        atomic::{self, AtomicBool},
+    },
+    time::Duration,
+    u32,
+};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
@@ -132,6 +131,8 @@ pub struct OutlinePanel {
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
     preserve_selection_on_buffer_fold_toggles: HashSet<BufferId>,
+    pending_default_expansion_depth: Option<usize>,
+    outline_children_cache: HashMap<BufferId, HashMap<(Range<Anchor>, usize), bool>>,
 }
 
 #[derive(Debug)]
@@ -318,12 +319,13 @@ struct CachedEntry {
     entry: PanelEntry,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum CollapsedEntry {
     Dir(WorktreeId, ProjectEntryId),
     File(WorktreeId, BufferId),
     ExternalFile(BufferId),
     Excerpt(BufferId, ExcerptId),
+    Outline(BufferId, ExcerptId, Range<Anchor>),
 }
 
 #[derive(Debug)]
@@ -803,8 +805,52 @@ impl OutlinePanel {
                             outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                         }
                     } else if &outline_panel_settings != new_settings {
+                        let old_expansion_depth =
+                            outline_panel_settings.default_outline_expansion_depth;
                         outline_panel_settings = *new_settings;
-                        cx.notify();
+
+                        // If the default expansion depth changed, update collapsed entries
+                        if old_expansion_depth != new_settings.default_outline_expansion_depth {
+                            outline_panel.collapsed_entries.clear();
+
+                            // Apply new expansion depth to existing outlines
+                            let new_depth = new_settings.default_outline_expansion_depth;
+
+                            // Collapse outlines based on depth
+                            for (buffer_id, excerpts) in &outline_panel.excerpts {
+                                for (excerpt_id, excerpt) in excerpts {
+                                    if let ExcerptOutlines::Outlines(outlines) = &excerpt.outlines {
+                                        for outline in outlines.iter() {
+                                            let outline_entry = OutlineEntryOutline {
+                                                buffer_id: *buffer_id,
+                                                excerpt_id: *excerpt_id,
+                                                outline: outline.clone(),
+                                            };
+
+                                            // Collapse if has children AND either:
+                                            // - depth is 0 (collapse all)
+                                            // - outline depth >= specified depth
+                                            if outline_panel
+                                                .has_outline_children(&outline_entry, cx)
+                                                && (new_depth == 0 || outline.depth >= new_depth)
+                                            {
+                                                outline_panel.collapsed_entries.insert(
+                                                    CollapsedEntry::Outline(
+                                                        *buffer_id,
+                                                        *excerpt_id,
+                                                        outline.range.clone(),
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                        } else {
+                            cx.notify();
+                        }
                     }
                 });
 
@@ -841,6 +887,7 @@ impl OutlinePanel {
                 updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
+                pending_default_expansion_depth: None,
                 fs_entries_update_task: Task::ready(()),
                 cached_entries_update_task: Task::ready(()),
                 reveal_selection_task: Task::ready(Ok(())),
@@ -855,6 +902,7 @@ impl OutlinePanel {
                     workspace_subscription,
                     filter_update_subscription,
                 ],
+                outline_children_cache: HashMap::default(),
             };
             if let Some((item, editor)) = workspace_active_editor(workspace, cx) {
                 outline_panel.replace_active_editor(item, editor, window, cx);
@@ -1462,7 +1510,12 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                 Some(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id))
             }
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => return,
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => Some(CollapsedEntry::Outline(
+                outline.buffer_id,
+                outline.excerpt_id,
+                outline.outline.range.clone(),
+            )),
+            PanelEntry::Search(_) => return,
         };
         let Some(collapsed_entry) = entry_to_expand else {
             return;
@@ -1565,7 +1618,14 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => self
                 .collapsed_entries
                 .insert(CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id)),
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => false,
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                self.collapsed_entries.insert(CollapsedEntry::Outline(
+                    outline.buffer_id,
+                    outline.excerpt_id,
+                    outline.outline.range.clone(),
+                ))
+            }
+            PanelEntry::Search(_) => false,
         };
 
         if collapsed {
@@ -1780,7 +1840,17 @@ impl OutlinePanel {
                     self.collapsed_entries.insert(collapsed_entry);
                 }
             }
-            PanelEntry::Search(_) | PanelEntry::Outline(..) => return,
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                let collapsed_entry = CollapsedEntry::Outline(
+                    outline.buffer_id,
+                    outline.excerpt_id,
+                    outline.outline.range.clone(),
+                );
+                if !self.collapsed_entries.remove(&collapsed_entry) {
+                    self.collapsed_entries.insert(collapsed_entry);
+                }
+            }
+            _ => {}
         }
 
         active_editor.update(cx, |editor, cx| {
@@ -2108,7 +2178,7 @@ impl OutlinePanel {
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt.clone())),
             item_id,
             depth,
-            Some(icon),
+            icon,
             is_active,
             label_element,
             window,
@@ -2160,11 +2230,31 @@ impl OutlinePanel {
             _ => false,
         };
 
-        let icon = if self.is_singleton_active(cx) {
-            None
+        let has_children = self
+            .outline_children_cache
+            .get(&outline.buffer_id)
+            .and_then(|children_map| {
+                let key = (outline.outline.range.clone(), outline.outline.depth);
+                children_map.get(&key)
+            })
+            .copied()
+            .unwrap_or(false);
+        let is_expanded = !self.collapsed_entries.contains(&CollapsedEntry::Outline(
+            outline.buffer_id,
+            outline.excerpt_id,
+            outline.outline.range.clone(),
+        ));
+
+        let icon = if has_children {
+            FileIcons::get_chevron_icon(is_expanded, cx).map(|icon_path| {
+                Icon::from_path(icon_path)
+                    .color(entry_label_color(is_active))
+                    .into_any_element()
+            })
         } else {
             Some(empty_icon())
-        };
+        }
+        .unwrap_or_else(empty_icon);
 
         self.entry_element(
             PanelEntry::Outline(OutlineEntry::Outline(outline.clone())),
@@ -2287,7 +2377,7 @@ impl OutlinePanel {
             PanelEntry::Fs(rendered_entry.clone()),
             item_id,
             depth,
-            Some(icon),
+            icon,
             is_active,
             label_element,
             window,
@@ -2358,7 +2448,7 @@ impl OutlinePanel {
             PanelEntry::FoldedDirs(folded_dir.clone()),
             item_id,
             depth,
-            Some(icon),
+            icon,
             is_active,
             label_element,
             window,
@@ -2449,7 +2539,7 @@ impl OutlinePanel {
             }),
             ElementId::from(SharedString::from(format!("search-{match_range:?}"))),
             depth,
-            None,
+            empty_icon(),
             is_active,
             entire_label,
             window,
@@ -2462,7 +2552,7 @@ impl OutlinePanel {
         rendered_entry: PanelEntry,
         item_id: ElementId,
         depth: usize,
-        icon_element: Option<AnyElement>,
+        icon_element: AnyElement,
         is_active: bool,
         label_element: gpui::AnyElement,
         window: &mut Window,
@@ -2479,7 +2569,18 @@ impl OutlinePanel {
                         return;
                     }
                     let change_focus = event.down.click_count > 1;
-                    outline_panel.toggle_expanded(&clicked_entry, window, cx);
+
+                    // Check if this entry is already selected
+                    let is_already_selected = outline_panel
+                        .selected_entry()
+                        .map(|selected| selected == &clicked_entry)
+                        .unwrap_or(false);
+
+                    // Only toggle expansion if already selected and the item is expandable
+                    if is_already_selected && outline_panel.is_expandable(&clicked_entry, cx) {
+                        outline_panel.toggle_expanded(&clicked_entry, window, cx);
+                    }
+
                     outline_panel.scroll_editor_to_entry(
                         &clicked_entry,
                         true,
@@ -2495,10 +2596,11 @@ impl OutlinePanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .toggle_state(is_active)
-                    .when_some(icon_element, |list_item, icon_element| {
-                        list_item.child(h_flex().child(icon_element))
-                    })
-                    .child(h_flex().h_6().child(label_element).ml_1())
+                    .child(
+                        h_flex()
+                            .child(h_flex().w(px(16.)).justify_center().child(icon_element))
+                            .child(h_flex().h_6().child(label_element).ml_1()),
+                    )
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, window, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
@@ -2956,6 +3058,13 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         self.clear_previous(window, cx);
+
+        // Apply default outline expansion depth for the new active editor
+        let default_expansion_depth =
+            OutlinePanelSettings::get_global(cx).default_outline_expansion_depth;
+        // We'll apply the expansion depth after outlines are loaded
+        self.pending_default_expansion_depth = Some(default_expansion_depth);
+
         let buffer_search_subscription = cx.subscribe_in(
             &new_active_editor,
             window,
@@ -3004,6 +3113,7 @@ impl OutlinePanel {
         self.selected_entry = SelectedEntry::None;
         self.pinned = false;
         self.mode = ItemsDisplayMode::Outline;
+        self.pending_default_expansion_depth = None;
     }
 
     fn location_for_editor_selection(
@@ -3259,12 +3369,32 @@ impl OutlinePanel {
                                         || buffer_language.as_ref()
                                             == buffer_snapshot.language_at(outline.range.start)
                                 });
-                                outlines
+
+                                let mut outlines_with_children = HashSet::default();
+                                for i in 0..outlines.len() {
+                                    if let Some(next_outline) = outlines.get(i + 1) {
+                                        if next_outline.depth > outlines[i].depth {
+                                            outlines_with_children.insert((
+                                                outlines[i].range.clone(),
+                                                outlines[i].depth,
+                                            ));
+                                        }
+                                    }
+                                }
+
+                                (outlines, outlines_with_children)
                             })
                             .await;
+
+                        let (fetched_outlines, outlines_with_children) = fetched_outlines;
+
                         outline_panel
                             .update_in(cx, |outline_panel, window, cx| {
-                                if let Some(excerpt) = outline_panel
+                                let pending_default_depth =
+                                    outline_panel.pending_default_expansion_depth.take();
+
+                                // First, update the excerpt and collect outlines
+                                let outlines_to_check = if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
                                     .or_default()
@@ -3277,7 +3407,54 @@ impl OutlinePanel {
                                     } else {
                                         Some(UPDATE_DEBOUNCE)
                                     };
+
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
+
+                                    // Collect outlines to check for default expansion
+                                    let outlines_to_check =
+                                        if let Some(default_depth) = pending_default_depth {
+                                            if let ExcerptOutlines::Outlines(outlines) =
+                                                &excerpt.outlines
+                                            {
+                                                if default_depth == 0 {
+                                                    // For depth 0, collapse all outlines with children
+                                                    outlines.clone()
+                                                } else {
+                                                    // For other depths, collapse outlines at or below that depth
+                                                    outlines
+                                                        .iter()
+                                                        .filter(|outline| {
+                                                            outline.depth >= default_depth
+                                                        })
+                                                        .cloned()
+                                                        .collect::<Vec<_>>()
+                                                }
+                                            } else {
+                                                Vec::new()
+                                            }
+                                        } else {
+                                            Vec::new()
+                                        };
+
+                                    Some((debounce, outlines_to_check))
+                                } else {
+                                    None
+                                };
+
+                                if let Some((debounce, outlines_to_check)) = outlines_to_check {
+                                    for outline in outlines_to_check {
+                                        let outline_key = (outline.range.clone(), outline.depth);
+                                        if outlines_with_children.contains(&outline_key) {
+                                            outline_panel.collapsed_entries.insert(
+                                                CollapsedEntry::Outline(
+                                                    buffer_id,
+                                                    excerpt_id,
+                                                    outline.range.clone(),
+                                                ),
+                                            );
+                                        }
+                                    }
+
                                     outline_panel.update_cached_entries(debounce, window, cx);
                                 }
                             })
@@ -4083,7 +4260,7 @@ impl OutlinePanel {
     }
 
     fn add_excerpt_entries(
-        &self,
+        &mut self,
         state: &mut GenerationState,
         buffer_id: BufferId,
         entries_to_add: &[ExcerptId],
@@ -4094,6 +4271,8 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(excerpts) = self.excerpts.get(&buffer_id) {
+            let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx);
+
             for &excerpt_id in entries_to_add {
                 let Some(excerpt) = excerpts.get(&excerpt_id) else {
                     continue;
@@ -4123,15 +4302,84 @@ impl OutlinePanel {
                     continue;
                 }
 
-                for outline in excerpt.iter_outlines() {
+                let mut last_depth_at_level: Vec<Option<Range<Anchor>>> = vec![None; 10];
+
+                let all_outlines: Vec<_> = excerpt.iter_outlines().collect();
+
+                let mut outline_has_children = HashMap::default();
+                let mut visible_outlines = Vec::new();
+                let mut collapsed_state: Option<(usize, Range<Anchor>)> = None;
+
+                for (i, &outline) in all_outlines.iter().enumerate() {
+                    let has_children = all_outlines
+                        .get(i + 1)
+                        .map(|next| next.depth > outline.depth)
+                        .unwrap_or(false);
+
+                    outline_has_children
+                        .insert((outline.range.clone(), outline.depth), has_children);
+
+                    let mut should_include = true;
+
+                    if let Some((collapsed_depth, collapsed_range)) = &collapsed_state {
+                        if outline.depth <= *collapsed_depth {
+                            collapsed_state = None;
+                        } else if let Some(buffer_snapshot) = buffer_snapshot.as_ref() {
+                            let outline_start = outline.range.start;
+                            if outline_start
+                                .cmp(&collapsed_range.start, buffer_snapshot)
+                                .is_ge()
+                                && outline_start
+                                    .cmp(&collapsed_range.end, buffer_snapshot)
+                                    .is_lt()
+                            {
+                                should_include = false; // Skip - inside collapsed range
+                            } else {
+                                collapsed_state = None;
+                            }
+                        }
+                    }
+
+                    // Check if this outline itself is collapsed
+                    if should_include
+                        && self.collapsed_entries.contains(&CollapsedEntry::Outline(
+                            buffer_id,
+                            excerpt_id,
+                            outline.range.clone(),
+                        ))
+                    {
+                        collapsed_state = Some((outline.depth, outline.range.clone()));
+                    }
+
+                    if should_include {
+                        visible_outlines.push(outline);
+                    }
+                }
+
+                self.outline_children_cache
+                    .entry(buffer_id)
+                    .or_default()
+                    .extend(outline_has_children);
+
+                for outline in visible_outlines {
+                    let outline_entry = OutlineEntryOutline {
+                        buffer_id,
+                        excerpt_id,
+                        outline: outline.clone(),
+                    };
+
+                    if outline.depth < last_depth_at_level.len() {
+                        last_depth_at_level[outline.depth] = Some(outline.range.clone());
+                        // Clear deeper levels when we go back to a shallower depth
+                        for d in (outline.depth + 1)..last_depth_at_level.len() {
+                            last_depth_at_level[d] = None;
+                        }
+                    }
+
                     self.push_entry(
                         state,
                         track_matches,
-                        PanelEntry::Outline(OutlineEntry::Outline(OutlineEntryOutline {
-                            buffer_id,
-                            excerpt_id,
-                            outline: outline.clone(),
-                        })),
+                        PanelEntry::Outline(OutlineEntry::Outline(outline_entry)),
                         outline_base_depth + outline.depth,
                         cx,
                     );
@@ -4728,6 +4976,44 @@ impl OutlinePanel {
                 _ => None,
             })
             .collect()
+    }
+
+    fn has_outline_children(&self, outline: &OutlineEntryOutline, _cx: &App) -> bool {
+        if let Some(excerpts) = self.excerpts.get(&outline.buffer_id) {
+            if let Some(excerpt) = excerpts.get(&outline.excerpt_id) {
+                let outlines: Vec<_> = excerpt.iter_outlines().collect();
+
+                // Find the current outline
+                for (i, o) in outlines.iter().enumerate() {
+                    if o.range == outline.outline.range && o.depth == outline.outline.depth {
+                        // Check if the next outline has greater depth
+                        if let Some(next_outline) = outlines.get(i + 1) {
+                            if next_outline.depth > outline.outline.depth {
+                                return true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn is_expandable(&self, entry: &PanelEntry, cx: &App) -> bool {
+        match entry {
+            PanelEntry::FoldedDirs(_) => true,
+            PanelEntry::Fs(FsEntry::Directory(_)) => true,
+            PanelEntry::Fs(FsEntry::File(file)) => self.excerpts.contains_key(&file.buffer_id),
+            PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
+                self.excerpts.contains_key(&external_file.buffer_id)
+            }
+            PanelEntry::Outline(OutlineEntry::Excerpt(_)) => true,
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
+                self.has_outline_children(outline, cx)
+            }
+            PanelEntry::Search(_) => false,
+        }
     }
 }
 
@@ -6908,5 +7194,437 @@ outline: struct OutlineEntryExcerpt
                 let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
                 multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
         })
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_outline_expand_collapse_functionality(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "lib.rs": indoc!("
+                        mod outer {
+                            pub struct OuterStruct {
+                                field: String,
+                            }
+
+                            impl OuterStruct {
+                                pub fn new() -> Self {
+                                    Self { field: String::new() }
+                                }
+
+                                pub fn method(&self) {
+                                    println!(\"{}\", self.field);
+                                }
+                            }
+
+                            mod inner {
+                                pub fn inner_function() {
+                                    let x = 42;
+                                    println!(\"{}\", x);
+                                }
+
+                                pub struct InnerStruct {
+                                    value: i32,
+                                }
+                            }
+                        }
+
+                        fn main() {
+                            let s = outer::OuterStruct::new();
+                            s.method();
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(
+                rust_lang()
+                    .with_outline_query(
+                        r#"
+                        (struct_item
+                            (visibility_modifier)? @context
+                            "struct" @context
+                            name: (_) @name) @item
+
+                        (impl_item
+                            "impl" @context
+                            trait: (_)? @context
+                            "for"? @context
+                            type: (_) @context
+                            body: (_)) @item
+
+                        (function_item
+                            (visibility_modifier)? @context
+                            "fn" @context
+                            name: (_) @name
+                            parameters: (_) @context) @item
+
+                        (mod_item
+                            (visibility_modifier)? @context
+                            "mod" @context
+                            name: (_) @name) @item
+
+                        (enum_item
+                            (visibility_modifier)? @context
+                            "enum" @context
+                            name: (_) @name) @item
+
+                        (field_declaration
+                            (visibility_modifier)? @context
+                            name: (_) @name
+                            ":" @context
+                            type: (_) @context) @item
+                        "#,
+                    )
+                    .unwrap(),
+            ))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from("/test/src/lib.rs"),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        // Force another update cycle to ensure outlines are fetched
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.update_non_fs_items(window, cx);
+            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        let count_visible_outlines = |panel: &OutlinePanel| {
+            panel
+                .cached_entries
+                .iter()
+                .filter(|e| matches!(e.entry, PanelEntry::Outline(_)))
+                .count()
+        };
+
+        let initial_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+        assert!(initial_count > 0, "Should have outline entries");
+
+        // Find the first outline that has children (like "mod outer" or "impl OuterStruct")
+        let parent_outline = outline_panel
+            .read_with(cx, |panel, cx| {
+                panel
+                    .cached_entries
+                    .iter()
+                    .find_map(|entry| match &entry.entry {
+                        PanelEntry::Outline(OutlineEntry::Outline(outline))
+                            if panel.has_outline_children(outline, cx) =>
+                        {
+                            Some(entry.entry.clone())
+                        }
+                        _ => None,
+                    })
+            })
+            .expect("Should find an outline with children");
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry(parent_outline.clone(), true, window, cx);
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let collapsed_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+        assert!(
+            collapsed_count < initial_count,
+            "Should have fewer visible outlines after collapsing parent (initial: {}, collapsed: {})",
+            initial_count,
+            collapsed_count
+        );
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let expanded_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+        assert_eq!(
+            expanded_count, initial_count,
+            "Should return to initial count after expanding"
+        );
+
+        // First, make sure we're starting from all expanded state
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapsed_entries.clear();
+            panel.update_cached_entries(None, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let fully_expanded_count =
+            outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            let outlines_with_children: Vec<_> = panel
+                .cached_entries
+                .iter()
+                .filter_map(|entry| match &entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if panel.has_outline_children(outline, cx) =>
+                    {
+                        Some(entry.entry.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            for outline in outlines_with_children {
+                panel.select_entry(outline, false, window, cx);
+                panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+            }
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let all_collapsed_count =
+            outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+
+        // When all parents are collapsed, we should only see top-level items without children
+        // In our test file: "mod outer" (has children) and "fn main" (no children)
+        // So when "mod outer" is collapsed, we should see 2 items total
+        assert!(
+            all_collapsed_count < fully_expanded_count,
+            "Should have fewer outlines when all parents are collapsed (all: {}, expanded: {})",
+            all_collapsed_count,
+            fully_expanded_count
+        );
+
+        assert!(
+            all_collapsed_count <= 2,
+            "Should have minimal entries when all parents are collapsed (got {})",
+            all_collapsed_count
+        );
+
+        let collapsed_entries_count =
+            outline_panel.read_with(cx, |panel, _| panel.collapsed_entries.len());
+        assert!(
+            collapsed_entries_count > 0,
+            "Should have collapsed entries tracked"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_expand_collapse_functionality(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "src": {
+                    "main.rs": indoc!("
+                        struct Config {
+                            name: String,
+                            value: i32,
+                        }
+
+                        impl Config {
+                            fn new(name: String) -> Self {
+                                Self { name, value: 0 }
+                            }
+
+                            fn get_value(&self) -> i32 {
+                                self.value
+                            }
+                        }
+
+                        enum Status {
+                            Active,
+                            Inactive,
+                        }
+
+                        fn process_config(config: Config) -> Status {
+                            if config.get_value() > 0 {
+                                Status::Active
+                            } else {
+                                Status::Inactive
+                            }
+                        }
+
+                        fn main() {
+                            let config = Config::new(\"test\".to_string());
+                            let status = process_config(config);
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(
+                rust_lang()
+                    .with_outline_query(
+                        r#"
+                        (struct_item
+                            (visibility_modifier)? @context
+                            "struct" @context
+                            name: (_) @name) @item
+
+                        (impl_item
+                            "impl" @context
+                            trait: (_)? @context
+                            "for"? @context
+                            type: (_) @context
+                            body: (_)) @item
+
+                        (function_item
+                            (visibility_modifier)? @context
+                            "fn" @context
+                            name: (_) @name
+                            parameters: (_) @context) @item
+
+                        (mod_item
+                            (visibility_modifier)? @context
+                            "mod" @context
+                            name: (_) @name) @item
+
+                        (enum_item
+                            (visibility_modifier)? @context
+                            "enum" @context
+                            name: (_) @name) @item
+
+                        (field_declaration
+                            (visibility_modifier)? @context
+                            name: (_) @name
+                            ":" @context
+                            type: (_) @context) @item
+                        "#,
+                    )
+                    .unwrap(),
+            ))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from("/test/src/main.rs"),
+                    OpenOptions {
+                        visible: Some(OpenVisible::All),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        // Force another update cycle to ensure outlines are fetched
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.update_non_fs_items(window, cx);
+            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        let count_visible_outlines = |panel: &OutlinePanel| {
+            panel
+                .cached_entries
+                .iter()
+                .filter(|e| matches!(e.entry, PanelEntry::Outline(_)))
+                .count()
+        };
+
+        let _initial_count = outline_panel.read_with(cx, |panel, _| panel.cached_entries.len());
+
+        // Select and expand first expandable outline entry (like a struct or impl block)
+        outline_panel.update_in(cx, |panel, window, cx| {
+            if let Some(outline_entry) = panel
+                .cached_entries
+                .iter()
+                .find(|e| matches!(e.entry, PanelEntry::Outline(_)))
+            {
+                panel.select_entry(outline_entry.entry.clone(), true, window, cx);
+                panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+            }
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let _after_expand = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let _after_collapse = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+
+        // Test navigation between outline entries
+        let visible_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+        assert!(visible_count > 0, "Should have visible outline entries");
+
+        // Navigate through outline entries
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_first(&SelectFirst, window, cx);
+            // Move to next outline entry
+            for _ in 0..2 {
+                panel.select_next(&SelectNext, window, cx);
+            }
+        });
+
+        let selected = outline_panel.read_with(cx, |panel, _| panel.selected_entry().cloned());
+        assert!(
+            selected.is_some(),
+            "Should have a selected entry after navigation"
+        );
     }
 }

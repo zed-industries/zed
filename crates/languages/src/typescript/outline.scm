@@ -22,17 +22,17 @@
     "interface" @context
     name: (_) @name) @item
 
-(export_statement
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (_) @name) @item))
+; All lexical declarations anywhere (including nested)
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (identifier) @name) @item)
 
-(program
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (_) @name) @item))
+; Variable declarations with var keyword
+(variable_declaration
+    "var" @context
+    (variable_declarator
+        name: (identifier) @name) @item)
 
 (class_declaration
     "class" @context
