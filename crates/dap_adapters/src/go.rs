@@ -79,7 +79,7 @@ impl GoDebugAdapter {
             DownloadedFileType::GzipTar
         };
         download_adapter_from_github(
-            "delve-shim-dap".into(),
+            "delve-shim-dap",
             asset.clone(),
             ty,
             paths::debug_adapters_dir(),

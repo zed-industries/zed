@@ -96,7 +96,7 @@ impl CodeLldbDebugAdapter {
         let (package_json, package_nls_json) = get_vsix_package_json(
             temp_dir,
             "vadimcn/codelldb",
-            |_| Ok(format!("codelldb-bootstrap.vsix")),
+            |_| Ok("codelldb-bootstrap.vsix".into()),
             delegate,
         )?;
         let package_json = parse_package_json(package_json, package_nls_json)?;
