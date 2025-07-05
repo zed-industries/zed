@@ -4075,6 +4075,29 @@ async fn test_manipulate_immutable_lines_with_single_selection(cx: &mut TestAppC
         Zˇ»
     "});
 
+    // Test sort_lines_by_length()
+    //
+    // Demonstrates:
+    // - ∞ is 3 bytes UTF-8, but sorted by its char count (1)
+    // - sort is stable
+    cx.set_state(indoc! {"
+        «123
+        æ
+        12
+        ∞
+        1
+        æˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_by_length(&SortLinesByLength, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «æ
+        ∞
+        1
+        æ
+        12
+        123ˇ»
+    "});
+
     // Test reverse_lines()
     cx.set_state(indoc! {"
         «5
