@@ -21,7 +21,7 @@ use dap::{
 };
 use fs::Fs as _;
 use gdb::GdbDebugAdapter;
-use go::GoDebugAdapter;
+pub use go::GoDebugAdapter;
 use gpui::{App, BorrowAppContext, http_client::github::GithubRelease};
 pub use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;

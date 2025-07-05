@@ -1,6 +1,6 @@
 use std::{path::Path, process::Command};
 
-use dap_adapters::{JsDebugAdapter, PythonDebugAdapter, UpdateSchemasDapDelegate};
+use dap_adapters::{GoDebugAdapter, JsDebugAdapter, PythonDebugAdapter, UpdateSchemasDapDelegate};
 use tempfile::TempDir;
 
 fn main() -> anyhow::Result<()> {
@@ -15,10 +15,19 @@ fn main() -> anyhow::Result<()> {
             .with_extension("json"),
         serde_json::to_string(&schema)?,
     )?;
+
     let schema = PythonDebugAdapter::get_schema(&temp_dir, delegate.clone())?;
     std::fs::write(
         &output_dir
             .join(PythonDebugAdapter::ADAPTER_NAME)
+            .with_extension("json"),
+        serde_json::to_string(&schema)?,
+    )?;
+
+    let schema = GoDebugAdapter::get_schema(&temp_dir, delegate.clone())?;
+    std::fs::write(
+        &output_dir
+            .join(GoDebugAdapter::ADAPTER_NAME)
             .with_extension("json"),
         serde_json::to_string(&schema)?,
     )?;

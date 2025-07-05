@@ -1,0 +1,398 @@
+{
+  "allOf": [
+    {
+      "if": { "properties": { "request": { "const": "launch" } }, "required": ["request"] },
+      "then": {
+        "required": [],
+        "properties": {
+          "debugAdapter": {
+            "enum": ["legacy", "dlv-dap"],
+            "description": "Select which debug adapter to use with this launch configuration.",
+            "default": "dlv-dap"
+          },
+          "program": {
+            "type": "string",
+            "description": "Path to the program folder (or any go file within that folder) when in `debug` or `test` mode, and to the pre-built binary file to debug in `exec` mode. If it is not an absolute path, the extension interprets it as a workspace relative path.",
+            "default": "${ZED_WORKTREE_ROOT}"
+          },
+          "mode": {
+            "enum": ["auto", "debug", "test", "exec", "replay", "core"],
+            "description": "One of `auto`, `debug`, `test`, `exec`, `replay`, `core`. In `auto` mode, the extension will choose either `debug` or `test` depending on active editor window.",
+            "default": "auto"
+          },
+          "traceDirPath": {
+            "type": "string",
+            "description": "Directory in which the record trace is located or to be created for a new output trace. For use on 'replay' mode only",
+            "default": ""
+          },
+          "coreFilePath": {
+            "type": "string",
+            "description": "Path to the core dump file to open. For use on 'core' mode only",
+            "default": ""
+          },
+          "stopOnEntry": {
+            "type": "boolean",
+            "description": "Automatically stop program after launch.",
+            "default": false
+          },
+          "args": {
+            "type": ["array", "string"],
+            "description": "Command line arguments passed to the debugged program.",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "showLog": {
+            "type": "boolean",
+            "description": "Show log output from the delve debugger. Maps to dlv's `--log` flag.",
+            "default": false
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Workspace relative or absolute path to the working directory of the program being debugged if a non-empty value is specified. The `program` folder is used as the working directory if `cwd` is omitted or empty.",
+            "default": ""
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables passed to the launched debuggee program. Format as string key:value pairs. Merged with `envFile` and `go.toolsEnvVars` with precedence `env` > `envFile` > `go.toolsEnvVars`.",
+            "default": {}
+          },
+          "substitutePath": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "description": "The absolute local path to be replaced when passing paths to the debugger.",
+                  "default": ""
+                },
+                "to": {
+                  "type": "string",
+                  "description": "The absolute remote path to be replaced when passing paths back to the client.",
+                  "default": ""
+                }
+              }
+            },
+            "description": "An array of mappings from a local path (editor) to the remote path (debugee). This setting is useful when working in a file system with symbolic links, running remote debugging, or debugging an executable compiled externally. The debug adapter will replace the local path with the remote path in all of the calls.",
+            "default": []
+          },
+          "buildFlags": {
+            "type": ["string", "array"],
+            "items": { "type": "string" },
+            "description": "Build flags, to be passed to the Go compiler. Maps to dlv's `--build-flags` flag.",
+            "default": []
+          },
+          "dlvFlags": {
+            "type": "array",
+            "description": "Extra flags for `dlv`. See `dlv help` for the full list of supported. Flags such as `--log-output`, `--log`, `--log-dest`, `--api-version`, `--output`, `--backend` already have corresponding properties in the debug configuration, and flags such as `--listen` and `--headless` are used internally. If they are specified in `dlvFlags`, they may be ignored or cause an error.",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "port": {
+            "type": "number",
+            "description": "When applied to remote-attach configurations, will look for \"dlv ... --headless --listen=<host>:<port>\" server started externally. In dlv-dap mode this will apply to all other configurations as well. The extension will try to connect to an external server started with \"dlv dap --listen=<host>:<port>\" to ask it to launch/attach to the target process.",
+            "default": 2345
+          },
+          "host": {
+            "type": "string",
+            "description": "When applied to remote-attach configurations, will look for \"dlv ... --headless --listen=<host>:<port>\" server started externally. In dlv-dap mode this will apply to all other configurations as well. The extension will try to connect to an external server started with \"dlv dap --listen=<host>:<port>\" to ask it to launch/attach to the target process.",
+            "default": "127.0.0.1"
+          },
+          "trace": {
+            "type": "string",
+            "enum": ["verbose", "trace", "log", "info", "warn", "error"],
+            "default": "error",
+            "description": "Various levels of logging shown in the debug console & 'Go Debug' output channel. When using the `legacy` debug adapter, the logs will also be written to a file if it is set to a value other than `error`."
+          },
+          "envFile": {
+            "type": ["string", "array"],
+            "items": { "type": "string" },
+            "description": "Absolute path to a file containing environment variable definitions, formatted as string key=value pairs. Multiple files can be specified by provided an array of absolute paths. Merged with `env` and `go.toolsEnvVars` with precedence `env` > `envFile` > `go.toolsEnvVars`. ",
+            "default": ""
+          },
+          "backend": {
+            "type": "string",
+            "enum": ["default", "native", "lldb", "rr"],
+            "description": "Backend used by delve. Maps to `dlv`'s `--backend` flag."
+          },
+          "output": {
+            "type": "string",
+            "description": "Output path for the binary of the debugee.",
+            "default": "debug"
+          },
+          "logOutput": {
+            "type": "string",
+            "enum": ["debugger", "gdbwire", "lldbout", "debuglineerr", "rpc", "dap"],
+            "description": "Comma separated list of components that should produce debug output. Maps to dlv's `--log-output` flag. Check `dlv log` for details.",
+            "default": "debugger"
+          },
+          "logDest": {
+            "type": "string",
+            "description": "dlv's `--log-dest` flag. See `dlv log` for details. Number argument is not allowed. Supported only in `dlv-dap` mode, and on Linux and Mac OS."
+          },
+          "dlvLoadConfig": {
+            "type": "object",
+            "properties": {
+              "followPointers": {
+                "type": "boolean",
+                "description": "FollowPointers requests pointers to be automatically dereferenced.",
+                "default": true
+              },
+              "maxVariableRecurse": {
+                "type": "number",
+                "description": "MaxVariableRecurse is how far to recurse when evaluating nested types.",
+                "default": 1
+              },
+              "maxStringLen": {
+                "type": "number",
+                "description": "MaxStringLen is the maximum number of bytes read from a string.",
+                "default": 64
+              },
+              "maxArrayValues": {
+                "type": "number",
+                "description": "MaxArrayValues is the maximum number of elements read from an array, a slice or a map.",
+                "default": 64
+              },
+              "maxStructFields": {
+                "type": "number",
+                "description": "MaxStructFields is the maximum number of fields read from a struct, -1 will read all fields.",
+                "default": -1
+              }
+            },
+            "description": "LoadConfig describes to delve, how to load values from target's memory. Not applicable when using `dlv-dap` mode.",
+            "default": {
+              "followPointers": true,
+              "maxVariableRecurse": 1,
+              "maxStringLen": 64,
+              "maxArrayValues": 64,
+              "maxStructFields": -1
+            }
+          },
+          "apiVersion": {
+            "type": "number",
+            "enum": [1, 2],
+            "description": "Delve Api Version to use. Default value is 2. Maps to dlv's `--api-version` flag. Not applicable when using `dlv-dap` mode.",
+            "default": 2
+          },
+          "stackTraceDepth": {
+            "type": "number",
+            "description": "Maximum depth of stack trace collected from Delve.",
+            "default": 50
+          },
+          "showGlobalVariables": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether global package variables should be shown in the variables pane or not."
+          },
+          "showRegisters": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether register variables should be shown in the variables pane or not."
+          },
+          "hideSystemGoroutines": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether system goroutines should be hidden from call stack view."
+          },
+          "console": {
+            "default": "internalConsole",
+            "description": "(Experimental) Where to launch the debugger and the debug target: internal console, integrated terminal, or external terminal. It is ignored in remote debugging.",
+            "enum": ["internalConsole", "integratedTerminal", "externalTerminal"]
+          },
+          "asRoot": {
+            "default": false,
+            "description": "(Experimental) Debug with elevated permissions (on Unix). It requires `integrated` or `external` console modes and is ignored in remote debugging.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "request": { "const": "attach" } }, "required": ["request"] },
+      "then": {
+        "required": [],
+        "properties": {
+          "debugAdapter": {
+            "enum": ["legacy", "dlv-dap"],
+            "description": "Select which debug adapter to use with this launch configuration.",
+            "default": "dlv-dap"
+          },
+          "processId": {
+            "anyOf": [
+              {
+                "enum": ["${command:pickProcess}", "${command:pickGoProcess}"],
+                "description": "Use process picker to select a process to attach, or Process ID as integer."
+              },
+              {
+                "type": "string",
+                "description": "Attach to a process by name. If more than one process matches the name, use the process picker to select a process."
+              },
+              {
+                "type": "number",
+                "description": "The numeric ID of the process to be debugged. If 0, use the process picker to select a process."
+              }
+            ],
+            "default": 0
+          },
+          "mode": {
+            "enum": ["local", "remote"],
+            "description": "Indicates local or remote debugging. Local is similar to the `dlv attach` command, remote - to `dlv connect`",
+            "default": "local"
+          },
+          "stopOnEntry": {
+            "type": "boolean",
+            "description": "Automatically stop program after attach.",
+            "default": false
+          },
+          "dlvFlags": {
+            "type": "array",
+            "description": "Extra flags for `dlv`. See `dlv help` for the full list of supported. Flags such as `--log-output`, `--log`, `--log-dest`, `--api-version`, `--output`, `--backend` already have corresponding properties in the debug configuration, and flags such as `--listen` and `--headless` are used internally. If they are specified in `dlvFlags`, they may be ignored or cause an error.",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "showLog": {
+            "type": "boolean",
+            "description": "Show log output from the delve debugger. Maps to dlv's `--log` flag.",
+            "default": false
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Workspace relative or absolute path to the working directory of the program being debugged. Default is the current workspace.",
+            "default": "${ZED_WORKTREE_ROOT}"
+          },
+          "remotePath": {
+            "type": "string",
+            "description": "The path to the source code on the remote machine, when the remote path is different from the local machine. If specified, becomes the first entry in substitutePath. Not supported with `dlv-dap`.",
+            "markdownDeprecationMessage": "Use `substitutePath` instead.",
+            "default": ""
+          },
+          "port": {
+            "type": "number",
+            "description": "When applied to remote-attach configurations, will look for \"dlv ... --headless --listen=<host>:<port>\" server started externally. In dlv-dap mode, this will apply to all other configurations as well. The extension will try to connect to an external server started with \"dlv dap --listen=<host>:<port>\" to ask it to launch/attach to the target process.",
+            "default": 2345
+          },
+          "host": {
+            "type": "string",
+            "description": "When applied to remote-attach configurations, will look for \"dlv ... --headless --listen=<host>:<port>\" server started externally. In dlv-dap mode, this will apply to all other configurations as well. The extension will try to connect to an external server started with \"dlv dap --listen=<host>:<port>\" to ask it to launch/attach to the target process.",
+            "default": "127.0.0.1"
+          },
+          "substitutePath": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "description": "The absolute local path to be replaced when passing paths to the debugger.",
+                  "default": ""
+                },
+                "to": {
+                  "type": "string",
+                  "description": "The absolute remote path to be replaced when passing paths back to the client.",
+                  "default": ""
+                }
+              }
+            },
+            "description": "An array of mappings from a local path (editor) to the remote path (debugee). This setting is useful when working in a file system with symbolic links, running remote debugging, or debugging an executable compiled externally. The debug adapter will replace the local path with the remote path in all of the calls.  Overridden by `remotePath`.",
+            "default": []
+          },
+          "trace": {
+            "type": "string",
+            "enum": ["verbose", "trace", "log", "info", "warn", "error"],
+            "default": "error",
+            "description": "Various levels of logging shown in the debug console & 'Go Debug' output channel. When using the `legacy` debug adapter, the logs will also be written to a file if it is set to a value other than `error`."
+          },
+          "backend": {
+            "type": "string",
+            "enum": ["default", "native", "lldb", "rr"],
+            "description": "Backend used by delve. Maps to `dlv`'s `--backend` flag."
+          },
+          "logOutput": {
+            "type": "string",
+            "enum": ["debugger", "gdbwire", "lldbout", "debuglineerr", "rpc", "dap"],
+            "description": "Comma separated list of components that should produce debug output. Maps to dlv's `--log-output` flag. Check `dlv log` for details.",
+            "default": "debugger"
+          },
+          "logDest": {
+            "type": "string",
+            "description": "dlv's `--log-dest` flag. See `dlv log` for details. Number argument is not allowed. Supported only in `dlv-dap` mode and on Linux and Mac OS."
+          },
+          "dlvLoadConfig": {
+            "type": "object",
+            "properties": {
+              "followPointers": {
+                "type": "boolean",
+                "description": "FollowPointers requests pointers to be automatically dereferenced",
+                "default": true
+              },
+              "maxVariableRecurse": {
+                "type": "number",
+                "description": "MaxVariableRecurse is how far to recurse when evaluating nested types",
+                "default": 1
+              },
+              "maxStringLen": {
+                "type": "number",
+                "description": "MaxStringLen is the maximum number of bytes read from a string",
+                "default": 64
+              },
+              "maxArrayValues": {
+                "type": "number",
+                "description": "MaxArrayValues is the maximum number of elements read from an array, a slice or a map",
+                "default": 64
+              },
+              "maxStructFields": {
+                "type": "number",
+                "description": "MaxStructFields is the maximum number of fields read from a struct, -1 will read all fields",
+                "default": -1
+              }
+            },
+            "description": "LoadConfig describes to delve, how to load values from target's memory. Not applicable when using `dlv-dap` mode.",
+            "default": {
+              "followPointers": true,
+              "maxVariableRecurse": 1,
+              "maxStringLen": 64,
+              "maxArrayValues": 64,
+              "maxStructFields": -1
+            }
+          },
+          "apiVersion": {
+            "type": "number",
+            "enum": [1, 2],
+            "description": "Delve Api Version to use. Default value is 2. Not applicable when using `dlv-dap` mode.",
+            "default": 2
+          },
+          "stackTraceDepth": {
+            "type": "number",
+            "description": "Maximum depth of stack trace collected from Delve.",
+            "default": 50
+          },
+          "showGlobalVariables": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether global package variables should be shown in the variables pane or not."
+          },
+          "showRegisters": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether register variables should be shown in the variables pane or not."
+          },
+          "hideSystemGoroutines": {
+            "type": "boolean",
+            "default": false,
+            "description": "Boolean value to indicate whether system goroutines should be hidden from call stack view."
+          },
+          "console": {
+            "default": "internalConsole",
+            "description": "(Experimental) Where to launch the debugger: internal console, integrated terminal, or external terminal. This does not affect tty of the running program. It is ignored in remote debugging.",
+            "enum": ["internalConsole", "integratedTerminal", "externalTerminal"]
+          },
+          "asRoot": {
+            "default": false,
+            "description": "(Experimental) Debug with elevated permissions (on Unix). This requires `integrated` or `external` console modes and is ignored in remote debugging.",
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  ]
+}
