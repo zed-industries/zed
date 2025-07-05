@@ -50,6 +50,16 @@ struct UpdateSchemasDapDelegate {
 }
 
 #[cfg(feature = "update-schemas")]
+impl UpdateSchemasDapDelegate {
+    fn new(executor: gpui::BackgroundExecutor) -> Self {
+        // FIXME
+        let client = Arc::new(reqwest_client::ReqwestClient::user_agent("Cole").unwrap());
+        let fs = Arc::new(fs::RealFs::new(None, executor.clone()));
+        Self { client, fs }
+    }
+}
+
+#[cfg(feature = "update-schemas")]
 #[async_trait]
 impl dap::adapters::DapDelegate for UpdateSchemasDapDelegate {
     fn worktree_id(&self) -> settings::WorktreeId {

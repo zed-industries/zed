@@ -16,9 +16,7 @@ test-support = [
 ]
 update-schemas = [
     "dep:node_runtime",
-    "dep:regex",
     "dep:reqwest_client",
-    "dep:schemars",
     "dep:settings",
     "dep:tempfile",
 ]
@@ -56,11 +54,7 @@ util.workspace = true
 workspace-hack.workspace = true
 
 node_runtime = { workspace = true, optional = true }
-# FIXME do we still need this
-regex = { workspace = true, optional = true }
 reqwest_client = { workspace = true, optional = true }
-# FIXME do we still need this
-schemars = { workspace = true, optional = true }
 settings = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 

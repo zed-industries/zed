@@ -1,8 +1,9 @@
 use adapters::latest_github_release;
 use anyhow::Context as _;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use fs::{Fs, RealFs};
-use gpui::{AsyncApp, background_executor};
+use fs::Fs;
+use gpui::{AsyncApp, BackgroundExecutor};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     borrow::Cow,
@@ -10,7 +11,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{LazyLock, OnceLock},
 };
-use task::DebugRequest;
+use task::{DebugRequest, EnvVariableReplacer, VariableName};
+use tempfile::TempDir;
 use util::{ResultExt, maybe};
 
 use crate::*;
@@ -276,18 +278,44 @@ impl DebugAdapter for JsDebugAdapter {
     }
 }
 
+#[cfg(feature = "update-schemas")]
 impl JsDebugAdapter {
-    pub fn fetch_schema(dir: &Path) -> anyhow::Result<(String, String)> {
-        let executor = background_executor();
-        // FIXME
-        let client = Arc::new(reqwest_client::ReqwestClient::user_agent("Cole").unwrap());
-        let fs = Arc::new(RealFs::new(None, executor.clone()));
-        let delegate = UpdateSchemasDapDelegate {
-            client: client.clone(),
-            fs: fs.clone(),
-        };
+    pub fn get_schema(
+        temp_dir: &TempDir,
+        output_dir: &Path,
+        executor: BackgroundExecutor,
+    ) -> anyhow::Result<()> {
+        #[derive(Serialize, Deserialize)]
+        struct PackageJsonConfigurationAttributes {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            launch: Option<serde_json::Value>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            attach: Option<serde_json::Value>,
+        }
 
-        executor.block(async move {
+        #[derive(Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PackageJsonDebugger {
+            r#type: String,
+            configuration_attributes: PackageJsonConfigurationAttributes,
+        }
+
+        #[derive(Serialize, Deserialize)]
+        struct PackageJsonContributes {
+            debuggers: Vec<PackageJsonDebugger>,
+        }
+
+        #[derive(Serialize, Deserialize)]
+        struct PackageJson {
+            contributes: PackageJsonContributes,
+        }
+
+        let temp_dir = std::fs::canonicalize(temp_dir.path())?;
+        let delegate = UpdateSchemasDapDelegate::new(executor.clone());
+        let fs = delegate.fs.clone();
+        let client = delegate.client.clone();
+
+        let (package_json, package_nls_json) = executor.block(async move {
             let release = latest_github_release(
                 &format!("microsoft/{}", Self::ADAPTER_NPM_NAME),
                 true,
@@ -296,7 +324,10 @@ impl JsDebugAdapter {
             )
             .await?;
 
-            let version = release.tag_name.strip_prefix("v").unwrap();
+            let version = release
+                .tag_name
+                .strip_prefix("v")
+                .context("parse version")?;
             let asset_name = format!("ms-vscode.js-debug.{version}.vsix",);
             let version = AdapterVersion {
                 tag_name: release.tag_name,
@@ -313,18 +344,132 @@ impl JsDebugAdapter {
                 DebugAdapterName(Self::ADAPTER_NAME.into()),
                 version,
                 adapters::DownloadedFileType::Vsix,
-                dir,
+                &temp_dir,
                 &delegate,
             )
             .await?;
-            let package_json_content = fs
+            let package_json = fs
                 .load(&path.join("extension").join("package.json"))
                 .await?;
-            let package_nls_json_content = fs
+            let package_nls_json = fs
                 .load(&path.join("extension").join("package.nls.json"))
                 .await?;
-            Ok((package_json_content, package_nls_json_content))
-        })
+            anyhow::Ok((package_json, package_nls_json))
+        })?;
+
+        let package_nls_json =
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&package_nls_json)?
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let v = v.as_str()?;
+                    Some((k, v.to_owned()))
+                })
+                .collect();
+
+        let package_json: serde_json::Value = serde_json::from_str(&package_json)?;
+
+        struct Replacer {
+            package_nls_json: HashMap<String, String>,
+            env: EnvVariableReplacer,
+        }
+
+        impl Replacer {
+            fn replace(&self, input: serde_json::Value) -> serde_json::Value {
+                match input {
+                    serde_json::Value::String(s) => {
+                        if s.starts_with("%") && s.ends_with("%") {
+                            self.package_nls_json
+                                .get(s.trim_matches('%'))
+                                .map(|s| s.as_str().into())
+                                .unwrap_or("(missing)".into())
+                        } else {
+                            self.env.replace(&s).into()
+                        }
+                    }
+                    serde_json::Value::Array(arr) => {
+                        serde_json::Value::Array(arr.into_iter().map(|v| self.replace(v)).collect())
+                    }
+                    serde_json::Value::Object(obj) => serde_json::Value::Object(
+                        obj.into_iter().map(|(k, v)| (k, self.replace(v))).collect(),
+                    ),
+                    _ => input,
+                }
+            }
+        }
+
+        let env = EnvVariableReplacer::new(HashMap::from_iter([(
+            "workspaceFolder".to_owned(),
+            VariableName::WorktreeRoot.to_string(),
+        )]));
+        let replacer = Replacer {
+            env,
+            package_nls_json,
+        };
+        let package_json = replacer.replace(package_json);
+
+        let package_json: PackageJson = serde_json::from_value(package_json)?;
+
+        let types = package_json
+            .contributes
+            .debuggers
+            .iter()
+            .map(|debugger| debugger.r#type.clone())
+            .collect::<Vec<_>>();
+        let mut conjuncts = package_json
+            .contributes
+            .debuggers
+            .into_iter()
+            .flat_map(|debugger| {
+                let r#type = debugger.r#type;
+                let configuration_attributes = debugger.configuration_attributes;
+                configuration_attributes
+                    .launch
+                    .map(|schema| ("launch", schema))
+                    .into_iter()
+                    .chain(
+                        configuration_attributes
+                            .attach
+                            .map(|schema| ("attach", schema)),
+                    )
+                    .map(|(request, schema)| {
+                        json!({
+                            "if": {
+                                "properties": {
+                                    "type": {
+                                        "const": r#type
+                                    },
+                                    "request": {
+                                        "const": request
+                                    }
+                                },
+                                "required": ["type", "request"]
+                            },
+                            "then": schema
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        conjuncts.push(json!({
+            "properties": {
+                "type": {
+                    "enum": types
+                }
+            },
+            "required": ["type"]
+        }));
+        let schema = json!({
+            "allOf": conjuncts
+        });
+
+        // FIXME figure out what to do about formatting
+        let mut schema = serde_json::to_string_pretty(&schema)?;
+        schema.push('\n');
+        std::fs::write(
+            output_dir.join(Self::ADAPTER_NAME).with_extension("json"),
+            schema,
+        )?;
+        Ok(())
     }
 }
 
