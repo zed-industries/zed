@@ -142,13 +142,11 @@ fn git_panel_context_menu(
                 UnstageAll.boxed_clone(),
             )
             .separator()
-            .map(|menu| {
-                if state.has_new_changes || state.has_tracked_changes {
-                    menu.action("Stash All", StashAll.boxed_clone())
-                } else {
-                    menu.disabled_action("Stash All", StashAll.boxed_clone())
-                }
-            })
+            .action_disabled_when(
+                !(state.has_new_changes || state.has_tracked_changes),
+                "Stash All",
+                StashAll.boxed_clone(),
+            )
             .action("Stash Pop", StashPop.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
