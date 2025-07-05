@@ -499,7 +499,7 @@ impl TerminalPanel {
 
         let task = SpawnInTerminal {
             command_label,
-            command,
+            command: Some(command),
             args,
             ..task.clone()
         };
