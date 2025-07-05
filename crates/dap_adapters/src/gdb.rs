@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, ffi::OsStr};
+use std::{borrow::Cow, collections::HashMap, ffi::OsStr, sync::LazyLock};
 
 use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
@@ -64,94 +64,11 @@ impl DebugAdapter for GdbDebugAdapter {
     }
 
     fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
-        Cow::Owned(json!({
-            "oneOf": [
-                {
-                    "allOf": [
-                        {
-                            "type": "object",
-                            "required": ["request"],
-                            "properties": {
-                                "request": {
-                                    "type": "string",
-                                    "enum": ["launch"],
-                                    "description": "Request to launch a new process"
-                                }
-                            }
-                        },
-                        {
-                            "type": "object",
-                            "properties": {
-                                "program": {
-                                    "type": "string",
-                                    "description": "The program to debug. This corresponds to the GDB 'file' command."
-                                },
-                                "args": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    },
-                                    "description": "Command line arguments passed to the program. These strings are provided as command-line arguments to the inferior.",
-                                    "default": []
-                                },
-                                "cwd": {
-                                    "type": "string",
-                                    "description": "Working directory for the debugged program. GDB will change its working directory to this directory."
-                                },
-                                "env": {
-                                    "type": "object",
-                                    "description": "Environment variables for the debugged program. Each key is the name of an environment variable; each value is the value of that variable."
-                                },
-                                "stopAtBeginningOfMainSubprogram": {
-                                    "type": "boolean",
-                                    "description": "When true, GDB will set a temporary breakpoint at the program's main procedure, like the 'start' command.",
-                                    "default": false
-                                },
-                                "stopOnEntry": {
-                                    "type": "boolean",
-                                    "description": "When true, GDB will set a temporary breakpoint at the program's first instruction, like the 'starti' command.",
-                                    "default": false
-                                }
-                            },
-                            "required": ["program"]
-                        }
-                    ]
-                },
-                {
-                    "allOf": [
-                        {
-                            "type": "object",
-                            "required": ["request"],
-                            "properties": {
-                                "request": {
-                                    "type": "string",
-                                    "enum": ["attach"],
-                                    "description": "Request to attach to an existing process"
-                                }
-                            }
-                        },
-                        {
-                            "type": "object",
-                            "properties": {
-                                "pid": {
-                                    "type": "number",
-                                    "description": "The process ID to which GDB should attach."
-                                },
-                                "program": {
-                                    "type": "string",
-                                    "description": "The program to debug (optional). This corresponds to the GDB 'file' command. In many cases, GDB can determine which program is running automatically."
-                                },
-                                "target": {
-                                    "type": "string",
-                                    "description": "The target to which GDB should connect. This is passed to the 'target remote' command."
-                                }
-                            },
-                            "required": ["pid"]
-                        }
-                    ]
-                }
-            ]
-        }))
+        static SCHEMA: LazyLock<serde_json::Value> = LazyLock::new(|| {
+            const RAW_SCHEMA: &str = include_str!("../schemas/GDB.json");
+            serde_json::from_str(RAW_SCHEMA).unwrap()
+        });
+        Cow::Borrowed(&*SCHEMA)
     }
 
     async fn get_binary(
