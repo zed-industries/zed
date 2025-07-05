@@ -639,21 +639,28 @@ impl ConsoleQueryBarCompletionProvider {
                 variable_list.completion_variables(cx)
             }) {
                 if let Some(evaluate_name) = &variable.evaluate_name {
-                    variables.insert(evaluate_name.clone(), variable.value.clone());
-                    string_matches.push(StringMatchCandidate {
-                        id: 0,
-                        string: evaluate_name.clone(),
-                        char_bag: evaluate_name.chars().collect(),
-                    });
+                    if variables
+                        .insert(evaluate_name.clone(), variable.value.clone())
+                        .is_none()
+                    {
+                        string_matches.push(StringMatchCandidate {
+                            id: 0,
+                            string: evaluate_name.clone(),
+                            char_bag: evaluate_name.chars().collect(),
+                        });
+                    }
                 }
 
-                variables.insert(variable.name.clone(), variable.value.clone());
-
-                string_matches.push(StringMatchCandidate {
-                    id: 0,
-                    string: variable.name.clone(),
-                    char_bag: variable.name.chars().collect(),
-                });
+                if variables
+                    .insert(variable.name.clone(), variable.value.clone())
+                    .is_none()
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: variable.name.clone(),
+                        char_bag: variable.name.chars().collect(),
+                    });
+                }
             }
 
             (variables, string_matches)
