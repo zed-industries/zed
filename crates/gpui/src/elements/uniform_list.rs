@@ -42,6 +42,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
+        sticky_items: None,
         decorations: Vec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
@@ -61,6 +62,7 @@ pub struct UniformList {
     render_items: Box<
         dyn for<'a> Fn(Range<usize>, &'a mut Window, &'a mut App) -> SmallVec<[AnyElement; 64]>,
     >,
+    sticky_items: Option<Box<dyn UniformListSticky>>,
     decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
@@ -71,6 +73,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
+    sticky_items: SmallVec<[AnyElement; 8]>,
     decorations: SmallVec<[AnyElement; 1]>,
 }
 
@@ -212,6 +215,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
+                sticky_items: SmallVec::new(),
             },
         )
     }
@@ -354,7 +358,17 @@ impl Element for UniformList {
                     let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
                         / item_height)
                         .ceil() as usize;
-                    let visible_range = first_visible_element_ix
+                    let initial_range = first_visible_element_ix
+                        ..cmp::min(last_visible_element_ix, self.item_count);
+
+                    let (sticky_elements, sticky_items_count, marker_index, last_item_is_drifting) =
+                        if let Some(ref sticky) = self.sticky_items {
+                            sticky.compute(initial_range, window, cx)
+                        } else {
+                            (SmallVec::new(), 0, None, false)
+                        };
+
+                    let visible_range = (sticky_items_count + first_visible_element_ix)
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let items = if y_flipped {
@@ -391,6 +405,46 @@ impl Element for UniformList {
                             item.layout_as_root(available_space, window, cx);
                             item.prepaint_at(item_origin, window, cx);
                             frame_state.items.push(item);
+                        }
+
+                        let y_offset = if last_item_is_drifting && sticky_items_count > 0 {
+                            if let Some(marker_index) = marker_index {
+                                let scroll_top = -scroll_offset.y;
+                                let marker_top = item_height * marker_index;
+                                let sticky_area_height = item_height * sticky_items_count;
+                                (marker_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
+                            } else {
+                                Pixels::ZERO
+                            }
+                        } else {
+                            Pixels::ZERO
+                        };
+
+                        let sticky_count = sticky_elements.len();
+                        for (ix, mut sticky_item) in sticky_elements.into_iter().enumerate() {
+                            let is_last_item = ix == sticky_count - 1;
+                            let item_y_offset = if is_last_item { y_offset } else { Pixels::ZERO };
+                            let sticky_origin = padded_bounds.origin
+                                + point(
+                                    if can_scroll_horizontally {
+                                        scroll_offset.x + padding.left
+                                    } else {
+                                        scroll_offset.x
+                                    },
+                                    item_height * ix + padding.top + item_y_offset,
+                                );
+                            let available_width = if can_scroll_horizontally {
+                                padded_bounds.size.width + scroll_offset.x.abs()
+                            } else {
+                                padded_bounds.size.width
+                            };
+                            let available_space = size(
+                                AvailableSpace::Definite(available_width),
+                                AvailableSpace::Definite(item_height),
+                            );
+                            sticky_item.layout_as_root(available_space, window, cx);
+                            sticky_item.prepaint_at(sticky_origin, window, cx);
+                            frame_state.sticky_items.push(sticky_item);
                         }
 
                         let bounds = Bounds::new(
@@ -451,6 +505,10 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(window, cx);
                 }
+                // reverse so that last item is bottom most among sticky items
+                for sticky_item in request_layout.sticky_items.iter_mut().rev() {
+                    sticky_item.paint(window, cx);
+                }
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
@@ -481,6 +539,25 @@ pub trait UniformListDecoration {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement;
+}
+
+/// A trait for implementing sticky items in a [`UniformList`].
+/// Sticky items are elements that remain visible at the top of the list
+/// as the user scrolls, typically used for headers or section markers.
+pub trait UniformListSticky {
+    /// Compute the sticky elements for the given visible range.
+    ///
+    /// Returns a tuple containing:
+    /// - The sticky elements to render
+    /// - The count of sticky elements
+    /// - The optional marker index (for drifting animation)
+    /// - Whether the last sticky item should drift
+    fn compute(
+        &self,
+        visible_range: Range<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (SmallVec<[AnyElement; 8]>, usize, Option<usize>, bool);
 }
 
 impl UniformList {
@@ -518,6 +595,12 @@ impl UniformList {
     /// Adds a decoration element to the list.
     pub fn with_decoration(mut self, decoration: impl UniformListDecoration + 'static) -> Self {
         self.decorations.push(Box::new(decoration));
+        self
+    }
+
+    /// Sets a sticky header for the list.
+    pub fn with_sticky(mut self, sticky: impl UniformListSticky + 'static) -> Self {
+        self.sticky_items = Some(Box::new(sticky));
         self
     }
 

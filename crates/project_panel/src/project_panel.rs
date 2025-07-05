@@ -56,7 +56,7 @@ use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
     IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip, prelude::*, v_flex,
+    ScrollbarState, StickyEntry, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -173,6 +173,7 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    is_sticky: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
     git_status: GitSummary,
@@ -3366,22 +3367,13 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons, show_folder_icons) = {
+            let git_status_setting = {
                 let settings = ProjectPanelSettings::get_global(cx);
-                (
-                    settings.git_status,
-                    settings.file_icons,
-                    settings.folder_icons,
-                )
+                settings.git_status
             };
             if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
                 let snapshot = worktree.read(cx).snapshot();
                 let root_name = OsStr::new(snapshot.root_name());
-                let expanded_entry_ids = self
-                    .expanded_dir_ids
-                    .get(&snapshot.id())
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 let entries = entries_paths.get_or_init(|| {
@@ -3394,80 +3386,17 @@ impl ProjectPanel {
                     let status = git_status_setting
                         .then_some(entry.git_summary)
                         .unwrap_or_default();
-                    let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
-                    let icon = match entry.kind {
-                        EntryKind::File => {
-                            if show_file_icons {
-                                FileIcons::get_icon(&entry.path, cx)
-                            } else {
-                                None
-                            }
-                        }
-                        _ => {
-                            if show_folder_icons {
-                                FileIcons::get_folder_icon(is_expanded, cx)
-                            } else {
-                                FileIcons::get_chevron_icon(is_expanded, cx)
-                            }
-                        }
-                    };
 
-                    let (depth, difference) =
-                        ProjectPanel::calculate_depth_and_difference(&entry, entries);
-
-                    let filename = match difference {
-                        diff if diff > 1 => entry
-                            .path
-                            .iter()
-                            .skip(entry.path.components().count() - diff)
-                            .collect::<PathBuf>()
-                            .to_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        _ => entry
-                            .path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
-                    };
-                    let selection = SelectedEntry {
-                        worktree_id: snapshot.id(),
-                        entry_id: entry.id,
-                    };
-
-                    let is_marked = self.marked_entries.contains(&selection);
-
-                    let diagnostic_severity = self
-                        .diagnostics
-                        .get(&(*worktree_id, entry.path.to_path_buf()))
-                        .cloned();
-
-                    let filename_text_color =
-                        entry_git_aware_label_color(status, entry.is_ignored, is_marked);
-
-                    let mut details = EntryDetails {
-                        filename,
-                        icon,
-                        path: entry.path.clone(),
-                        depth,
-                        kind: entry.kind,
-                        is_ignored: entry.is_ignored,
-                        is_expanded,
-                        is_selected: self.selection == Some(selection),
-                        is_marked,
-                        is_editing: false,
-                        is_processing: false,
-                        is_cut: self
-                            .clipboard
-                            .as_ref()
-                            .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
-                        filename_text_color,
-                        diagnostic_severity,
-                        git_status: status,
-                        is_private: entry.is_private,
-                        worktree_id: *worktree_id,
-                        canonical_path: entry.canonical_path.clone(),
-                    };
+                    let mut details = self.details_for_entry(
+                        entry,
+                        *worktree_id,
+                        root_name,
+                        entries,
+                        status,
+                        false,
+                        window,
+                        cx,
+                    );
 
                     if let Some(edit_state) = &self.edit_state {
                         let is_edited_entry = if edit_state.is_new_entry() {
@@ -3879,6 +3808,7 @@ impl ProjectPanel {
         const GROUP_NAME: &str = "project_entry";
 
         let kind = details.kind;
+        let is_sticky = details.is_sticky;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
 
@@ -4002,220 +3932,223 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .on_drag_move::<ExternalPaths>(cx.listener(
-                move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                    let is_current_target = this.drag_target_entry.as_ref()
-                         .map(|entry| entry.entry_id) == Some(entry_id);
+            .when(!is_sticky, |this| {
+                this
+                .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
+                .on_drag_move::<ExternalPaths>(cx.listener(
+                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                        let is_current_target = this.drag_target_entry.as_ref()
+                             .map(|entry| entry.entry_id) == Some(entry_id);
 
-                    if !event.bounds.contains(&event.event.position) {
-                        // Entry responsible for setting drag target is also responsible to
-                        // clear it up after drag is out of bounds
-                        if is_current_target {
-                            this.drag_target_entry = None;
-                        }
-                        return;
-                    }
-
-                    if is_current_target {
-                        return;
-                    }
-
-                    let Some((entry_id, highlight_entry_id)) = maybe!({
-                        let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
-                        let target_entry = target_worktree.entry_for_path(&path_for_external_paths)?;
-                        let highlight_entry_id = this.highlight_entry_for_external_drag(target_entry, target_worktree);
-                        Some((target_entry.id, highlight_entry_id))
-                    }) else {
-                        return;
-                    };
-
-                    this.drag_target_entry = Some(DragTargetEntry {
-                        entry_id,
-                        highlight_entry_id,
-                    });
-                    this.marked_entries.clear();
-                },
-            ))
-            .on_drop(cx.listener(
-                move |this, external_paths: &ExternalPaths, window, cx| {
-                    this.drag_target_entry = None;
-                    this.hover_scroll_task.take();
-                    this.drop_external_files(external_paths.paths(), entry_id, window, cx);
-                    cx.stop_propagation();
-                },
-            ))
-            .on_drag_move::<DraggedSelection>(cx.listener(
-                move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
-                    let is_current_target = this.drag_target_entry.as_ref()
-                         .map(|entry| entry.entry_id) == Some(entry_id);
-
-                    if !event.bounds.contains(&event.event.position) {
-                        // Entry responsible for setting drag target is also responsible to
-                        // clear it up after drag is out of bounds
-                        if is_current_target {
-                            this.drag_target_entry = None;
-                        }
-                        return;
-                    }
-
-                    if is_current_target {
-                        return;
-                    }
-
-                    let drag_state = event.drag(cx);
-                    let Some((entry_id, highlight_entry_id)) = maybe!({
-                        let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
-                        let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
-                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx);
-                        Some((target_entry.id, highlight_entry_id))
-                    }) else {
-                        return;
-                    };
-
-                    this.drag_target_entry = Some(DragTargetEntry {
-                        entry_id,
-                        highlight_entry_id,
-                    });
-                    if drag_state.items().count() == 1 {
-                        this.marked_entries.clear();
-                        this.marked_entries.insert(drag_state.active_selection);
-                    }
-                    this.hover_expand_task.take();
-
-                    if !kind.is_dir()
-                        || this
-                            .expanded_dir_ids
-                            .get(&details.worktree_id)
-                            .map_or(false, |ids| ids.binary_search(&entry_id).is_ok())
-                    {
-                        return;
-                    }
-
-                    let bounds = event.bounds;
-                    this.hover_expand_task =
-                        Some(cx.spawn_in(window, async move |this, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(500))
-                                .await;
-                            this.update_in(cx, |this, window, cx| {
-                                this.hover_expand_task.take();
-                                if this.drag_target_entry.as_ref().map(|entry| entry.entry_id) == Some(entry_id)
-                                    && bounds.contains(&window.mouse_position())
-                                {
-                                    this.expand_entry(worktree_id, entry_id, cx);
-                                    this.update_visible_entries(
-                                        Some((worktree_id, entry_id)),
-                                        cx,
-                                    );
-                                    cx.notify();
-                                }
-                            })
-                            .ok();
-                        }));
-                },
-            ))
-            .on_drag(
-                dragged_selection,
-                move |selection, click_offset, _window, cx| {
-                    cx.new(|_| DraggedProjectEntryView {
-                        details: details.clone(),
-                        click_offset,
-                        selection: selection.active_selection,
-                        selections: selection.marked_selections.clone(),
-                    })
-                },
-            )
-            .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
-            .on_drop(
-                cx.listener(move |this, selections: &DraggedSelection, window, cx| {
-                    this.drag_target_entry = None;
-                    this.hover_scroll_task.take();
-                    this.hover_expand_task.take();
-                    if  folded_directory_drag_target.is_some() {
-                        return;
-                    }
-                    this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| {
-                    this.mouse_down = true;
-                    cx.propagate();
-                }),
-            )
-            .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right
-                        || event.down.first_mouse
-                        || show_editor
-                    {
-                        return;
-                    }
-                    if event.down.button == MouseButton::Left {
-                        this.mouse_down = false;
-                    }
-                    cx.stop_propagation();
-
-                    if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
-                        let current_selection = this.index_for_selection(selection);
-                        let clicked_entry = SelectedEntry {
-                            entry_id,
-                            worktree_id,
-                        };
-                        let target_selection = this.index_for_selection(clicked_entry);
-                        if let Some(((_, _, source_index), (_, _, target_index))) =
-                            current_selection.zip(target_selection)
-                        {
-                            let range_start = source_index.min(target_index);
-                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                            let mut new_selections = BTreeSet::new();
-                            this.for_each_visible_entry(
-                                range_start..range_end,
-                                window,
-                                cx,
-                                |entry_id, details, _, _| {
-                                    new_selections.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id: details.worktree_id,
-                                    });
-                                },
-                            );
-
-                            this.marked_entries = this
-                                .marked_entries
-                                .union(&new_selections)
-                                .cloned()
-                                .collect();
-
-                            this.selection = Some(clicked_entry);
-                            this.marked_entries.insert(clicked_entry);
-                        }
-                    } else if event.modifiers().secondary() {
-                        if event.down.click_count > 1 {
-                            this.split_entry(entry_id, cx);
-                        } else {
-                            this.selection = Some(selection);
-                            if !this.marked_entries.insert(selection) {
-                                this.marked_entries.remove(&selection);
+                        if !event.bounds.contains(&event.event.position) {
+                            // Entry responsible for setting drag target is also responsible to
+                            // clear it up after drag is out of bounds
+                            if is_current_target {
+                                this.drag_target_entry = None;
                             }
+                            return;
                         }
-                    } else if kind.is_dir() {
+
+                        if is_current_target {
+                            return;
+                        }
+
+                        let Some((entry_id, highlight_entry_id)) = maybe!({
+                            let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                            let target_entry = target_worktree.entry_for_path(&path_for_external_paths)?;
+                            let highlight_entry_id = this.highlight_entry_for_external_drag(target_entry, target_worktree);
+                            Some((target_entry.id, highlight_entry_id))
+                        }) else {
+                            return;
+                        };
+
+                        this.drag_target_entry = Some(DragTargetEntry {
+                            entry_id,
+                            highlight_entry_id,
+                        });
                         this.marked_entries.clear();
-                        if event.modifiers().alt {
-                            this.toggle_expand_all(entry_id, window, cx);
-                        } else {
-                            this.toggle_expanded(entry_id, window, cx);
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |this, external_paths: &ExternalPaths, window, cx| {
+                        this.drag_target_entry = None;
+                        this.hover_scroll_task.take();
+                        this.drop_external_files(external_paths.paths(), entry_id, window, cx);
+                        cx.stop_propagation();
+                    },
+                ))
+                .on_drag_move::<DraggedSelection>(cx.listener(
+                    move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
+                        let is_current_target = this.drag_target_entry.as_ref()
+                             .map(|entry| entry.entry_id) == Some(entry_id);
+
+                        if !event.bounds.contains(&event.event.position) {
+                            // Entry responsible for setting drag target is also responsible to
+                            // clear it up after drag is out of bounds
+                            if is_current_target {
+                                this.drag_target_entry = None;
+                            }
+                            return;
                         }
-                    } else {
-                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
-                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
-                        let allow_preview = preview_tabs_enabled && click_count == 1;
-                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                    }
-                }),
-            )
+
+                        if is_current_target {
+                            return;
+                        }
+
+                        let drag_state = event.drag(cx);
+                        let Some((entry_id, highlight_entry_id)) = maybe!({
+                            let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                            let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
+                            let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx);
+                            Some((target_entry.id, highlight_entry_id))
+                        }) else {
+                            return;
+                        };
+
+                        this.drag_target_entry = Some(DragTargetEntry {
+                            entry_id,
+                            highlight_entry_id,
+                        });
+                        if drag_state.items().count() == 1 {
+                            this.marked_entries.clear();
+                            this.marked_entries.insert(drag_state.active_selection);
+                        }
+                        this.hover_expand_task.take();
+
+                        if !kind.is_dir()
+                            || this
+                                .expanded_dir_ids
+                                .get(&details.worktree_id)
+                                .map_or(false, |ids| ids.binary_search(&entry_id).is_ok())
+                        {
+                            return;
+                        }
+
+                        let bounds = event.bounds;
+                        this.hover_expand_task =
+                            Some(cx.spawn_in(window, async move |this, cx| {
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(500))
+                                    .await;
+                                this.update_in(cx, |this, window, cx| {
+                                    this.hover_expand_task.take();
+                                    if this.drag_target_entry.as_ref().map(|entry| entry.entry_id) == Some(entry_id)
+                                        && bounds.contains(&window.mouse_position())
+                                    {
+                                        this.expand_entry(worktree_id, entry_id, cx);
+                                        this.update_visible_entries(
+                                            Some((worktree_id, entry_id)),
+                                            cx,
+                                        );
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                            }));
+                    },
+                ))
+                .on_drag(
+                    dragged_selection,
+                    move |selection, click_offset, _window, cx| {
+                        cx.new(|_| DraggedProjectEntryView {
+                            details: details.clone(),
+                            click_offset,
+                            selection: selection.active_selection,
+                            selections: selection.marked_selections.clone(),
+                        })
+                    },
+                )
+                .on_drop(
+                    cx.listener(move |this, selections: &DraggedSelection, window, cx| {
+                        this.drag_target_entry = None;
+                        this.hover_scroll_task.take();
+                        this.hover_expand_task.take();
+                        if  folded_directory_drag_target.is_some() {
+                            return;
+                        }
+                        this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _, _, cx| {
+                        this.mouse_down = true;
+                        cx.propagate();
+                    }),
+                )
+                .on_click(
+                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                        if event.down.button == MouseButton::Right
+                            || event.down.first_mouse
+                            || show_editor
+                        {
+                            return;
+                        }
+                        if event.down.button == MouseButton::Left {
+                            this.mouse_down = false;
+                        }
+                        cx.stop_propagation();
+
+                        if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
+                            let current_selection = this.index_for_selection(selection);
+                            let clicked_entry = SelectedEntry {
+                                entry_id,
+                                worktree_id,
+                            };
+                            let target_selection = this.index_for_selection(clicked_entry);
+                            if let Some(((_, _, source_index), (_, _, target_index))) =
+                                current_selection.zip(target_selection)
+                            {
+                                let range_start = source_index.min(target_index);
+                                let range_end = source_index.max(target_index) + 1;
+                                let mut new_selections = BTreeSet::new();
+                                this.for_each_visible_entry(
+                                    range_start..range_end,
+                                    window,
+                                    cx,
+                                    |entry_id, details, _, _| {
+                                        new_selections.insert(SelectedEntry {
+                                            entry_id,
+                                            worktree_id: details.worktree_id,
+                                        });
+                                    },
+                                );
+
+                                this.marked_entries = this
+                                    .marked_entries
+                                    .union(&new_selections)
+                                    .cloned()
+                                    .collect();
+
+                                this.selection = Some(clicked_entry);
+                                this.marked_entries.insert(clicked_entry);
+                            }
+                        } else if event.modifiers().secondary() {
+                            if event.down.click_count > 1 {
+                                this.split_entry(entry_id, cx);
+                            } else {
+                                this.selection = Some(selection);
+                                if !this.marked_entries.insert(selection) {
+                                    this.marked_entries.remove(&selection);
+                                }
+                            }
+                        } else if kind.is_dir() {
+                            this.marked_entries.clear();
+                            if event.modifiers().alt {
+                                this.toggle_expand_all(entry_id, window, cx);
+                            } else {
+                                this.toggle_expanded(entry_id, window, cx);
+                            }
+                        } else {
+                            let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                            let click_count = event.up.click_count;
+                            let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                            let allow_preview = preview_tabs_enabled && click_count == 1;
+                            this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        }
+                    }),
+                )
+            })
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -4328,38 +4261,41 @@ impl ProjectPanel {
                                                 let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - delimiter_target_index).cloned();
                                                 this = this.child(
                                                     div()
-                                                    .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
-                                                        this.hover_scroll_task.take();
-                                                        this.drag_target_entry = None;
-                                                        this.folded_directory_drag_target = None;
-                                                        if let Some(target_entry_id) = target_entry_id {
-                                                            this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
-                                                        }
-                                                    }))
-                                                    .on_drag_move(cx.listener(
-                                                        move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
-                                                            if event.bounds.contains(&event.event.position) {
-                                                                this.folded_directory_drag_target = Some(
-                                                                    FoldedDirectoryDragTarget {
-                                                                        entry_id,
-                                                                        index: delimiter_target_index,
-                                                                        is_delimiter_target: true,
-                                                                    }
-                                                                );
-                                                            } else {
-                                                                let is_current_target = this.folded_directory_drag_target
-                                                                    .map_or(false, |target|
-                                                                        target.entry_id == entry_id &&
-                                                                        target.index == delimiter_target_index &&
-                                                                        target.is_delimiter_target
-                                                                    );
-                                                                if is_current_target {
-                                                                    this.folded_directory_drag_target = None;
-                                                                }
+                                                    .when(!is_sticky, |div| {
+                                                        div
+                                                            .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
+                                                            this.hover_scroll_task.take();
+                                                            this.drag_target_entry = None;
+                                                            this.folded_directory_drag_target = None;
+                                                            if let Some(target_entry_id) = target_entry_id {
+                                                                this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
                                                             }
+                                                        }))
+                                                        .on_drag_move(cx.listener(
+                                                            move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
+                                                                if event.bounds.contains(&event.event.position) {
+                                                                    this.folded_directory_drag_target = Some(
+                                                                        FoldedDirectoryDragTarget {
+                                                                            entry_id,
+                                                                            index: delimiter_target_index,
+                                                                            is_delimiter_target: true,
+                                                                        }
+                                                                    );
+                                                                } else {
+                                                                    let is_current_target = this.folded_directory_drag_target
+                                                                        .map_or(false, |target|
+                                                                            target.entry_id == entry_id &&
+                                                                            target.index == delimiter_target_index &&
+                                                                            target.is_delimiter_target
+                                                                        );
+                                                                    if is_current_target {
+                                                                        this.folded_directory_drag_target = None;
+                                                                    }
+                                                                }
 
-                                                        },
-                                                    ))
+                                                            },
+                                                        ))
+                                                    })
                                                     .child(
                                                         Label::new(DELIMITER.clone())
                                                             .single_line()
@@ -4373,57 +4309,60 @@ impl ProjectPanel {
                                         ));
                                         let label = div()
                                             .id(id)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if index != active_index {
-                                                    if let Some(folds) =
-                                                        this.ancestors.get_mut(&entry_id)
-                                                    {
-                                                        folds.current_ancestor_depth =
-                                                            components_len - 1 - index;
-                                                        cx.notify();
-                                                    }
-                                                }
-                                            }))
-                                            .when(index != components_len - 1, |div|{
-                                                let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
+                                            .when(!is_sticky,| div| {
                                                 div
-                                                .on_drag_move(cx.listener(
-                                                    move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
-                                                    if event.bounds.contains(&event.event.position) {
-                                                            this.folded_directory_drag_target = Some(
-                                                                FoldedDirectoryDragTarget {
-                                                                    entry_id,
-                                                                    index,
-                                                                    is_delimiter_target: false,
-                                                                }
-                                                            );
-                                                        } else {
-                                                            let is_current_target = this.folded_directory_drag_target
-                                                                .as_ref()
-                                                                .map_or(false, |target|
-                                                                    target.entry_id == entry_id &&
-                                                                    target.index == index &&
-                                                                    !target.is_delimiter_target
-                                                                );
-                                                            if is_current_target {
-                                                                this.folded_directory_drag_target = None;
-                                                            }
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    if index != active_index {
+                                                        if let Some(folds) =
+                                                            this.ancestors.get_mut(&entry_id)
+                                                        {
+                                                            folds.current_ancestor_depth =
+                                                                components_len - 1 - index;
+                                                            cx.notify();
                                                         }
-                                                    },
-                                                ))
-                                                .on_drop(cx.listener(move |this, selections: &DraggedSelection, window,cx| {
-                                                    this.hover_scroll_task.take();
-                                                    this.drag_target_entry = None;
-                                                    this.folded_directory_drag_target = None;
-                                                    if let Some(target_entry_id) = target_entry_id {
-                                                        this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
                                                     }
                                                 }))
-                                                .when(folded_directory_drag_target.map_or(false, |target|
-                                                    target.entry_id == entry_id &&
-                                                    target.index == index
-                                                ), |this| {
-                                                    this.bg(item_colors.drag_over)
+                                                .when(index != components_len - 1, |div|{
+                                                    let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
+                                                    div
+                                                    .on_drag_move(cx.listener(
+                                                        move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
+                                                        if event.bounds.contains(&event.event.position) {
+                                                                this.folded_directory_drag_target = Some(
+                                                                    FoldedDirectoryDragTarget {
+                                                                        entry_id,
+                                                                        index,
+                                                                        is_delimiter_target: false,
+                                                                    }
+                                                                );
+                                                            } else {
+                                                                let is_current_target = this.folded_directory_drag_target
+                                                                    .as_ref()
+                                                                    .map_or(false, |target|
+                                                                        target.entry_id == entry_id &&
+                                                                        target.index == index &&
+                                                                        !target.is_delimiter_target
+                                                                    );
+                                                                if is_current_target {
+                                                                    this.folded_directory_drag_target = None;
+                                                                }
+                                                            }
+                                                        },
+                                                    ))
+                                                    .on_drop(cx.listener(move |this, selections: &DraggedSelection, window,cx| {
+                                                        this.hover_scroll_task.take();
+                                                        this.drag_target_entry = None;
+                                                        this.folded_directory_drag_target = None;
+                                                        if let Some(target_entry_id) = target_entry_id {
+                                                            this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
+                                                        }
+                                                    }))
+                                                    .when(folded_directory_drag_target.map_or(false, |target|
+                                                        target.entry_id == entry_id &&
+                                                        target.index == index
+                                                    ), |this| {
+                                                        this.bg(item_colors.drag_over)
+                                                    })
                                                 })
                                             })
                                             .child(
@@ -4451,21 +4390,23 @@ impl ProjectPanel {
                             })
                         },
                     )
-                    .on_secondary_mouse_down(cx.listener(
-                        move |this, event: &MouseDownEvent, window, cx| {
-                            // Stop propagation to prevent the catch-all context menu for the project
-                            // panel from being deployed.
-                            cx.stop_propagation();
-                            // Some context menu actions apply to all marked entries. If the user
-                            // right-clicks on an entry that is not marked, they may not realize the
-                            // action applies to multiple entries. To avoid inadvertent changes, all
-                            // entries are unmarked.
-                            if !this.marked_entries.contains(&selection) {
-                                this.marked_entries.clear();
-                            }
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
-                        },
-                    ))
+                    .when(!is_sticky,| div| {
+                        div.on_secondary_mouse_down(cx.listener(
+                            move |this, event: &MouseDownEvent, window, cx| {
+                                // Stop propagation to prevent the catch-all context menu for the project
+                                // panel from being deployed.
+                                cx.stop_propagation();
+                                // Some context menu actions apply to all marked entries. If the user
+                                // right-clicks on an entry that is not marked, they may not realize the
+                                // action applies to multiple entries. To avoid inadvertent changes, all
+                                // entries are unmarked.
+                                if !this.marked_entries.contains(&selection) {
+                                    this.marked_entries.clear();
+                                }
+                                this.deploy_context_menu(event.position, entry_id, window, cx);
+                            },
+                        ))
+                    })
                     .overflow_x(),
             )
             .when_some(
@@ -4495,6 +4436,108 @@ impl ProjectPanel {
                     )
                 }
             )
+    }
+
+    fn details_for_entry(
+        &self,
+        entry: &Entry,
+        worktree_id: WorktreeId,
+        root_name: &OsStr,
+        entries_paths: &HashSet<Arc<Path>>,
+        git_status: GitSummary,
+        is_sticky: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> EntryDetails {
+        let (show_file_icons, show_folder_icons) = {
+            let settings = ProjectPanelSettings::get_global(cx);
+            (settings.file_icons, settings.folder_icons)
+        };
+
+        let expanded_entry_ids = self
+            .expanded_dir_ids
+            .get(&worktree_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+
+        let icon = match entry.kind {
+            EntryKind::File => {
+                if show_file_icons {
+                    FileIcons::get_icon(&entry.path, cx)
+                } else {
+                    None
+                }
+            }
+            _ => {
+                if show_folder_icons {
+                    FileIcons::get_folder_icon(is_expanded, cx)
+                } else {
+                    FileIcons::get_chevron_icon(is_expanded, cx)
+                }
+            }
+        };
+
+        let (depth, difference) =
+            ProjectPanel::calculate_depth_and_difference(&entry, entries_paths);
+
+        let filename = match difference {
+            diff if diff > 1 => entry
+                .path
+                .iter()
+                .skip(entry.path.components().count() - diff)
+                .collect::<PathBuf>()
+                .to_str()
+                .unwrap_or_default()
+                .to_string(),
+            _ => entry
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
+        };
+
+        let selection = SelectedEntry {
+            worktree_id,
+            entry_id: entry.id,
+        };
+        let is_marked = self.marked_entries.contains(&selection);
+        let is_selected = self.selection == Some(selection);
+
+        let diagnostic_severity = self
+            .diagnostics
+            .get(&(worktree_id, entry.path.to_path_buf()))
+            .cloned();
+
+        let filename_text_color =
+            entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
+
+        let is_cut = self
+            .clipboard
+            .as_ref()
+            .map_or(false, |e| e.is_cut() && e.items().contains(&selection));
+
+        EntryDetails {
+            filename,
+            icon,
+            path: entry.path.clone(),
+            depth,
+            kind: entry.kind,
+            is_ignored: entry.is_ignored,
+            is_expanded,
+            is_selected,
+            is_marked,
+            is_editing: false,
+            is_processing: false,
+            is_cut,
+            is_sticky,
+            filename_text_color,
+            diagnostic_severity,
+            git_status,
+            is_private: entry.is_private,
+            worktree_id,
+            canonical_path: entry.canonical_path.clone(),
+        }
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -4751,6 +4794,148 @@ impl ProjectPanel {
         }
         None
     }
+
+    fn sticky_entries_for_range(
+        &self,
+        range: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<StickyProjectPanelEntry> {
+        let mut current_offset = 0;
+        for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
+            let worktree_len = visible_worktree_entries.len();
+            let worktree_end_offset = current_offset + worktree_len;
+            if current_offset >= range.end {
+                break;
+            }
+            if worktree_end_offset > range.start {
+                let local_start = range.start.saturating_sub(current_offset);
+                let local_end = range.end.saturating_sub(current_offset).min(worktree_len);
+                let paths = entries_paths.get_or_init(|| {
+                    visible_worktree_entries
+                        .iter()
+                        .map(|e| e.path.clone())
+                        .collect()
+                });
+                return visible_worktree_entries[local_start..local_end]
+                    .iter()
+                    .map(|entry| {
+                        let (depth, _) = Self::calculate_depth_and_difference(&entry.entry, paths);
+                        StickyProjectPanelEntry {
+                            entry: entry.clone(),
+                            depth,
+                            should_skip: self.ancestors.contains_key(&entry.entry.id),
+                        }
+                    })
+                    .collect();
+            }
+            current_offset = worktree_end_offset;
+        }
+        Vec::new()
+    }
+
+    fn render_sticky_entries(
+        &self,
+        marker_entry: StickyProjectPanelEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> SmallVec<[AnyElement; 8]> {
+        let project = self.project.read(cx);
+        let entry_path = &marker_entry.entry.path;
+
+        let mut worktree_id = None;
+        let mut visible_worktree_entries = Vec::new();
+
+        for (worktree_id, entries, _) in &self.visible_entries {
+            if entries.iter().any(|e| e.path == *entry_path) {
+                worktree_id = Some(*worktree_id);
+                visible_worktree_entries = entries.clone();
+                break;
+            }
+        }
+
+        let Some(worktree_id) = worktree_id else {
+            return SmallVec::new();
+        };
+
+        let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
+            return SmallVec::new();
+        };
+
+        let worktree = worktree.read(cx).snapshot();
+        let root_name = OsStr::new(worktree.root_name());
+
+        let mut parent_ids = marker_entry
+            .entry
+            .entry
+            .path
+            .ancestors()
+            .skip(1)
+            .filter_map(|path| worktree.entry_for_path(path).map(|entry| entry.id))
+            .collect::<Vec<_>>();
+        parent_ids.reverse();
+
+        if parent_ids.is_empty() {
+            return SmallVec::new();
+        }
+
+        let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
+        let git_summaries_by_id = if git_status_enabled {
+            visible_worktree_entries
+                .iter()
+                .map(|e| (e.id, e.git_summary))
+                .collect::<HashMap<_, _>>()
+        } else {
+            Default::default()
+        };
+
+        let paths: HashSet<Arc<Path>> = visible_worktree_entries
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+
+        parent_ids
+            .iter()
+            .map(|&entry_id| {
+                if let Some(entry) = worktree.entry_for_id(entry_id) {
+                    let git_status = git_summaries_by_id
+                        .get(&entry_id)
+                        .copied()
+                        .unwrap_or_default();
+                    let details = self.details_for_entry(
+                        entry,
+                        worktree_id,
+                        root_name,
+                        &paths,
+                        git_status,
+                        true,
+                        window,
+                        cx,
+                    );
+                    self.render_entry(entry_id, details, window, cx).into_any()
+                } else {
+                    div().into_any()
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone)]
+struct StickyProjectPanelEntry {
+    entry: GitEntry,
+    depth: usize,
+    should_skip: bool,
+}
+
+impl StickyEntry for StickyProjectPanelEntry {
+    fn depth(&self) -> usize {
+        self.depth
+    }
+
+    fn should_skip(&self) -> bool {
+        self.should_skip
+    }
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
@@ -4769,6 +4954,7 @@ impl Render for ProjectPanel {
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
         let show_indent_guides =
             ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
+        let show_sticky_scroll = ProjectPanelSettings::get_global(cx).sticky_scroll;
         let is_local = project.is_local();
 
         if has_worktree {
@@ -4962,6 +5148,17 @@ impl Render for ProjectPanel {
                             );
                             items
                         })
+                    })
+                    .when(show_sticky_scroll, |list| {
+                        list.with_sticky(ui::sticky_items(
+                            cx.entity().clone(),
+                            |this, range, window, cx| {
+                                this.sticky_entries_for_range(range, window, cx)
+                            },
+                            |this, marker_entry, window, cx| {
+                                this.render_sticky_entries(marker_entry, window, cx)
+                            },
+                        ))
                     })
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
