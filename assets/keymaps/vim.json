@@ -243,6 +243,7 @@
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
+      "shift-u": "vim::UndoLastLine",
       "ctrl-r": "vim::Redo",
       "r": "vim::PushReplace",
       "s": "vim::Substitute",
