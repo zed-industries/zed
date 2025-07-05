@@ -706,11 +706,13 @@ impl ConsoleQueryBarCompletionProvider {
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),
-                            text: format!("{} {}", string_match.string, variable_value),
+                            text: string_match.string.clone(),
                             runs: Vec::new(),
                         },
                         icon_path: None,
-                        documentation: None,
+                        documentation: Some(CompletionDocumentation::MultiLineMarkdown(
+                            variable_value.into(),
+                        )),
                         confirm: None,
                         source: project::CompletionSource::Custom,
                         insert_text_mode: None,
