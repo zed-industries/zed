@@ -10,40 +10,15 @@ use util::schemars::add_new_subschema;
 
 use crate::TaskTemplate;
 
-// FIXME
-//"tcp_connection": {
-//    "type": "object",
-//    "description": "Optional TCP connection information for connecting to an already running debug adapter",
-//    "properties": {
-//        "port": {
-//            "type": "integer",
-//            "description": "The port that the debug adapter is listening on (default: auto-find open port)"
-//        },
-//        "host": {
-//            "type": "string",
-//            "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-//            "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
-//        },
-//        "timeout": {
-//            "type": "integer",
-//            "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
-//        }
-//    }
-//}
-/// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+/// Optional TCP connection information for connecting to an already running debug adapter
 pub struct TcpArgumentsTemplate {
-    /// The port that the debug adapter is listening on
-    ///
-    /// Default: We will try to find an open port
+    /// The port that the debug adapter is listening on (default: auto-find open port)
     pub port: Option<u16>,
-    /// The host that the debug adapter is listening too
-    ///
-    /// Default: 127.0.0.1
+    /// The host that the debug adapter is listening to (default: 127.0.0.1)
+    #[garde(ipv4)]
     pub host: Option<Ipv4Addr>,
-    /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error
-    ///
-    /// Default: 2000ms
+    /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)
     pub timeout: Option<u64>,
 }
 
