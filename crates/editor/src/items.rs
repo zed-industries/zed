@@ -1264,15 +1264,12 @@ impl SerializableItem for Editor {
             serialize_dirty_buffers = false;
         }
 
-        let pane = workspace.pane_for(&cx.entity())?;
-
-        let pane_ref = pane.read(cx);
-        let is_pinned = pane_ref
+        let pane = workspace.pane_for(&cx.entity())?.read(cx);
+        let pinned = pane
             .index_for_item(&cx.entity())
-            .map(|index| pane_ref.is_tab_pinned(index))
-            .unwrap_or(false);
+            .map(|index| pane.is_tab_pinned(index));
 
-        if closing && !serialize_dirty_buffers && !is_pinned {
+        if closing && !serialize_dirty_buffers && !pinned.unwrap_or(false) {
             return None;
         }
 
@@ -1313,7 +1310,7 @@ impl SerializableItem for Editor {
                     contents,
                     language,
                     mtime,
-                    pinned: Some(is_pinned),
+                    pinned,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 DB.save_serialized_editor(item_id, workspace_id, editor)
