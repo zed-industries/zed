@@ -643,7 +643,7 @@ impl ConsoleQueryBarCompletionProvider {
             let reversed_chars = snapshot.reversed_chars_for_range(0..buffer_offset);
             let mut word_len = 0;
             for ch in reversed_chars {
-                if ch.is_alphanumeric() || ch == '_' {
+                if ch.is_alphanumeric() || matches!(ch, '_' | '$' | '-' | '>' | '[' | ']') {
                     word_len += 1;
                 } else {
                     break;
