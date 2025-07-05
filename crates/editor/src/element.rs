@@ -1837,16 +1837,42 @@ impl EditorElement {
         let minimap_height = minimap_bounds.size.height;
         let rem_size = window.rem_size();
         let base_minimap_line_height = self.get_minimap_line_height(MINIMAP_FONT_SIZE, window, cx);
+
+        let minimap_snapshot = minimap_editor.update(cx, |editor, cx| editor.snapshot(window, cx));
+        let longest_line_row = minimap_snapshot.longest_row();
+
+        let mut minimap_style = self.style.clone();
+        minimap_style.text.font_size = MINIMAP_FONT_SIZE;
+
+        let longest_line_layout = layout_line(
+            longest_line_row,
+            &minimap_snapshot,
+            &minimap_style,
+            Pixels::MAX,
+            |_| false,
+            window,
+            cx,
+        );
+        let longest_line_width = longest_line_layout.width;
+
+        let scale_factor_x = if longest_line_width > minimap_width {
+            minimap_width / longest_line_width
+        } else {
+            f32::MAX
+        };
+
         let scale_factor = match minimap_settings.size {
             MinimapSize::Fill => {
                 let minimap_content_height = total_editor_lines * base_minimap_line_height;
-                minimap_height / minimap_content_height
+                let scale_factor_y = minimap_height / minimap_content_height;
+                scale_factor_y.min(scale_factor_x)
             }
             MinimapSize::Fit => {
                 let minimap_content_height = total_editor_lines * base_minimap_line_height;
-                (minimap_height / minimap_content_height).min(1.)
+                let scale_factor_y = (minimap_height / minimap_content_height).min(1.);
+                scale_factor_y.min(scale_factor_x)
             }
-            MinimapSize::Proportional => 1.,
+            MinimapSize::Proportional => 1f32.min(scale_factor_x),
         };
 
         let minimap_font_size =
@@ -1929,30 +1955,20 @@ impl EditorElement {
         &self,
         minimap_settings: &Minimap,
         scrollbars_shown: bool,
-        rem_size: Pixels,
+        window: &Window,
         cx: &App,
     ) -> Option<Pixels> {
         if minimap_settings.show == ShowMinimap::Auto && !scrollbars_shown {
             return None;
         }
 
-        let minimap_font_size = self
-            .editor
-            .read_with(cx, |editor, cx| {
-                editor.minimap().map(|minimap_editor| {
-                    minimap_editor
-                        .read(cx)
-                        .text_style_refinement
-                        .as_ref()
-                        .and_then(|refinement| refinement.font_size)
-                        .unwrap_or(MINIMAP_FONT_SIZE)
-                })
-            })
-            .unwrap_or(MINIMAP_FONT_SIZE);
+        let rem_size = self.rem_size(cx).unwrap_or_else(|| window.rem_size());
+        // Omitted reading text_style_refinement as it was causing the width to change.
+        // Now always using the base MINIMAP_FONT_SIZE for width calculation.
 
         let style = self.style.text.clone();
         let font_id = cx.text_system().resolve_font(&style.font());
-        let font_size = minimap_font_size.to_pixels(rem_size);
+        let font_size = MINIMAP_FONT_SIZE.to_pixels(rem_size); // Use base font size
         let em_width = cx.text_system().em_width(font_id, font_size).unwrap();
 
         let minimap_width = em_width * minimap_settings.max_width_columns.get() as f32;
@@ -7696,7 +7712,7 @@ impl EditorElement {
     /// Returns the rem size to use when rendering the [`EditorElement`].
     ///
     /// This allows UI elements to scale based on the `buffer_font_size`.
-    fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
+    fn rem_size(&self, cx: &App) -> Option<Pixels> {
         match self.editor.read(cx).mode {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: true,
@@ -7924,7 +7940,7 @@ impl Element for EditorElement {
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
                     let minimap_width = self
-                        .get_minimap_width(&settings.minimap, scrollbars_shown, rem_size, cx)
+                        .get_minimap_width(&settings.minimap, scrollbars_shown, window, cx)
                         .unwrap_or_default();
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
