@@ -509,7 +509,7 @@ impl ParentElement for ButtonLike {
 }
 
 impl RenderOnce for ButtonLike {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let style = self
             .selected_style
             .filter(|_| self.selected)
@@ -538,16 +538,13 @@ impl RenderOnce for ButtonLike {
                 }
                 ButtonSize::None => this,
             })
-            .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| {
-                if self.cursor_style == CursorStyle::PointingHand {
-                    this.cursor_not_allowed()
-                } else {
-                    this.cursor(self.cursor_style)
-                }
+                this.bg(style.disabled(self.layer, window, cx).background)
+                    .cursor_not_allowed()
             })
             .when(!self.disabled, |this| {
-                this.cursor(self.cursor_style)
+                this.bg(style.enabled(self.layer, cx).background)
+                    .cursor(self.cursor_style)
                     .hover(|hover| hover.bg(style.hovered(self.layer, cx).background))
                     .active(|active| active.bg(style.active(cx).background))
             })
