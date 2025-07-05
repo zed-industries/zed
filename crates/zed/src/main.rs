@@ -14,7 +14,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -766,6 +766,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
+        let app_state = app_state.clone();
         cx.spawn(async move |mut cx| {
             let result = maybe!(async {
                 if let Some(task) = task {
@@ -826,6 +827,83 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         cx.spawn(async move |mut cx| {
             if let Err(err) = task.await {
                 fail_to_open_window_async(err, &mut cx);
+            }
+        })
+        .detach();
+    }
+
+    if let Some((url, folder_name)) = request.clone_repo {
+        let task = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+        });
+        cx.spawn(async move |mut cx| {
+            let mut folders = match task.await {
+                Ok(Ok(Some(ok))) => ok,
+                Ok(Err(err)) => {
+                    fail_to_open_window_async(err, &mut cx);
+                    return;
+                }
+                // cancel/None
+                _ => return,
+            };
+
+            let Some(mut folder) = folders.pop() else {
+                return;
+            };
+
+            let res = util::command::new_smol_command("git")
+                .arg("clone")
+                .arg(url)
+                .current_dir(folder.clone())
+                .stdin(smol::process::Stdio::null())
+                .stdout(smol::process::Stdio::piped())
+                .stdout(smol::process::Stdio::piped())
+                .status()
+                .await;
+
+            match res {
+                Ok(status) => {
+                    if !status.success() {
+                        fail_to_open_window_async(
+                            anyhow::anyhow!("Git clone does not success"),
+                            &mut cx,
+                        );
+                    }
+                }
+                Err(err) => {
+                    fail_to_open_window_async(err.into(), &mut cx);
+                }
+            }
+            folder.push(folder_name);
+            let paths = &[folder];
+            let task = cx.update(|cx| {
+                workspace::open_paths(
+                    paths,
+                    app_state,
+                    workspace::OpenOptions {
+                        visible: Some(workspace::OpenVisible::All),
+                        focus: Some(true),
+                        open_new_workspace: Some(true),
+                        replace_window: None,
+                        env: None,
+                    },
+                    cx,
+                )
+            });
+
+            match task {
+                Ok(task) => match task.await {
+                    // success
+                    Ok(_) => {}
+                    Err(err) => {
+                        fail_to_open_window_async(err.into(), &mut cx);
+                    }
+                },
+                Err(err) => {
+                    fail_to_open_window_async(err.into(), &mut cx);
+                }
             }
         })
         .detach();
