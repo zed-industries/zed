@@ -146,9 +146,23 @@ pub struct Scrollbar {
     pub axes: ScrollbarAxes,
 }
 
+/// Controls how the minimap is sized.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapSize {
+    /// The minimap has a proportional size to the editor content.
+    #[default]
+    Proportional,
+    /// The minimap stretches or shrinks to fill the editor's height.
+    Fill,
+    /// The minimap shrinks to fit the editor's height if needed.
+    Fit,
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
+    pub size: MinimapSize,
     pub display_in: DisplayIn,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
@@ -615,6 +629,11 @@ pub struct MinimapContent {
     ///
     /// Default: never
     pub show: Option<ShowMinimap>,
+
+    /// Controls how the minimap is sized.
+    ///
+    /// Default: proportional
+    pub size: Option<MinimapSize>,
 
     /// Where to show the minimap in the editor.
     ///

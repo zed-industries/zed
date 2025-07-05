@@ -410,6 +410,11 @@
     // 3. Never show the minimap:
     //    "never" (default)
     "show": "never",
+    // Controls how the minimap is sized.
+    // - `proportional`: The minimap has a proportional size to the editor content.
+    // - `fill`: The minimap stretches or shrinks to fill the editor's height.
+    // - `fit`: The minimap shrinks to fit the editor's height if needed.
+    "size": "proportional",
     // Where to show the minimap in the editor.
     // This setting can take two values:
     // 1. Show the minimap on the focused editor only:

@@ -17,7 +17,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
-        MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
+        MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, MinimapSize,
         ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
@@ -1832,17 +1832,22 @@ impl EditorElement {
             top_right_anchor,
             size(minimap_width, editor_bounds.size.height),
         );
-        let minimap_line_height = self.get_minimap_line_height(
-            minimap_editor
-                .read(cx)
-                .text_style_refinement
-                .as_ref()
-                .and_then(|refinement| refinement.font_size)
-                .unwrap_or(MINIMAP_FONT_SIZE),
-            window,
-            cx,
-        );
+
+        let total_editor_lines = scroll_range.height / line_height;
         let minimap_height = minimap_bounds.size.height;
+        let rem_size = window.rem_size();
+        let base_minimap_line_height = self.get_minimap_line_height(MINIMAP_FONT_SIZE, window, cx);
+        let scale_factor = match minimap_settings.size {
+            MinimapSize::Fill | MinimapSize::Fit => {
+                let minimap_content_height = total_editor_lines * base_minimap_line_height;
+                (minimap_height / minimap_content_height).min(1.)
+            }
+            MinimapSize::Proportional => 1.,
+        };
+
+        let minimap_font_size =
+            AbsoluteLength::Pixels(MINIMAP_FONT_SIZE.to_pixels(rem_size) * scale_factor);
+        let minimap_line_height = self.get_minimap_line_height(minimap_font_size, window, cx);
 
         let visible_editor_lines = editor_bounds.size.height / line_height;
         let total_editor_lines = scroll_range.height / line_height;
@@ -1867,6 +1872,10 @@ impl EditorElement {
         .with_thumb_state(thumb_state);
 
         minimap_editor.update(cx, |editor, cx| {
+            editor.text_style_refinement = Some(TextStyleRefinement {
+                font_size: Some(minimap_font_size),
+                ..Default::default()
+            });
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
@@ -1916,9 +1925,6 @@ impl EditorElement {
         &self,
         minimap_settings: &Minimap,
         scrollbars_shown: bool,
-        text_width: Pixels,
-        em_width: Pixels,
-        font_size: Pixels,
         rem_size: Pixels,
         cx: &App,
     ) -> Option<Pixels> {
@@ -1926,23 +1932,28 @@ impl EditorElement {
             return None;
         }
 
-        let minimap_font_size = self.editor.read_with(cx, |editor, cx| {
-            editor.minimap().map(|minimap_editor| {
-                minimap_editor
-                    .read(cx)
-                    .text_style_refinement
-                    .as_ref()
-                    .and_then(|refinement| refinement.font_size)
-                    .unwrap_or(MINIMAP_FONT_SIZE)
+        let minimap_font_size = self
+            .editor
+            .read_with(cx, |editor, cx| {
+                editor.minimap().map(|minimap_editor| {
+                    minimap_editor
+                        .read(cx)
+                        .text_style_refinement
+                        .as_ref()
+                        .and_then(|refinement| refinement.font_size)
+                        .unwrap_or(MINIMAP_FONT_SIZE)
+                })
             })
-        })?;
+            .unwrap_or(MINIMAP_FONT_SIZE);
 
-        let minimap_em_width = em_width * (minimap_font_size.to_pixels(rem_size) / font_size);
+        let style = self.style.text.clone();
+        let font_id = cx.text_system().resolve_font(&style.font());
+        let font_size = minimap_font_size.to_pixels(rem_size);
+        let em_width = cx.text_system().em_width(font_id, font_size).unwrap();
 
-        let minimap_width = (text_width * MinimapLayout::MINIMAP_WIDTH_PCT)
-            .min(minimap_em_width * minimap_settings.max_width_columns.get() as f32);
+        let minimap_width = em_width * minimap_settings.max_width_columns.get() as f32;
 
-        (minimap_width >= minimap_em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
+        (minimap_width >= em_width * MinimapLayout::MINIMAP_MIN_WIDTH_COLUMNS)
             .then_some(minimap_width)
     }
 
@@ -6360,10 +6371,13 @@ impl EditorElement {
                     - layout.position_map.scroll_pixel_position.y,
                 lines: row_range
                     .iter_rows()
-                    .map(|row| {
-                        let line_layout =
-                            &layout.position_map.line_layouts[row.minus(start_row) as usize];
-                        HighlightedRangeLine {
+                    .filter_map(|row| {
+                        let ix = row.minus(start_row) as usize;
+                        if ix >= layout.position_map.line_layouts.len() {
+                            return None;
+                        }
+                        let line_layout = &layout.position_map.line_layouts[ix];
+                        Some(HighlightedRangeLine {
                             start_x: if row == range.start.row() {
                                 layout.content_origin.x
                                     + line_layout.x_for_index(range.start.column() as usize)
@@ -6380,7 +6394,7 @@ impl EditorElement {
                                 layout.content_origin.x + line_layout.width + line_end_overshoot
                                     - layout.position_map.scroll_pixel_position.x
                             },
-                        }
+                        })
                     })
                     .collect(),
             };
@@ -7173,13 +7187,16 @@ impl LineWithInvisibles {
 
         let ellipsis = SharedString::from("⋯");
 
-        for highlighted_chunk in chunks.chain([HighlightedChunk {
-            text: "\n",
-            style: None,
-            is_tab: false,
-            is_inlay: false,
-            replacement: None,
-        }]) {
+        for highlighted_chunk in chunks
+            .filter(|chunk| !editor_mode.is_minimap() || !chunk.is_inlay)
+            .chain([HighlightedChunk {
+                text: "\n",
+                style: None,
+                is_tab: false,
+                is_inlay: false,
+                replacement: None,
+            }])
+        {
             if let Some(replacement) = highlighted_chunk.replacement {
                 if !line.is_empty() {
                     let shaped_line =
@@ -7903,15 +7920,7 @@ impl Element for EditorElement {
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
                     let minimap_width = self
-                        .get_minimap_width(
-                            &settings.minimap,
-                            scrollbars_shown,
-                            text_width,
-                            em_width,
-                            font_size,
-                            rem_size,
-                            cx,
-                        )
+                        .get_minimap_width(&settings.minimap, scrollbars_shown, rem_size, cx)
                         .unwrap_or_default();
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
@@ -9517,8 +9526,6 @@ struct MinimapLayout {
 impl MinimapLayout {
     /// The minimum width of the minimap in columns. If the minimap is smaller than this, it will be hidden.
     const MINIMAP_MIN_WIDTH_COLUMNS: f32 = 20.;
-    /// The minimap width as a percentage of the editor width.
-    const MINIMAP_WIDTH_PCT: f32 = 0.15;
     /// Calculates the scroll top offset the minimap editor has to have based on the
     /// current scroll progress.
     fn calculate_minimap_top_offset(
