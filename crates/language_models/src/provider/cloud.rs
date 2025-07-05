@@ -435,6 +435,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
+
+    fn usage(&self, cx: &App) -> Option<ModelRequestUsage> {
+        self.state
+            .read(cx)
+            .user_store
+            .read(cx)
+            .model_request_usage()
+    }
 }
 
 fn render_accept_terms(
