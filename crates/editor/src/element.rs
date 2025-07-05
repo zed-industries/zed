@@ -1838,7 +1838,11 @@ impl EditorElement {
         let rem_size = window.rem_size();
         let base_minimap_line_height = self.get_minimap_line_height(MINIMAP_FONT_SIZE, window, cx);
         let scale_factor = match minimap_settings.size {
-            MinimapSize::Fill | MinimapSize::Fit => {
+            MinimapSize::Fill => {
+                let minimap_content_height = total_editor_lines * base_minimap_line_height;
+                minimap_height / minimap_content_height
+            }
+            MinimapSize::Fit => {
                 let minimap_content_height = total_editor_lines * base_minimap_line_height;
                 (minimap_height / minimap_content_height).min(1.)
             }
