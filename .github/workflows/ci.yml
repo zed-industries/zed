@@ -5,12 +5,24 @@ on:
     branches:
       - main
       - "v[0-9]+.[0-9]+.x"
+    paths-ignore:
+      - ".github/workflows/community_close_stale_issues.yml"
+      - ".github/workflows/community_delete_comments.yml"
+      - ".github/workflows/community_release_actions.yml"
+      - ".github/workflows/community_update_all_top_ranking_issues.yml"
+      - ".github/workflows/community_update_weekly_top_ranking_issues.yml"
     tags:
       - "v*"
 
   pull_request:
     branches:
       - "**"
+    paths-ignore:
+      - ".github/workflows/community_close_stale_issues.yml"
+      - ".github/workflows/community_delete_comments.yml"
+      - ".github/workflows/community_release_actions.yml"
+      - ".github/workflows/community_update_all_top_ranking_issues.yml"
+      - ".github/workflows/community_update_weekly_top_ranking_issues.yml"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
