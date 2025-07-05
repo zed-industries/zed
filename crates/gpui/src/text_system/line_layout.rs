@@ -482,6 +482,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            force_width: None,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -516,6 +517,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                force_width: None,
             });
 
             let mut current_frame = self.current_frame.write();
@@ -538,11 +540,26 @@ impl LineLayoutCache {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
+        self.layout_line_internal(text, font_size, runs, None)
+    }
+
+    pub fn layout_line_internal<Text>(
+        &self,
+        text: Text,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> Arc<LineLayout>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
         let key = &CacheKeyRef {
             text: text.as_ref(),
             font_size,
             runs,
             wrap_width: None,
+            force_width,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -557,16 +574,30 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let layout = Arc::new(
-                self.platform_text_system
-                    .layout_line(&text, font_size, runs),
-            );
+            let mut layout = self
+                .platform_text_system
+                .layout_line(&text, font_size, runs);
+
+            if let Some(force_width) = force_width {
+                let mut glyph_pos = 0;
+                for run in layout.runs.iter_mut() {
+                    for glyph in run.glyphs.iter_mut() {
+                        if (glyph.position.x - glyph_pos * force_width).abs() > px(1.) {
+                            glyph.position.x = glyph_pos * force_width;
+                        }
+                        glyph_pos += 1;
+                    }
+                }
+            }
+
             let key = Arc::new(CacheKey {
                 text,
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                force_width,
             });
+            let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
@@ -591,6 +622,7 @@ struct CacheKey {
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    force_width: Option<Pixels>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -599,6 +631,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    force_width: Option<Pixels>,
 }
 
 impl PartialEq for (dyn AsCacheKeyRef + '_) {
@@ -622,6 +655,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            force_width: self.force_width,
         }
     }
 }

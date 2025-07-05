@@ -58,7 +58,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -501,6 +501,8 @@ impl TerminalBuilder {
             vi_mode_enabled: false,
             is_ssh_terminal,
             python_venv_directory,
+            last_mouse_move_time: Instant::now(),
+            last_hyperlink_search_position: None,
         };
 
         Ok(TerminalBuilder {
@@ -659,6 +661,8 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_ssh_terminal: bool,
+    last_mouse_move_time: Instant,
+    last_hyperlink_search_position: Option<Point<Pixels>>,
 }
 
 pub struct TaskState {
@@ -1307,24 +1311,27 @@ impl Terminal {
 
     fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
         let content = term.renderable_content();
+
+        // Pre-allocate with estimated size to reduce reallocations
+        let estimated_size = content.display_iter.size_hint().0;
+        let mut cells = Vec::with_capacity(estimated_size);
+
+        cells.extend(content.display_iter.map(|ic| IndexedCell {
+            point: ic.point,
+            cell: ic.cell.clone(),
+        }));
+
+        let selection_text = if content.selection.is_some() {
+            term.selection_to_string()
+        } else {
+            None
+        };
+
         TerminalContent {
-            cells: content
-                .display_iter
-                //TODO: Add this once there's a way to retain empty lines
-                // .filter(|ic| {
-                //     !ic.flags.contains(Flags::HIDDEN)
-                //         && !(ic.bg == Named(NamedColor::Background)
-                //             && ic.c == ' '
-                //             && !ic.flags.contains(Flags::INVERSE))
-                // })
-                .map(|ic| IndexedCell {
-                    point: ic.point,
-                    cell: ic.cell.clone(),
-                })
-                .collect::<Vec<IndexedCell>>(),
+            cells,
             mode: content.mode,
             display_offset: content.display_offset,
-            selection_text: term.selection_to_string(),
+            selection_text,
             selection: content.selection,
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
@@ -1457,10 +1464,26 @@ impl Terminal {
         if self.selection_phase == SelectionPhase::Selecting {
             self.last_content.last_hovered_word = None;
         } else if self.last_content.terminal_bounds.bounds.contains(&position) {
-            self.events.push_back(InternalEvent::FindHyperlink(
-                position - self.last_content.terminal_bounds.bounds.origin,
-                false,
-            ));
+            // Throttle hyperlink searches to avoid excessive processing
+            let now = Instant::now();
+            let should_search = if let Some(last_pos) = self.last_hyperlink_search_position {
+                // Only search if mouse moved significantly or enough time passed
+                let distance_moved =
+                    ((position.x - last_pos.x).abs() + (position.y - last_pos.y).abs()) > px(5.0);
+                let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
+                distance_moved || time_elapsed
+            } else {
+                true
+            };
+
+            if should_search {
+                self.last_mouse_move_time = now;
+                self.last_hyperlink_search_position = Some(position);
+                self.events.push_back(InternalEvent::FindHyperlink(
+                    position - self.last_content.terminal_bounds.bounds.origin,
+                    false,
+                ));
+            }
         } else {
             self.last_content.last_hovered_word = None;
         }

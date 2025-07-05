@@ -357,6 +357,7 @@ impl WindowTextSystem {
         text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
+        force_width: Option<Pixels>,
     ) -> ShapedLine {
         debug_assert!(
             text.find('\n').is_none(),
@@ -384,7 +385,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs);
+        let layout = self.layout_line(&text, font_size, runs, force_width);
 
         ShapedLine {
             layout,
@@ -524,6 +525,7 @@ impl WindowTextSystem {
         text: Text,
         font_size: Pixels,
         runs: &[TextRun],
+        force_width: Option<Pixels>,
     ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
@@ -544,9 +546,9 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self
-            .line_layout_cache
-            .layout_line(text, font_size, &font_runs);
+        let layout =
+            self.line_layout_cache
+                .layout_line_internal(text, font_size, &font_runs, force_width);
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
