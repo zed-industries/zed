@@ -1211,14 +1211,23 @@ impl Pane {
 
     fn update_history(&mut self, index: usize) {
         if let Some(newly_active_item) = self.items.get(index) {
-            self.activation_history
-                .retain(|entry| entry.entity_id != newly_active_item.item_id());
-            self.activation_history.push(ActivationHistoryEntry {
-                entity_id: newly_active_item.item_id(),
-                timestamp: self
-                    .next_activation_timestamp
-                    .fetch_add(1, Ordering::SeqCst),
-            });
+            let item_id = newly_active_item.item_id();
+
+            if self
+                .activation_history
+                .last()
+                .map_or(true, |entry| entry.entity_id != item_id)
+            {
+                self.activation_history
+                    .retain(|entry| entry.entity_id != item_id);
+
+                self.activation_history.push(ActivationHistoryEntry {
+                    entity_id: item_id,
+                    timestamp: self
+                        .next_activation_timestamp
+                        .fetch_add(1, Ordering::SeqCst),
+                });
+            }
         }
     }
 
@@ -1959,15 +1968,29 @@ impl Pane {
                 })?;
                 if !will_autosave {
                     let item_id = item.item_id();
+
+                    let is_terminal = cx.update(|_, cx| {
+                        item.to_serializable_item_handle(cx)
+                            .map(|serializable| serializable.serialized_item_kind() == "Terminal")
+                            .unwrap_or(false)
+                            && item.is_dirty(cx)
+                    })?;
+
                     let answer_task = pane.update_in(cx, |pane, window, cx| {
                         if pane.save_modals_spawned.insert(item_id) {
                             pane.activate_item(item_ix, true, true, window, cx);
-                            let prompt = dirty_message_for(item.project_path(cx));
+                            let (prompt, buttons) = if is_terminal {
+                                let prompt = "This terminal has active processes running. Closing it will terminate these processes.";
+                                (prompt.to_string(), &["Close Terminal", "Cancel"][..])
+                            } else {
+                                let prompt = dirty_message_for(item.project_path(cx));
+                                (prompt, &["Save", "Don't Save", "Cancel"][..])
+                            };
                             Some(window.prompt(
                                 PromptLevel::Warning,
                                 &prompt,
                                 None,
-                                &["Save", "Don't Save", "Cancel"],
+                                buttons,
                                 cx,
                             ))
                         } else {
@@ -1984,19 +2007,32 @@ impl Pane {
                             }
                         })?;
                         match answer {
-                            Ok(0) => {}
-                            Ok(1) => {
-                                // Don't save this file
-                                pane.update_in(cx, |pane, window, cx| {
-                                    if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
-                                        pane.pinned_tab_count -= 1;
-                                    }
-                                    item.discarded(project, window, cx)
-                                })
-                                .log_err();
-                                return Ok(true);
+                            Ok(0) => {
+                                // For terminals: Close Terminal
+                                // For files: Save (continue to save logic below)
+                                if is_terminal {
+                                    // Terminal: Close Terminal button pressed, proceed with closing
+                                    // (the save logic below will handle the terminal appropriately)
+                                }
+                                // For files, continue to save logic below
                             }
-                            _ => return Ok(false), // Cancel
+                            Ok(1) => {
+                                if is_terminal {
+                                    // Terminal: Cancel button pressed
+                                    return Ok(false);
+                                } else {
+                                    // File: Don't Save button pressed
+                                    pane.update_in(cx, |pane, window, cx| {
+                                        if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
+                                            pane.pinned_tab_count -= 1;
+                                        }
+                                        item.discarded(project, window, cx)
+                                    })
+                                    .log_err();
+                                    return Ok(true);
+                                }
+                            }
+                            _ => return Ok(false), // Cancel for files (button 2)
                         }
                     } else {
                         return Ok(false);
@@ -6263,6 +6299,42 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_close_terminal_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add a terminal item
+        pane.update_in(cx, |pane, window, cx| {
+            let terminal_item = Box::new(cx.new(|cx| TestItem::new(cx).with_label("Terminal")));
+            pane.add_item(terminal_item.clone(), false, false, None, window, cx);
+            terminal_item
+        });
+        assert_item_labels(&pane, ["Terminal*"], cx);
+
+        // Close the terminal item
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Ensure the terminal item is closed
+        assert_item_labels(&pane, [], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {
