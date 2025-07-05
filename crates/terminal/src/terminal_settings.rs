@@ -94,12 +94,14 @@ pub enum VenvSettings {
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
         activate_script: Option<ActivateScript>,
+        venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
     },
 }
 
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
+    pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
 }
 
@@ -109,9 +111,11 @@ impl VenvSettings {
             VenvSettings::Off => None,
             VenvSettings::On {
                 activate_script,
+                venv_name,
                 directories,
             } => Some(VenvSettingsContent {
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
+                venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
             }),
         }
@@ -127,6 +131,7 @@ pub enum ActivateScript {
     Fish,
     Nushell,
     PowerShell,
+    Pyenv,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
