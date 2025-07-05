@@ -8,12 +8,6 @@ pub trait StickyCandidate {
     fn should_skip(&self) -> bool;
 }
 
-pub struct StickyMarkerResult<E> {
-    pub marker_entry: Option<E>,
-    pub marker_index: Option<usize>,
-    pub last_item_is_drifting: bool,
-}
-
 pub struct StickyItems<T> {
     compute_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<T>>,
     render_fn: Box<dyn Fn(T, &mut Window, &mut App) -> SmallVec<[AnyElement; 8]>>,
@@ -59,82 +53,44 @@ where
     ) -> (SmallVec<[AnyElement; 8]>, usize, Option<usize>, bool) {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
-        let sticky_result =
-            calculate_sticky_marker(&entries, visible_range.start, |entry| entry.should_skip());
+        let mut iter = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.should_skip())
+            .peekable();
+
+        let mut last_item_is_drifting = false;
+        let mut marker_index = None;
+        let mut marker_entry = None;
+
+        while let Some((ix, current_entry)) = iter.next() {
+            let current_depth = current_entry.depth();
+            let index_in_range = ix;
+
+            if current_depth < index_in_range {
+                marker_entry = Some(current_entry.clone());
+                break;
+            }
+
+            if let Some(&(_next_ix, next_entry)) = iter.peek() {
+                let next_depth = next_entry.depth();
+
+                if next_depth < current_depth && next_depth < index_in_range {
+                    last_item_is_drifting = true;
+                    marker_index = Some(visible_range.start + ix);
+                    marker_entry = Some(current_entry.clone());
+                    break;
+                }
+            }
+        }
 
         let mut elements = SmallVec::new();
-        if let Some(marker_entry) = sticky_result.marker_entry {
+        if let Some(marker_entry) = marker_entry {
             elements = (self.render_fn)(marker_entry, window, cx);
         }
 
         let count = elements.len();
-        (
-            elements,
-            count,
-            sticky_result.marker_index,
-            sticky_result.last_item_is_drifting,
-        )
-    }
-}
-
-pub fn calculate_sticky_marker<E: StickyCandidate + Clone>(
-    entries: &[E],
-    range_start: usize,
-    skip_predicate: impl Fn(&E) -> bool,
-) -> StickyMarkerResult<E> {
-    let mut last_item_is_drifting = false;
-    let mut marker_ix = None;
-
-    let mut entry_iter = entries.iter().enumerate();
-
-    if let Some((mut ix, mut current_entry)) = entry_iter.find(|(_, entry)| !skip_predicate(entry))
-    {
-        let mut current_depth = current_entry.depth();
-        let mut found_marker = None;
-
-        for (next_ix, next_entry) in entry_iter {
-            if skip_predicate(next_entry) {
-                continue;
-            }
-
-            let next_depth = next_entry.depth();
-
-            if next_depth < current_depth && next_depth < ix {
-                found_marker = Some(current_entry.clone());
-                marker_ix = Some(range_start + ix);
-                last_item_is_drifting = true;
-                break;
-            }
-
-            let index_in_range = ix;
-            if current_depth < index_in_range {
-                found_marker = Some(current_entry.clone());
-                break;
-            }
-
-            ix = next_ix;
-            current_entry = next_entry;
-            current_depth = next_depth;
-        }
-
-        if found_marker.is_none() {
-            let index_in_range = ix;
-            if current_depth < index_in_range {
-                found_marker = Some(current_entry.clone());
-            }
-        }
-
-        StickyMarkerResult {
-            marker_entry: found_marker,
-            marker_index: marker_ix,
-            last_item_is_drifting,
-        }
-    } else {
-        StickyMarkerResult {
-            marker_entry: None,
-            marker_index: None,
-            last_item_is_drifting: false,
-        }
+        (elements, count, marker_index, last_item_is_drifting)
     }
 }
 
