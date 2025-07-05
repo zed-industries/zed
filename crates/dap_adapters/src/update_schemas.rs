@@ -88,7 +88,13 @@ fn main() {
 
     let package_json: PackageJson = serde_json::from_value(package_json).unwrap();
 
-    let alternatives = package_json
+    let types = package_json
+        .contributes
+        .debuggers
+        .iter()
+        .map(|debugger| debugger.r#type.clone())
+        .collect::<Vec<_>>();
+    let mut conjuncts = package_json
         .contributes
         .debuggers
         .into_iter()
@@ -109,10 +115,10 @@ fn main() {
                         "if": {
                             "properties": {
                                 "type": {
-                                    "enum": [r#type]
+                                    "const": r#type
                                 },
                                 "request": {
-                                    "enum": [request]
+                                    "const": request
                                 }
                             },
                             "required": ["type", "request"]
@@ -123,8 +129,16 @@ fn main() {
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    conjuncts.push(json_schema!({
+        "properties": {
+            "type": {
+                "enum": types
+            }
+        },
+        "required": ["type"]
+    }));
     let schema = json_schema!({
-        "allOf": alternatives
+        "allOf": conjuncts
     });
 
     let mut schema = serde_json::to_string_pretty(&schema.to_value()).unwrap();

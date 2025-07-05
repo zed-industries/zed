@@ -4,12 +4,32 @@ use gpui::SharedString;
 use log as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use util::{debug_panic, schemars::add_new_subschema};
+use std::{borrow::Cow, net::Ipv4Addr};
+use util::schemars::add_new_subschema;
 
-use crate::{TaskTemplate, adapter_schema::AdapterSchemas};
+use crate::TaskTemplate;
 
+// FIXME
+//"tcp_connection": {
+//    "type": "object",
+//    "description": "Optional TCP connection information for connecting to an already running debug adapter",
+//    "properties": {
+//        "port": {
+//            "type": "integer",
+//            "description": "The port that the debug adapter is listening on (default: auto-find open port)"
+//        },
+//        "host": {
+//            "type": "string",
+//            "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
+//            "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
+//        },
+//        "timeout": {
+//            "type": "integer",
+//            "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
+//        }
+//    }
+//}
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct TcpArgumentsTemplate {
@@ -281,51 +301,54 @@ pub struct DebugScenario {
 }
 
 /// A group of Debug Tasks defined in a JSON file.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
-    pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json::Value {
+    pub fn generate_json_schema(
+        adapter_schemas: Vec<(SharedString, Cow<'static, serde_json::Value>)>,
+    ) -> serde_json::Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
 
-        let mut build_task_value = BuildTaskDefinition::json_schema(&mut generator).to_value();
+        // FIXME what is this doing
+        // if let Some(template_object) = build_task_schema
+        //     .get_mut("anyOf")
+        //     .and_then(|array| array.as_array_mut())
+        //     .and_then(|array| array.get_mut(1))
+        // {
+        //     if let Some(properties) = template_object
+        //         .get_mut("properties")
+        //         .and_then(|value| value.as_object_mut())
+        //     {
+        //         if properties.remove("label").is_none() {
+        //             debug_panic!(
+        //                 "Generated TaskTemplate json schema did not have expected 'label' field. \
+        //                 Schema of 2nd alternative is: {template_object:?}"
+        //             );
+        //         }
+        //     }
 
-        if let Some(template_object) = build_task_value
-            .get_mut("anyOf")
-            .and_then(|array| array.as_array_mut())
-            .and_then(|array| array.get_mut(1))
-        {
-            if let Some(properties) = template_object
-                .get_mut("properties")
-                .and_then(|value| value.as_object_mut())
-            {
-                if properties.remove("label").is_none() {
-                    debug_panic!(
-                        "Generated TaskTemplate json schema did not have expected 'label' field. \
-                        Schema of 2nd alternative is: {template_object:?}"
-                    );
-                }
-            }
+        //     if let Some(arr) = template_object
+        //         .get_mut("required")
+        //         .and_then(|array| array.as_array_mut())
+        //     {
+        //         arr.retain(|v| v.as_str() != Some("label"));
+        //     }
+        // } else {
+        //     debug_panic!(
+        //         "Generated TaskTemplate json schema did not match expectations. \
+        //         Schema is: {build_task_schema:?}"
+        //     );
+        // }
 
-            if let Some(arr) = template_object
-                .get_mut("required")
-                .and_then(|array| array.as_array_mut())
-            {
-                arr.retain(|v| v.as_str() != Some("label"));
-            }
-        } else {
-            debug_panic!(
-                "Generated TaskTemplate json schema did not match expectations. \
-                Schema is: {build_task_value:?}"
-            );
-        }
-
-        let adapter_conditions = schemas
-            .0
+        let adapter_names = adapter_schemas
             .iter()
-            .map(|adapter_schema| {
-                let adapter_name = adapter_schema.adapter.to_string();
+            .map(|(adapter_name, _)| adapter_name.clone())
+            .collect::<Vec<_>>();
+        let adapter_conditions = adapter_schemas
+            .iter()
+            .map(|(adapter_name, schema)| {
                 add_new_subschema(
                     &mut generator,
                     &format!("{adapter_name}DebugSettings"),
@@ -335,16 +358,23 @@ impl DebugTaskFile {
                                 "adapter": { "const": adapter_name }
                             }
                         },
-                        "then": adapter_schema.schema
+                        "then": schema
                     }),
                 )
             })
             .collect::<Vec<_>>();
 
+        let build_task_schema = BuildTaskDefinition::json_schema(&mut generator).to_value();
         let build_task_definition_ref = add_new_subschema(
             &mut generator,
             BuildTaskDefinition::schema_name().as_ref(),
-            build_task_value,
+            build_task_schema,
+        );
+        let tcp_connection_schema = TcpArgumentsTemplate::json_schema(&mut generator).to_value();
+        let tcp_connection_definition_ref = add_new_subschema(
+            &mut generator,
+            TcpArgumentsTemplate::schema_name().as_ref(),
+            tcp_connection_schema,
         );
 
         let meta_schema = generator
@@ -362,16 +392,10 @@ impl DebugTaskFile {
             "items": {
                 "type": "object",
                 "required": ["adapter", "label"],
-                // TODO: Uncommenting this will cause json-language-server to provide warnings for
-                // unrecognized properties. It should be enabled if/when there's an adapter JSON
-                // schema that's comprehensive. In order to not get warnings for the other schemas,
-                // `additionalProperties` or `unevaluatedProperties` (to handle "allOf" etc style
-                // schema combinations) could be set to `true` for that schema.
-                //
-                // "unevaluatedProperties": false,
+                "unevaluatedProperties": false,
                 "properties": {
                     "adapter": {
-                        "type": "string",
+                        "enum": adapter_names,
                         "description": "The name of the debug adapter"
                     },
                     "label": {
@@ -379,25 +403,7 @@ impl DebugTaskFile {
                         "description": "The name of the debug configuration"
                     },
                     "build": build_task_definition_ref,
-                    "tcp_connection": {
-                        "type": "object",
-                        "description": "Optional TCP connection information for connecting to an already running debug adapter",
-                        "properties": {
-                            "port": {
-                                "type": "integer",
-                                "description": "The port that the debug adapter is listening on (default: auto-find open port)"
-                            },
-                            "host": {
-                                "type": "string",
-                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
-                            },
-                            "timeout": {
-                                "type": "integer",
-                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
-                            }
-                        }
-                    }
+                    "tcp_connection": tcp_connection_definition_ref,
                 },
                 "allOf": adapter_conditions
             },

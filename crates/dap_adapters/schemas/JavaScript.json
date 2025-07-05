@@ -4,14 +4,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-node"
-            ]
+            "const": "pwa-node"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -412,14 +408,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-node"
-            ]
+            "const": "pwa-node"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -757,14 +749,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "node"
-            ]
+            "const": "node"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -1165,14 +1153,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "node"
-            ]
+            "const": "node"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -1510,14 +1494,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "node-terminal"
-            ]
+            "const": "node-terminal"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -1798,14 +1778,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-extensionHost"
-            ]
+            "const": "pwa-extensionHost"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -3098,14 +3074,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "extensionHost"
-            ]
+            "const": "extensionHost"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -4398,14 +4370,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-chrome"
-            ]
+            "const": "pwa-chrome"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -5436,14 +5404,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-chrome"
-            ]
+            "const": "pwa-chrome"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -6428,14 +6392,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "chrome"
-            ]
+            "const": "chrome"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -7466,14 +7426,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "chrome"
-            ]
+            "const": "chrome"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -8458,14 +8414,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-msedge"
-            ]
+            "const": "pwa-msedge"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -9506,14 +9458,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "pwa-msedge"
-            ]
+            "const": "pwa-msedge"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -10510,14 +10458,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "msedge"
-            ]
+            "const": "msedge"
           },
           "request": {
-            "enum": [
-              "launch"
-            ]
+            "const": "launch"
           }
         },
         "required": [
@@ -11558,14 +11502,10 @@
       "if": {
         "properties": {
           "type": {
-            "enum": [
-              "msedge"
-            ]
+            "const": "msedge"
           },
           "request": {
-            "enum": [
-              "attach"
-            ]
+            "const": "attach"
           }
         },
         "required": [
@@ -12557,6 +12497,26 @@
           }
         }
       }
+    },
+    {
+      "properties": {
+        "type": {
+          "enum": [
+            "pwa-node",
+            "node",
+            "node-terminal",
+            "pwa-extensionHost",
+            "extensionHost",
+            "pwa-chrome",
+            "chrome",
+            "pwa-msedge",
+            "msedge"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
     }
   ]
 }
