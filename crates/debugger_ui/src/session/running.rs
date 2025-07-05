@@ -973,7 +973,7 @@ impl RunningState {
 
                 let task_with_shell = SpawnInTerminal {
                     command_label,
-                    command,
+                    command: Some(command),
                     args,
                     ..task.resolved.clone()
                 };
@@ -1085,19 +1085,6 @@ impl RunningState {
             .map(PathBuf::from)
             .or_else(|| session.binary().unwrap().cwd.clone());
 
-        let mut args = request.args.clone();
-
-        // Handle special case for NodeJS debug adapter
-        // If only the Node binary path is provided, we set the command to None
-        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
-        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
-        // This allows the NodeJS debug client to attach correctly
-        let command = if args.len() > 1 {
-            Some(args.remove(0))
-        } else {
-            None
-        };
-
         let mut envs: HashMap<String, String> =
             self.session.read(cx).task_context().project_env.clone();
         if let Some(Value::Object(env)) = &request.env {
@@ -1111,31 +1098,57 @@ impl RunningState {
             }
         }
 
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
-        let kind = if let Some(command) = command {
-            let title = request.title.clone().unwrap_or(command.clone());
-            TerminalKind::Task(task::SpawnInTerminal {
-                id: task::TaskId("debug".to_string()),
-                full_label: title.clone(),
-                label: title.clone(),
-                command: command.clone(),
-                args,
-                command_label: title.clone(),
-                cwd,
-                env: envs,
-                use_new_terminal: true,
-                allow_concurrent_runs: true,
-                reveal: task::RevealStrategy::NoFocus,
-                reveal_target: task::RevealTarget::Dock,
-                hide: task::HideStrategy::Never,
-                shell,
-                show_summary: false,
-                show_command: false,
-                show_rerun: false,
-            })
+        let mut args = request.args.clone();
+        let command = if envs.contains_key("VSCODE_INSPECTOR_OPTIONS") {
+            // Handle special case for NodeJS debug adapter
+            // If the Node binary path is provided (possibly with arguments like --experimental-network-inspection),
+            // we set the command to None
+            // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+            // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+            // This allows the NodeJS debug client to attach correctly
+            if args
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .collect::<Vec<_>>()
+                .len()
+                > 1
+            {
+                Some(args.remove(0))
+            } else {
+                None
+            }
+        } else if args.len() > 0 {
+            Some(args.remove(0))
         } else {
-            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
+            None
         };
+
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+        let title = request
+            .title
+            .clone()
+            .filter(|title| !title.is_empty())
+            .or_else(|| command.clone())
+            .unwrap_or_else(|| "Debug terminal".to_string());
+        let kind = TerminalKind::Task(task::SpawnInTerminal {
+            id: task::TaskId("debug".to_string()),
+            full_label: title.clone(),
+            label: title.clone(),
+            command: command.clone(),
+            args,
+            command_label: title.clone(),
+            cwd,
+            env: envs,
+            use_new_terminal: true,
+            allow_concurrent_runs: true,
+            reveal: task::RevealStrategy::NoFocus,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            shell,
+            show_summary: false,
+            show_command: false,
+            show_rerun: false,
+        });
 
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();

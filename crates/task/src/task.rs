@@ -46,7 +46,7 @@ pub struct SpawnInTerminal {
     /// Human readable name of the terminal tab.
     pub label: String,
     /// Executable command to spawn.
-    pub command: String,
+    pub command: Option<String>,
     /// Arguments to the command, potentially unsubstituted,
     /// to let the shell that spawns the command to do the substitution, if needed.
     pub args: Vec<String>,

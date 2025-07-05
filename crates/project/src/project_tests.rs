@@ -568,7 +568,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|(source_kind, task)| {
                 let resolved = task.resolved;
-                (source_kind, resolved.command)
+                (source_kind, resolved.command.unwrap())
             })
             .collect::<Vec<_>>(),
         vec![(
