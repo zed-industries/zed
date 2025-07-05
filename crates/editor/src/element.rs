@@ -75,7 +75,7 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
@@ -87,7 +87,6 @@ use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
-const SELECTION_DRAG_DELAY: Duration = Duration::from_millis(300);
 
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
@@ -651,7 +650,6 @@ impl EditorElement {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
                     selection: newest_anchor.clone(),
                     click_position: event.position,
-                    mouse_down_time: Instant::now(),
                 };
                 cx.stop_propagation();
                 return;
@@ -851,7 +849,6 @@ impl EditorElement {
             SelectionDragState::ReadyToDrag {
                 selection: _,
                 ref click_position,
-                mouse_down_time: _,
             } => {
                 if event.position == *click_position {
                     editor.select(
@@ -1018,46 +1015,22 @@ impl EditorElement {
                 }
                 SelectionDragState::ReadyToDrag {
                     ref selection,
-                    ref click_position,
-                    ref mouse_down_time,
+                    click_position: _,
                 } => {
-                    if mouse_down_time.elapsed() >= SELECTION_DRAG_DELAY {
-                        let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id),
-                            start: drop_anchor,
-                            end: drop_anchor,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        };
-                        editor.selection_drag_state = SelectionDragState::Dragging {
-                            selection: selection.clone(),
-                            drop_cursor,
-                            hide_drop_cursor: false,
-                        };
-                        editor.apply_scroll_delta(scroll_delta, window, cx);
-                        cx.notify();
-                    } else {
-                        let click_point = position_map.point_for_position(*click_position);
-                        editor.selection_drag_state = SelectionDragState::None;
-                        editor.select(
-                            SelectPhase::Begin {
-                                position: click_point.previous_valid,
-                                add: false,
-                                click_count: 1,
-                            },
-                            window,
-                            cx,
-                        );
-                        editor.select(
-                            SelectPhase::Update {
-                                position: point_for_position.previous_valid,
-                                goal_column: point_for_position.exact_unclipped.column(),
-                                scroll_delta,
-                            },
-                            window,
-                            cx,
-                        );
-                    }
+                    let drop_cursor = Selection {
+                        id: post_inc(&mut editor.selections.next_selection_id),
+                        start: drop_anchor,
+                        end: drop_anchor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    };
+                    editor.selection_drag_state = SelectionDragState::Dragging {
+                        selection: selection.clone(),
+                        drop_cursor,
+                        hide_drop_cursor: false,
+                    };
+                    editor.apply_scroll_delta(scroll_delta, window, cx);
+                    cx.notify();
                 }
                 _ => {}
             }
