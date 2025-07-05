@@ -122,35 +122,9 @@ impl GoDebugAdapter {
                 anyhow::anyhow!("unexpected number of go debuggers: {}", debuggers.len())
             })?;
 
-        let configuration_attributes = debugger.configuration_attributes;
-        let conjuncts = configuration_attributes
-            .launch
-            .map(|schema| ("launch", schema))
-            .into_iter()
-            .chain(
-                configuration_attributes
-                    .attach
-                    .map(|schema| ("attach", schema)),
-            )
-            .map(|(request, schema)| {
-                json!({
-                    "if": {
-                        "properties": {
-                            "request": {
-                                "const": request
-                            }
-                        },
-                        "required": ["request"]
-                    },
-                    "then": schema
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let schema = json!({
-            "allOf": conjuncts
-        });
-        Ok(schema)
+        Ok(schema_for_configuration_attributes(
+            debugger.configuration_attributes,
+        ))
     }
 }
 

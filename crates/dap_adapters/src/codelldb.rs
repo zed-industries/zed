@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    path::PathBuf,
+    sync::{LazyLock, OnceLock},
+};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -12,12 +17,12 @@ use util::fs::remove_matching;
 use crate::*;
 
 #[derive(Default)]
-pub(crate) struct CodeLldbDebugAdapter {
+pub struct CodeLldbDebugAdapter {
     path_to_codelldb: OnceLock<String>,
 }
 
 impl CodeLldbDebugAdapter {
-    const ADAPTER_NAME: &'static str = "CodeLLDB";
+    pub const ADAPTER_NAME: &'static str = "CodeLLDB";
 
     async fn request_args(
         &self,
@@ -82,6 +87,34 @@ impl CodeLldbDebugAdapter {
     }
 }
 
+#[cfg(feature = "update-schemas")]
+impl CodeLldbDebugAdapter {
+    pub fn get_schema(
+        temp_dir: &TempDir,
+        delegate: UpdateSchemasDapDelegate,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (package_json, package_nls_json) = get_vsix_package_json(
+            temp_dir,
+            "vadimcn/codelldb",
+            |_| Ok(format!("codelldb-bootstrap.vsix")),
+            delegate,
+        )?;
+        let package_json = parse_package_json(package_json, package_nls_json)?;
+
+        let [debugger] =
+            <[_; 1]>::try_from(package_json.contributes.debuggers).map_err(|debuggers| {
+                anyhow::anyhow!(
+                    "unexpected number of codelldb debuggers: {}",
+                    debuggers.len()
+                )
+            })?;
+
+        Ok(schema_for_configuration_attributes(
+            debugger.configuration_attributes,
+        ))
+    }
+}
+
 #[async_trait(?Send)]
 impl DebugAdapter for CodeLldbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
@@ -133,194 +166,11 @@ impl DebugAdapter for CodeLldbDebugAdapter {
     }
 
     fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
-        Cow::Owned(json!({
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "enum": ["attach", "launch"],
-                    "description": "Debug adapter request type"
-                },
-                "program": {
-                    "type": "string",
-                    "description": "Path to the program to debug or attach to"
-                },
-                "args": {
-                    "type": ["array", "string"],
-                    "description": "Program arguments"
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Program working directory"
-                },
-                "env": {
-                    "type": "object",
-                    "description": "Additional environment variables",
-                    "patternProperties": {
-                        ".*": {
-                            "type": "string"
-                        }
-                    }
-                },
-                "envFile": {
-                    "type": "string",
-                    "description": "File to read the environment variables from"
-                },
-                "stdio": {
-                    "type": ["null", "string", "array", "object"],
-                    "description": "Destination for stdio streams: null = send to debugger console or a terminal, \"<path>\" = attach to a file/tty/fifo"
-                },
-                "terminal": {
-                    "type": "string",
-                    "enum": ["integrated", "console"],
-                    "description": "Terminal type to use",
-                    "default": "integrated"
-                },
-                "console": {
-                    "type": "string",
-                    "enum": ["integratedTerminal", "internalConsole"],
-                    "description": "Terminal type to use (compatibility alias of 'terminal')"
-                },
-                "stopOnEntry": {
-                    "type": "boolean",
-                    "description": "Automatically stop debuggee after launch",
-                    "default": false
-                },
-                "initCommands": {
-                    "type": "array",
-                    "description": "Initialization commands executed upon debugger startup",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "targetCreateCommands": {
-                    "type": "array",
-                    "description": "Commands that create the debug target",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "preRunCommands": {
-                    "type": "array",
-                    "description": "Commands executed just before the program is launched",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "processCreateCommands": {
-                    "type": "array",
-                    "description": "Commands that create the debuggee process",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "postRunCommands": {
-                    "type": "array",
-                    "description": "Commands executed just after the program has been launched",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "preTerminateCommands": {
-                    "type": "array",
-                    "description": "Commands executed just before the debuggee is terminated or disconnected from",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "exitCommands": {
-                    "type": "array",
-                    "description": "Commands executed at the end of debugging session",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "expressions": {
-                    "type": "string",
-                    "enum": ["simple", "python", "native"],
-                    "description": "The default evaluator type used for expressions"
-                },
-                "sourceMap": {
-                    "type": "object",
-                    "description": "Source path remapping between the build machine and the local machine",
-                    "patternProperties": {
-                        ".*": {
-                            "type": ["string", "null"]
-                        }
-                    }
-                },
-                "relativePathBase": {
-                    "type": "string",
-                    "description": "Base directory used for resolution of relative source paths. Defaults to the workspace folder"
-                },
-                "sourceLanguages": {
-                    "type": "array",
-                    "description": "A list of source languages to enable language-specific features for",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "reverseDebugging": {
-                    "type": "boolean",
-                    "description": "Enable reverse debugging",
-                    "default": false
-                },
-                "breakpointMode": {
-                    "type": "string",
-                    "enum": ["path", "file"],
-                    "description": "Specifies how source breakpoints should be set"
-                },
-                "pid": {
-                    "type": ["integer", "string"],
-                    "description": "Process id to attach to"
-                },
-                "waitFor": {
-                    "type": "boolean",
-                    "description": "Wait for the process to launch (MacOS only)",
-                    "default": false
-                }
-            },
-            "required": ["request"],
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {
-                            "request": {
-                                "enum": ["launch"]
-                            }
-                        }
-                    },
-                    "then": {
-                        "oneOf": [
-                            {
-                                "required": ["program"]
-                            },
-                            {
-                                "required": ["targetCreateCommands"]
-                            }
-                        ]
-                    }
-                },
-                {
-                    "if": {
-                        "properties": {
-                            "request": {
-                                "enum": ["attach"]
-                            }
-                        }
-                    },
-                    "then": {
-                        "oneOf": [
-                            {
-                                "required": ["pid"]
-                            },
-                            {
-                                "required": ["program"]
-                            }
-                        ]
-                    }
-                }
-            ]
-        }))
+        static SCHEMA: LazyLock<serde_json::Value> = LazyLock::new(|| {
+            const RAW_SCHEMA: &str = include_str!("../schemas/CodeLLDB.json");
+            serde_json::from_str(RAW_SCHEMA).unwrap()
+        });
+        Cow::Borrowed(&*SCHEMA)
     }
 
     async fn get_binary(

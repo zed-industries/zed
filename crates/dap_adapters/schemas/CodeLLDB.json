@@ -1,0 +1,253 @@
+{
+  "allOf": [
+    {
+      "if": { "properties": { "request": { "const": "launch" } }, "required": ["request"] },
+      "then": {
+        "properties": {
+          "program": { "description": "Path to the program to debug.", "type": "string" },
+          "cargo": {
+            "description": "Cargo invocation parameters.",
+            "type": "object",
+            "properties": {
+              "args": { "description": "Cargo command line arguments.", "type": "array", "default": [] },
+              "env": {
+                "description": "Additional environment variables passed to Cargo.",
+                "type": "object",
+                "patternProperties": { ".*": { "type": "string" } },
+                "default": {}
+              },
+              "cwd": { "description": "Cargo working directory.", "type": "string" },
+              "problemMatcher": {
+                "description": "Problem matcher(s) to apply to Cargo output.",
+                "type": ["string", "array"]
+              },
+              "filter": {
+                "description": "Filter applied to compilation artifacts.",
+                "type": "object",
+                "properties": { "name": { "type": "string" }, "kind": { "type": "string" } }
+              }
+            },
+            "required": ["args"],
+            "additionalProperties": false,
+            "defaultSnippets": [
+              {
+                "label": "Library unit tests",
+                "body": { "args": ["test", "--no-run", "--lib"], "filter": { "kind": "lib" } }
+              },
+              { "label": "Executable", "body": { "args": ["build", "--bin=${1:<name>}"], "filter": { "kind": "bin" } } }
+            ]
+          },
+          "args": { "description": "Program arguments.", "type": ["array", "string"] },
+          "cwd": { "description": "Program working directory.", "type": "string" },
+          "env": {
+            "description": "Additional environment variables.",
+            "type": "object",
+            "patternProperties": { ".*": { "type": "string" } }
+          },
+          "envFile": { "description": "File to read the environment variables from.", "type": "string" },
+          "stdio": {
+            "description": "Destination for stdio streams: null = send to debugger console or a terminal, \"<path>\" = attach to a file/tty/fifo.",
+            "type": ["null", "string", "array", "object"],
+            "default": null
+          },
+          "terminal": {
+            "description": "Terminal type to use.",
+            "type": "string",
+            "enum": ["integrated", "external", "console"],
+            "enumDescriptions": [
+              "Use integrated terminal in VSCode.",
+              "Use external terminal window.",
+              "Use VScode Debug Console for stdout and stderr. Stdin will be unavailable."
+            ],
+            "default": "integrated"
+          },
+          "console": {
+            "description": "Terminal type to use. (This setting is a compatibility alias of 'terminal'.)",
+            "type": "string",
+            "enum": ["integratedTerminal", "externalTerminal", "internalConsole"],
+            "enumDescriptions": [
+              "Use integrated terminal in VSCode.",
+              "Use external terminal window.",
+              "Use VScode Debug Console for stdout and stderr. Stdin will be unavailable."
+            ]
+          },
+          "stopOnEntry": {
+            "description": "Automatically stop debuggee after launch.",
+            "type": "boolean",
+            "default": false
+          },
+          "initCommands": {
+            "description": "Initialization commands executed upon debugger startup.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "targetCreateCommands": {
+            "description": "Commands that create the debug target.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "preRunCommands": {
+            "description": "Commands executed just before the program is launched.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "processCreateCommands": {
+            "description": "Commands that create the debuggee process.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "postRunCommands": {
+            "description": "Commands executed just after the program has been launched.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "preTerminateCommands": {
+            "description": "Commands executed just before the debuggee is terminated or disconnected from.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "exitCommands": {
+            "description": "Commands executed at the end of debugging session.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "expressions": {
+            "description": "The default evaluator type used for expressions.",
+            "type": "string",
+            "enum": ["simple", "python", "native"]
+          },
+          "sourceMap": {
+            "description": "Source path remapping between the build machine and the local machine.  Each item is a pair of remote and local path prefixes.",
+            "type": "object",
+            "patternProperties": { ".*": { "type": ["string", "null"] } },
+            "default": {}
+          },
+          "relativePathBase": {
+            "description": "Base directory used for resolution of relative source paths.  Defaults to \"${ZED_WORKTREE_ROOT}\".",
+            "type": "string"
+          },
+          "sourceLanguages": {
+            "description": "A list of source languages to enable language-specific features for.",
+            "type": "array",
+            "default": []
+          },
+          "reverseDebugging": {
+            "description": "Enable reverse debugging (Requires reverse execution support in the debug server, see User's Manual for details).",
+            "type": "boolean",
+            "default": false
+          },
+          "breakpointMode": {
+            "description": "Specifies how source breakpoints should be set.",
+            "type": "string",
+            "enum": ["path", "file"],
+            "enumDescriptions": [
+              "Resolve locations using full source file path.",
+              "Resolve locations using file name only."
+            ]
+          }
+        },
+        "anyOf": [{ "required": ["program"] }, { "required": ["targetCreateCommands"] }, { "required": ["cargo"] }]
+      }
+    },
+    {
+      "if": { "properties": { "request": { "const": "attach" } }, "required": ["request"] },
+      "then": {
+        "properties": {
+          "program": { "description": "Path to the program to attach to.", "type": "string" },
+          "pid": {
+            "description": "Process id to attach to.",
+            "type": ["integer", "string"],
+            "default": "${command:pickMyProcess}"
+          },
+          "stopOnEntry": {
+            "description": "Automatically stop debuggee after attach.",
+            "type": "boolean",
+            "default": false
+          },
+          "waitFor": {
+            "description": "Wait for the process to launch (MacOS only).",
+            "type": "boolean",
+            "default": false
+          },
+          "initCommands": {
+            "description": "Initialization commands executed upon debugger startup.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "targetCreateCommands": {
+            "description": "Commands that create the debug target.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "preRunCommands": {
+            "description": "Commands executed just before the program is launched.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "processCreateCommands": {
+            "description": "Commands that create the debuggee process.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "postRunCommands": {
+            "description": "Commands executed just after the program has been launched.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "exitCommands": {
+            "description": "Commands executed at the end of debugging session.",
+            "type": "array",
+            "items": { "type": "string" },
+            "default": []
+          },
+          "expressions": {
+            "description": "The default evaluator type used for expressions.",
+            "type": "string",
+            "enum": ["simple", "python", "native"]
+          },
+          "sourceMap": {
+            "description": "Source path remapping between the build machine and the local machine.  Each item is a pair of remote and local path prefixes.",
+            "type": "object",
+            "patternProperties": { ".*": { "type": ["string", "null"] } },
+            "default": {}
+          },
+          "relativePathBase": {
+            "description": "Base directory used for resolution of relative source paths.  Defaults to \"${ZED_WORKTREE_ROOT}\".",
+            "type": "string"
+          },
+          "sourceLanguages": {
+            "description": "A list of source languages to enable language-specific features for.",
+            "type": "array",
+            "default": []
+          },
+          "reverseDebugging": {
+            "description": "Enable reverse debugging (Requires reverse execution support in the debug server, see User's Manual for details).",
+            "type": "boolean",
+            "default": false
+          },
+          "breakpointMode": {
+            "description": "Specifies how source breakpoints should be set.",
+            "type": "string",
+            "enum": ["path", "file"],
+            "enumDescriptions": [
+              "Resolve locations using full source file path.",
+              "Resolve locations using file name only."
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

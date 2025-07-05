@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use codelldb::CodeLldbDebugAdapter;
+pub use codelldb::CodeLldbDebugAdapter;
 use collections::HashMap;
 use dap::{
     DapRegistry,
@@ -242,4 +242,32 @@ fn parse_package_json(
 
     let package_json: PackageJson = serde_json::from_value(package_json)?;
     Ok(package_json)
+}
+
+fn schema_for_configuration_attributes(
+    attrs: PackageJsonConfigurationAttributes,
+) -> serde_json::Value {
+    let conjuncts = attrs
+        .launch
+        .map(|schema| ("launch", schema))
+        .into_iter()
+        .chain(attrs.attach.map(|schema| ("attach", schema)))
+        .map(|(request, schema)| {
+            json!({
+                "if": {
+                    "properties": {
+                        "request": {
+                            "const": request
+                        }
+                    },
+                    "required": ["request"]
+                },
+                "then": schema
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "allOf": conjuncts
+    })
 }
