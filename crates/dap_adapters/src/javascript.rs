@@ -245,7 +245,7 @@ impl DebugAdapter for JsDebugAdapter {
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge"],
+                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge", "node-terminal"],
                                     "description": "The type of debug session",
                                     "default": "pwa-node"
                                 },
@@ -379,10 +379,6 @@ impl DebugAdapter for JsDebugAdapter {
                                     }
                                 }
                             },
-                            "oneOf": [
-                                { "required": ["program"] },
-                                { "required": ["url"] }
-                            ]
                         }
                     ]
                 },

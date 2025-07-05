@@ -3303,12 +3303,13 @@ impl ProjectPanel {
     fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, GitEntryRef<'_>)> {
         let mut offset = 0;
         for (worktree_id, visible_worktree_entries, _) in &self.visible_entries {
-            if visible_worktree_entries.len() > offset + index {
+            let current_len = visible_worktree_entries.len();
+            if index < offset + current_len {
                 return visible_worktree_entries
-                    .get(index)
+                    .get(index - offset)
                     .map(|entry| (*worktree_id, entry.to_ref()));
             }
-            offset += visible_worktree_entries.len();
+            offset += current_len;
         }
         None
     }

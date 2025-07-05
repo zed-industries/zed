@@ -1935,12 +1935,14 @@ impl Session {
     }
 
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
         self.thread_states.continue_thread(thread_id);
         self.request(
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: Some(true),
+                    single_thread: supports_single_thread_execution_requests,
                 },
             },
             Self::on_step_response::<ContinueCommand>(thread_id),
