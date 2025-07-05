@@ -746,8 +746,6 @@
     "default_width": 380
   },
   "agent": {
-    // Version of this setting.
-    "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
     /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -1658,7 +1656,6 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
-      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
     "google": {
@@ -1668,7 +1665,6 @@
       "api_url": "http://localhost:11434"
     },
     "openai": {
-      "version": "1",
       "api_url": "https://api.openai.com/v1"
     },
     "open_router": {
