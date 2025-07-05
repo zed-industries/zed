@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub file_opening_behavior: FileOpeningBehavior,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -114,6 +115,16 @@ pub enum RestoreOnStartupBehavior {
     /// Restore all workspaces that were open when quitting Zed.
     #[default]
     LastSession,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileOpeningBehavior {
+    /// Open files in the last active pane
+    #[default]
+    ActivePane,
+    /// Open files in the first pane
+    FirstPane,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +213,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Controls which pane files open in when opened from project panel, file finder, etc.
+    /// Values: active_pane, first_pane
+    ///
+    /// Default: active_pane
+    pub file_opening_behavior: Option<FileOpeningBehavior>,
 }
 
 #[derive(Deserialize)]
