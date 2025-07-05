@@ -6655,86 +6655,105 @@ impl EditorElement {
         }
     }
 
-    fn paint_scroll_wheel_listener(
-        &mut self,
-        layout: &EditorLayout,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn paint_scroll_wheel_listener(&mut self, layout: &EditorLayout, window: &mut Window) {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
-            let mut delta = ScrollDelta::default();
-
-            // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
-            // accidentally turn off their scrolling.
-            let base_scroll_sensitivity =
-                EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
-
-            // Use a minimum fast_scroll_sensitivity for same reason above
-            let fast_scroll_sensitivity = EditorSettings::get_global(cx)
-                .fast_scroll_sensitivity
-                .max(0.01);
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
-                let scroll_sensitivity = {
-                    if event.modifiers.alt {
-                        fast_scroll_sensitivity
-                    } else {
-                        base_scroll_sensitivity
-                    }
-                };
-
-                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    delta = delta.coalesce(event.delta);
-                    editor.update(cx, |editor, cx| {
-                        let position_map: &PositionMap = &position_map;
-
-                        let line_height = position_map.line_height;
-                        let max_glyph_advance = position_map.em_advance;
-                        let (delta, axis) = match delta {
-                            gpui::ScrollDelta::Pixels(mut pixels) => {
-                                //Trackpad
-                                let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
-                                (pixels, axis)
-                            }
-
-                            gpui::ScrollDelta::Lines(lines) => {
-                                //Not trackpad
-                                let pixels =
-                                    point(lines.x * max_glyph_advance, lines.y * line_height);
-                                (pixels, None)
-                            }
-                        };
-
-                        let current_scroll_position = position_map.snapshot.scroll_position();
-                        let x = (current_scroll_position.x * max_glyph_advance
-                            - (delta.x * scroll_sensitivity))
-                            / max_glyph_advance;
-                        let y = (current_scroll_position.y * line_height
-                            - (delta.y * scroll_sensitivity))
-                            / line_height;
-                        let mut scroll_position =
-                            point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
-                        let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
-                        if forbid_vertical_scroll {
-                            scroll_position.y = current_scroll_position.y;
-                        }
-
-                        if scroll_position != current_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
-                            cx.stop_propagation();
-                        } else if y < 0. {
-                            // Due to clamping, we may fail to detect cases of overscroll to the top;
-                            // We want the scroll manager to get an update in such cases and detect the change of direction
-                            // on the next frame.
-                            cx.notify();
-                        }
-                    });
+                if hitbox.should_handle_scroll(window) {
+                    Self::handle_scroll(event, phase, &position_map, &editor, window, cx);
                 }
             }
         });
+    }
+
+    fn paint_scroll_focus_listener(&mut self, layout: &EditorLayout, window: &mut Window) {
+        window.on_action(TypeId::of::<workspace::ScrollFocused>(), {
+            let position_map = layout.position_map.clone();
+            let editor = self.editor.clone();
+
+            move |action, phase, window, cx| {
+                let workspace::ScrollFocused(event) =
+                    action.downcast_ref::<workspace::ScrollFocused>().unwrap();
+
+                Self::handle_scroll(event, phase, &position_map, &editor, window, cx);
+            }
+        });
+    }
+
+    fn handle_scroll(
+        event: &ScrollWheelEvent,
+        phase: DispatchPhase,
+        position_map: &PositionMap,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
+        // accidentally turn off their scrolling.
+        let base_scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+
+        // Use a minimum fast_scroll_sensitivity for same reason above
+        let fast_scroll_sensitivity = EditorSettings::get_global(cx)
+            .fast_scroll_sensitivity
+            .max(0.01);
+
+        let scroll_sensitivity = {
+            if event.modifiers.alt {
+                fast_scroll_sensitivity
+            } else {
+                base_scroll_sensitivity
+            }
+        };
+
+        if phase == DispatchPhase::Bubble {
+            let delta = ScrollDelta::default().coalesce(event.delta);
+
+            editor.update(cx, |editor, cx| {
+                let position_map: &PositionMap = &position_map;
+
+                let line_height = position_map.line_height;
+                let max_glyph_advance = position_map.em_advance;
+                let (delta, axis) = match delta {
+                    gpui::ScrollDelta::Pixels(mut pixels) => {
+                        // Trackpad
+                        let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                        (pixels, axis)
+                    }
+
+                    gpui::ScrollDelta::Lines(lines) => {
+                        // Not trackpad
+                        let pixels = point(lines.x * max_glyph_advance, lines.y * line_height);
+                        (pixels, None)
+                    }
+                };
+
+                let current_scroll_position = position_map.snapshot.scroll_position();
+                let x = (current_scroll_position.x * max_glyph_advance
+                    - (delta.x * scroll_sensitivity))
+                    / max_glyph_advance;
+                let y = (current_scroll_position.y * line_height - (delta.y * scroll_sensitivity))
+                    / line_height;
+                let mut scroll_position =
+                    point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+                let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
+                if forbid_vertical_scroll {
+                    scroll_position.y = current_scroll_position.y;
+                }
+
+                if scroll_position != current_scroll_position {
+                    editor.scroll(scroll_position, axis, window, cx);
+                    cx.stop_propagation();
+                } else if y < 0. {
+                    // Due to clamping, we may fail to detect cases of overscroll to the top;
+                    // We want the scroll manager to get an update in such cases and detect the change of direction
+                    // on the next frame.
+                    cx.notify();
+                }
+            });
+        }
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
@@ -6742,7 +6761,14 @@ impl EditorElement {
             return;
         }
 
-        self.paint_scroll_wheel_listener(layout, window, cx);
+        // This would be configured through a setting
+        let should_scroll_focused = true;
+
+        if should_scroll_focused {
+            self.paint_scroll_focus_listener(layout, window);
+        } else {
+            self.paint_scroll_wheel_listener(layout, window);
+        }
 
         window.on_mouse_event({
             let position_map = layout.position_map.clone();

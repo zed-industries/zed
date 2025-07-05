@@ -77,7 +77,7 @@ impl Deref for ModifiersChangedEvent {
 
 /// The phase of a touch motion event.
 /// Based on the winit enum of the same name.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum TouchPhase {
     /// The touch started.
     Started,
@@ -243,7 +243,7 @@ impl MouseMoveEvent {
 }
 
 /// A mouse wheel event from the platform
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScrollWheelEvent {
     /// The position of the mouse on the window.
     pub position: Point<Pixels>,
@@ -275,7 +275,7 @@ impl Deref for ScrollWheelEvent {
 }
 
 /// The scroll delta for a scroll wheel event.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollDelta {
     /// An exact scroll delta in pixels.
     Pixels(Point<Pixels>),

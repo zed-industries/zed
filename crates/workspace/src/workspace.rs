@@ -38,9 +38,9 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
-    point, relative, size, transparent_black,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, ScrollWheelEvent, Size, Stateful,
+    Subscription, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions,
+    actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -342,6 +342,10 @@ pub struct SendKeystrokes(pub String);
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = workspace, no_json)]
+pub struct ScrollFocused(pub ScrollWheelEvent);
 
 actions!(
     project_symbols,
@@ -6191,6 +6195,16 @@ impl Render for Workspace {
                 .justify_start()
                 .items_start()
                 .text_color(colors.text)
+                .on_scroll_wheel(move |event: &ScrollWheelEvent, window, cx| {
+                  let Some(focus) = window.focused(cx) else {
+                    println!("no focus");
+                    return;
+                  };
+
+                  // This event would need to be listened to in every view that
+                  // is scrollable
+                  focus.dispatch_action(&ScrollFocused(event.clone()), window, cx);
+                })
                 .overflow_hidden()
                 .children(self.titlebar_item.clone())
                 .on_modifiers_changed(move |_, _, cx| {
