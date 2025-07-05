@@ -21,6 +21,7 @@ test-support = [
 [dependencies]
 agent.workspace = true
 agent_settings.workspace = true
+ai_onboarding.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true
 assistant_slash_command.workspace = true

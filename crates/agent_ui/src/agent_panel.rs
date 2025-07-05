@@ -23,7 +23,7 @@ use crate::{
         render_remaining_tokens,
     },
     thread_history::{HistoryEntryElement, ThreadHistory},
-    ui::AgentOnboardingModal,
+    ui::{AgentOnboardingModal, EndTrialUpsell},
 };
 use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
@@ -32,6 +32,7 @@ use agent::{
     thread_store::{TextThreadStore, ThreadStore},
 };
 use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
+use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -42,13 +43,11 @@ use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop,
-    linear_gradient, prelude::*, pulsating_between,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{
-    ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
-};
+use language_model::{ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry};
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
@@ -59,8 +58,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, Callout, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, Callout, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProgressBar, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -427,7 +426,7 @@ pub struct AgentPanel {
     height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
-    hide_upsell: bool,
+    onboarding: Entity<AgentPanelOnboarding>,
 }
 
 impl AgentPanel {
@@ -529,6 +528,7 @@ impl AgentPanel {
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
+        let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
@@ -661,6 +661,12 @@ impl AgentPanel {
             },
         );
 
+        let onboarding = cx.new(|_cx| {
+            AgentPanelOnboarding::new(user_store.clone(), client, |_window, cx| {
+                Upsell::set_dismissed(true, cx);
+            })
+        });
+
         Self {
             active_view,
             workspace,
@@ -690,7 +696,7 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
-            hide_upsell: false,
+            onboarding,
         }
     }
 
@@ -2018,42 +2024,44 @@ impl AgentPanel {
     }
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
-        match &self.active_view {
-            ActiveView::Thread { thread, .. } => {
-                let is_using_zed_provider = thread
-                    .read(cx)
-                    .thread()
-                    .read(cx)
-                    .configured_model()
-                    .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
-
-                if !is_using_zed_provider {
-                    return false;
-                }
-            }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
-                return false;
-            }
-        };
-
-        if self.hide_upsell || Upsell::dismissed() {
-            return false;
-        }
-
-        let plan = self.user_store.read(cx).current_plan();
-        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
-            return false;
-        }
-
-        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
-        if has_previous_trial {
-            return false;
-        }
-
         true
+
+        // if Upsell::dismissed() {
+        //     return false;
+        // }
+
+        // match &self.active_view {
+        //     ActiveView::Thread { thread, .. } => {
+        //         let is_using_zed_provider = thread
+        //             .read(cx)
+        //             .thread()
+        //             .read(cx)
+        //             .configured_model()
+        //             .map_or(false, |model| model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID);
+
+        //         if !is_using_zed_provider {
+        //             return false;
+        //         }
+        //     }
+        //     ActiveView::TextThread { .. } => {
+        //         let is_using_zed_provider = LanguageModelRegistry::global(cx)
+        //             .read(cx)
+        //             .default_model()
+        //             .map_or(false, |model| model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID);
+
+        //         if !is_using_zed_provider {
+        //             return false;
+        //         }
+        //     }
+        //     ActiveView::History | ActiveView::Configuration => return false,
+        // }
+
+        // // TODO: change this when the "signing in is === free plan" is in place
+        // let plan = self.user_store.read(cx).current_plan();
+        // plan.is_none()
     }
 
-    fn render_upsell(
+    fn render_onboarding(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -2062,137 +2070,7 @@ impl AgentPanel {
             return None;
         }
 
-        if self.user_store.read(cx).account_too_young() {
-            Some(self.render_young_account_upsell(cx).into_any_element())
-        } else {
-            Some(self.render_trial_upsell(cx).into_any_element())
-        }
-    }
-
-    fn render_young_account_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let checkbox = CheckboxWithLabel::new(
-            "dont-show-again",
-            Label::new("Don't show again").color(Color::Muted),
-            ToggleState::Unselected,
-            move |toggle_state, _window, cx| {
-                let toggle_state_bool = toggle_state.selected();
-
-                Upsell::set_dismissed(toggle_state_bool, cx);
-            },
-        );
-
-        let contents = div()
-            .size_full()
-            .gap_2()
-            .flex()
-            .flex_col()
-            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
-            .child(
-                Label::new("Your GitHub account was created less than 30 days ago, so we can't offer you a free trial.")
-                    .size(LabelSize::Small),
-            )
-            .child(
-                Label::new(
-                    "Use your own API keys, upgrade to Zed Pro or send an email to billing-support@zed.dev.",
-                )
-                .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_neg_1()
-                    .justify_between()
-                    .items_center()
-                    .child(h_flex().items_center().gap_1().child(checkbox))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("dismiss-button", "Not Now")
-                                    .style(ButtonStyle::Transparent)
-                                    .color(Color::Muted)
-                                    .on_click({
-                                        let agent_panel = cx.entity();
-                                        move |_, _, cx| {
-                                            agent_panel.update(cx, |this, cx| {
-                                                this.hide_upsell = true;
-                                                cx.notify();
-                                            });
-                                        }
-                                    }),
-                            )
-                            .child(
-                                Button::new("cta-button", "Upgrade to Zed Pro")
-                                    .style(ButtonStyle::Transparent)
-                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                            ),
-                    ),
-            );
-
-        self.render_upsell_container(cx, contents)
-    }
-
-    fn render_trial_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let checkbox = CheckboxWithLabel::new(
-            "dont-show-again",
-            Label::new("Don't show again").color(Color::Muted),
-            ToggleState::Unselected,
-            move |toggle_state, _window, cx| {
-                let toggle_state_bool = toggle_state.selected();
-
-                Upsell::set_dismissed(toggle_state_bool, cx);
-            },
-        );
-
-        let contents = div()
-            .size_full()
-            .gap_2()
-            .flex()
-            .flex_col()
-            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
-            .child(
-                Label::new("Try Zed Pro for free for 14 days - no credit card required.")
-                    .size(LabelSize::Small),
-            )
-            .child(
-                Label::new(
-                    "Use your own API keys or enable usage-based billing once you hit the cap.",
-                )
-                .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .px_neg_1()
-                    .justify_between()
-                    .items_center()
-                    .child(h_flex().items_center().gap_1().child(checkbox))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("dismiss-button", "Not Now")
-                                    .style(ButtonStyle::Transparent)
-                                    .color(Color::Muted)
-                                    .on_click({
-                                        let agent_panel = cx.entity();
-                                        move |_, _, cx| {
-                                            agent_panel.update(cx, |this, cx| {
-                                                this.hide_upsell = true;
-                                                cx.notify();
-                                            });
-                                        }
-                                    }),
-                            )
-                            .child(
-                                Button::new("cta-button", "Start Trial")
-                                    .style(ButtonStyle::Transparent)
-                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                            ),
-                    ),
-            );
-
-        self.render_upsell_container(cx, contents)
+        Some(div().size_full().child(self.onboarding.clone()))
     }
 
     fn render_trial_end_upsell(
@@ -2204,141 +2082,15 @@ impl AgentPanel {
             return None;
         }
 
-        Some(
-            self.render_upsell_container(
-                cx,
-                div()
-                    .size_full()
-                    .gap_2()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        Headline::new("Your Zed Pro trial has expired.").size(HeadlineSize::Small),
-                    )
-                    .child(
-                        Label::new("You've been automatically reset to the free plan.")
-                            .size(LabelSize::Small),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .px_neg_1()
-                            .justify_between()
-                            .items_center()
-                            .child(div())
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("dismiss-button", "Stay on Free")
-                                            .style(ButtonStyle::Transparent)
-                                            .color(Color::Muted)
-                                            .on_click({
-                                                let agent_panel = cx.entity();
-                                                move |_, _, cx| {
-                                                    agent_panel.update(cx, |_this, cx| {
-                                                        TrialEndUpsell::set_dismissed(true, cx);
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("cta-button", "Upgrade to Zed Pro")
-                                            .style(ButtonStyle::Transparent)
-                                            .on_click(|_, _, cx| {
-                                                cx.open_url(&zed_urls::account_url(cx))
-                                            }),
-                                    ),
-                            ),
-                    ),
-            ),
-        )
-    }
-
-    fn render_upsell_container(&self, cx: &mut Context<Self>, content: Div) -> Div {
-        div().p_2().child(
-            v_flex()
-                .w_full()
-                .elevation_2(cx)
-                .rounded(px(8.))
-                .bg(cx.theme().colors().background.alpha(0.5))
-                .p(px(3.))
-                .child(
-                    div()
-                        .gap_2()
-                        .flex()
-                        .flex_col()
-                        .size_full()
-                        .border_1()
-                        .rounded(px(5.))
-                        .border_color(cx.theme().colors().text.alpha(0.1))
-                        .overflow_hidden()
-                        .relative()
-                        .bg(cx.theme().colors().panel_background)
-                        .px_4()
-                        .py_3()
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .right(px(-1.0))
-                                .w(px(441.))
-                                .h(px(167.))
-                                .child(
-                                    Vector::new(
-                                        VectorName::Grid,
-                                        rems_from_px(441.),
-                                        rems_from_px(167.),
-                                    )
-                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1))),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(-8.0))
-                                .right_0()
-                                .w(px(400.))
-                                .h(px(92.))
-                                .child(
-                                    Vector::new(
-                                        VectorName::AiGrid,
-                                        rems_from_px(400.),
-                                        rems_from_px(92.),
-                                    )
-                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
-                                ),
-                        )
-                        // .child(
-                        //     div()
-                        //         .absolute()
-                        //         .top_0()
-                        //         .right(px(360.))
-                        //         .size(px(401.))
-                        //         .overflow_hidden()
-                        //         .bg(cx.theme().colors().panel_background)
-                        // )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .right_0()
-                                .w(px(660.))
-                                .h(px(401.))
-                                .overflow_hidden()
-                                .bg(linear_gradient(
-                                    75.,
-                                    linear_color_stop(
-                                        cx.theme().colors().panel_background.alpha(0.01),
-                                        1.0,
-                                    ),
-                                    linear_color_stop(cx.theme().colors().panel_background, 0.45),
-                                )),
-                        )
-                        .child(content),
-                ),
-        )
+        Some(EndTrialUpsell::new(Arc::new({
+            let this = cx.entity();
+            move |_, cx| {
+                this.update(cx, |_this, cx| {
+                    TrialEndUpsell::set_dismissed(true, cx);
+                    cx.notify();
+                });
+            }
+        })))
     }
 
     fn render_thread_empty_state(
@@ -3041,7 +2793,7 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_upsell(window, cx))
+            .children(self.render_onboarding(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread {
@@ -3257,7 +3009,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 struct Upsell;
 
 impl Dismissable for Upsell {
-    const KEY: &'static str = "dismissed-trial-upsell";
+    const KEY: &'static str = "dismissed-upsell";
 }
 
 struct TrialEndUpsell;
