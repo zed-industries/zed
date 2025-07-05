@@ -903,7 +903,7 @@ pub trait InteractiveElement: Sized {
     /// Apply the given style when the given data type is dragged over this element
     fn drag_over<S: 'static>(
         mut self,
-        f: impl 'static + Fn(StyleRefinement, &S, &Window, &App) -> StyleRefinement,
+        f: impl 'static + Fn(StyleRefinement, &S, &mut Window, &mut App) -> StyleRefinement,
     ) -> Self {
         self.interactivity().drag_over_styles.push((
             TypeId::of::<S>(),
