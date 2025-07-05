@@ -585,17 +585,41 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         &self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        _text: &str,
-        _trigger_in_words: bool,
+        text: &str,
+        trigger_in_words: bool,
         menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+
         let snapshot = buffer.read(cx).snapshot();
         if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
         }
 
-        true
+        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        if trigger_in_words && classifier.is_word(char) {
+            return true;
+        }
+
+        self.0
+            .read_with(cx, |console, cx| {
+                console
+                    .session
+                    .read(cx)
+                    .capabilities()
+                    .completion_trigger_characters
+                    .as_ref()
+                    .map(|triggers| triggers.contains(&text.to_string()))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(true)
     }
 }
 
