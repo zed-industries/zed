@@ -327,6 +327,7 @@
       "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
+      "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
       // "g ?": "vim::ConvertToRot47",
       "\"": "vim::PushRegister",
