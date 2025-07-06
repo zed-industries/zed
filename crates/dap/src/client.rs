@@ -166,6 +166,7 @@ impl DebugAdapterClient {
     pub fn kill(&self) {
         log::debug!("Killing DAP process");
         self.transport_delegate.transport.lock().kill();
+        self.transport_delegate.tasks.lock().clear();
     }
 
     pub fn has_adapter_logs(&self) -> bool {

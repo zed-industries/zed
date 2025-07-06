@@ -96,7 +96,7 @@ pub(crate) struct TransportDelegate {
     pub(crate) pending_requests: Requests,
     pub(crate) transport: Mutex<Box<dyn Transport>>,
     pub(crate) server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
-    tasks: Mutex<Vec<Task<()>>>,
+    pub(crate) tasks: Mutex<Vec<Task<()>>>,
 }
 
 impl TransportDelegate {
