@@ -161,6 +161,87 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_broken_symlink(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "target_dir": {
+                "actual_file.txt": "",
+                "file_to_be_symlinked.txt": "hello"
+            }
+        }),
+    )
+    .await;
+
+    fs.create_symlink(
+        "/root/target_dir/actual_file.txt".as_ref(),
+        "/root/target_dir/file_to_be_symlinked.txt".into(),
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        let symlink_entry = tree.entry_for_path("target_dir/actual_file.txt").unwrap();
+        assert!(
+            !symlink_entry.is_symlink_broken,
+            "Symlink should be valid initially"
+        );
+        assert!(
+            symlink_entry.canonical_path.is_some(),
+            "Canonical path should be present for valid symlink"
+        );
+    });
+
+    // Delete the target file, making the symlink broken
+    fs.trash_file(
+        "/root/target_dir/file_to_be_symlinked.txt".as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    cx.executor().run_until_parked();
+    // Refresh the symlink entry
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![Path::new("target_dir").into()])
+    })
+    .recv()
+    .await;
+
+    // After refresh: symlink should be broken
+    tree.read_with(cx, |tree, _| {
+        let symlink_entry = tree.entry_for_path("target_dir/actual_file.txt").unwrap();
+        assert!(
+            symlink_entry.is_symlink_broken,
+            "Symlink should be broken after target is deleted"
+        );
+        assert!(
+            symlink_entry.canonical_path.is_none(),
+            "Canonical path should be None for broken symlink"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
