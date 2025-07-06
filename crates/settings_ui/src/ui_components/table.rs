@@ -12,8 +12,7 @@ use ui::{
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement as _, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
     Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledExt as _,
-    StyledTypography, Tooltip, Window, div, example_group_with_title, h_flex, px, single_example,
-    v_flex,
+    StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
 struct UniformListData<const COLS: usize> {
@@ -474,7 +473,6 @@ pub fn render_row<const COLS: usize>(
     let row = div().w_full().child(
         h_flex()
             .id("table_row")
-            .tooltip(Tooltip::text("Hit enter to edit"))
             .w_full()
             .justify_between()
             .px_1p5()

@@ -249,12 +249,15 @@ impl KeymapEditor {
 
     fn process_bindings(
         json_language: Arc<Language>,
+        rust_language: Arc<Language>,
         cx: &mut App,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
-        let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names());
+        let mut unmapped_action_names =
+            HashSet::from_iter(cx.all_action_names().into_iter().copied());
+        let action_documentation = cx.action_documentation();
 
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
@@ -270,7 +273,9 @@ impl KeymapEditor {
 
             let context = key_binding
                 .predicate()
-                .map(|predicate| KeybindContextString::Local(predicate.to_string().into()))
+                .map(|predicate| {
+                    KeybindContextString::Local(predicate.to_string().into(), rust_language.clone())
+                })
                 .unwrap_or(KeybindContextString::Global);
 
             let source = source.map(|source| (source, source.name().into()));
@@ -280,6 +285,7 @@ impl KeymapEditor {
             let action_input = key_binding
                 .action_input()
                 .map(|input| SyntaxHighlightedText::new(input, json_language.clone()));
+            let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
             let string_match_candidate = StringMatchCandidate::new(index, &action_name);
@@ -288,6 +294,7 @@ impl KeymapEditor {
                 ui_key_binding,
                 action: action_name.into(),
                 action_input,
+                action_docs,
                 context: Some(context),
                 source,
             });
@@ -301,8 +308,9 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
-                action: (*action_name).into(),
+                action: action_name.into(),
                 action_input: None,
+                action_docs: action_documentation.get(action_name).copied(),
                 context: None,
                 source: None,
             });
@@ -315,11 +323,12 @@ impl KeymapEditor {
     fn update_keybindings(&mut self, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
-            let json_language = Self::load_json_language(workspace, cx).await;
+            let json_language = Self::load_json_language(workspace.clone(), cx).await;
+            let rust_language = Self::load_rust_language(workspace.clone(), cx).await;
 
             let query = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
-                    Self::process_bindings(json_language.clone(), cx);
+                    Self::process_bindings(json_language, rust_language, cx);
                 this.keybindings = key_bindings;
                 this.string_match_candidates = Arc::new(string_match_candidates);
                 this.matches = this
@@ -366,6 +375,35 @@ impl KeymapEditor {
                     ..Default::default()
                 },
                 Some(tree_sitter_json::LANGUAGE.into()),
+            ))
+        });
+    }
+
+    async fn load_rust_language(
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncApp,
+    ) -> Arc<Language> {
+        let rust_language_task = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .languages()
+                    .language_for_name("Rust")
+            })
+            .context("Failed to load Rust language")
+            .log_err();
+        let rust_language = match rust_language_task {
+            Some(task) => task.await.context("Failed to load Rust language").log_err(),
+            None => None,
+        };
+        return rust_language.unwrap_or_else(|| {
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::LANGUAGE.into()),
             ))
         });
     }
@@ -537,6 +575,7 @@ struct ProcessedKeybinding {
     ui_key_binding: Option<ui::KeyBinding>,
     action: SharedString,
     action_input: Option<SyntaxHighlightedText>,
+    action_docs: Option<&'static str>,
     context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -544,7 +583,7 @@ struct ProcessedKeybinding {
 #[derive(Clone, Debug, IntoElement)]
 enum KeybindContextString {
     Global,
-    Local(SharedString),
+    Local(SharedString, Arc<Language>),
 }
 
 impl KeybindContextString {
@@ -553,14 +592,14 @@ impl KeybindContextString {
     pub fn local(&self) -> Option<&SharedString> {
         match self {
             KeybindContextString::Global => None,
-            KeybindContextString::Local(name) => Some(name),
+            KeybindContextString::Local(name, _) => Some(name),
         }
     }
 
     pub fn local_str(&self) -> Option<&str> {
         match self {
             KeybindContextString::Global => None,
-            KeybindContextString::Local(name) => Some(name),
+            KeybindContextString::Local(name, _) => Some(name),
         }
     }
 }
@@ -568,8 +607,15 @@ impl KeybindContextString {
 impl RenderOnce for KeybindContextString {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         match self {
-            KeybindContextString::Global => KeybindContextString::GLOBAL.clone(),
-            KeybindContextString::Local(name) => name,
+            KeybindContextString::Global => StyledText::new(KeybindContextString::GLOBAL.clone())
+                .with_highlights([(
+                    0..KeybindContextString::GLOBAL.len(),
+                    gpui::HighlightStyle::color(_cx.theme().colors().text_muted),
+                )])
+                .into_any_element(),
+            KeybindContextString::Local(name, language) => {
+                SyntaxHighlightedText::new(name, language).into_any_element()
+            }
         }
     }
 }
@@ -635,7 +681,26 @@ impl Render for KeymapEditor {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
 
-                                    let action = binding.action.clone().into_any_element();
+                                    let action = div()
+                                        .child(binding.action.clone())
+                                        .id(("keymap action", index))
+                                        .tooltip({
+                                            let action_name = binding.action.clone();
+                                            let action_docs = binding.action_docs;
+                                            move |_, cx| {
+                                                let action_tooltip = Tooltip::new(
+                                                    command_palette::humanize_action_name(
+                                                        &action_name,
+                                                    ),
+                                                );
+                                                let action_tooltip = match action_docs {
+                                                    Some(docs) => action_tooltip.meta(docs),
+                                                    None => action_tooltip,
+                                                };
+                                                cx.new(|_| action_tooltip).into()
+                                            }
+                                        })
+                                        .into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
