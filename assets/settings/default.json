@@ -1723,6 +1723,12 @@
     // Whether to show the LSP servers button in the status bar.
     "button": true
   },
+  // Common context server settings.
+  "global_context_server_settings": {
+    // Request timeout in seconds for context server operations.
+    // Default: 60
+    // "request_timeout_secs": 60
+  },
   // Jupyter settings
   "jupyter": {
     "enabled": true

@@ -9,7 +9,7 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings as _, SettingsStore, SettingsLocation};
 use util::ResultExt as _;
 
 use crate::{
@@ -376,7 +376,21 @@ impl ContextServerStore {
             let server = server.clone();
             let configuration = configuration.clone();
             async move |this, cx| {
-                match server.clone().start(&cx).await {
+                // Get the request timeout from global context server settings
+                let request_timeout = this.update(cx, |this, cx| {
+                    let location = this.worktree_store
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .map(|worktree| SettingsLocation {
+                            worktree_id: worktree.read(cx).id(),
+                            path: Path::new(""),
+                        });
+                    let timeout_secs = ProjectSettings::get(location, cx).global_context_server_settings.request_timeout_secs;
+                     std::time::Duration::from_secs(timeout_secs)
+                }).unwrap_or_else(|_| std::time::Duration::from_secs(60));
+                
+                match server.clone().start(request_timeout, &cx).await {
                     Ok(_) => {
                         log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
