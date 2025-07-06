@@ -3939,18 +3939,6 @@ impl ProjectPanel {
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .block_mouse_except_scroll()
-            .when(is_sticky, |this| {
-                this.on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                        let strategy = sticky_index
-                            .map(ScrollStrategy::ToPosition)
-                            .unwrap_or(ScrollStrategy::Top);
-                        this.scroll_handle.scroll_to_item(index, strategy);
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }))
-            })
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
@@ -4088,86 +4076,96 @@ impl ProjectPanel {
                         this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
                     }),
                 )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.mouse_down = true;
-                        cx.propagate();
-                    }),
-                )
-                .on_click(
-                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        if event.down.button == MouseButton::Right
-                            || event.down.first_mouse
-                            || show_editor
-                        {
-                            return;
-                        }
-                        if event.down.button == MouseButton::Left {
-                            this.mouse_down = false;
-                        }
-                        cx.stop_propagation();
-
-                        if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
-                            let current_selection = this.index_for_selection(selection);
-                            let clicked_entry = SelectedEntry {
-                                entry_id,
-                                worktree_id,
-                            };
-                            let target_selection = this.index_for_selection(clicked_entry);
-                            if let Some(((_, _, source_index), (_, _, target_index))) =
-                                current_selection.zip(target_selection)
-                            {
-                                let range_start = source_index.min(target_index);
-                                let range_end = source_index.max(target_index) + 1;
-                                let mut new_selections = BTreeSet::new();
-                                this.for_each_visible_entry(
-                                    range_start..range_end,
-                                    window,
-                                    cx,
-                                    |entry_id, details, _, _| {
-                                        new_selections.insert(SelectedEntry {
-                                            entry_id,
-                                            worktree_id: details.worktree_id,
-                                        });
-                                    },
-                                );
-
-                                this.marked_entries = this
-                                    .marked_entries
-                                    .union(&new_selections)
-                                    .cloned()
-                                    .collect();
-
-                                this.selection = Some(clicked_entry);
-                                this.marked_entries.insert(clicked_entry);
-                            }
-                        } else if event.modifiers().secondary() {
-                            if event.down.click_count > 1 {
-                                this.split_entry(entry_id, cx);
-                            } else {
-                                this.selection = Some(selection);
-                                if !this.marked_entries.insert(selection) {
-                                    this.marked_entries.remove(&selection);
-                                }
-                            }
-                        } else if kind.is_dir() {
-                            this.marked_entries.clear();
-                            if event.modifiers().alt {
-                                this.toggle_expand_all(entry_id, window, cx);
-                            } else {
-                                this.toggle_expanded(entry_id, window, cx);
-                            }
-                        } else {
-                            let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                            let click_count = event.up.click_count;
-                            let focus_opened_item = !preview_tabs_enabled || click_count > 1;
-                            let allow_preview = preview_tabs_enabled && click_count == 1;
-                            this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                        }
-                    }),
-                )
             })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.mouse_down = true;
+                    cx.propagate();
+                }),
+            )
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    if event.down.button == MouseButton::Right
+                        || event.down.first_mouse
+                        || show_editor
+                    {
+                        return;
+                    }
+                    if event.down.button == MouseButton::Left {
+                        this.mouse_down = false;
+                    }
+                    cx.stop_propagation();
+
+                    if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
+                        let current_selection = this.index_for_selection(selection);
+                        let clicked_entry = SelectedEntry {
+                            entry_id,
+                            worktree_id,
+                        };
+                        let target_selection = this.index_for_selection(clicked_entry);
+                        if let Some(((_, _, source_index), (_, _, target_index))) =
+                            current_selection.zip(target_selection)
+                        {
+                            let range_start = source_index.min(target_index);
+                            let range_end = source_index.max(target_index) + 1;
+                            let mut new_selections = BTreeSet::new();
+                            this.for_each_visible_entry(
+                                range_start..range_end,
+                                window,
+                                cx,
+                                |entry_id, details, _, _| {
+                                    new_selections.insert(SelectedEntry {
+                                        entry_id,
+                                        worktree_id: details.worktree_id,
+                                    });
+                                },
+                            );
+
+                            this.marked_entries = this
+                                .marked_entries
+                                .union(&new_selections)
+                                .cloned()
+                                .collect();
+
+                            this.selection = Some(clicked_entry);
+                            this.marked_entries.insert(clicked_entry);
+                        }
+                    } else if event.modifiers().secondary() {
+                        if event.down.click_count > 1 {
+                            this.split_entry(entry_id, cx);
+                        } else {
+                            this.selection = Some(selection);
+                            if !this.marked_entries.insert(selection) {
+                                this.marked_entries.remove(&selection);
+                            }
+                        }
+                    } else if kind.is_dir() {
+                        this.marked_entries.clear();
+                        if event.modifiers().alt {
+                            this.toggle_expand_all(entry_id, window, cx);
+                        } else {
+                            this.toggle_expanded(entry_id, window, cx);
+                        }
+                    } else {
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let click_count = event.up.click_count;
+                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                        let allow_preview = preview_tabs_enabled && click_count == 1;
+                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                    }
+
+                    if is_sticky {
+                        if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
+                            let strategy = sticky_index
+                                .map(ScrollStrategy::ToPosition)
+                                .unwrap_or(ScrollStrategy::Top);
+                            this.scroll_handle.scroll_to_item(index, strategy);
+                            cx.notify();
+                        }
+                    }
+                }),
+            )
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -4330,17 +4328,6 @@ impl ProjectPanel {
                                             .id(id)
                                             .when(!is_sticky,| div| {
                                                 div
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    if index != active_index {
-                                                        if let Some(folds) =
-                                                            this.ancestors.get_mut(&entry_id)
-                                                        {
-                                                            folds.current_ancestor_depth =
-                                                                components_len - 1 - index;
-                                                            cx.notify();
-                                                        }
-                                                    }
-                                                }))
                                                 .when(index != components_len - 1, |div|{
                                                     let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
                                                     div
@@ -4384,6 +4371,17 @@ impl ProjectPanel {
                                                     })
                                                 })
                                             })
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if index != active_index {
+                                                    if let Some(folds) =
+                                                        this.ancestors.get_mut(&entry_id)
+                                                    {
+                                                        folds.current_ancestor_depth =
+                                                            components_len - 1 - index;
+                                                        cx.notify();
+                                                    }
+                                                }
+                                            }))
                                             .child(
                                                 Label::new(component)
                                                     .single_line()
@@ -4409,23 +4407,21 @@ impl ProjectPanel {
                             })
                         },
                     )
-                    .when(!is_sticky,| div| {
-                        div.on_secondary_mouse_down(cx.listener(
-                            move |this, event: &MouseDownEvent, window, cx| {
-                                // Stop propagation to prevent the catch-all context menu for the project
-                                // panel from being deployed.
-                                cx.stop_propagation();
-                                // Some context menu actions apply to all marked entries. If the user
-                                // right-clicks on an entry that is not marked, they may not realize the
-                                // action applies to multiple entries. To avoid inadvertent changes, all
-                                // entries are unmarked.
-                                if !this.marked_entries.contains(&selection) {
-                                    this.marked_entries.clear();
-                                }
-                                this.deploy_context_menu(event.position, entry_id, window, cx);
-                            },
-                        ))
-                    })
+                    .on_secondary_mouse_down(cx.listener(
+                        move |this, event: &MouseDownEvent, window, cx| {
+                            // Stop propagation to prevent the catch-all context menu for the project
+                            // panel from being deployed.
+                            cx.stop_propagation();
+                            // Some context menu actions apply to all marked entries. If the user
+                            // right-clicks on an entry that is not marked, they may not realize the
+                            // action applies to multiple entries. To avoid inadvertent changes, all
+                            // entries are unmarked.
+                            if !this.marked_entries.contains(&selection) {
+                                this.marked_entries.clear();
+                            }
+                            this.deploy_context_menu(event.position, entry_id, window, cx);
+                        },
+                    ))
                     .overflow_x(),
             )
             .when_some(
