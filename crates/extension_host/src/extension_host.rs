@@ -1670,7 +1670,7 @@ impl ExtensionStore {
                 .extensions
                 .iter()
                 .filter_map(|(id, entry)| {
-                    if entry.manifest.language_servers.is_empty() {
+                    if !entry.manifest.allow_remote_load() {
                         return None;
                     }
                     Some(proto::Extension {
