@@ -3018,7 +3018,8 @@ impl Pane {
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
                     if let Some(split_direction) = split_direction {
-                        to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
+                        to_pane =
+                            workspace.split_and_activate(to_pane, split_direction, window, cx);
                     }
                     let database_id = workspace.database_id();
                     let was_pinned_in_from_pane = from_pane.read_with(cx, |pane, _| {
@@ -3124,7 +3125,7 @@ impl Pane {
                                 let (to_pane, new_item_handle) = workspace
                                     .update_in(cx, |workspace, window, cx| {
                                         if let Some(split_direction) = split_direction {
-                                            to_pane = workspace.split_pane(
+                                            to_pane = workspace.split_and_activate(
                                                 to_pane,
                                                 split_direction,
                                                 window,
