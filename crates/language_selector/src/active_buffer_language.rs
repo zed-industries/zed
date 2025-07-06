@@ -1,5 +1,4 @@
-use editor::Editor;
-use editor::EditorSettings;
+use editor::{Editor, EditorSettings};
 use settings::Settings as _;
 use gpui::{
     Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window, div,
