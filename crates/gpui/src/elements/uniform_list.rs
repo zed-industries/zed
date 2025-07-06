@@ -73,7 +73,6 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
-    top_slot_items: SmallVec<[AnyElement; 8]>,
     decorations: SmallVec<[AnyElement; 1]>,
 }
 
@@ -91,6 +90,8 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
+    /// Scrolls the element to be at the given item index from the top of the viewport.
+    ToPosition(usize),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -215,7 +216,6 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
-                top_slot_items: SmallVec::new(),
             },
         )
     }
@@ -349,6 +349,15 @@ impl Element for UniformList {
                                     }
                                 }
                             }
+                            ScrollStrategy::ToPosition(sticky_index) => {
+                                let target_y_in_viewport = item_height * sticky_index;
+                                let target_scroll_top = item_top - target_y_in_viewport;
+                                let max_scroll_top =
+                                    (content_height - list_height).max(Pixels::ZERO);
+                                let new_scroll_top =
+                                    target_scroll_top.clamp(Pixels::ZERO, max_scroll_top);
+                                updated_scroll_offset.y = -new_scroll_top;
+                            }
                         }
                         scroll_offset = *updated_scroll_offset
                     }
@@ -361,7 +370,7 @@ impl Element for UniformList {
                     let initial_range = first_visible_element_ix
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
-                    let mut top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
+                    let top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
                         top_slot.compute(initial_range, window, cx)
                     } else {
                         SmallVec::new()
@@ -409,7 +418,7 @@ impl Element for UniformList {
 
                         if let Some(ref top_slot) = self.top_slot {
                             top_slot.prepaint(
-                                &mut top_slot_elements,
+                                top_slot_elements,
                                 padded_bounds,
                                 item_height,
                                 scroll_offset,
@@ -419,7 +428,6 @@ impl Element for UniformList {
                                 cx,
                             );
                         }
-                        frame_state.top_slot_items = top_slot_elements;
 
                         let bounds = Bounds::new(
                             padded_bounds.origin
@@ -479,9 +487,6 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(window, cx);
                 }
-                if let Some(ref top_slot) = self.top_slot {
-                    top_slot.paint(&mut request_layout.top_slot_items, window, cx);
-                }
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
@@ -529,7 +534,7 @@ pub trait UniformListTopSlot {
     /// Layout and prepaint the top slot elements.
     fn prepaint(
         &self,
-        elements: &mut SmallVec<[AnyElement; 8]>,
+        elements: SmallVec<[AnyElement; 8]>,
         bounds: Bounds<Pixels>,
         item_height: Pixels,
         scroll_offset: Point<Pixels>,
@@ -538,9 +543,6 @@ pub trait UniformListTopSlot {
         window: &mut Window,
         cx: &mut App,
     );
-
-    /// Paint the top slot elements.
-    fn paint(&self, elements: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App);
 }
 
 impl UniformList {

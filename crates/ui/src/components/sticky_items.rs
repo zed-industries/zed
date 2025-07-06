@@ -92,7 +92,7 @@ where
 
     fn prepaint(
         &self,
-        items: &mut SmallVec<[AnyElement; 8]>,
+        items: SmallVec<[AnyElement; 8]>,
         bounds: Bounds<Pixels>,
         item_height: Pixels,
         scroll_offset: gpui::Point<Pixels>,
@@ -103,15 +103,15 @@ where
     ) {
         let items_count = items.len();
 
-        for (ix, item) in items.iter_mut().enumerate() {
-            let mut item_y_offset = Pixels::ZERO;
+        for (ix, mut item) in items.into_iter().enumerate() {
+            let mut item_y_offset = None;
             if ix == items_count - 1 && self.last_item_is_drifting {
                 if let Some(anchor_index) = self.anchor_index {
                     let scroll_top = -scroll_offset.y;
                     let anchor_top = item_height * anchor_index;
                     let sticky_area_height = item_height * items_count;
                     item_y_offset =
-                        (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO);
+                        Some((anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO));
                 };
             }
 
@@ -122,7 +122,7 @@ where
                     } else {
                         scroll_offset.x
                     },
-                    item_height * ix + padding.top + item_y_offset,
+                    item_height * ix + padding.top + item_y_offset.unwrap_or(Pixels::ZERO),
                 );
 
             let available_width = if can_scroll_horizontally {
@@ -137,14 +137,9 @@ where
             );
 
             item.layout_as_root(available_space, window, cx);
-            item.prepaint_at(sticky_origin, window, cx);
-        }
-    }
 
-    fn paint(&self, items: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App) {
-        // reverse so that last item is bottom most among sticky items
-        for item in items.iter_mut().rev() {
-            item.paint(window, cx);
+            let priority = if item_y_offset.is_some() { 2 } else { 3 };
+            window.defer_draw(item, sticky_origin, priority);
         }
     }
 }

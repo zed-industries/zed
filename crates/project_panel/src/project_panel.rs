@@ -173,13 +173,18 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
-    is_sticky: bool,
+    sticky: Option<StickyDetails>,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+struct StickyDetails {
+    sticky_index: usize,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -3393,7 +3398,7 @@ impl ProjectPanel {
                         root_name,
                         entries,
                         status,
-                        false,
+                        None,
                         window,
                         cx,
                     );
@@ -3808,7 +3813,8 @@ impl ProjectPanel {
         const GROUP_NAME: &str = "project_entry";
 
         let kind = details.kind;
-        let is_sticky = details.is_sticky;
+        let is_sticky = details.sticky.is_some();
+        let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
 
@@ -3932,6 +3938,19 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
+            .block_mouse_except_scroll()
+            .when(is_sticky, |this| {
+                this.on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
+                        let strategy = sticky_index
+                            .map(ScrollStrategy::ToPosition)
+                            .unwrap_or(ScrollStrategy::Top);
+                        this.scroll_handle.scroll_to_item(index, strategy);
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }))
+            })
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
@@ -4445,7 +4464,7 @@ impl ProjectPanel {
         root_name: &OsStr,
         entries_paths: &HashSet<Arc<Path>>,
         git_status: GitSummary,
-        is_sticky: bool,
+        sticky: Option<StickyDetails>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> EntryDetails {
@@ -4530,7 +4549,7 @@ impl ProjectPanel {
             is_editing: false,
             is_processing: false,
             is_cut,
-            is_sticky,
+            sticky,
             filename_text_color,
             diagnostic_severity,
             git_status,
@@ -4909,18 +4928,22 @@ impl ProjectPanel {
 
         sticky_parents
             .iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
                 let git_status = git_summaries_by_id
                     .get(&entry.id)
                     .copied()
                     .unwrap_or_default();
+                let sticky_details = Some(StickyDetails {
+                    sticky_index: index,
+                });
                 let details = self.details_for_entry(
                     entry,
                     worktree_id,
                     root_name,
                     paths,
                     git_status,
-                    true,
+                    sticky_details,
                     window,
                     cx,
                 );
@@ -5280,7 +5303,7 @@ impl Render for ProjectPanel {
                             .anchor(gpui::Corner::TopLeft)
                             .child(menu.clone()),
                     )
-                    .with_priority(1)
+                    .with_priority(3)
                 }))
         } else {
             v_flex()
