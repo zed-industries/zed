@@ -5154,7 +5154,7 @@ impl Render for ProjectPanel {
                         })
                     })
                     .when(show_sticky_scroll, |list| {
-                        list.with_sticky(ui::sticky_items(
+                        list.with_top_slot(ui::sticky_items(
                             cx.entity().clone(),
                             |this, range, window, cx| {
                                 this.candidate_entries_in_range_for_sticky(range, window, cx)

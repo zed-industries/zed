@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use gpui::{AnyElement, App, Context, Entity, Render, UniformListSticky, Window};
+use gpui::{
+    AnyElement, App, AvailableSpace, Bounds, Context, Entity, Pixels, Render, UniformListTopSlot,
+    Window, point, size,
+};
 use smallvec::SmallVec;
 
 pub trait StickyCandidate {
@@ -10,6 +13,8 @@ pub trait StickyCandidate {
 pub struct StickyItems<T> {
     compute_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<T>>,
     render_fn: Box<dyn Fn(T, &mut Window, &mut App) -> SmallVec<[AnyElement; 8]>>,
+    last_item_is_drifting: bool,
+    anchor_index: Option<usize>,
 }
 
 pub fn sticky_items<V, T>(
@@ -37,33 +42,32 @@ where
     StickyItems {
         compute_fn,
         render_fn,
+        last_item_is_drifting: false,
+        anchor_index: None,
     }
 }
 
-impl<T> UniformListSticky for StickyItems<T>
+impl<T> UniformListTopSlot for StickyItems<T>
 where
     T: StickyCandidate + Clone + 'static,
 {
     fn compute(
-        &self,
+        &mut self,
         visible_range: Range<usize>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (SmallVec<[AnyElement; 8]>, usize, Option<usize>, bool) {
+    ) -> SmallVec<[AnyElement; 8]> {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
+        let mut anchor_entry = None;
+
         let mut iter = entries.iter().enumerate().peekable();
-
-        let mut last_item_is_drifting = false;
-        let mut marker_index = None;
-        let mut marker_entry = None;
-
         while let Some((ix, current_entry)) = iter.next() {
             let current_depth = current_entry.depth();
             let index_in_range = ix;
 
             if current_depth < index_in_range {
-                marker_entry = Some(current_entry.clone());
+                anchor_entry = Some(current_entry.clone());
                 break;
             }
 
@@ -71,20 +75,76 @@ where
                 let next_depth = next_entry.depth();
 
                 if next_depth < current_depth && next_depth < index_in_range {
-                    last_item_is_drifting = true;
-                    marker_index = Some(visible_range.start + ix);
-                    marker_entry = Some(current_entry.clone());
+                    self.last_item_is_drifting = true;
+                    self.anchor_index = Some(visible_range.start + ix);
+                    anchor_entry = Some(current_entry.clone());
                     break;
                 }
             }
         }
 
-        let mut elements = SmallVec::new();
-        if let Some(marker_entry) = marker_entry {
-            elements = (self.render_fn)(marker_entry, window, cx);
+        if let Some(anchor_entry) = anchor_entry {
+            (self.render_fn)(anchor_entry, window, cx)
+        } else {
+            SmallVec::new()
         }
+    }
 
-        let count = elements.len();
-        (elements, count, marker_index, last_item_is_drifting)
+    fn prepaint(
+        &self,
+        items: &mut SmallVec<[AnyElement; 8]>,
+        bounds: Bounds<Pixels>,
+        item_height: Pixels,
+        scroll_offset: gpui::Point<Pixels>,
+        padding: gpui::Edges<Pixels>,
+        can_scroll_horizontally: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let items_count = items.len();
+
+        for (ix, item) in items.iter_mut().enumerate() {
+            let mut item_y_offset = Pixels::ZERO;
+            if ix == items_count - 1 && self.last_item_is_drifting {
+                if let Some(anchor_index) = self.anchor_index {
+                    let scroll_top = -scroll_offset.y;
+                    let anchor_top = item_height * anchor_index;
+                    let sticky_area_height = item_height * items_count;
+                    item_y_offset =
+                        (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO);
+                };
+            }
+
+            let sticky_origin = bounds.origin
+                + point(
+                    if can_scroll_horizontally {
+                        scroll_offset.x + padding.left
+                    } else {
+                        scroll_offset.x
+                    },
+                    item_height * ix + padding.top + item_y_offset,
+                );
+
+            let available_width = if can_scroll_horizontally {
+                bounds.size.width + scroll_offset.x.abs()
+            } else {
+                bounds.size.width
+            };
+
+            let available_space = size(
+                AvailableSpace::Definite(available_width),
+                AvailableSpace::Definite(item_height),
+            );
+
+            item.layout_as_root(available_space, window, cx);
+            item.prepaint_at(sticky_origin, window, cx);
+        }
+    }
+
+    fn paint(&self, items: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App) {
+        // reverse so that last item is bottom most among sticky items
+        for item in items.iter_mut().rev() {
+            item.paint(window, cx);
+        }
     }
 }
