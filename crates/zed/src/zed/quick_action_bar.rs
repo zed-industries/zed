@@ -255,8 +255,11 @@ impl Render for QuickActionBar {
                             .action("Go to Symbol", Box::new(ToggleOutline))
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))
                             .separator()
-                            .action("Next Problem", Box::new(GoToDiagnostic))
-                            .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
+                            .action("Next Problem", Box::new(GoToDiagnostic::default()))
+                            .action(
+                                "Previous Problem",
+                                Box::new(GoToPreviousDiagnostic::default()),
+                            )
                             .separator()
                             .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
                             .action_disabled_when(

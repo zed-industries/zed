@@ -326,6 +326,35 @@ impl DiagnosticSeverity {
     }
 }
 
+/// Determines the severity of the diagnostic that should be moved to.
+#[derive(PartialEq, Clone, Copy, Default, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDiagnosticSeverity {
+    /// Any severity
+    #[default]
+    Any,
+    /// Errors
+    Error,
+    /// Warnings
+    Warning,
+    /// Information
+    Information,
+    /// Hints
+    Hint,
+}
+
+impl PartialEq<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
+    fn eq(&self, other: &lsp::DiagnosticSeverity) -> bool {
+        match self {
+            GoToDiagnosticSeverity::Any => true,
+            GoToDiagnosticSeverity::Error => other == &lsp::DiagnosticSeverity::ERROR,
+            GoToDiagnosticSeverity::Warning => other == &lsp::DiagnosticSeverity::WARNING,
+            GoToDiagnosticSeverity::Information => other == &lsp::DiagnosticSeverity::INFORMATION,
+            GoToDiagnosticSeverity::Hint => other == &lsp::DiagnosticSeverity::HINT,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
