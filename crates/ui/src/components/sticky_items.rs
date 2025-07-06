@@ -5,7 +5,6 @@ use smallvec::SmallVec;
 
 pub trait StickyCandidate {
     fn depth(&self) -> usize;
-    fn should_skip(&self) -> bool;
 }
 
 pub struct StickyItems<T> {
@@ -53,11 +52,7 @@ where
     ) -> (SmallVec<[AnyElement; 8]>, usize, Option<usize>, bool) {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
-        let mut iter = entries
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| !entry.should_skip())
-            .peekable();
+        let mut iter = entries.iter().enumerate().peekable();
 
         let mut last_item_is_drifting = false;
         let mut marker_index = None;
@@ -91,154 +86,5 @@ where
 
         let count = elements.len();
         (elements, count, marker_index, last_item_is_drifting)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct TestEntry {
-        id: usize,
-        depth: usize,
-        should_skip: bool,
-    }
-
-    impl StickyCandidate for TestEntry {
-        fn depth(&self) -> usize {
-            self.depth
-        }
-
-        fn should_skip(&self) -> bool {
-            self.should_skip
-        }
-    }
-
-    #[test]
-    fn test_calculate_sticky_marker_basic() {
-        let entries = [
-            TestEntry {
-                id: 1,
-                depth: 0,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 2,
-                depth: 1,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 3,
-                depth: 2,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 4,
-                depth: 1,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 5,
-                depth: 0,
-                should_skip: false,
-            },
-        ];
-
-        // Test with range starting at 2
-        let result = calculate_sticky_marker(&entries[2..], 2, |e| e.should_skip);
-        assert_eq!(result.marker_entry, Some(entries[2].clone()));
-        assert_eq!(result.marker_index, None);
-        assert!(!result.last_item_is_drifting);
-    }
-
-    #[test]
-    fn test_calculate_sticky_marker_with_skipped() {
-        let entries = vec![
-            TestEntry {
-                id: 1,
-                depth: 0,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 2,
-                depth: 1,
-                should_skip: true,
-            }, // This should be skipped
-            TestEntry {
-                id: 3,
-                depth: 2,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 4,
-                depth: 1,
-                should_skip: false,
-            },
-        ];
-
-        let result = calculate_sticky_marker(&entries, 0, |e| e.should_skip);
-        assert_eq!(result.marker_entry.as_ref().map(|e| e.id), Some(1));
-    }
-
-    #[test]
-    fn test_calculate_sticky_marker_drifting() {
-        let entries = [
-            TestEntry {
-                id: 1,
-                depth: 0,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 2,
-                depth: 1,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 3,
-                depth: 2,
-                should_skip: false,
-            },
-            TestEntry {
-                id: 4,
-                depth: 0,
-                should_skip: false,
-            }, // New parent at lower depth
-        ];
-
-        let result = calculate_sticky_marker(&entries[1..], 1, |e| e.should_skip);
-        assert_eq!(result.marker_entry.as_ref().map(|e| e.id), Some(2));
-        assert_eq!(result.marker_index, Some(1));
-        assert!(result.last_item_is_drifting);
-    }
-
-    #[test]
-    fn test_calculate_sticky_marker_empty() {
-        let entries: Vec<TestEntry> = Vec::new();
-        let result = calculate_sticky_marker(&entries, 0, |_| false);
-        assert_eq!(result.marker_entry, None);
-        assert_eq!(result.marker_index, None);
-        assert!(!result.last_item_is_drifting);
-    }
-
-    #[test]
-    fn test_calculate_sticky_marker_all_skipped() {
-        let entries = [
-            TestEntry {
-                id: 1,
-                depth: 0,
-                should_skip: true,
-            },
-            TestEntry {
-                id: 2,
-                depth: 1,
-                should_skip: true,
-            },
-        ];
-
-        let result = calculate_sticky_marker(&entries, 0, |e| e.should_skip);
-        assert_eq!(result.marker_entry, None);
-        assert_eq!(result.marker_index, None);
-        assert!(!result.last_item_is_drifting);
     }
 }

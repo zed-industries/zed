@@ -4831,7 +4831,6 @@ impl ProjectPanel {
                         StickyProjectPanelCandidate {
                             index: current_offset + local_start + i,
                             depth,
-                            should_skip: self.ancestors.contains_key(&entry.entry.id),
                         }
                     });
 
@@ -4856,72 +4855,76 @@ impl ProjectPanel {
             return SmallVec::new();
         };
 
+        let Some((_, visible_worktree_entries, entries_paths)) = self
+            .visible_entries
+            .iter()
+            .find(|(id, _, _)| *id == worktree_id)
+        else {
+            return SmallVec::new();
+        };
+
         let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
             return SmallVec::new();
         };
-
         let worktree = worktree.read(cx).snapshot();
-        let root_name = OsStr::new(worktree.root_name());
 
-        let mut parent_ids = entry_ref
-            .path
-            .ancestors()
-            .skip(1)
-            .filter_map(|path| worktree.entry_for_path(path).map(|entry| entry.id))
-            .collect::<Vec<_>>();
-        parent_ids.reverse();
+        let paths = entries_paths.get_or_init(|| {
+            visible_worktree_entries
+                .iter()
+                .map(|e| e.path.clone())
+                .collect()
+        });
 
-        if parent_ids.is_empty() {
-            return SmallVec::new();
+        let mut sticky_parents = Vec::new();
+        let mut current_path = entry_ref.path.clone();
+
+        'outer: loop {
+            if let Some(parent_path) = current_path.parent() {
+                for ancestor_path in parent_path.ancestors() {
+                    if paths.contains(ancestor_path) {
+                        if let Some(parent_entry) = worktree.entry_for_path(ancestor_path) {
+                            sticky_parents.push(parent_entry.clone());
+                            current_path = parent_entry.path.clone();
+                            continue 'outer;
+                        }
+                    }
+                }
+            }
+            break 'outer;
         }
 
+        sticky_parents.reverse();
+
         let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
-        let visible_worktree_entries = self
-            .visible_entries
-            .iter()
-            .find(|(id, _, _)| *id == worktree_id);
+        let root_name = OsStr::new(worktree.root_name());
 
         let git_summaries_by_id = if git_status_enabled {
-            if let Some((_, entries, _)) = visible_worktree_entries {
-                entries
-                    .iter()
-                    .map(|e| (e.id, e.git_summary))
-                    .collect::<HashMap<_, _>>()
-            } else {
-                Default::default()
-            }
+            visible_worktree_entries
+                .iter()
+                .map(|e| (e.id, e.git_summary))
+                .collect::<HashMap<_, _>>()
         } else {
             Default::default()
         };
 
-        let paths: HashSet<Arc<Path>> = if let Some((_, entries, _)) = visible_worktree_entries {
-            entries.iter().map(|e| e.path.clone()).collect()
-        } else {
-            Default::default()
-        };
-
-        parent_ids
+        sticky_parents
             .iter()
-            .map(|&entry_id| {
-                if let Some(entry) = worktree.entry_for_id(entry_id) {
-                    let git_status = git_summaries_by_id
-                        .get(&entry_id)
-                        .copied()
-                        .unwrap_or_default();
-                    let details = self.details_for_entry(
-                        entry,
-                        worktree_id,
-                        root_name,
-                        &paths,
-                        git_status,
-                        true,
-                        window,
-                        cx,
-                    );
-                    self.render_entry(entry_id, details, window, cx).into_any()
-                } else {
-                    div().into_any()
-                }
+            .map(|entry| {
+                let git_status = git_summaries_by_id
+                    .get(&entry.id)
+                    .copied()
+                    .unwrap_or_default();
+                let details = self.details_for_entry(
+                    entry,
+                    worktree_id,
+                    root_name,
+                    paths,
+                    git_status,
+                    true,
+                    window,
+                    cx,
+                );
+                self.render_entry(entry.id, details, window, cx).into_any()
             })
             .collect()
     }
@@ -4931,16 +4934,11 @@ impl ProjectPanel {
 struct StickyProjectPanelCandidate {
     index: usize,
     depth: usize,
-    should_skip: bool,
 }
 
 impl StickyCandidate for StickyProjectPanelCandidate {
     fn depth(&self) -> usize {
         self.depth
-    }
-
-    fn should_skip(&self) -> bool {
-        self.should_skip
     }
 }
 
