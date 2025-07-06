@@ -697,7 +697,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_bytes = buffer_text[0..buffer_offset].as_bytes();
+        let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;
         for i in (0..new_bytes.len()).rev() {
