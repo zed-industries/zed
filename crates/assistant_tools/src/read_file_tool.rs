@@ -51,11 +51,13 @@ pub struct ReadFileToolInput {
 pub struct ReadFileTool;
 
 impl Tool for ReadFileTool {
+    type Input = ReadFileToolInput;
+
     fn name(&self) -> String {
         "read_file".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -75,23 +77,18 @@ impl Tool for ReadFileTool {
         json_schema_for::<ReadFileToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
-            Ok(input) => {
-                let path = MarkdownInlineCode(&input.path);
-                match (input.start_line, input.end_line) {
-                    (Some(start), None) => format!("Read file {path} (from line {start})"),
-                    (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
-                    _ => format!("Read file {path}"),
-                }
-            }
-            Err(_) => "Read file".to_string(),
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let path = MarkdownInlineCode(&input.path);
+        match (input.start_line, input.end_line) {
+            (Some(start), None) => format!("Read file {path} (from line {start})"),
+            (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
+            _ => format!("Read file {path}"),
         }
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -99,11 +96,6 @@ impl Tool for ReadFileTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<ReadFileToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
@@ -308,9 +300,12 @@ mod test {
         let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/nonexistent_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "root/nonexistent_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -347,9 +342,11 @@ mod test {
         let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/small_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "root/small_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -389,9 +386,11 @@ mod test {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/large_file.rs"
-                });
+                let input = ReadFileToolInput {
+                    path: "root/large_file.rs".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -421,10 +420,11 @@ mod test {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/large_file.rs",
-                    "offset": 1
-                });
+                let input = ReadFileToolInput {
+                    path: "root/large_file.rs".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -477,11 +477,11 @@ mod test {
         let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/multiline.txt",
-                    "start_line": 2,
-                    "end_line": 4
-                });
+                let input = ReadFileToolInput {
+                    path: "root/multiline.txt".to_string(),
+                    start_line: Some(2),
+                    end_line: Some(4),
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -520,11 +520,11 @@ mod test {
         // start_line of 0 should be treated as 1
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/multiline.txt",
-                    "start_line": 0,
-                    "end_line": 2
-                });
+                let input = ReadFileToolInput {
+                    path: "root/multiline.txt".to_string(),
+                    start_line: Some(0),
+                    end_line: Some(2),
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -543,11 +543,11 @@ mod test {
         // end_line of 0 should result in at least 1 line
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/multiline.txt",
-                    "start_line": 1,
-                    "end_line": 0
-                });
+                let input = ReadFileToolInput {
+                    path: "root/multiline.txt".to_string(),
+                    start_line: Some(1),
+                    end_line: Some(0),
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -566,11 +566,11 @@ mod test {
         // when start_line > end_line, should still return at least 1 line
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "root/multiline.txt",
-                    "start_line": 3,
-                    "end_line": 2
-                });
+                let input = ReadFileToolInput {
+                    path: "root/multiline.txt".to_string(),
+                    start_line: Some(3),
+                    end_line: Some(2),
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -694,9 +694,11 @@ mod test {
         // Reading a file outside the project worktree should fail
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "/outside_project/sensitive_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "/outside_project/sensitive_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -718,9 +720,11 @@ mod test {
         // Reading a file within the project should succeed
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/allowed_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/allowed_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -742,9 +746,11 @@ mod test {
         // Reading files that match file_scan_exclusions should fail
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/.secretdir/config"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/.secretdir/config".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -765,9 +771,11 @@ mod test {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/.mymetadata"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/.mymetadata".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -789,9 +797,11 @@ mod test {
         // Reading private files should fail
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/.mysecrets"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/secrets/.mysecrets".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -812,9 +822,11 @@ mod test {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/subdir/special.privatekey"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/subdir/special.privatekey".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -835,9 +847,11 @@ mod test {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/subdir/data.mysensitive"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/subdir/data.mysensitive".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -859,9 +873,11 @@ mod test {
         // Reading a normal file should still work, even with private_files configured
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/subdir/normal_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/subdir/normal_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -884,9 +900,11 @@ mod test {
         // Path traversal attempts with .. should fail
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "path": "project_root/../outside_project/sensitive_file.txt"
-                });
+                let input = ReadFileToolInput {
+                    path: "project_root/../outside_project/sensitive_file.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
                 Arc::new(ReadFileTool)
                     .run(
                         input,
@@ -981,9 +999,11 @@ mod test {
         let tool = Arc::new(ReadFileTool);
 
         // Test reading allowed files in worktree1
-        let input = json!({
-            "path": "worktree1/src/main.rs"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree1/src/main.rs".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1007,9 +1027,11 @@ mod test {
         );
 
         // Test reading private file in worktree1 should fail
-        let input = json!({
-            "path": "worktree1/src/secret.rs"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree1/src/secret.rs".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1036,9 +1058,11 @@ mod test {
         );
 
         // Test reading excluded file in worktree1 should fail
-        let input = json!({
-            "path": "worktree1/tests/fixture.sql"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree1/tests/fixture.sql".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1065,9 +1089,11 @@ mod test {
         );
 
         // Test reading allowed files in worktree2
-        let input = json!({
-            "path": "worktree2/lib/public.js"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree2/lib/public.js".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1091,9 +1117,11 @@ mod test {
         );
 
         // Test reading private file in worktree2 should fail
-        let input = json!({
-            "path": "worktree2/lib/private.js"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree2/lib/private.js".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1120,9 +1148,11 @@ mod test {
         );
 
         // Test reading excluded file in worktree2 should fail
-        let input = json!({
-            "path": "worktree2/docs/internal.md"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree2/docs/internal.md".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {
@@ -1150,9 +1180,11 @@ mod test {
 
         // Test that files allowed in one worktree but not in another are handled correctly
         // (e.g., config.toml is private in worktree1 but doesn't exist in worktree2)
-        let input = json!({
-            "path": "worktree1/src/config.toml"
-        });
+        let input = ReadFileToolInput {
+            path: "worktree1/src/config.toml".to_string(),
+            start_line: None,
+            end_line: None,
+        };
 
         let result = cx
             .update(|cx| {

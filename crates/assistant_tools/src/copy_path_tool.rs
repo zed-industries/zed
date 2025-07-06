@@ -40,11 +40,13 @@ pub struct CopyPathToolInput {
 pub struct CopyPathTool;
 
 impl Tool for CopyPathTool {
+    type Input = CopyPathToolInput;
+
     fn name(&self) -> String {
         "copy_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -64,20 +66,15 @@ impl Tool for CopyPathTool {
         json_schema_for::<CopyPathToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<CopyPathToolInput>(input.clone()) {
-            Ok(input) => {
-                let src = MarkdownInlineCode(&input.source_path);
-                let dest = MarkdownInlineCode(&input.destination_path);
-                format!("Copy {src} to {dest}")
-            }
-            Err(_) => "Copy path".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let src = MarkdownInlineCode(&input.source_path);
+        let dest = MarkdownInlineCode(&input.destination_path);
+        format!("Copy {src} to {dest}")
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -85,10 +82,6 @@ impl Tool for CopyPathTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<CopyPathToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
         let copy_task = project.update(cx, |project, cx| {
             match project
                 .find_project_path(&input.source_path, cx)

@@ -29,11 +29,13 @@ pub struct DeletePathToolInput {
 pub struct DeletePathTool;
 
 impl Tool for DeletePathTool {
+    type Input = DeletePathToolInput;
+
     fn name(&self) -> String {
         "delete_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -53,16 +55,13 @@ impl Tool for DeletePathTool {
         json_schema_for::<DeletePathToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
-            Ok(input) => format!("Delete “`{}`”", input.path),
-            Err(_) => "Delete path".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        format!("Delete “`{}`”", input.path)
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -70,10 +69,7 @@ impl Tool for DeletePathTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
-            Ok(input) => input.path,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
+        let path_str = input.path;
         let Some(project_path) = project.read(cx).find_project_path(&path_str, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."

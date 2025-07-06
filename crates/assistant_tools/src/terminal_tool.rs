@@ -2,7 +2,7 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
@@ -72,11 +72,13 @@ impl TerminalTool {
 }
 
 impl Tool for TerminalTool {
+    type Input = TerminalToolInput;
+
     fn name(&self) -> String {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         true
     }
 
@@ -96,30 +98,24 @@ impl Tool for TerminalTool {
         json_schema_for::<TerminalToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<TerminalToolInput>(input.clone()) {
-            Ok(input) => {
-                let mut lines = input.command.lines();
-                let first_line = lines.next().unwrap_or_default();
-                let remaining_line_count = lines.count();
-                match remaining_line_count {
-                    0 => MarkdownInlineCode(&first_line).to_string(),
-                    1 => MarkdownInlineCode(&format!(
-                        "{} - {} more line",
-                        first_line, remaining_line_count
-                    ))
-                    .to_string(),
-                    n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n))
-                        .to_string(),
-                }
-            }
-            Err(_) => "Run terminal command".to_string(),
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let mut lines = input.command.lines();
+        let first_line = lines.next().unwrap_or_default();
+        let remaining_line_count = lines.count();
+        match remaining_line_count {
+            0 => MarkdownInlineCode(&first_line).to_string(),
+            1 => MarkdownInlineCode(&format!(
+                "{} - {} more line",
+                first_line, remaining_line_count
+            ))
+            .to_string(),
+            n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n)).to_string(),
         }
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -127,11 +123,6 @@ impl Tool for TerminalTool {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input: TerminalToolInput = match serde_json::from_value(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         let working_dir = match working_dir(&input, &project, cx) {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
@@ -756,7 +747,7 @@ mod tests {
         let result = cx.update(|cx| {
             TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
-                serde_json::to_value(input).unwrap(),
+                input,
                 Arc::default(),
                 project.clone(),
                 action_log.clone(),
@@ -791,7 +782,7 @@ mod tests {
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
-                serde_json::to_value(input).unwrap(),
+                input,
                 Arc::default(),
                 project.clone(),
                 action_log.clone(),

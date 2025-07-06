@@ -10,7 +10,7 @@ use crate::{
 };
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyTool, AnyToolCard, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::HashMap;
@@ -2452,7 +2452,7 @@ impl Thread {
         ui_text: impl Into<SharedString>,
         input: serde_json::Value,
         request: Arc<LanguageModelRequest>,
-        tool: Arc<dyn Tool>,
+        tool: AnyTool,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
@@ -2468,7 +2468,7 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         request: Arc<LanguageModelRequest>,
         input: serde_json::Value,
-        tool: Arc<dyn Tool>,
+        tool: AnyTool,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,

@@ -41,11 +41,13 @@ pub struct ListDirectoryToolInput {
 pub struct ListDirectoryTool;
 
 impl Tool for ListDirectoryTool {
+    type Input = ListDirectoryToolInput;
+
     fn name(&self) -> String {
         "list_directory".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -65,19 +67,14 @@ impl Tool for ListDirectoryTool {
         json_schema_for::<ListDirectoryToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
-            Ok(input) => {
-                let path = MarkdownInlineCode(&input.path);
-                format!("List the {path} directory's contents")
-            }
-            Err(_) => "List directory".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let path = MarkdownInlineCode(&input.path);
+        format!("List the {path} directory's contents")
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -85,11 +82,6 @@ impl Tool for ListDirectoryTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         // Sometimes models will return these even though we tell it to give a path and not a glob.
         // When this happens, just list the root worktree directories.
         if matches!(input.path.as_str(), "." | "" | "./" | "*") {
@@ -285,9 +277,9 @@ mod tests {
         let tool = Arc::new(ListDirectoryTool);
 
         // Test listing root directory
-        let input = json!({
-            "path": "project"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -320,9 +312,9 @@ mod tests {
         );
 
         // Test listing src directory
-        let input = json!({
-            "path": "project/src"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/src".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -355,9 +347,9 @@ mod tests {
         );
 
         // Test listing directory with only files
-        let input = json!({
-            "path": "project/tests"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/tests".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -399,9 +391,9 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let tool = Arc::new(ListDirectoryTool);
 
-        let input = json!({
-            "path": "project/empty_dir"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/empty_dir".to_string(),
+        };
 
         let result = cx
             .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
@@ -432,9 +424,9 @@ mod tests {
         let tool = Arc::new(ListDirectoryTool);
 
         // Test non-existent path
-        let input = json!({
-            "path": "project/nonexistent"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/nonexistent".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -455,9 +447,9 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("Path not found"));
 
         // Test trying to list a file instead of directory
-        let input = json!({
-            "path": "project/file.txt"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/file.txt".to_string(),
+        };
 
         let result = cx
             .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
@@ -527,9 +519,9 @@ mod tests {
         let tool = Arc::new(ListDirectoryTool);
 
         // Listing root directory should exclude private and excluded files
-        let input = json!({
-            "path": "project"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -568,9 +560,9 @@ mod tests {
         );
 
         // Trying to list an excluded directory should fail
-        let input = json!({
-            "path": "project/.secretdir"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/.secretdir".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -600,9 +592,9 @@ mod tests {
         );
 
         // Listing a directory should exclude private files within it
-        let input = json!({
-            "path": "project/visible_dir"
-        });
+        let input = ListDirectoryToolInput {
+            path: "project/visible_dir".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -720,9 +712,9 @@ mod tests {
         let tool = Arc::new(ListDirectoryTool);
 
         // Test listing worktree1/src - should exclude secret.rs and config.toml based on local settings
-        let input = json!({
-            "path": "worktree1/src"
-        });
+        let input = ListDirectoryToolInput {
+            path: "worktree1/src".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -752,9 +744,9 @@ mod tests {
         );
 
         // Test listing worktree1/tests - should exclude fixture.sql based on local settings
-        let input = json!({
-            "path": "worktree1/tests"
-        });
+        let input = ListDirectoryToolInput {
+            path: "worktree1/tests".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -780,9 +772,9 @@ mod tests {
         );
 
         // Test listing worktree2/lib - should exclude private.js and data.json based on local settings
-        let input = json!({
-            "path": "worktree2/lib"
-        });
+        let input = ListDirectoryToolInput {
+            path: "worktree2/lib".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -812,9 +804,9 @@ mod tests {
         );
 
         // Test listing worktree2/docs - should exclude internal.md based on local settings
-        let input = json!({
-            "path": "worktree2/docs"
-        });
+        let input = ListDirectoryToolInput {
+            path: "worktree2/docs".to_string(),
+        };
 
         let result = cx
             .update(|cx| {
@@ -840,9 +832,9 @@ mod tests {
         );
 
         // Test trying to list an excluded directory directly
-        let input = json!({
-            "path": "worktree1/src/secret.rs"
-        });
+        let input = ListDirectoryToolInput {
+            path: "worktree1/src/secret.rs".to_string(),
+        };
 
         let result = cx
             .update(|cx| {

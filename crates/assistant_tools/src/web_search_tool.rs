@@ -28,11 +28,13 @@ pub struct WebSearchToolInput {
 pub struct WebSearchTool;
 
 impl Tool for WebSearchTool {
+    type Input = WebSearchToolInput;
+
     fn name(&self) -> String {
         "web_search".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -52,13 +54,13 @@ impl Tool for WebSearchTool {
         json_schema_for::<WebSearchToolInput>(format)
     }
 
-    fn ui_text(&self, _input: &serde_json::Value) -> String {
+    fn ui_text(&self, _input: &Self::Input) -> String {
         "Searching the Web".to_string()
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -66,10 +68,6 @@ impl Tool for WebSearchTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<WebSearchToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
             return Task::ready(Err(anyhow!("Web search is not available."))).into();
         };

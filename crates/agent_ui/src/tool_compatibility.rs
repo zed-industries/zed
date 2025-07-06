@@ -1,5 +1,5 @@
 use agent::{Thread, ThreadEvent};
-use assistant_tool::{Tool, ToolSource};
+use assistant_tool::{AnyTool, ToolSource};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};
 use language_model::{LanguageModel, LanguageModelToolSchemaFormat};
@@ -7,7 +7,7 @@ use std::sync::Arc;
 use ui::prelude::*;
 
 pub struct IncompatibleToolsState {
-    cache: HashMap<LanguageModelToolSchemaFormat, Vec<Arc<dyn Tool>>>,
+    cache: HashMap<LanguageModelToolSchemaFormat, Vec<AnyTool>>,
     thread: Entity<Thread>,
     _thread_subscription: Subscription,
 }
@@ -29,11 +29,7 @@ impl IncompatibleToolsState {
         }
     }
 
-    pub fn incompatible_tools(
-        &mut self,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> &[Arc<dyn Tool>] {
+    pub fn incompatible_tools(&mut self, model: &Arc<dyn LanguageModel>, cx: &App) -> &[AnyTool] {
         self.cache
             .entry(model.tool_input_format())
             .or_insert_with(|| {
@@ -50,7 +46,7 @@ impl IncompatibleToolsState {
 }
 
 pub struct IncompatibleToolsTooltip {
-    pub incompatible_tools: Vec<Arc<dyn Tool>>,
+    pub incompatible_tools: Vec<AnyTool>,
 }
 
 impl Render for IncompatibleToolsTooltip {

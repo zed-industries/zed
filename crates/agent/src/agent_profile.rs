@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
-use assistant_tool::{Tool, ToolSource, ToolWorkingSet, UniqueToolName};
+use assistant_tool::{AnyTool, ToolSource, ToolWorkingSet, UniqueToolName};
 use collections::IndexMap;
 use convert_case::{Case, Casing};
 use fs::Fs;
@@ -72,7 +72,7 @@ impl AgentProfile {
         &self.id
     }
 
-    pub fn enabled_tools(&self, cx: &App) -> Vec<(UniqueToolName, Arc<dyn Tool>)> {
+    pub fn enabled_tools(&self, cx: &App) -> Vec<(UniqueToolName, AnyTool)> {
         let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
             return Vec::new();
         };
@@ -108,7 +108,7 @@ impl AgentProfile {
 #[cfg(test)]
 mod tests {
     use agent_settings::ContextServerPreset;
-    use assistant_tool::ToolRegistry;
+    use assistant_tool::{Tool, ToolRegistry};
     use collections::IndexMap;
     use gpui::SharedString;
     use gpui::{AppContext, TestAppContext};
@@ -269,8 +269,14 @@ mod tests {
     fn default_tool_set(cx: &mut TestAppContext) -> Entity<ToolWorkingSet> {
         cx.new(|cx| {
             let mut tool_set = ToolWorkingSet::default();
-            tool_set.insert(Arc::new(FakeTool::new("enabled_mcp_tool", "mcp")), cx);
-            tool_set.insert(Arc::new(FakeTool::new("disabled_mcp_tool", "mcp")), cx);
+            tool_set.insert(
+                Arc::new(FakeTool::new("enabled_mcp_tool", "mcp")).into(),
+                cx,
+            );
+            tool_set.insert(
+                Arc::new(FakeTool::new("disabled_mcp_tool", "mcp")).into(),
+                cx,
+            );
             tool_set
         })
     }
@@ -290,6 +296,8 @@ mod tests {
     }
 
     impl Tool for FakeTool {
+        type Input = ();
+
         fn name(&self) -> String {
             self.name.clone()
         }
@@ -308,17 +316,17 @@ mod tests {
             unimplemented!()
         }
 
-        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        fn needs_confirmation(&self, _input: &Self::Input, _cx: &App) -> bool {
             unimplemented!()
         }
 
-        fn ui_text(&self, _input: &serde_json::Value) -> String {
+        fn ui_text(&self, _input: &Self::Input) -> String {
             unimplemented!()
         }
 
         fn run(
             self: Arc<Self>,
-            _input: serde_json::Value,
+            _input: Self::Input,
             _request: Arc<language_model::LanguageModelRequest>,
             _project: Entity<Project>,
             _action_log: Entity<assistant_tool::ActionLog>,

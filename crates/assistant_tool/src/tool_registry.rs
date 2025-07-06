@@ -6,7 +6,7 @@ use gpui::Global;
 use gpui::{App, ReadGlobal};
 use parking_lot::RwLock;
 
-use crate::Tool;
+use crate::{AnyTool, Tool};
 
 #[derive(Default, Deref, DerefMut)]
 struct GlobalToolRegistry(Arc<ToolRegistry>);
@@ -15,7 +15,7 @@ impl Global for GlobalToolRegistry {}
 
 #[derive(Default)]
 struct ToolRegistryState {
-    tools: HashMap<Arc<str>, Arc<dyn Tool>>,
+    tools: HashMap<Arc<str>, AnyTool>,
 }
 
 #[derive(Default)]
@@ -48,7 +48,7 @@ impl ToolRegistry {
     pub fn register_tool(&self, tool: impl Tool) {
         let mut state = self.state.write();
         let tool_name: Arc<str> = tool.name().into();
-        state.tools.insert(tool_name, Arc::new(tool));
+        state.tools.insert(tool_name, Arc::new(tool).into());
     }
 
     /// Unregisters the provided [`Tool`].
@@ -63,12 +63,12 @@ impl ToolRegistry {
     }
 
     /// Returns the list of tools in the registry.
-    pub fn tools(&self) -> Vec<Arc<dyn Tool>> {
+    pub fn tools(&self) -> Vec<AnyTool> {
         self.state.read().tools.values().cloned().collect()
     }
 
     /// Returns the [`Tool`] with the given name.
-    pub fn tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+    pub fn tool(&self, name: &str) -> Option<AnyTool> {
         self.state.read().tools.get(name).cloned()
     }
 }

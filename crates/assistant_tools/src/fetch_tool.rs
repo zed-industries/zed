@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::AsyncReadExt as _;
-use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext as _, Entity};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -113,11 +113,13 @@ impl FetchTool {
 }
 
 impl Tool for FetchTool {
+    type Input = FetchToolInput;
+
     fn name(&self) -> String {
         "fetch".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -137,16 +139,13 @@ impl Tool for FetchTool {
         json_schema_for::<FetchToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)),
-            Err(_) => "Fetch URL".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        format!("Fetch {}", MarkdownEscaped(&input.url))
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -154,11 +153,6 @@ impl Tool for FetchTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<FetchToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         let text = cx.background_spawn({
             let http_client = self.http_client.clone();
             async move { Self::build_message(http_client, &input.url).await }

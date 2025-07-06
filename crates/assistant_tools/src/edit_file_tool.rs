@@ -121,11 +121,13 @@ struct PartialInput {
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
 impl Tool for EditFileTool {
+    type Input = EditFileToolInput;
+
     fn name(&self) -> String {
         "edit_file".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -145,24 +147,20 @@ impl Tool for EditFileTool {
         json_schema_for::<EditFileToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<EditFileToolInput>(input.clone()) {
-            Ok(input) => input.display_description,
-            Err(_) => "Editing file".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        input.display_description.clone()
     }
 
-    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(input) = serde_json::from_value::<PartialInput>(input.clone()).ok() {
-            let description = input.display_description.trim();
-            if !description.is_empty() {
-                return description.to_string();
-            }
+    fn still_streaming_ui_text(&self, input: &Self::Input) -> String {
+        let description = input.display_description.trim();
+        if !description.is_empty() {
+            return description.to_string();
+        }
 
-            let path = input.path.trim();
-            if !path.is_empty() {
-                return path.to_string();
-            }
+        let path = input.path.to_string_lossy();
+        let path = path.trim();
+        if !path.is_empty() {
+            return path.to_string();
         }
 
         DEFAULT_UI_TEXT.to_string()
@@ -170,7 +168,7 @@ impl Tool for EditFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -178,11 +176,6 @@ impl Tool for EditFileTool {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<EditFileToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         let project_path = match resolve_path(&input, project.clone(), cx) {
             Ok(path) => path,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
@@ -1169,12 +1162,11 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
-                let input = serde_json::to_value(EditFileToolInput {
+                let input = EditFileToolInput {
                     display_description: "Some edit".into(),
                     path: "root/nonexistent_file.txt".into(),
                     mode: EditFileMode::Edit,
-                })
-                .unwrap();
+                };
                 Arc::new(EditFileTool)
                     .run(
                         input,
@@ -1288,24 +1280,22 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_path() {
-        let input = json!({
-            "path": "src/main.rs",
-            "display_description": "",
-            "old_string": "old code",
-            "new_string": "new code"
-        });
+        let input = EditFileToolInput {
+            path: "src/main.rs".into(),
+            display_description: "".into(),
+            mode: EditFileMode::Edit,
+        };
 
         assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
     }
 
     #[test]
     fn still_streaming_ui_text_with_description() {
-        let input = json!({
-            "path": "",
-            "display_description": "Fix error handling",
-            "old_string": "old code",
-            "new_string": "new code"
-        });
+        let input = EditFileToolInput {
+            path: "".into(),
+            display_description: "Fix error handling".into(),
+            mode: EditFileMode::Edit,
+        };
 
         assert_eq!(
             EditFileTool.still_streaming_ui_text(&input),
@@ -1315,12 +1305,11 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_path_and_description() {
-        let input = json!({
-            "path": "src/main.rs",
-            "display_description": "Fix error handling",
-            "old_string": "old code",
-            "new_string": "new code"
-        });
+        let input = EditFileToolInput {
+            path: "src/main.rs".into(),
+            display_description: "Fix error handling".into(),
+            mode: EditFileMode::Edit,
+        };
 
         assert_eq!(
             EditFileTool.still_streaming_ui_text(&input),
@@ -1330,12 +1319,11 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_no_path_or_description() {
-        let input = json!({
-            "path": "",
-            "display_description": "",
-            "old_string": "old code",
-            "new_string": "new code"
-        });
+        let input = EditFileToolInput {
+            path: "".into(),
+            display_description: "".into(),
+            mode: EditFileMode::Edit,
+        };
 
         assert_eq!(
             EditFileTool.still_streaming_ui_text(&input),
@@ -1345,7 +1333,11 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_null() {
-        let input = serde_json::Value::Null;
+        let input = EditFileToolInput {
+            path: "".into(),
+            display_description: "".into(),
+            mode: EditFileMode::Edit,
+        };
 
         assert_eq!(
             EditFileTool.still_streaming_ui_text(&input),
@@ -1457,12 +1449,11 @@ mod tests {
         // Have the model stream unformatted content
         let edit_result = {
             let edit_task = cx.update(|cx| {
-                let input = serde_json::to_value(EditFileToolInput {
+                let input = EditFileToolInput {
                     display_description: "Create main function".into(),
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
-                })
-                .unwrap();
+                };
                 Arc::new(EditFileTool)
                     .run(
                         input,
@@ -1521,12 +1512,11 @@ mod tests {
         // Stream unformatted edits again
         let edit_result = {
             let edit_task = cx.update(|cx| {
-                let input = serde_json::to_value(EditFileToolInput {
+                let input = EditFileToolInput {
                     display_description: "Update main function".into(),
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
-                })
-                .unwrap();
+                };
                 Arc::new(EditFileTool)
                     .run(
                         input,
@@ -1600,12 +1590,11 @@ mod tests {
         // Have the model stream content that contains trailing whitespace
         let edit_result = {
             let edit_task = cx.update(|cx| {
-                let input = serde_json::to_value(EditFileToolInput {
+                let input = EditFileToolInput {
                     display_description: "Create main function".into(),
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
-                })
-                .unwrap();
+                };
                 Arc::new(EditFileTool)
                     .run(
                         input,
@@ -1657,12 +1646,11 @@ mod tests {
         // Stream edits again with trailing whitespace
         let edit_result = {
             let edit_task = cx.update(|cx| {
-                let input = serde_json::to_value(EditFileToolInput {
+                let input = EditFileToolInput {
                     display_description: "Update main function".into(),
                     path: "root/src/main.rs".into(),
                     mode: EditFileMode::Overwrite,
-                })
-                .unwrap();
+                };
                 Arc::new(EditFileTool)
                     .run(
                         input,

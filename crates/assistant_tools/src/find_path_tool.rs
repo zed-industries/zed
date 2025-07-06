@@ -51,11 +51,13 @@ const RESULTS_PER_PAGE: usize = 50;
 pub struct FindPathTool;
 
 impl Tool for FindPathTool {
+    type Input = FindPathToolInput;
+
     fn name(&self) -> String {
         "find_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -75,16 +77,13 @@ impl Tool for FindPathTool {
         json_schema_for::<FindPathToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<FindPathToolInput>(input.clone()) {
-            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
-            Err(_) => "Search paths".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        format!("Find paths matching \"`{}`\"", input.glob)
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -92,10 +91,7 @@ impl Tool for FindPathTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let (offset, glob) = match serde_json::from_value::<FindPathToolInput>(input) {
-            Ok(input) => (input.offset, input.glob),
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
+        let (offset, glob) = (input.offset, input.glob);
 
         let (sender, receiver) = oneshot::channel();
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use chrono::{Local, Utc};
 use gpui::{AnyWindowHandle, App, Entity, Task};
@@ -29,11 +29,13 @@ pub struct NowToolInput {
 pub struct NowTool;
 
 impl Tool for NowTool {
+    type Input = NowToolInput;
+
     fn name(&self) -> String {
         "now".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -53,13 +55,13 @@ impl Tool for NowTool {
         json_schema_for::<NowToolInput>(format)
     }
 
-    fn ui_text(&self, _input: &serde_json::Value) -> String {
+    fn ui_text(&self, _input: &Self::Input) -> String {
         "Get current time".to_string()
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -67,11 +69,6 @@ impl Tool for NowTool {
         _window: Option<AnyWindowHandle>,
         _cx: &mut App,
     ) -> ToolResult {
-        let input: NowToolInput = match serde_json::from_value(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         let now = match input.timezone {
             Timezone::Utc => Utc::now().to_rfc3339(),
             Timezone::Local => Local::now().to_rfc3339(),
