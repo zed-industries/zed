@@ -1206,6 +1206,12 @@
     // 2. hour24
     "hour_format": "hour12"
   },
+  // StatusBar-related settings
+  // Many items in the status bar have their own settings.
+  "status_bar": {
+    // Whether to show the active language button in the status bar.
+    "show_active_language_button": true
+  },
   // Settings specific to the terminal
   "terminal": {
     // What shell to use when opening a terminal. May take 3 values:
