@@ -12,7 +12,7 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Buffer, CodeLabel, ToOffset};
+use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionResponse,
@@ -637,27 +637,14 @@ impl ConsoleQueryBarCompletionProvider {
         });
 
         let snapshot = buffer.read(cx).text_snapshot();
-        let query = snapshot.text();
-        let replace_range = {
-            let buffer_offset = buffer_position.to_offset(&snapshot);
-            let reversed_chars = snapshot.reversed_chars_for_range(0..buffer_offset);
-            let mut word_len = 0;
-            for ch in reversed_chars {
-                if ch.is_alphanumeric() || matches!(ch, '_' | '$' | '-' | '>' | '[' | ']') {
-                    word_len += 1;
-                } else {
-                    break;
-                }
-            }
-            let word_start_offset = buffer_offset - word_len;
-            let start_anchor = snapshot.anchor_at(word_start_offset, Bias::Left);
-            start_anchor..buffer_position
-        };
+        let buffer_text = snapshot.text();
+        let buffer_offset = buffer_position.to_offset(&snapshot);
+
         cx.spawn(async move |_, cx| {
             const LIMIT: usize = 10;
             let matches = fuzzy::match_strings(
                 &string_matches,
-                &query,
+                &buffer_text,
                 true,
                 true,
                 LIMIT,
@@ -672,7 +659,13 @@ impl ConsoleQueryBarCompletionProvider {
                     let variable_value = variables.get(&string_match.string)?;
 
                     Some(project::Completion {
-                        replace_range: replace_range.clone(),
+                        replace_range: Self::replace_range_for_completion(
+                            &buffer_text,
+                            buffer_offset,
+                            buffer_position,
+                            string_match.string.as_bytes(),
+                            &snapshot,
+                        ),
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),
@@ -695,6 +688,28 @@ impl ConsoleQueryBarCompletionProvider {
                 completions,
             }])
         })
+    }
+
+    fn replace_range_for_completion(
+        buffer_text: &String,
+        buffer_offset: usize,
+        buffer_position: Anchor,
+        new_bytes: &[u8],
+        snapshot: &TextBufferSnapshot,
+    ) -> Range<Anchor> {
+        let buffer_bytes = buffer_text[0..buffer_offset].as_bytes();
+
+        let mut prefix_len = 0;
+        for i in (0..new_bytes.len()).rev() {
+            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                prefix_len = i;
+                break;
+            }
+        }
+
+        let start = snapshot.clip_offset(buffer_offset - prefix_len, Bias::Left);
+
+        snapshot.anchor_before(start)..buffer_position
     }
 
     const fn completion_type_score(completion_type: CompletionItemType) -> usize {
@@ -744,6 +759,9 @@ impl ConsoleQueryBarCompletionProvider {
         cx.background_executor().spawn(async move {
             let completions = completion_task.await?;
 
+            let buffer_text = snapshot.text();
+            let buffer_offset = buffer_position.to_offset(&snapshot);
+
             let completions = completions
                 .into_iter()
                 .map(|completion| {
@@ -753,26 +771,15 @@ impl ConsoleQueryBarCompletionProvider {
                         .as_ref()
                         .unwrap_or(&completion.label)
                         .to_owned();
-                    let buffer_text = snapshot.text();
-                    let buffer_bytes = buffer_text.as_bytes();
-                    let new_bytes = new_text.as_bytes();
-
-                    let mut prefix_len = 0;
-                    for i in (0..new_bytes.len()).rev() {
-                        if buffer_bytes.ends_with(&new_bytes[0..i]) {
-                            prefix_len = i;
-                            break;
-                        }
-                    }
-
-                    let buffer_offset = buffer_position.to_offset(&snapshot);
-                    let start = buffer_offset - prefix_len;
-                    let start = snapshot.clip_offset(start, Bias::Left);
-                    let start = snapshot.anchor_before(start);
-                    let replace_range = start..buffer_position;
 
                     project::Completion {
-                        replace_range,
+                        replace_range: Self::replace_range_for_completion(
+                            &buffer_text,
+                            buffer_offset,
+                            buffer_position,
+                            new_text.as_bytes(),
+                            &snapshot,
+                        ),
                         new_text,
                         label: CodeLabel {
                             filter_range: 0..completion.label.len(),
