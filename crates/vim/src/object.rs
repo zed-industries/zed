@@ -399,11 +399,11 @@ impl Vim {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal => self.normal_object(object, count, window, cx),
+            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
