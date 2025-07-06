@@ -794,23 +794,22 @@ impl OutlinePanel {
                             outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                         }
                     } else if &outline_panel_settings != new_settings {
-                        let old_expansion_depth =
-                            outline_panel_settings.default_outline_expansion_depth;
+                        let old_expansion_depth = outline_panel_settings.expand_outlines_with_depth;
                         outline_panel_settings = *new_settings;
 
                         // If the default expansion depth changed, update collapsed entries
-                        if old_expansion_depth != new_settings.default_outline_expansion_depth {
+                        if old_expansion_depth != new_settings.expand_outlines_with_depth {
                             outline_panel.collapsed_entries.clear();
 
                             // Apply new expansion depth to existing outlines
-                            let new_depth = new_settings.default_outline_expansion_depth;
+                            let new_depth = new_settings.expand_outlines_with_depth;
 
                             // Collapse outlines based on depth
                             for (buffer_id, excerpts) in &outline_panel.excerpts {
                                 for (excerpt_id, excerpt) in excerpts {
                                     if let ExcerptOutlines::Outlines(outlines) = &excerpt.outlines {
                                         for outline in outlines.iter() {
-                                            let outline_entry = OutlineEntryOutline {
+                                            let _outline_entry = OutlineEntryOutline {
                                                 buffer_id: *buffer_id,
                                                 excerpt_id: *excerpt_id,
                                                 outline: outline.clone(),
@@ -820,7 +819,15 @@ impl OutlinePanel {
                                             // - depth is 0 (collapse all)
                                             // - outline depth >= specified depth
                                             if outline_panel
-                                                .has_outline_children(&outline_entry, cx)
+                                                .outline_children_cache
+                                                .get(buffer_id)
+                                                .and_then(|children_map| {
+                                                    let key =
+                                                        (outline.range.clone(), outline.depth);
+                                                    children_map.get(&key)
+                                                })
+                                                .copied()
+                                                .unwrap_or(false)
                                                 && (new_depth == 0 || outline.depth >= new_depth)
                                             {
                                                 outline_panel.collapsed_entries.insert(
@@ -2235,15 +2242,16 @@ impl OutlinePanel {
         ));
 
         let icon = if has_children {
-            FileIcons::get_chevron_icon(is_expanded, cx).map(|icon_path| {
-                Icon::from_path(icon_path)
-                    .color(entry_label_color(is_active))
-                    .into_any_element()
-            })
+            FileIcons::get_chevron_icon(is_expanded, cx)
+                .map(|icon_path| {
+                    Icon::from_path(icon_path)
+                        .color(entry_label_color(is_active))
+                        .into_any_element()
+                })
+                .unwrap_or_else(empty_icon)
         } else {
-            Some(empty_icon())
-        }
-        .unwrap_or_else(empty_icon);
+            empty_icon()
+        };
 
         self.entry_element(
             PanelEntry::Outline(OutlineEntry::Outline(outline.clone())),
@@ -2559,11 +2567,9 @@ impl OutlinePanel {
                     }
                     let change_focus = event.down.click_count > 1;
 
-                    // Check if this entry is already selected
                     let is_already_selected = outline_panel
                         .selected_entry()
-                        .map(|selected| selected == &clicked_entry)
-                        .unwrap_or(false);
+                        .is_some_and(|selected| selected == &clicked_entry);
 
                     // Only toggle expansion if already selected and the item is expandable
                     if is_already_selected && outline_panel.is_expandable(&clicked_entry, cx) {
@@ -3050,7 +3056,7 @@ impl OutlinePanel {
 
         // Apply default outline expansion depth for the new active editor
         let default_expansion_depth =
-            OutlinePanelSettings::get_global(cx).default_outline_expansion_depth;
+            OutlinePanelSettings::get_global(cx).expand_outlines_with_depth;
         // We'll apply the expansion depth after outlines are loaded
         self.pending_default_expansion_depth = Some(default_expansion_depth);
 
@@ -3382,69 +3388,61 @@ impl OutlinePanel {
                                 let pending_default_depth =
                                     outline_panel.pending_default_expansion_depth.take();
 
-                                // First, update the excerpt and collect outlines
-                                let outlines_to_check = if let Some(excerpt) = outline_panel
-                                    .excerpts
-                                    .entry(buffer_id)
-                                    .or_default()
-                                    .get_mut(&excerpt_id)
-                                {
-                                    let debounce = if first_update
-                                        .fetch_and(false, atomic::Ordering::AcqRel)
-                                    {
+                                let debounce =
+                                    if first_update.fetch_and(false, atomic::Ordering::AcqRel) {
                                         None
                                     } else {
                                         Some(UPDATE_DEBOUNCE)
                                     };
 
+                                let mut outlines_to_check = Vec::new();
+
+                                if let Some(excerpt) = outline_panel
+                                    .excerpts
+                                    .entry(buffer_id)
+                                    .or_default()
+                                    .get_mut(&excerpt_id)
+                                {
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
 
-                                    // Collect outlines to check for default expansion
-                                    let outlines_to_check =
-                                        if let Some(default_depth) = pending_default_depth {
-                                            if let ExcerptOutlines::Outlines(outlines) =
-                                                &excerpt.outlines
-                                            {
-                                                if default_depth == 0 {
-                                                    // For depth 0, collapse all outlines with children
-                                                    outlines.clone()
-                                                } else {
-                                                    // For other depths, collapse outlines at or below that depth
+                                    if let Some(default_depth) = pending_default_depth {
+                                        if let ExcerptOutlines::Outlines(outlines) =
+                                            &excerpt.outlines
+                                        {
+                                            if default_depth == 0 {
+                                                // For depth 0, collapse all outlines with children
+                                                outlines_to_check.extend(outlines.clone());
+                                            } else {
+                                                // For other depths, collapse outlines at or below that depth
+                                                outlines_to_check.extend(
                                                     outlines
                                                         .iter()
                                                         .filter(|outline| {
                                                             outline.depth >= default_depth
                                                         })
-                                                        .cloned()
-                                                        .collect::<Vec<_>>()
-                                                }
-                                            } else {
-                                                Vec::new()
+                                                        .cloned(),
+                                                );
                                             }
-                                        } else {
-                                            Vec::new()
-                                        };
-
-                                    Some((debounce, outlines_to_check))
-                                } else {
-                                    None
-                                };
-
-                                if let Some((debounce, outlines_to_check)) = outlines_to_check {
-                                    for outline in outlines_to_check {
-                                        let outline_key = (outline.range.clone(), outline.depth);
-                                        if outlines_with_children.contains(&outline_key) {
-                                            outline_panel.collapsed_entries.insert(
-                                                CollapsedEntry::Outline(
-                                                    buffer_id,
-                                                    excerpt_id,
-                                                    outline.range.clone(),
-                                                ),
-                                            );
                                         }
                                     }
 
-                                    outline_panel.update_cached_entries(debounce, window, cx);
+                                    if !outlines_to_check.is_empty() {
+                                        for outline in &outlines_to_check {
+                                            let outline_key =
+                                                (outline.range.clone(), outline.depth);
+                                            if outlines_with_children.contains(&outline_key) {
+                                                outline_panel.collapsed_entries.insert(
+                                                    CollapsedEntry::Outline(
+                                                        buffer_id,
+                                                        excerpt_id,
+                                                        outline.range.clone(),
+                                                    ),
+                                                );
+                                            }
+                                        }
+
+                                        outline_panel.update_cached_entries(debounce, window, cx);
+                                    }
                                 }
                             })
                             .ok();
@@ -4967,29 +4965,7 @@ impl OutlinePanel {
             .collect()
     }
 
-    fn has_outline_children(&self, outline: &OutlineEntryOutline, _cx: &App) -> bool {
-        if let Some(excerpts) = self.excerpts.get(&outline.buffer_id) {
-            if let Some(excerpt) = excerpts.get(&outline.excerpt_id) {
-                let outlines: Vec<_> = excerpt.iter_outlines().collect();
-
-                // Find the current outline
-                for (i, o) in outlines.iter().enumerate() {
-                    if o.range == outline.outline.range && o.depth == outline.outline.depth {
-                        // Check if the next outline has greater depth
-                        if let Some(next_outline) = outlines.get(i + 1) {
-                            if next_outline.depth > outline.outline.depth {
-                                return true;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    fn is_expandable(&self, entry: &PanelEntry, cx: &App) -> bool {
+    fn is_expandable(&self, entry: &PanelEntry, _cx: &App) -> bool {
         match entry {
             PanelEntry::FoldedDirs(_) => true,
             PanelEntry::Fs(FsEntry::Directory(_)) => true,
@@ -4998,9 +4974,15 @@ impl OutlinePanel {
                 self.excerpts.contains_key(&external_file.buffer_id)
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(_)) => true,
-            PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
-                self.has_outline_children(outline, cx)
-            }
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => self
+                .outline_children_cache
+                .get(&outline.buffer_id)
+                .and_then(|children_map| {
+                    let key = (outline.outline.range.clone(), outline.outline.depth);
+                    children_map.get(&key)
+                })
+                .copied()
+                .unwrap_or(false),
             PanelEntry::Search(_) => false,
         }
     }
@@ -7326,13 +7308,22 @@ outline: struct OutlineEntryExcerpt
 
         // Find the first outline that has children (like "mod outer" or "impl OuterStruct")
         let parent_outline = outline_panel
-            .read_with(cx, |panel, cx| {
+            .read_with(cx, |panel, _cx| {
                 panel
                     .cached_entries
                     .iter()
                     .find_map(|entry| match &entry.entry {
                         PanelEntry::Outline(OutlineEntry::Outline(outline))
-                            if panel.has_outline_children(outline, cx) =>
+                            if panel
+                                .outline_children_cache
+                                .get(&outline.buffer_id)
+                                .and_then(|children_map| {
+                                    let key =
+                                        (outline.outline.range.clone(), outline.outline.depth);
+                                    children_map.get(&key)
+                                })
+                                .copied()
+                                .unwrap_or(false) =>
                         {
                             Some(entry.entry.clone())
                         }
@@ -7388,7 +7379,15 @@ outline: struct OutlineEntryExcerpt
                 .iter()
                 .filter_map(|entry| match &entry.entry {
                     PanelEntry::Outline(OutlineEntry::Outline(outline))
-                        if panel.has_outline_children(outline, cx) =>
+                        if panel
+                            .outline_children_cache
+                            .get(&outline.buffer_id)
+                            .and_then(|children_map| {
+                                let key = (outline.outline.range.clone(), outline.outline.depth);
+                                children_map.get(&key)
+                            })
+                            .copied()
+                            .unwrap_or(false) =>
                     {
                         Some(entry.entry.clone())
                     }
