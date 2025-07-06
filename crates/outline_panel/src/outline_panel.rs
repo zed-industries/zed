@@ -2572,7 +2572,7 @@ impl OutlinePanel {
                         .is_some_and(|selected| selected == &clicked_entry);
 
                     // Only toggle expansion if already selected and the item is expandable
-                    if is_already_selected && outline_panel.is_expandable(&clicked_entry, cx) {
+                    if is_already_selected && outline_panel.can_toggle(&clicked_entry, cx) {
                         outline_panel.toggle_expanded(&clicked_entry, window, cx);
                     }
 
@@ -4965,7 +4965,7 @@ impl OutlinePanel {
             .collect()
     }
 
-    fn is_expandable(&self, entry: &PanelEntry, _cx: &App) -> bool {
+    fn can_toggle(&self, entry: &PanelEntry, _cx: &App) -> bool {
         match entry {
             PanelEntry::FoldedDirs(_) => true,
             PanelEntry::Fs(FsEntry::Directory(_)) => true,
