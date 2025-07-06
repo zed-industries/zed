@@ -1,9 +1,9 @@
 use editor::{Editor, EditorSettings};
-use settings::Settings as _;
 use gpui::{
     Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window, div,
 };
 use language::LanguageName;
+use settings::Settings as _;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -41,7 +41,10 @@ impl ActiveBufferLanguage {
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let div = div();
-        if !EditorSettings::get_global(cx).status_bar.show_active_language_button {
+        if !EditorSettings::get_global(cx)
+            .status_bar
+            .show_active_language_button
+        {
             return div;
         }
         div.when_some(self.active_language.as_ref(), |el, active_language| {
