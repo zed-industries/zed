@@ -21,7 +21,7 @@ use util::TryFutureExt;
 use crate::transport::{StdioTransport, Transport};
 
 const JSON_RPC_VERSION: &str = "2.0";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(1200);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Standard JSON-RPC error codes
 pub const PARSE_ERROR: i32 = -32700;
