@@ -830,7 +830,7 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
 
 #[cfg(test)]
 mod tests {
-    use remote_path::PathStyle;
+    use util::paths::PathStyle;
 
     use crate::open_path_prompt::get_dir_and_suffix;
 

@@ -3,10 +3,9 @@ use std::sync::Arc;
 use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
-use remote_path::PathStyle;
 use serde_json::json;
 use ui::rems;
-use util::path;
+use util::{path, paths::PathStyle};
 use workspace::{AppState, Workspace};
 
 use crate::OpenPathDelegate;
