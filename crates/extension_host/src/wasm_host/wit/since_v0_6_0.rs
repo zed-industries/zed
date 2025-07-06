@@ -575,6 +575,24 @@ impl HostWorktree for WasmState {
         Ok(delegate.which(binary_name).await)
     }
 
+    async fn active_toolchain(
+        &mut self,
+        delegate: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> wasmtime::Result<Option<Toolchain>> {
+        let delegate = self.table.get(&delegate)?;
+        let toolchain = delegate.active_toolchain().await;
+        if let Some(toolchain) = toolchain {
+            Ok(Some(Toolchain {
+                name: toolchain.name.to_string(),
+                path: toolchain.path.to_string(),
+                language_name: toolchain.language_name.to_string(),
+                as_json: toolchain.as_json.to_string(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())

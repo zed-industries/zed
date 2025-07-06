@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use fs::normalize_path;
 use gpui::{App, Task};
-use language::LanguageName;
+use language::{LanguageName, Toolchain};
 use semantic_version::SemanticVersion;
 use task::{SpawnInTerminal, ZedDebugConfig};
 
@@ -34,6 +34,7 @@ pub trait WorktreeDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
     async fn which(&self, binary_name: String) -> Option<String>;
     async fn shell_env(&self) -> Vec<(String, String)>;
+    async fn active_toolchain(&self) -> Option<Toolchain>;
 }
 
 pub trait ProjectDelegate: Send + Sync + 'static {

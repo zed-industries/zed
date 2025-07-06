@@ -5,6 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use extension::{Extension, ExtensionHostProxy, ExtensionSlashCommandProxy, WorktreeDelegate};
 use gpui::{App, Task, WeakEntity, Window};
+use language::Toolchain;
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -62,6 +63,10 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
 
     async fn shell_env(&self) -> Vec<(String, String)> {
         self.0.shell_env().await.into_iter().collect()
+    }
+
+    async fn active_toolchain(&self) -> Option<Toolchain> {
+        None
     }
 }
 

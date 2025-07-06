@@ -14,6 +14,7 @@ use dap::{
 };
 use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
+use language::Toolchain;
 use task::{DebugScenario, ZedDebugConfig};
 
 pub(crate) struct ExtensionDapAdapter {
@@ -66,6 +67,10 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
             .which(binary_name.as_ref())
             .await
             .map(|path| path.to_string_lossy().to_string())
+    }
+
+    async fn active_toolchain(&self) -> Option<Toolchain> {
+        None
     }
 
     async fn shell_env(&self) -> Vec<(String, String)> {

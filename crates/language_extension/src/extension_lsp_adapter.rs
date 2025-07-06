@@ -13,7 +13,7 @@ use futures::{Future, FutureExt};
 use gpui::AsyncApp;
 use language::{
     BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
-    LspAdapter, LspAdapterDelegate,
+    LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
@@ -23,31 +23,50 @@ use util::{ResultExt, fs::make_file_executable, maybe};
 use crate::LanguageServerRegistryProxy;
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
-struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
+struct WorktreeDelegateAdapter {
+    delegate: Arc<dyn LspAdapterDelegate>,
+    toolchain: Option<Toolchain>,
+}
+
+impl WorktreeDelegateAdapter {
+    fn new(delegate: Arc<dyn LspAdapterDelegate>, toolchain: Option<Toolchain>) -> Arc<Self> {
+        Arc::new(Self {
+            delegate,
+            toolchain,
+        })
+    }
+}
 
 #[async_trait]
 impl WorktreeDelegate for WorktreeDelegateAdapter {
     fn id(&self) -> u64 {
-        self.0.worktree_id().to_proto()
+        self.delegate.worktree_id().to_proto()
     }
 
     fn root_path(&self) -> String {
-        self.0.worktree_root_path().to_string_lossy().to_string()
+        self.delegate
+            .worktree_root_path()
+            .to_string_lossy()
+            .to_string()
     }
 
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
-        self.0.read_text_file(path).await
+        self.delegate.read_text_file(path).await
     }
 
     async fn which(&self, binary_name: String) -> Option<String> {
-        self.0
+        self.delegate
             .which(binary_name.as_ref())
             .await
             .map(|path| path.to_string_lossy().to_string())
     }
 
     async fn shell_env(&self) -> Vec<(String, String)> {
-        self.0.shell_env().await.into_iter().collect()
+        self.delegate.shell_env().await.into_iter().collect()
+    }
+
+    async fn active_toolchain(&self) -> Option<Toolchain> {
+        self.toolchain.clone()
     }
 }
 
@@ -116,13 +135,21 @@ impl LspAdapter for ExtensionLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        language_toolchain_store: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncApp,
+        cx: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
-            let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+            let toolchain = language_toolchain_store
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    Arc::from("".as_ref()),
+                    self.language_name.clone(),
+                    cx,
+                )
+                .await;
+            let delegate = WorktreeDelegateAdapter::new(delegate.clone(), toolchain) as _;
             let command = self
                 .extension
                 .language_server_command(
@@ -223,7 +250,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let delegate = WorktreeDelegateAdapter::new(delegate.clone(), None) as _;
         let json_options = self
             .extension
             .language_server_initialization_options(
@@ -245,10 +272,18 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        language_toolchain_store: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let toolchain = language_toolchain_store
+            .active_toolchain(
+                delegate.worktree_id(),
+                Arc::from("".as_ref()),
+                self.language_name.clone(),
+                _cx,
+            )
+            .await;
+        let delegate = WorktreeDelegateAdapter::new(delegate.clone(), toolchain) as _;
         let json_options: Option<String> = self
             .extension
             .language_server_workspace_configuration(self.language_server_id.clone(), delegate)
@@ -268,7 +303,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let delegate = WorktreeDelegateAdapter::new(delegate.clone(), None) as _;
         let json_options: Option<String> = self
             .extension
             .language_server_additional_initialization_options(
@@ -296,7 +331,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
-        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let delegate = WorktreeDelegateAdapter::new(delegate.clone(), None) as _;
         let json_options: Option<String> = self
             .extension
             .language_server_additional_workspace_configuration(
