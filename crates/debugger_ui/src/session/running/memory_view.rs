@@ -421,28 +421,42 @@ impl Render for MemoryView {
                     .child(
                         div()
                             .absolute()
+                            .id("memory-view-top-scroll-area")
                             .h_1_6()
                             .w_full()
-                            .bg(gpui::red())
                             .opacity(0.5)
                             .top_0()
                             .right_1()
-                            .left_1(),
+                            .left_1()
+                            .on_mouse_move({
+                                let this = this.clone();
+                                move |_, _, cx| {
+                                    _ = this.update(cx, |this, _| {
+                                        if this
+                                            .view_state
+                                            .selection
+                                            .as_ref()
+                                            .is_some_and(|selection| selection.is_dragging())
+                                        {
+                                            this.list_state.scroll_by(px(-100.));
+                                        }
+                                    });
+                                    // style
+                                }
+                            }),
                     )
                     .child(
                         div()
-                            .id("ayylmaojesus")
+                            .id("memory-view-bottom-scroll-area")
                             .absolute()
                             .h_1_6()
                             .w_full()
-                            .bg(gpui::blue())
                             .opacity(0.5)
                             .bottom_0()
                             .right_1()
                             .left_1()
-                            .on_mouse_move(move |evt, _, cx| {
-                                dbg!("Hey");
-                                _ = this.update(cx, |this, cx| {
+                            .on_mouse_move(move |_, _, cx| {
+                                _ = this.update(cx, |this, _| {
                                     if this
                                         .view_state
                                         .selection
