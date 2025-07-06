@@ -92,7 +92,7 @@ where
 
     fn prepaint(
         &self,
-        items: SmallVec<[AnyElement; 8]>,
+        items: &mut SmallVec<[AnyElement; 8]>,
         bounds: Bounds<Pixels>,
         item_height: Pixels,
         scroll_offset: gpui::Point<Pixels>,
@@ -103,7 +103,7 @@ where
     ) {
         let items_count = items.len();
 
-        for (ix, mut item) in items.into_iter().enumerate() {
+        for (ix, item) in items.iter_mut().enumerate() {
             let mut item_y_offset = None;
             if ix == items_count - 1 && self.last_item_is_drifting {
                 if let Some(anchor_index) = self.anchor_index {
@@ -137,9 +137,14 @@ where
             );
 
             item.layout_as_root(available_space, window, cx);
+            item.prepaint_at(sticky_origin, window, cx);
+        }
+    }
 
-            let priority = if item_y_offset.is_some() { 2 } else { 3 };
-            window.defer_draw(item, sticky_origin, priority);
+    fn paint(&self, items: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App) {
+        // reverse so that last item is bottom most among sticky items
+        for item in items.iter_mut().rev() {
+            item.paint(window, cx);
         }
     }
 }

@@ -73,6 +73,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
+    top_slot_items: SmallVec<[AnyElement; 8]>,
     decorations: SmallVec<[AnyElement; 1]>,
 }
 
@@ -216,6 +217,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
+                top_slot_items: SmallVec::new(),
             },
         )
     }
@@ -370,7 +372,7 @@ impl Element for UniformList {
                     let initial_range = first_visible_element_ix
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
-                    let top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
+                    let mut top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
                         top_slot.compute(initial_range, window, cx)
                     } else {
                         SmallVec::new()
@@ -418,7 +420,7 @@ impl Element for UniformList {
 
                         if let Some(ref top_slot) = self.top_slot {
                             top_slot.prepaint(
-                                top_slot_elements,
+                                &mut top_slot_elements,
                                 padded_bounds,
                                 item_height,
                                 scroll_offset,
@@ -428,6 +430,7 @@ impl Element for UniformList {
                                 cx,
                             );
                         }
+                        frame_state.top_slot_items = top_slot_elements;
 
                         let bounds = Bounds::new(
                             padded_bounds.origin
@@ -490,6 +493,9 @@ impl Element for UniformList {
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
+                if let Some(ref top_slot) = self.top_slot {
+                    top_slot.paint(&mut request_layout.top_slot_items, window, cx);
+                }
             },
         )
     }
@@ -534,7 +540,7 @@ pub trait UniformListTopSlot {
     /// Layout and prepaint the top slot elements.
     fn prepaint(
         &self,
-        elements: SmallVec<[AnyElement; 8]>,
+        elements: &mut SmallVec<[AnyElement; 8]>,
         bounds: Bounds<Pixels>,
         item_height: Pixels,
         scroll_offset: Point<Pixels>,
@@ -543,6 +549,9 @@ pub trait UniformListTopSlot {
         window: &mut Window,
         cx: &mut App,
     );
+
+    /// Paint the top slot elements.
+    fn paint(&self, elements: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App);
 }
 
 impl UniformList {
