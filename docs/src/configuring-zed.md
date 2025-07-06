@@ -2440,6 +2440,28 @@ Examples:
 3. `replace_subsequence` - Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text, and like `"insert"` otherwise
 4. `replace_suffix` - Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like `"insert"` otherwise
 
+## Global Context Server Settings
+
+- Description: Global configuration settings for Model Context Protocol (MCP) servers.
+- Setting: `global_context_server_settings`
+- Default:
+
+```json
+"global_context_server_settings": {
+  "request_timeout_secs": 60
+}
+```
+
+### Request Timeout (seconds)
+
+- Description: Timeout duration in seconds for requests to context servers. When set to 0, requests will wait indefinitely.
+- Setting: `request_timeout_secs`
+- Default: `60`
+
+**Options**
+
+`integer` values representing seconds
+
 ## Show Completions On Input
 
 - Description: Whether or not to show completions as you type.
