@@ -360,8 +360,7 @@ impl SshSocket {
     #[cfg(target_os = "windows")]
     fn new(options: SshConnectionOptions, temp_dir: &TempDir, secret: String) -> Result<Self> {
         let askpass_script = temp_dir.path().join("askpass.bat");
-        let askpass_script_content = format!("@ECHO OFF\necho %ZED_SSH_ASKPASS%");
-        std::fs::write(&askpass_script, askpass_script_content)?;
+        std::fs::write(&askpass_script, "@ECHO OFF\necho %ZED_SSH_ASKPASS%")?;
         let mut envs = HashMap::default();
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
         envs.insert("SSH_ASKPASS".into(), askpass_script.display().to_string());
