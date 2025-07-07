@@ -150,6 +150,7 @@ dependencies = [
  "anyhow",
  "collections",
  "gpui",
+ "paths",
  "project",
  "schemars",
  "serde",

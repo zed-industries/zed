@@ -400,7 +400,7 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    Unavailable,
+    Unavailable(SharedString),
     Unsupported,
     Exited(i32),
     Other(SharedString),
@@ -409,7 +409,7 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unavailable => write!(f, "Not installed yet"),
+            LoadError::Unavailable(msg) => write!(f, "Not installed yet: {}", msg),
             LoadError::Unsupported => write!(f, "This server version does not support ACP"),
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
@@ -427,8 +427,8 @@ impl AcpThread {
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let command = match server.command(&project, cx).await {
-            Some(command) => command,
-            None => return Err(anyhow!(LoadError::Unavailable)),
+            Ok(command) => command,
+            Err(e) => return Err(anyhow!(LoadError::Unavailable(format!("{e}").into()))),
         };
 
         // todo! get this out of the happy path

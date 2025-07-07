@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity};
 use project::Project;
@@ -43,7 +43,7 @@ pub trait AgentServer {
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> impl Future<Output = Option<AgentServerCommand>>;
+    ) -> impl Future<Output = Result<AgentServerCommand>>;
 
     fn version_supported(&self, command: &AgentServerCommand) -> impl Future<Output = bool>;
 }
@@ -55,34 +55,50 @@ impl AgentServer for Gemini {
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> Option<AgentServerCommand> {
-        let custom_command = cx
-            .read_global(|settings: &SettingsStore, _| {
-                let settings = settings.get::<AllAgentServersSettings>(None);
-                settings
-                    .gemini
-                    .as_ref()
-                    .map(|gemini_settings| AgentServerCommand {
-                        path: gemini_settings.command.path.clone(),
-                        args: gemini_settings
-                            .command
-                            .args
-                            .iter()
-                            .cloned()
-                            .chain(std::iter::once(GEMINI_ACP_ARG.into()))
-                            .collect(),
-                        env: gemini_settings.command.env.clone(),
-                    })
-            })
-            .log_err()?;
+    ) -> Result<AgentServerCommand> {
+        let custom_command = cx.read_global(|settings: &SettingsStore, _| {
+            let settings = settings.get::<AllAgentServersSettings>(None);
+            settings
+                .gemini
+                .as_ref()
+                .map(|gemini_settings| AgentServerCommand {
+                    path: gemini_settings.command.path.clone(),
+                    args: gemini_settings
+                        .command
+                        .args
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(GEMINI_ACP_ARG.into()))
+                        .collect(),
+                    env: gemini_settings.command.env.clone(),
+                })
+        })?;
 
-        if custom_command.is_some() {
-            return custom_command;
+        if let Some(custom_command) = custom_command {
+            return Ok(custom_command);
         }
 
-        let path = find_bin_in_path("gemini", project, cx).await?;
+        if let Some(path) = find_bin_in_path("gemini", project, cx).await {
+            return Ok(AgentServerCommand {
+                path,
+                args: vec![GEMINI_ACP_ARG.into()],
+                env: None,
+            });
+        }
 
-        Some(AgentServerCommand {
+        let (fs, node_runtime) = project.update(cx, |project, _| {
+            (project.fs().clone(), project.node_runtime().cloned())
+        })?;
+        let node_runtime = node_runtime.context("gemini not found on path")?;
+
+        let directory = ::paths::agent_servers_dir().join("gemini");
+        fs.create_dir(&directory).await?;
+        node_runtime
+            .npm_install_packages(&directory, &[("@google/gemini-cli", "latest")])
+            .await?;
+        let path = directory.join("node_modules/.bin/gemini");
+
+        Ok(AgentServerCommand {
             path,
             args: vec![GEMINI_ACP_ARG.into()],
             env: None,

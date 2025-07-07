@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 gpui.workspace = true
+paths.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
