@@ -71,6 +71,7 @@ pub struct ReplaceCommand {
 pub struct Replacement {
     search: String,
     replacement: String,
+    replace_any: bool,
     should_replace_all: bool,
     is_case_sensitive: bool,
     continue_replacing: bool,
@@ -497,7 +498,12 @@ impl Vim {
                     options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
                 }
 
-                search_bar.set_replacement(Some(&replacement.replacement), replacement.continue_replacing, window, cx);
+                let replace_str: Option<&str> = if replacement.replace_any {
+                    Some(&replacement.replacement)
+                } else {
+                    None
+                };
+                search_bar.set_replacement(replace_str, replacement.continue_replacing, window, cx);
                 Some(search_bar.search(&search, Some(options), window, cx))
             });
             let Some(search) = search else { return };
@@ -506,7 +512,9 @@ impl Vim {
                 search.await?;
                 search_bar.update_in(cx, |search_bar, window, cx| {
                     search_bar.select_last_match(window, cx);
-                    search_bar.replace_all(&Default::default(), window, cx);
+                    if replacement.replace_any {
+                        search_bar.replace_all(&Default::default(), window, cx);
+                    }
                     editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
                     let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
                     vim.update(cx, |vim, cx| {
@@ -591,6 +599,7 @@ impl Replacement {
         let mut replacement = Replacement {
             search,
             replacement,
+            replace_any: true,
             should_replace_all: false,
             is_case_sensitive: true,
             continue_replacing: false,
@@ -599,7 +608,10 @@ impl Replacement {
         for c in flags.chars() {
             match c {
                 'g' => replacement.should_replace_all = true,
-                'n' => replacement.should_replace_all = false,
+                'n' => {
+                    replacement.replace_any = false;
+                    replacement.should_replace_all = false;
+                },
                 'c' => {
                     replacement.should_replace_all = false;
                     replacement.continue_replacing = true;
