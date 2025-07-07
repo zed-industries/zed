@@ -61,7 +61,8 @@ impl ReqwestClient {
                 })
                 .ok()
         }) {
-            client = client.proxy(proxy);
+            // Respect NO_PROXY env var
+            client = client.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
             client_has_proxy = true;
         } else {
             client_has_proxy = false;

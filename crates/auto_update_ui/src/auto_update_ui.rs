@@ -12,7 +12,13 @@ use workspace::Workspace;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::notifications::{NotificationId, show_app_notification};
 
-actions!(auto_update, [ViewReleaseNotesLocally]);
+actions!(
+    auto_update,
+    [
+        /// Opens the release notes for the current version in a new tab.
+        ViewReleaseNotesLocally
+    ]
+);
 
 pub fn init(cx: &mut App) {
     notify_if_app_was_updated(cx);

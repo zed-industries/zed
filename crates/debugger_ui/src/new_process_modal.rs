@@ -23,7 +23,9 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
+use project::{
+    DebugScenarioContext, ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore,
+};
 use settings::{Settings, initial_local_debug_tasks_content};
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
@@ -92,6 +94,7 @@ impl NewProcessModal {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
+                // todo(debugger): get the buffer here (if the active item is an editor) and store it so we can pass it to start_session later
                 tasks_ui::task_contexts(workspace, window, cx)
             })?;
             workspace.update_in(cx, |workspace, window, cx| {
@@ -1110,7 +1113,11 @@ pub(super) struct TaskMode {
 
 pub(super) struct DebugDelegate {
     task_store: Entity<TaskStore>,
-    candidates: Vec<(Option<TaskSourceKind>, DebugScenario)>,
+    candidates: Vec<(
+        Option<TaskSourceKind>,
+        DebugScenario,
+        Option<DebugScenarioContext>,
+    )>,
     selected_index: usize,
     matches: Vec<StringMatch>,
     prompt: String,
@@ -1208,7 +1215,11 @@ impl DebugDelegate {
 
                 this.delegate.candidates = recent
                     .into_iter()
-                    .map(|scenario| Self::get_scenario_kind(&languages, &dap_registry, scenario))
+                    .map(|(scenario, context)| {
+                        let (kind, scenario) =
+                            Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                        (kind, scenario, Some(context))
+                    })
                     .chain(
                         scenarios
                             .into_iter()
@@ -1223,7 +1234,7 @@ impl DebugDelegate {
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
                                     Self::get_scenario_kind(&languages, &dap_registry, scenario);
-                                (language.or(Some(kind)), scenario)
+                                (language.or(Some(kind)), scenario, None)
                             }),
                     )
                     .collect();
@@ -1269,7 +1280,7 @@ impl PickerDelegate for DebugDelegate {
             let candidates: Vec<_> = candidates
                 .into_iter()
                 .enumerate()
-                .map(|(index, (_, candidate))| {
+                .map(|(index, (_, candidate, _))| {
                     StringMatchCandidate::new(index, candidate.label.as_ref())
                 })
                 .collect();
@@ -1434,25 +1445,40 @@ impl PickerDelegate for DebugDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((_, debug_scenario)) = debug_scenario else {
+        let Some((_, debug_scenario, context)) = debug_scenario else {
             return;
         };
 
-        let (task_context, worktree_id) = self
-            .task_contexts
-            .as_ref()
-            .and_then(|task_contexts| {
-                Some((
-                    task_contexts.active_context().cloned()?,
-                    task_contexts.worktree(),
-                ))
-            })
-            .unwrap_or_default();
+        let context = context.unwrap_or_else(|| {
+            self.task_contexts
+                .as_ref()
+                .and_then(|task_contexts| {
+                    Some(DebugScenarioContext {
+                        task_context: task_contexts.active_context().cloned()?,
+                        active_buffer: None,
+                        worktree_id: task_contexts.worktree(),
+                    })
+                })
+                .unwrap_or_default()
+        });
+        let DebugScenarioContext {
+            task_context,
+            active_buffer,
+            worktree_id,
+        } = context;
+        let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
         send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
         self.debug_panel
             .update(cx, |panel, cx| {
-                panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
+                panel.start_session(
+                    debug_scenario,
+                    task_context,
+                    active_buffer,
+                    worktree_id,
+                    window,
+                    cx,
+                );
             })
             .ok();
 

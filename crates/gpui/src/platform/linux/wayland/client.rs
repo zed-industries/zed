@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
 use calloop::{
     EventLoop, LoopHandle,
     timer::{TimeoutAction, Timer},
@@ -15,7 +14,6 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
-use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -77,8 +75,8 @@ use crate::{
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
-    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
+    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
     SharedString,
@@ -666,20 +664,25 @@ impl LinuxClient for WaylandClient {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    {
         // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
         // be tricky.
         //
         // start_scap_default_target_source()
-        let (sources_tx, sources_rx) = oneshot::channel();
+        let (sources_tx, sources_rx) = futures::channel::oneshot::channel();
         sources_tx
-            .send(Err(anyhow!("Wayland screen capture not yet implemented.")))
+            .send(Err(anyhow::anyhow!(
+                "Wayland screen capture not yet implemented."
+            )))
             .ok();
         sources_rx
     }

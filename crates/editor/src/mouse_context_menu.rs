@@ -233,31 +233,25 @@ pub fn deploy_context_menu(
                 .action("Copy and Trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .map(|builder| {
-                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                .action_disabled_when(
+                    !has_reveal_target,
+                    if cfg!(target_os = "macos") {
                         "Reveal in Finder"
                     } else {
                         "Reveal in File Manager"
-                    };
-                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                    if has_reveal_target {
-                        builder
-                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    } else {
-                        builder
-                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    }
-                })
-                .map(|builder| {
-                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                    if has_git_repo {
-                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    } else {
-                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    }
-                });
+                    },
+                    Box::new(RevealInFileManager),
+                )
+                .action_disabled_when(
+                    !has_reveal_target,
+                    "Open in Terminal",
+                    Box::new(OpenInTerminal),
+                )
+                .action_disabled_when(
+                    !has_git_repo,
+                    "Copy Permalink",
+                    Box::new(CopyPermalinkToLine),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

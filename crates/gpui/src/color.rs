@@ -1,9 +1,10 @@
 use anyhow::{Context as _, bail};
-use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Visitor},
 };
+use std::borrow::Cow;
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -99,22 +100,14 @@ impl Visitor<'_> for RgbaVisitor {
 }
 
 impl JsonSchema for Rgba {
-    fn schema_name() -> String {
-        "Rgba".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        "Rgba".into()
     }
 
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(
-                    r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$".to_string(),
-                ),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
         })
     }
 }
@@ -629,11 +622,11 @@ impl From<Rgba> for Hsla {
 }
 
 impl JsonSchema for Hsla {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         Rgba::schema_name()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         Rgba::json_schema(generator)
     }
 }

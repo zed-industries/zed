@@ -36,32 +36,59 @@ use multi_buffer::MultiBufferRow;
 actions!(
     vim,
     [
+        /// Inserts text after the cursor.
         InsertAfter,
+        /// Inserts text before the cursor.
         InsertBefore,
+        /// Inserts at the first non-whitespace character.
         InsertFirstNonWhitespace,
+        /// Inserts at the end of the line.
         InsertEndOfLine,
+        /// Inserts a new line above the current line.
         InsertLineAbove,
+        /// Inserts a new line below the current line.
         InsertLineBelow,
+        /// Inserts an empty line above without entering insert mode.
         InsertEmptyLineAbove,
+        /// Inserts an empty line below without entering insert mode.
         InsertEmptyLineBelow,
+        /// Inserts at the previous insert position.
         InsertAtPrevious,
+        /// Joins the current line with the next line.
         JoinLines,
+        /// Joins lines without adding whitespace.
         JoinLinesNoWhitespace,
+        /// Deletes character to the left.
         DeleteLeft,
+        /// Deletes character to the right.
         DeleteRight,
+        /// Deletes using Helix-style behavior.
         HelixDelete,
+        /// Changes from cursor to end of line.
         ChangeToEndOfLine,
+        /// Deletes from cursor to end of line.
         DeleteToEndOfLine,
+        /// Yanks (copies) the selected text.
         Yank,
+        /// Yanks the entire line.
         YankLine,
+        /// Toggles the case of selected text.
         ChangeCase,
+        /// Converts selected text to uppercase.
         ConvertToUpperCase,
+        /// Converts selected text to lowercase.
         ConvertToLowerCase,
+        /// Applies ROT13 cipher to selected text.
         ConvertToRot13,
+        /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Toggles comments for selected lines.
         ToggleComments,
+        /// Shows the current location in the file.
         ShowLocation,
+        /// Undoes the last change.
         Undo,
+        /// Redoes the last undone change.
         Redo,
     ]
 );

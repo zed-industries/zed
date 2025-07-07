@@ -41,7 +41,7 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, FontWeight,
+    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop,
     linear_gradient, prelude::*, pulsating_between,
 };
@@ -59,7 +59,7 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
+    Banner, Callout, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
     PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::ResultExt as _;
@@ -2025,9 +2025,7 @@ impl AgentPanel {
                     .thread()
                     .read(cx)
                     .configured_model()
-                    .map_or(false, |model| {
-                        model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-                    });
+                    .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID);
 
                 if !is_using_zed_provider {
                     return false;
@@ -2600,7 +2598,7 @@ impl AgentPanel {
                         Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
                             parent.child(Banner::new().severity(ui::Severity::Warning).child(
                                 h_flex().w_full().children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadtEmptyState,
+                                    LanguageModelProviderTosView::ThreadEmptyState,
                                     cx,
                                 )),
                             ))
@@ -2691,58 +2689,90 @@ impl AgentPanel {
         Some(div().px_2().pb_2().child(banner).into_any_element())
     }
 
+    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
+        let message = message.into();
+
+        IconButton::new("copy", IconName::Copy)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Copy Error Message"))
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
+            })
+    }
+
+    fn dismiss_error_button(
+        &self,
+        thread: &Entity<ActiveThread>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        IconButton::new("dismiss", IconName::Close)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Dismiss Error"))
+            .on_click(cx.listener({
+                let thread = thread.clone();
+                move |_, _, _, cx| {
+                    thread.update(cx, |this, _cx| {
+                        this.clear_last_error();
+                    });
+
+                    cx.notify();
+                }
+            }))
+    }
+
+    fn upgrade_button(
+        &self,
+        thread: &Entity<ActiveThread>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        Button::new("upgrade", "Upgrade")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+            .on_click(cx.listener({
+                let thread = thread.clone();
+                move |_, _, _, cx| {
+                    thread.update(cx, |this, _cx| {
+                        this.clear_last_error();
+                    });
+
+                    cx.open_url(&zed_urls::account_url(cx));
+                    cx.notify();
+                }
+            }))
+    }
+
+    fn error_callout_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().status().error.opacity(0.08)
+    }
+
     fn render_payment_required_error(
         &self,
         thread: &Entity<ActiveThread>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+        const ERROR_MESSAGE: &str =
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
 
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Free Usage Exceeded").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(ERROR_MESSAGE))
-                    .child(Button::new("subscribe", "Subscribe").on_click(cx.listener({
-                        let thread = thread.clone();
-                        move |_, _, _, cx| {
-                            thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
 
-                            cx.open_url(&zed_urls::account_url(cx));
-                            cx.notify();
-                        }
-                    })))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener({
-                        let thread = thread.clone();
-                        move |_, _, _, cx| {
-                            thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
-
-                            cx.notify();
-                        }
-                    }))),
+        div()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Callout::new()
+                    .icon(icon)
+                    .title("Free Usage Exceeded")
+                    .description(ERROR_MESSAGE)
+                    .tertiary_action(self.upgrade_button(thread, cx))
+                    .secondary_action(self.create_copy_button(ERROR_MESSAGE))
+                    .primary_action(self.dismiss_error_button(thread, cx))
+                    .bg_color(self.error_callout_bg(cx)),
             )
-            .into_any()
+            .into_any_element()
     }
 
     fn render_model_request_limit_reached_error(
@@ -2752,67 +2782,28 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error_message = match plan {
-            Plan::ZedPro => {
-                "Model request limit reached. Upgrade to usage-based billing for more requests."
-            }
-            Plan::ZedProTrial => {
-                "Model request limit reached. Upgrade to Zed Pro for more requests."
-            }
-            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
-        };
-        let call_to_action = match plan {
-            Plan::ZedPro => "Upgrade to usage-based billing",
-            Plan::ZedProTrial => "Upgrade to Zed Pro",
-            Plan::Free => "Upgrade to Zed Pro",
+            Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
+            Plan::ZedProTrial | Plan::Free => "Upgrade to Zed Pro for more prompts.",
         };
 
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Model Request Limit Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(error_message)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(error_message))
-                    .child(
-                        Button::new("subscribe", call_to_action).on_click(cx.listener({
-                            let thread = thread.clone();
-                            move |_, _, _, cx| {
-                                thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
 
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }
-                        })),
-                    )
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener({
-                        let thread = thread.clone();
-                        move |_, _, _, cx| {
-                            thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
-
-                            cx.notify();
-                        }
-                    }))),
+        div()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Callout::new()
+                    .icon(icon)
+                    .title("Model Prompt Limit Reached")
+                    .description(error_message)
+                    .tertiary_action(self.upgrade_button(thread, cx))
+                    .secondary_action(self.create_copy_button(error_message))
+                    .primary_action(self.dismiss_error_button(thread, cx))
+                    .bg_color(self.error_callout_bg(cx)),
             )
-            .into_any()
+            .into_any_element()
     }
 
     fn render_error_message(
@@ -2823,40 +2814,24 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let message_with_header = format!("{}\n{}", header, message);
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new(header).weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_32()
-                    .overflow_y_scroll()
-                    .child(Label::new(message.clone())),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(message_with_header))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener({
-                        let thread = thread.clone();
-                        move |_, _, _, cx| {
-                            thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
 
-                            cx.notify();
-                        }
-                    }))),
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        div()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Callout::new()
+                    .icon(icon)
+                    .title(header)
+                    .description(message.clone())
+                    .primary_action(self.dismiss_error_button(thread, cx))
+                    .secondary_action(self.create_copy_button(message_with_header))
+                    .bg_color(self.error_callout_bg(cx)),
             )
-            .into_any()
+            .into_any_element()
     }
 
     fn render_prompt_editor(
@@ -3001,15 +2976,6 @@ impl AgentPanel {
         }
     }
 
-    fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
-        let message = message.into();
-        IconButton::new("copy", IconName::Copy)
-            .on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
-            })
-            .tooltip(Tooltip::text("Copy Error Message"))
-    }
-
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
@@ -3091,18 +3057,9 @@ impl Render for AgentPanel {
                         thread.clone().into_any_element()
                     })
                     .children(self.render_tool_use_limit_reached(window, cx))
-                    .child(h_flex().child(message_editor.clone()))
                     .when_some(thread.read(cx).last_error(), |this, last_error| {
                         this.child(
                             div()
-                                .absolute()
-                                .right_3()
-                                .bottom_12()
-                                .max_w_96()
-                                .py_2()
-                                .px_3()
-                                .elevation_2(cx)
-                                .occlude()
                                 .child(match last_error {
                                     ThreadError::PaymentRequired => {
                                         self.render_payment_required_error(thread, cx)
@@ -3116,6 +3073,7 @@ impl Render for AgentPanel {
                                 .into_any(),
                         )
                     })
+                    .child(h_flex().child(message_editor.clone()))
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::TextThread {

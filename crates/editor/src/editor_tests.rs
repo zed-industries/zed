@@ -25,12 +25,12 @@ use language::{
     DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, LspInsertMode, PrettierSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, FormatterList,
+        LanguageSettingsContent, LspInsertMode, PrettierSettings, SelectedFormatter,
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use language_settings::{Formatter, IndentGuideSettings};
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -3469,6 +3469,70 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext) {
+    // This is a regression test for issue #33761
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
+        r#"ˇ#     ingress:
+ˇ#         api:
+ˇ#             enabled: false
+ˇ#             pathType: Prefix
+ˇ#           console:
+ˇ#               enabled: false
+ˇ#               pathType: Prefix
+"#,
+    );
+
+    // Press tab to indent all lines
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(
+        r#"    ˇ#     ingress:
+    ˇ#         api:
+    ˇ#             enabled: false
+    ˇ#             pathType: Prefix
+    ˇ#           console:
+    ˇ#               enabled: false
+    ˇ#               pathType: Prefix
+"#,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_yaml_non_comments_with_multiple_cursors(cx: &mut TestAppContext) {
+    // This is a test to make sure our fix for issue #33761 didn't break anything
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
+        r#"ˇingress:
+ˇ  api:
+ˇ    enabled: false
+ˇ    pathType: Prefix
+"#,
+    );
+
+    // Press tab to indent all lines
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(
+        r#"ˇingress:
+    ˇapi:
+        ˇenabled: false
+        ˇpathType: Prefix
+"#,
+    );
+}
+
+#[gpui::test]
 async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.hard_tabs = Some(true);
@@ -3567,7 +3631,7 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "TOML".into(),
                 LanguageSettingsContent {
@@ -5145,7 +5209,7 @@ fn test_transpose(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_rewrap(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "Markdown".into(),
                 LanguageSettingsContent {
@@ -5210,6 +5274,10 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     let markdown_language = Arc::new(Language::new(
         LanguageConfig {
             name: "Markdown".into(),
+            rewrap_prefixes: vec![
+                regex::Regex::new("\\d+\\.\\s+").unwrap(),
+                regex::Regex::new("[-*+]\\s+").unwrap(),
+            ],
             ..LanguageConfig::default()
         },
         None,
@@ -5372,7 +5440,82 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             A long long long line of markdown text
             to wrap.ˇ
          "},
-        markdown_language,
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping boundary works and preserves relative indent for Markdown documents
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list item that is very long and needs to be wrapped properly.
+            2. This is a numbered list item that is very long and needs to be wrapped properly.
+            - This is an unordered list item that is also very long and should not merge with the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping add indents for rewrapping boundary if not exists already.
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list item that is
+            very long and needs to be wrapped
+            properly.
+            2. This is a numbered list item that is
+            very long and needs to be wrapped
+            properly.
+            - This is an unordered list item that is
+            also very long and should not merge with
+            the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that rewrapping maintain indents even when they already exists.
+    assert_rewrap(
+        indoc! {"
+            «1. This is a numbered list
+               item that is very long and needs to be wrapped properly.
+            2. This is a numbered list
+               item that is very long and needs to be wrapped properly.
+            - This is an unordered list item that is also very long and
+              should not merge with the numbered item.ˇ»
+        "},
+        indoc! {"
+            «1. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            2. This is a numbered list item that is
+               very long and needs to be wrapped
+               properly.
+            - This is an unordered list item that is
+              also very long and should not merge
+              with the numbered item.ˇ»
+        "},
+        markdown_language.clone(),
         &mut cx,
     );
 
@@ -9326,7 +9469,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9890,7 +10033,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
-        settings.languages.insert(
+        settings.languages.0.insert(
             "Rust".into(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -9933,9 +10076,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+            Formatter::LanguageServer { name: None },
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10062,21 +10205,17 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 async fn test_multiple_formatters(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-        settings.defaults.formatter =
-            Some(language_settings::SelectedFormatter::List(FormatterList(
-                vec![
-                    Formatter::LanguageServer { name: None },
-                    Formatter::CodeActions(
-                        [
-                            ("code-action-1".into(), true),
-                            ("code-action-2".into(), true),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
+            Formatter::LanguageServer { name: None },
+            Formatter::CodeActions(
+                [
+                    ("code-action-1".into(), true),
+                    ("code-action-2".into(), true),
                 ]
-                .into(),
-            )))
+                .into_iter()
+                .collect(),
+            ),
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10328,9 +10467,9 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
+            Formatter::LanguageServer { name: None },
+        ])))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -10536,7 +10675,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -10791,9 +10930,10 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signatures[signature.current_signature].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -10962,9 +11102,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     cx.update_editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signatures[signature.current_signature].label,
+            "fn sample(param1: u8, param2: u8)"
         );
         editor.signature_help_state = SignatureHelpState::default();
     });
@@ -11003,9 +11144,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signatures[signature.current_signature].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -11064,9 +11206,10 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signatures[signature.current_signature].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 
@@ -11272,6 +11415,132 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     "});
     cx.condition(|editor, _| !editor.signature_help_state.is_shown()) // because hidden by escape
         .await;
+}
+
+#[gpui::test]
+async fn test_signature_help_multiple_signatures(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            signature_help_provider: Some(lsp::SignatureHelpOptions {
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            overloadedˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("(", window, cx);
+        editor.show_signature_help(&ShowSignatureHelp, window, cx);
+    });
+
+    // Mock response with 3 signatures
+    let mocked_response = lsp::SignatureHelp {
+        signatures: vec![
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![lsp::ParameterInformation {
+                    label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                    documentation: None,
+                }]),
+                active_parameter: None,
+            },
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32, y: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("y: i32".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            },
+            lsp::SignatureInformation {
+                label: "fn overloaded(x: i32, y: i32, z: i32)".to_string(),
+                documentation: None,
+                parameters: Some(vec![
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("x: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("y: i32".to_string()),
+                        documentation: None,
+                    },
+                    lsp::ParameterInformation {
+                        label: lsp::ParameterLabel::Simple("z: i32".to_string()),
+                        documentation: None,
+                    },
+                ]),
+                active_parameter: None,
+            },
+        ],
+        active_signature: Some(1),
+        active_parameter: Some(0),
+    };
+    handle_signature_help_request(&mut cx, mocked_response).await;
+
+    cx.condition(|editor, _| editor.signature_help_state.is_shown())
+        .await;
+
+    // Verify we have multiple signatures and the right one is selected
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.signatures.len(), 3);
+        // active_signature was 1, so that should be the current
+        assert_eq!(popover.current_signature, 1);
+        assert_eq!(popover.signatures[0].label, "fn overloaded(x: i32)");
+        assert_eq!(popover.signatures[1].label, "fn overloaded(x: i32, y: i32)");
+        assert_eq!(
+            popover.signatures[2].label,
+            "fn overloaded(x: i32, y: i32, z: i32)"
+        );
+    });
+
+    // Test navigation functionality
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_next(&crate::SignatureHelpNext, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 2);
+    });
+
+    // Test wrap around
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_next(&crate::SignatureHelpNext, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 0);
+    });
+
+    // Test previous navigation
+    cx.update_editor(|editor, window, cx| {
+        editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
+    });
+
+    cx.editor(|editor, _, _| {
+        let popover = editor.signature_help_state.popover().cloned().unwrap();
+        assert_eq!(popover.current_signature, 2);
+    });
 }
 
 #[gpui::test]
@@ -14905,7 +15174,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         .unwrap();
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
-        language_settings.languages.insert(
+        language_settings.languages.0.insert(
             language_name.clone(),
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
@@ -15803,9 +16072,9 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
-            FormatterList(vec![Formatter::Prettier].into()),
-        ))
+        settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+            Formatter::Prettier,
+        )))
     });
 
     let fs = FakeFs::new(cx.executor());
@@ -15875,7 +16144,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
     );
 
     update_test_language_settings(cx, |settings| {
-        settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
+        settings.defaults.formatter = Some(SelectedFormatter::Auto)
     });
     let format = editor.update_in(cx, |editor, window, cx| {
         editor.perform_format(

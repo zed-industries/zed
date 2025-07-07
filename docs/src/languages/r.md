@@ -63,6 +63,9 @@ See [Using lintr](https://lintr.r-lib.org/articles/lintr.html) for a complete li
 
 `REditorSupport/languageserver` bundles support for [r-lib/styler](https://github.com/r-lib/styler) as a formatter. See [Customizing Styler](https://cran.r-project.org/web/packages/styler/vignettes/customizing_styler.html) for more information on how to customize its behavior.
 
+<!--
+TBD: Get this working
+
 ### REditorSupport/languageserver Configuration
 
 You can configure the [R languageserver settings](https://github.com/REditorSupport/languageserver#settings) via Zed Project Settings `.zed/settings.json` or Zed User Settings `~/.config/zed/settings.json`:
@@ -85,6 +88,8 @@ For example to disable Lintr linting and suppress code snippet suggestions (both
   }
 }
 ```
+
+-->
 
 <!--
 TBD: R REPL Docs

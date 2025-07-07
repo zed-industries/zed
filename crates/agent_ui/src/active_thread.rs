@@ -1,9 +1,7 @@
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
-use crate::ui::{
-    AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
-};
+use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
@@ -47,8 +45,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
-    prelude::*,
+    Banner, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -58,6 +56,7 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const RESPONSE_PADDING_X: Pixels = px(19.);
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -1025,6 +1024,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
+                self.clear_last_error();
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
@@ -1041,6 +1041,7 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::MessageEdited(message_id) => {
+                self.clear_last_error();
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                         thread.message(*message_id).map(|message| {
@@ -1817,7 +1818,7 @@ impl ActiveThread {
                 .my_3()
                 .mx_5()
                 .when(is_generating_stale || message.is_hidden, |this| {
-                    this.child(AnimatedLabel::new("").size(LabelSize::Small))
+                    this.child(LoadingLabel::new("").size(LabelSize::Small))
                 })
         });
 
@@ -1873,9 +1874,6 @@ impl ActiveThread {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.scroll_to_top(cx);
             }));
-
-        // For all items that should be aligned with the LLM's response.
-        const RESPONSE_PADDING_X: Pixels = px(19.);
 
         let show_feedback = thread.is_turn_end(ix);
         let feedback_container = h_flex()
@@ -2537,34 +2535,18 @@ impl ActiveThread {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let colors = cx.theme().colors();
-        div().id(("message-container", ix)).py_1().px_2().child(
-            v_flex()
-                .w_full()
-                .bg(colors.editor_background)
-                .rounded_sm()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .p_2()
-                        .gap_2()
-                        .child(
-                            div().flex_none().child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            ),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(TextSize::Small.rems(cx))
-                                .text_color(cx.theme().colors().text_muted)
-                                .children(message_content),
-                        ),
-                ),
-        )
+        let message = div()
+            .flex_1()
+            .min_w_0()
+            .text_size(TextSize::XSmall.rems(cx))
+            .text_color(cx.theme().colors().text_muted)
+            .children(message_content);
+
+        div()
+            .id(("message-container", ix))
+            .py_1()
+            .px_2p5()
+            .child(Banner::new().severity(ui::Severity::Warning).child(message))
     }
 
     fn render_message_thinking_segment(
@@ -2602,7 +2584,7 @@ impl ActiveThread {
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
-                                    .child(AnimatedLabel::new("Thinking").size(LabelSize::Small)),
+                                    .child(LoadingLabel::new("Thinking").size(LabelSize::Small)),
                             )
                             .child(
                                 h_flex()
@@ -3171,7 +3153,7 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    AnimatedLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
                                 )
                                 .child(
                                     h_flex()
