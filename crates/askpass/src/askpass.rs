@@ -73,13 +73,12 @@ impl AskPassSession {
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
-        let listener =
-            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        let listener = UnixListener::bind(&askpass_socket).context("creating askpass socket")?;
         #[cfg(not(target_os = "windows"))]
         let zed_path = util::get_shell_safe_zed_path()?;
         #[cfg(target_os = "windows")]
         let zed_path = std::env::current_exe()
-            .context("Failed to figure out current executable path for use in askpass")?;
+            .context("finding current executable path for use in askpass")?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -102,7 +101,7 @@ impl AskPassSession {
                 if let Some(password) = delegate
                     .ask_password(prompt.to_string())
                     .await
-                    .context("failed to get askpass password")
+                    .context("getting askpass password")
                     .log_err()
                 {
                     stream.write_all(password.as_bytes()).await.log_err();
