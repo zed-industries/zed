@@ -1516,7 +1516,7 @@ impl Thread {
     ) -> Option<PendingToolUse> {
         let action_log = self.action_log.read(cx);
 
-        action_log.stale_buffers(cx).next()?;
+        action_log.unnotified_stale_buffers(cx).next()?;
 
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
@@ -3631,11 +3631,11 @@ fn main() {{
         });
 
         // We shouldn't have a stale buffer notification yet
-        let notification = thread.read_with(cx, |thread, _| {
-            find_tool_use(thread, "project_notifications")
+        let notifications = thread.read_with(cx, |thread, _| {
+            find_tool_uses(thread, "project_notifications")
         });
         assert!(
-            notification.is_none(),
+            notifications.is_empty(),
             "Should not have stale buffer notification before buffer is modified"
         );
 
@@ -3664,13 +3664,15 @@ fn main() {{
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
-        let Some(notification_result) = thread.read_with(cx, |thread, _cx| {
-            find_tool_use(thread, "project_notifications")
-        }) else {
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        let [notification] = notifications.as_slice() else {
             panic!("Should have a `project_notifications` tool use");
         };
 
-        let Some(notification_content) = notification_result.content.to_str() else {
+        let Some(notification_content) = notification.content.to_str() else {
             panic!("`project_notifications` should return text");
         };
 
@@ -3680,19 +3682,46 @@ fn main() {{
         - code.rs
         "};
         assert_eq!(notification_content, expected_content);
+
+        // Insert another user message and flush notifications again
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Can you tell me more?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // There should be no new notifications (we already flushed one)
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        assert_eq!(
+            notifications.len(),
+            1,
+            "Should still have only one notification after second flush - no duplicates"
+        );
     }
 
-    fn find_tool_use(thread: &Thread, tool_name: &str) -> Option<LanguageModelToolResult> {
+    fn find_tool_uses(thread: &Thread, tool_name: &str) -> Vec<LanguageModelToolResult> {
         thread
             .messages()
-            .filter_map(|message| {
+            .flat_map(|message| {
                 thread
                     .tool_results_for_message(message.id)
                     .into_iter()
-                    .find(|result| result.tool_name == tool_name.into())
+                    .filter(|result| result.tool_name == tool_name.into())
+                    .cloned()
+                    .collect::<Vec<_>>()
             })
-            .next()
-            .cloned()
+            .collect()
     }
 
     #[gpui::test]
