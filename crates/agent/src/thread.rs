@@ -1516,9 +1516,7 @@ impl Thread {
     ) -> Option<PendingToolUse> {
         let action_log = self.action_log.read(cx);
 
-        if action_log.stale_buffers(cx).next().is_none() {
-            return None;
-        }
+        action_log.stale_buffers(cx).next()?;
 
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
