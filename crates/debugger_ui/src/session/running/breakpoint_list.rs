@@ -5,7 +5,8 @@ use std::{
     time::Duration,
 };
 
-use dap::{Capabilities, ExceptionBreakpointsFilter};
+use dap::{Capabilities, ExceptionBreakpointsFilter, adapters::DebugAdapterName};
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -16,6 +17,7 @@ use project::{
     Project,
     debugger::{
         breakpoint_store::{BreakpointEditAction, BreakpointStore, SourceBreakpoint},
+        dap_store::{DapStore, PersistedAdapterOptions},
         session::Session,
     },
     worktree_store::WorktreeStore,
@@ -48,6 +50,7 @@ pub(crate) enum SelectedBreakpointKind {
 pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,
     breakpoint_store: Entity<BreakpointStore>,
+    dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
@@ -59,6 +62,7 @@ pub(crate) struct BreakpointList {
     selected_ix: Option<usize>,
     input: Entity<Editor>,
     strip_mode: Option<ActiveBreakpointStripMode>,
+    serialize_exception_breakpoints_task: Option<Task<anyhow::Result<()>>>,
 }
 
 impl Focusable for BreakpointList {
@@ -85,24 +89,34 @@ impl BreakpointList {
         let project = project.read(cx);
         let breakpoint_store = project.breakpoint_store();
         let worktree_store = project.worktree_store();
+        let dap_store = project.dap_store();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
-        cx.new(|cx| Self {
-            breakpoint_store,
-            worktree_store,
-            scrollbar_state,
-            breakpoints: Default::default(),
-            hide_scrollbar_task: None,
-            show_scrollbar: false,
-            workspace,
-            session,
-            focus_handle,
-            scroll_handle,
-            selected_ix: None,
-            input: cx.new(|cx| Editor::single_line(window, cx)),
-            strip_mode: None,
+        let adapter_name = session.as_ref().map(|session| session.read(cx).adapter());
+        cx.new(|cx| {
+            let this = Self {
+                breakpoint_store,
+                dap_store,
+                worktree_store,
+                scrollbar_state,
+                breakpoints: Default::default(),
+                hide_scrollbar_task: None,
+                show_scrollbar: false,
+                workspace,
+                session,
+                focus_handle,
+                scroll_handle,
+                selected_ix: None,
+                input: cx.new(|cx| Editor::single_line(window, cx)),
+                strip_mode: None,
+                serialize_exception_breakpoints_task: None,
+            };
+            if let Some(name) = adapter_name {
+                _ = this.deserialize_exception_breakpoints(name, cx);
+            }
+            this
         })
     }
 
@@ -404,12 +418,8 @@ impl BreakpointList {
                 self.edit_line_breakpoint(path, row, BreakpointEditAction::InvertState, cx);
             }
             BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
-                if let Some(session) = &self.session {
-                    let id = exception_breakpoint.id.clone();
-                    session.update(cx, |session, cx| {
-                        session.toggle_exception_breakpoint(&id, cx);
-                    });
-                }
+                let id = exception_breakpoint.id.clone();
+                self.toggle_exception_breakpoint(&id, cx);
             }
         }
         cx.notify();
@@ -478,6 +488,64 @@ impl BreakpointList {
             self.strip_mode.take();
         }
         cx.notify();
+    }
+
+    fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            session.update(cx, |this, cx| {
+                this.toggle_exception_breakpoint(&id, cx);
+            });
+            cx.notify();
+            const EXCEPTION_SERIALIZATION_INTERVAL: Duration = Duration::from_secs(1);
+            self.serialize_exception_breakpoints_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(EXCEPTION_SERIALIZATION_INTERVAL)
+                    .await;
+                this.update(cx, |this, cx| this.serialize_exception_breakpoints(cx))?
+                    .await?;
+                Ok(())
+            }));
+        }
+    }
+
+    fn kvp_key(adapter_name: &str) -> String {
+        format!("debug_adapter_`{adapter_name}`_persistence")
+    }
+    fn serialize_exception_breakpoints(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        if let Some(session) = self.session.as_ref() {
+            let key = {
+                let session = session.read(cx);
+                let name = session.adapter().0;
+                Self::kvp_key(&name)
+            };
+            let settings = self.dap_store.update(cx, |this, cx| {
+                this.sync_adapter_options(session, cx);
+            });
+            let value = serde_json::to_string(&settings);
+
+            cx.background_executor()
+                .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
+        } else {
+            return Task::ready(Result::Ok(()));
+        }
+    }
+
+    fn deserialize_exception_breakpoints(
+        &self,
+        adapter_name: DebugAdapterName,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let Some(val) = KEY_VALUE_STORE.read_kvp(&Self::kvp_key(&adapter_name))? else {
+            return Ok(());
+        };
+        let value: PersistedAdapterOptions = serde_json::from_str(&val)?;
+        self.dap_store
+            .update(cx, |this, _| this.set_adapter_options(adapter_name, value));
+
+        Ok(())
     }
 
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -988,12 +1056,7 @@ impl ExceptionBreakpoint {
                     let list = list.clone();
                     move |_, _, cx| {
                         list.update(cx, |this, cx| {
-                            if let Some(session) = &this.session {
-                                session.update(cx, |this, cx| {
-                                    this.toggle_exception_breakpoint(&id, cx);
-                                });
-                                cx.notify();
-                            }
+                            this.toggle_exception_breakpoint(&id, cx);
                         })
                         .ok();
                     }
