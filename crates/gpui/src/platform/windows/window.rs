@@ -43,6 +43,7 @@ pub struct WindowsWindowState {
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
@@ -105,6 +106,7 @@ impl WindowsWindowState {
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
         let system_key_handled = false;
@@ -126,6 +128,7 @@ impl WindowsWindowState {
             min_size,
             callbacks,
             input_handler,
+            pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
             system_key_handled,
