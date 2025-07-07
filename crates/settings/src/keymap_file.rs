@@ -698,7 +698,7 @@ impl KeymapFile {
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
                             &["context"],
-                            source.context.clone().map(Into::into).as_ref(),
+                            source.context.map(Into::into).as_ref(),
                             None,
                             index,
                             tab_size,
