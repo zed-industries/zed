@@ -131,19 +131,23 @@ async fn find_bin_in_path(
         })
         .log_err()?;
 
-    let which_result = if cfg!(windows) {
-        which::which(bin_name)
-    } else {
-        let env = env_task.await.unwrap_or_default();
-        let shell_path = env.get("PATH").cloned();
-        which::which_in(bin_name, shell_path.as_ref(), root_dir.as_ref())
-    };
+    cx.background_executor()
+        .spawn(async move {
+            let which_result = if cfg!(windows) {
+                which::which(bin_name)
+            } else {
+                let env = env_task.await.unwrap_or_default();
+                let shell_path = env.get("PATH").cloned();
+                which::which_in(bin_name, shell_path.as_ref(), root_dir.as_ref())
+            };
 
-    if let Err(which::Error::CannotFindBinaryPath) = which_result {
-        return None;
-    }
+            if let Err(which::Error::CannotFindBinaryPath) = which_result {
+                return None;
+            }
 
-    which_result.log_err()
+            which_result.log_err()
+        })
+        .await
 }
 
 impl std::fmt::Debug for AgentServerCommand {
