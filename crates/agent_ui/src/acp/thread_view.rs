@@ -616,6 +616,10 @@ impl AcpThreadView {
             .blend(cx.theme().colors().editor_foreground.opacity(0.025))
     }
 
+    fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().colors().border.opacity(0.6)
+    }
+
     fn tool_name_font_size(&self) -> Rems {
         rems_from_px(13.)
     }
@@ -688,10 +692,10 @@ impl AcpThreadView {
                     div()
                         .relative()
                         .mt_1p5()
-                        .ml_1p5()
-                        .pl_5()
+                        .ml(px(7.))
+                        .pl_4()
                         .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(self.tool_card_border_color(cx))
                         .text_ui_sm(cx)
                         .child(
                             // todo! url click
@@ -759,7 +763,6 @@ impl AcpThreadView {
         };
 
         // todo! consider cleaning up these conditions. maybe break it into a few variants?
-
         let has_content = tool_call.content.is_some();
         let is_collapsible = has_content && !needs_confirmation;
         let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
@@ -782,8 +785,6 @@ impl AcpThreadView {
                     tool_call.content.as_ref().map(|content| {
                         div()
                             .py_1p5()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border)
                             .child(self.render_tool_call_content(entry_ix, content, window, cx))
                             .into_any_element()
                     })
@@ -798,7 +799,7 @@ impl AcpThreadView {
             .when(needs_confirmation, |this| {
                 this.rounded_lg()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(self.tool_card_border_color(cx))
                     .bg(cx.theme().colors().editor_background)
                     .overflow_hidden()
             })
@@ -815,7 +816,7 @@ impl AcpThreadView {
                                 .rounded_t_md()
                                 .bg(self.tool_card_header_bg(cx))
                                 .border_b_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(self.tool_card_border_color(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
                         }
@@ -884,7 +885,7 @@ impl AcpThreadView {
                         .when(is_collapsible, |this| {
                             this.mt_1()
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(self.tool_card_border_color(cx))
                                 .bg(cx.theme().colors().editor_background)
                                 .rounded_lg()
                         })
@@ -929,7 +930,7 @@ impl AcpThreadView {
             .gap_1()
             .justify_end()
             .border_t_1()
-            .border_color(cx.theme().colors().border_variant);
+            .border_color(self.tool_card_border_color(cx));
 
         match confirmation {
             ToolCallConfirmation::Edit { description } => {

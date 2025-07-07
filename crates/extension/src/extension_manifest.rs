@@ -130,6 +130,22 @@ impl ExtensionManifest {
 
         Ok(())
     }
+
+    pub fn allow_remote_load(&self) -> bool {
+        !self.language_servers.is_empty()
+            || !self.debug_adapters.is_empty()
+            || !self.debug_locators.is_empty()
+    }
+}
+
+pub fn build_debug_adapter_schema_path(
+    adapter_name: &Arc<str>,
+    meta: &DebugAdapterManifestEntry,
+) -> PathBuf {
+    meta.schema_path.clone().unwrap_or_else(|| {
+        Path::new("debug_adapter_schemas")
+            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
+    })
 }
 
 /// A capability for an extension.
@@ -318,6 +334,29 @@ mod tests {
             debug_adapters: Default::default(),
             debug_locators: Default::default(),
         }
+    }
+
+    #[test]
+    fn test_build_adapter_schema_path_with_schema_path() {
+        let adapter_name = Arc::from("my_adapter");
+        let entry = DebugAdapterManifestEntry {
+            schema_path: Some(PathBuf::from("foo/bar")),
+        };
+
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
+        assert_eq!(path, PathBuf::from("foo/bar"));
+    }
+
+    #[test]
+    fn test_build_adapter_schema_path_without_schema_path() {
+        let adapter_name = Arc::from("my_adapter");
+        let entry = DebugAdapterManifestEntry { schema_path: None };
+
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
+        assert_eq!(
+            path,
+            PathBuf::from("debug_adapter_schemas").join("my_adapter.json")
+        );
     }
 
     #[test]

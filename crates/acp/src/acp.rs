@@ -823,18 +823,7 @@ impl AcpThread {
             match &entry.content {
                 AgentThreadEntryContent::UserMessage(user_message) => {
                     result.push_str("# User\n");
-                    for chunk in &user_message.chunks {
-                        match chunk {
-                            UserMessageChunk::Text { chunk } => {
-                                result.push_str(chunk.read(cx).source());
-                                result.push('\n');
-                            }
-                            UserMessageChunk::Path { path } => {
-                                result.push_str(&format!("Path: {}", path.to_string_lossy()));
-                                result.push('\n');
-                            }
-                        }
-                    }
+                    result.push_str(user_message.content.read(cx).source());
                 }
                 AgentThreadEntryContent::AssistantMessage(assistant_message) => {
                     result.push_str("# Assistant\n");
