@@ -88,7 +88,7 @@ pub(crate) fn handle_msg(
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(handle, wparam, lparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
@@ -404,6 +404,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("WM_KEYDOWN: wparam: {wparam:?}, lparam: {lparam:?}");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
@@ -447,6 +448,7 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("WM_KEYUP:   wparam: {wparam:?}, lparam: {lparam:?}");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
@@ -465,7 +467,15 @@ fn handle_keyup_msg(
     if handled { Some(0) } else { Some(1) }
 }
 
-fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_char_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    println!(
+        "=> WM_CHAR: wparam: {wparam:x}, lparam: {lparam:?}",
+        wparam = wparam.0
+    );
     let Some(input) = char::from_u32(wparam.0 as u32)
         .filter(|c| !c.is_control())
         .map(String::from)
