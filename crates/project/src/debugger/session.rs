@@ -1,4 +1,5 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_command::ReadMemory;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -15,6 +16,7 @@ use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
+use dap::events::Memory;
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
 use dap::{
@@ -42,6 +44,7 @@ use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
+use std::ops::{Range, RangeInclusive};
 use std::u64;
 use std::{
     any::Any,
@@ -678,6 +681,7 @@ pub struct Session {
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
     task_context: TaskContext,
+    memory: BTreeMap<String, MemoryChunk>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -846,6 +850,7 @@ impl Session {
                 label,
                 adapter,
                 task_context,
+                memory: Default::default(),
             };
 
             this
@@ -1713,6 +1718,25 @@ impl Session {
         &self.modules
     }
 
+    pub fn read_memory(
+        &mut self,
+        range: RangeInclusive<u64>,
+        cx: &mut Context<Self>,
+    ) -> MemoryRange {
+        self.request(
+            ReadMemory {
+                memory_reference: range.start().to_string(),
+            },
+            |this, memory, cx| None,
+            cx,
+        );
+        // self.memory.get();
+        MemoryRange {
+            base_address: *range.start(),
+            pages: todo!(),
+            range,
+        }
+    }
     pub fn ignore_breakpoints(&self) -> bool {
         self.ignore_breakpoints
     }
@@ -2461,5 +2485,36 @@ impl Session {
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.thread_states.thread_state(thread_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MemoryChunk {
+    address: Arc<str>,
+    content: Arc<[u8]>,
+}
+
+impl MemoryChunk {
+    pub(crate) fn new(address: Arc<str>, content: Arc<[u8]>) -> Self {
+        Self { address, content }
+    }
+}
+
+pub struct MemoryRange {
+    base_address: u64,
+    pages: Box<[Arc<[u8; 4096]>]>,
+    range: RangeInclusive<u64>,
+}
+
+impl MemoryRange {
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        let mut offset = self.base_address;
+        self.pages.iter().filter_map(move |page| {
+            if !self.range.contains(&offset) {
+                return None;
+            }
+            offset += page.len() as u64;
+            Some(&page[..])
+        })
     }
 }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Ok, Result};
+use base64::Engine;
 use dap::{
     Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
@@ -13,6 +14,8 @@ use dap::{
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
+
+use crate::debugger::session::MemoryChunk;
 
 pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
@@ -1772,5 +1775,41 @@ impl DapCommand for LocationsCommand {
             end_line: response.end_line,
             end_column: response.end_column,
         })
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub(crate) struct ReadMemory {
+    pub(crate) memory_reference: String,
+}
+
+impl LocalDapCommand for ReadMemory {
+    type Response = super::session::MemoryChunk;
+
+    type DapRequest = dap::requests::ReadMemory;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::ReadMemoryArguments {
+            memory_reference: self.memory_reference.clone(),
+            offset: None,
+            count: 4096, // The size of a page in most OSs
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        let Some(data) = message.data else {
+            return Err(anyhow::anyhow!(
+                "Expected `data` in ReadMemory DAP response to be non-empty"
+            ));
+        };
+        let as_buffer = base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(data)
+            .log_err()
+            .context("parsing base64 data from DAP's ReadMemory response")?;
+
+        Ok(MemoryChunk::new(message.address.into(), as_buffer.into()))
     }
 }

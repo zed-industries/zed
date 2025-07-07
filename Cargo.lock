@@ -12233,6 +12233,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "buffer_diff",
  "circular-buffer",
  "client",
