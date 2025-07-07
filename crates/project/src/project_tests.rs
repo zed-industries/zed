@@ -1678,7 +1678,10 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         diagnostics: Default::default(),
     });
     cx.executor().run_until_parked();
-    assert_eq!(futures::poll!(events.next()), Poll::Pending);
+    assert_eq!(
+        futures::poll!(events.next()),
+        Poll::Ready(Some(Event::DiagnosticsBatchUpdated))
+    );
 }
 
 #[gpui::test]
