@@ -16,6 +16,7 @@ use crate::{
     state::{Mode, SearchState},
 };
 
+/// Moves to the next search match.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +29,7 @@ pub(crate) struct MoveToNext {
     regex: bool,
 }
 
+/// Moves to the previous search match.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +42,7 @@ pub(crate) struct MoveToPrevious {
     regex: bool,
 }
 
+/// Initiates a search operation with the specified parameters.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +53,7 @@ pub(crate) struct Search {
     regex: bool,
 }
 
+/// Executes a find command to search for patterns in the buffer.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +62,7 @@ pub struct FindCommand {
     pub backwards: bool,
 }
 
+/// Executes a search and replace command within the specified range.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct ReplaceCommand {
@@ -73,7 +78,17 @@ pub(crate) struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
+actions!(
+    vim,
+    [
+        /// Submits the current search query.
+        SearchSubmit,
+        /// Moves to the next search match.
+        MoveToNextMatch,
+        /// Moves to the previous search match.
+        MoveToPreviousMatch
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);

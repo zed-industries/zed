@@ -30,13 +30,15 @@ use settings::SettingsStore;
 use std::time::Duration;
 use ui::prelude::*;
 use util::debug_panic;
+use zed_llm_client::CompletionIntent;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
 use super::open_ai::count_open_ai_tokens;
 
-const PROVIDER_ID: &str = "copilot_chat";
-const PROVIDER_NAME: &str = "GitHub Copilot Chat";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
+const PROVIDER_NAME: LanguageModelProviderName =
+    LanguageModelProviderName::new("GitHub Copilot Chat");
 
 pub struct CopilotChatLanguageModelProvider {
     state: Entity<State>,
@@ -102,11 +104,11 @@ impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
 
 impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -201,11 +203,11 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -267,6 +269,19 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_user_initiated = request.intent.is_none_or(|intent| match intent {
+            CompletionIntent::UserPrompt
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => true,
+
+            CompletionIntent::ToolResults
+            | CompletionIntent::ThreadSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile => false,
+        });
+
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -275,7 +290,8 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let request = CopilotChat::stream_completion(copilot_request, cx.clone());
+            let request =
+                CopilotChat::stream_completion(copilot_request, is_user_initiated, cx.clone());
             request_limiter
                 .stream(async move {
                     let response = request.await?;
@@ -391,24 +407,24 @@ pub fn map_to_language_model_completion_events(
                                             serde_json::Value::from_str(&tool_call.arguments)
                                         };
                                         match arguments {
-                                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_call.id.clone().into(),
-                                                    name: tool_call.name.as_str().into(),
-                                                    is_input_complete: true,
-                                                    input,
-                                                    raw_input: tool_call.arguments.clone(),
-                                                },
-                                            )),
-                                            Err(error) => {
-                                                Err(LanguageModelCompletionError::BadInputJson {
-                                                    id: tool_call.id.into(),
-                                                    tool_name: tool_call.name.as_str().into(),
-                                                    raw_input: tool_call.arguments.into(),
-                                                    json_parse_error: error.to_string(),
-                                                })
-                                            }
-                                        }
+                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_call.id.clone().into(),
+                                                name: tool_call.name.as_str().into(),
+                                                is_input_complete: true,
+                                                input,
+                                                raw_input: tool_call.arguments.clone(),
+                                            },
+                                        )),
+                                        Err(error) => Ok(
+                                            LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                                id: tool_call.id.into(),
+                                                tool_name: tool_call.name.as_str().into(),
+                                                raw_input: tool_call.arguments.into(),
+                                                json_parse_error: error.to_string(),
+                                            },
+                                        ),
+                                    }
                                     },
                                 ));
 

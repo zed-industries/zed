@@ -170,6 +170,12 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
+    ([^\(]+)\:(?:
+        \((\d+)[,:](\d+)\) # filename:(row,column), filename:(row:column)
+        |
+        \((\d+)\)()     # filename:(row)
+    )
+    |
     ([^\(]+)(?:
         \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
@@ -672,6 +678,15 @@ mod tests {
                 path: PathBuf::from("👋\nab"),
                 row: None,
                 column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("Types.hs:(617,9)-(670,28):"),
+            PathWithPosition {
+                path: PathBuf::from("Types.hs"),
+                row: Some(617),
+                column: Some(9),
             }
         );
     }

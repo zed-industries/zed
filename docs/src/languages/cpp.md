@@ -112,3 +112,25 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 ```
 
 After building your project, CMake will generate the `compile_commands.json` file in the build directory and clangd will automatically pick it up.
+
+## Debugging
+
+You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
+
+### Build and Debug Binary
+
+```json
+[
+  {
+    "label": "Debug native binary",
+    "build": {
+      "command": "make",
+      "args": ["-j8"],
+      "cwd": "$ZED_WORKTREE_ROOT"
+    }
+    "program": "$ZED_WORKTREE_ROOT/build/prog",
+    "request": "launch",
+    "adapter": "CodeLLDB"
+  }
+]
+```

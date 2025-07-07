@@ -204,7 +204,13 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(dev, [OpenLanguageServerLogs]);
+actions!(
+    dev,
+    [
+        /// Opens the language server protocol logs viewer.
+        OpenLanguageServerLogs
+    ]
+);
 
 pub(super) struct GlobalLogStore(pub WeakEntity<LogStore>);
 

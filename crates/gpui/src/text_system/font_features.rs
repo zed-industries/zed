@@ -1,6 +1,7 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
-use schemars::schema::{InstanceType, SchemaObject};
+use schemars::{JsonSchema, json_schema};
 
 /// The OpenType features that can be configured for a given font.
 #[derive(Default, Clone, Eq, PartialEq, Hash)]
@@ -128,36 +129,23 @@ impl serde::Serialize for FontFeatures {
     }
 }
 
-impl schemars::JsonSchema for FontFeatures {
-    fn schema_name() -> String {
+impl JsonSchema for FontFeatures {
+    fn schema_name() -> Cow<'static, str> {
         "FontFeatures".into()
     }
 
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        let mut schema = SchemaObject::default();
-        schema.instance_type = Some(schemars::schema::SingleOrVec::Single(Box::new(
-            InstanceType::Object,
-        )));
-        {
-            let mut property = SchemaObject {
-                instance_type: Some(schemars::schema::SingleOrVec::Vec(vec![
-                    InstanceType::Boolean,
-                    InstanceType::Integer,
-                ])),
-                ..Default::default()
-            };
-
-            {
-                let mut number_constraints = property.number();
-                number_constraints.multiple_of = Some(1.0);
-                number_constraints.minimum = Some(0.0);
-            }
-            schema
-                .object()
-                .pattern_properties
-                .insert("[0-9a-zA-Z]{4}$".into(), property.into());
-        }
-        schema.into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "object",
+            "patternProperties": {
+                "[0-9a-zA-Z]{4}$": {
+                    "type": ["boolean", "integer"],
+                    "minimum": 0,
+                    "multipleOf": 1
+                }
+            },
+            "additionalProperties": false
+        })
     }
 }
 

@@ -33,7 +33,7 @@ use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
-    Project, WorktreeId,
+    DebugScenarioContext, Project, WorktreeId,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
@@ -79,6 +79,8 @@ pub struct RunningState {
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
+    pub(crate) scenario: Option<DebugScenario>,
+    pub(crate) scenario_context: Option<DebugScenarioContext>,
 }
 
 impl RunningState {
@@ -831,6 +833,8 @@ impl RunningState {
             debug_terminal,
             dock_axis,
             _schedule_serialize: None,
+            scenario: None,
+            scenario_context: None,
         }
     }
 
@@ -900,7 +904,7 @@ impl RunningState {
 
 
             let config_is_valid = request_type.is_ok();
-
+            let mut extra_config = Value::Null;
             let build_output = if let Some(build) = build {
                 let (task_template, locator_name) = match build {
                     BuildTaskDefinition::Template {
@@ -930,6 +934,7 @@ impl RunningState {
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {
+                    extra_config = config.clone();
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
                 } else if !config_is_valid {
@@ -945,6 +950,7 @@ impl RunningState {
                         });
                     if let Ok(t) = task {
                         t.await.and_then(|scenario| {
+                            extra_config = scenario.config;
                             match scenario.build {
                                 Some(BuildTaskDefinition::Template {
                                     locator_name, ..
@@ -967,7 +973,7 @@ impl RunningState {
 
                 let task_with_shell = SpawnInTerminal {
                     command_label,
-                    command,
+                    command: Some(command),
                     args,
                     ..task.resolved.clone()
                 };
@@ -1008,13 +1014,13 @@ impl RunningState {
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
-                Some((task.resolved.clone(), locator_name))
+                Some((task.resolved.clone(), locator_name, extra_config))
             } else {
                 None
             };
 
             if config_is_valid {
-            } else if let Some((task, locator_name)) = build_output {
+            } else if let Some((task, locator_name, extra_config)) = build_output {
                 let locator_name =
                     locator_name.with_context(|| {
                         format!("Could not find a valid locator for a build task and configure is invalid with error: {}", request_type.err()
@@ -1037,8 +1043,10 @@ impl RunningState {
                 let scenario = dap_registry
                     .adapter(&adapter)
                     .with_context(|| anyhow!("{}: is not a valid adapter name", &adapter))?.config_from_zed_format(zed_config)
-.await?;
+                    .await?;
                 config = scenario.config;
+                util::merge_non_null_json_value_into(extra_config, &mut config);
+
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 let Err(e) = request_type else {
@@ -1077,19 +1085,6 @@ impl RunningState {
             .map(PathBuf::from)
             .or_else(|| session.binary().unwrap().cwd.clone());
 
-        let mut args = request.args.clone();
-
-        // Handle special case for NodeJS debug adapter
-        // If only the Node binary path is provided, we set the command to None
-        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
-        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
-        // This allows the NodeJS debug client to attach correctly
-        let command = if args.len() > 1 {
-            Some(args.remove(0))
-        } else {
-            None
-        };
-
         let mut envs: HashMap<String, String> =
             self.session.read(cx).task_context().project_env.clone();
         if let Some(Value::Object(env)) = &request.env {
@@ -1103,31 +1098,57 @@ impl RunningState {
             }
         }
 
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
-        let kind = if let Some(command) = command {
-            let title = request.title.clone().unwrap_or(command.clone());
-            TerminalKind::Task(task::SpawnInTerminal {
-                id: task::TaskId("debug".to_string()),
-                full_label: title.clone(),
-                label: title.clone(),
-                command: command.clone(),
-                args,
-                command_label: title.clone(),
-                cwd,
-                env: envs,
-                use_new_terminal: true,
-                allow_concurrent_runs: true,
-                reveal: task::RevealStrategy::NoFocus,
-                reveal_target: task::RevealTarget::Dock,
-                hide: task::HideStrategy::Never,
-                shell,
-                show_summary: false,
-                show_command: false,
-                show_rerun: false,
-            })
+        let mut args = request.args.clone();
+        let command = if envs.contains_key("VSCODE_INSPECTOR_OPTIONS") {
+            // Handle special case for NodeJS debug adapter
+            // If the Node binary path is provided (possibly with arguments like --experimental-network-inspection),
+            // we set the command to None
+            // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+            // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+            // This allows the NodeJS debug client to attach correctly
+            if args
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .collect::<Vec<_>>()
+                .len()
+                > 1
+            {
+                Some(args.remove(0))
+            } else {
+                None
+            }
+        } else if args.len() > 0 {
+            Some(args.remove(0))
         } else {
-            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
+            None
         };
+
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+        let title = request
+            .title
+            .clone()
+            .filter(|title| !title.is_empty())
+            .or_else(|| command.clone())
+            .unwrap_or_else(|| "Debug terminal".to_string());
+        let kind = TerminalKind::Task(task::SpawnInTerminal {
+            id: task::TaskId("debug".to_string()),
+            full_label: title.clone(),
+            label: title.clone(),
+            command: command.clone(),
+            args,
+            command_label: title.clone(),
+            cwd,
+            env: envs,
+            use_new_terminal: true,
+            allow_concurrent_runs: true,
+            reveal: task::RevealStrategy::NoFocus,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            shell,
+            show_summary: false,
+            show_command: false,
+            show_rerun: false,
+        });
 
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
@@ -1519,6 +1540,34 @@ impl RunningState {
         self.session().update(cx, |state, cx| {
             state.step_back(thread_id, granularity, cx);
         });
+    }
+
+    pub fn rerun_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((scenario, context)) = self.scenario.take().zip(self.scenario_context.take())
+            && scenario.build.is_some()
+        {
+            let DebugScenarioContext {
+                task_context,
+                active_buffer,
+                worktree_id,
+            } = context;
+            let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
+
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context,
+                        active_buffer,
+                        worktree_id,
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
+        } else {
+            self.restart_session(cx);
+        }
     }
 
     pub fn restart_session(&self, cx: &mut Context<Self>) {
