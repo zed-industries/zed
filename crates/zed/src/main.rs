@@ -44,7 +44,10 @@ use theme::{
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
-use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
+use workspace::{
+    AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
+    notifications::NotificationId,
+};
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
     derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
@@ -887,38 +890,105 @@ async fn installation_id() -> Result<IdType> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+        let mut tasks = Vec::new();
+
         for location in locations {
             match location {
                 SerializedWorkspaceLocation::Local(location, _) => {
-                    let task = cx.update(|cx| {
-                        workspace::open_paths(
-                            location.paths().as_ref(),
-                            app_state.clone(),
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                    })?;
-                    task.await?;
+                    let app_state = app_state.clone();
+                    let paths = location.paths().to_vec();
+                    let task = cx.spawn(async move |cx| {
+                        let open_task = cx.update(|cx| {
+                            workspace::open_paths(
+                                &paths,
+                                app_state,
+                                workspace::OpenOptions::default(),
+                                cx,
+                            )
+                        })?;
+                        open_task.await.map(|_| ())
+                    });
+                    tasks.push(task);
                 }
                 SerializedWorkspaceLocation::Ssh(ssh) => {
-                    let connection_options = cx.update(|cx| {
-                        SshSettings::get_global(cx)
-                            .connection_options_for(ssh.host, ssh.port, ssh.user)
-                    })?;
                     let app_state = app_state.clone();
-                    cx.spawn(async move |cx| {
-                        recent_projects::open_ssh_project(
-                            connection_options,
-                            ssh.paths.into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                        .await
-                        .log_err();
-                    })
-                    .detach();
+                    let ssh_host = ssh.host.clone();
+                    let task = cx.spawn(async move |cx| {
+                        let connection_options = cx.update(|cx| {
+                            SshSettings::get_global(cx)
+                                .connection_options_for(ssh.host, ssh.port, ssh.user)
+                        });
+
+                        match connection_options {
+                            Ok(connection_options) => recent_projects::open_ssh_project(
+                                connection_options,
+                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                app_state,
+                                workspace::OpenOptions::default(),
+                                cx,
+                            )
+                            .await
+                            .map_err(|e| anyhow::anyhow!(e)),
+                            Err(e) => Err(anyhow::anyhow!(
+                                "Failed to get SSH connection options for {}: {}",
+                                ssh_host,
+                                e
+                            )),
+                        }
+                    });
+                    tasks.push(task);
                 }
+            }
+        }
+
+        // Wait for all workspaces to open concurrently
+        let results = future::join_all(tasks).await;
+
+        // Show notifications for any errors that occurred
+        let mut error_count = 0;
+        for result in results {
+            if let Err(e) = result {
+                log::error!("Failed to restore workspace: {}", e);
+                error_count += 1;
+            }
+        }
+
+        if error_count > 0 {
+            let message = if error_count == 1 {
+                "Failed to restore 1 workspace. Check logs for details.".to_string()
+            } else {
+                format!(
+                    "Failed to restore {} workspaces. Check logs for details.",
+                    error_count
+                )
+            };
+
+            // Try to find an active workspace to show the toast
+            let toast_shown = cx
+                .update(|cx| {
+                    if let Some(window) = cx.active_window() {
+                        if let Some(workspace) = window.downcast::<Workspace>() {
+                            workspace
+                                .update(cx, |workspace, _, cx| {
+                                    workspace.show_toast(
+                                        Toast::new(NotificationId::unique::<()>(), message),
+                                        cx,
+                                    )
+                                })
+                                .ok();
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .unwrap_or(false);
+
+            // If we couldn't show a toast (no windows opened successfully),
+            // we've already logged the errors above, so the user can check logs
+            if !toast_shown {
+                log::error!(
+                    "Failed to show notification for window restoration errors, because no workspace windows were available."
+                );
             }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
@@ -1298,6 +1368,7 @@ fn dump_all_gpui_actions() {
         name: &'static str,
         human_name: String,
         aliases: &'static [&'static str],
+        documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
         .into_iter()
@@ -1305,6 +1376,7 @@ fn dump_all_gpui_actions() {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
             aliases: action.deprecated_aliases,
+            documentation: action.documentation,
         })
         .collect::<Vec<ActionDef>>();
 

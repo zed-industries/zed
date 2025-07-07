@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
@@ -23,11 +23,10 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
-    TokenUsage,
+    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
+    Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -961,13 +960,14 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            resolve_tool_name_conflicts(self.profile.enabled_tools(cx).as_slice())
+            self.profile
+                .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|(name, tool)| {
                     // Skip tools that cannot be supported
                     let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
                     Some(LanguageModelRequestTool {
-                        name,
+                        name: name.into(),
                         description: tool.description(),
                         input_schema,
                     })
@@ -1343,6 +1343,7 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => {
+                        let text = text.trim_end();
                         if !text.is_empty() {
                             request_message
                                 .content
@@ -1530,82 +1531,7 @@ impl Thread {
                     }
 
                     thread.update(cx, |thread, cx| {
-                        let event = match event {
-                            Ok(event) => event,
-                            Err(error) => {
-                                match error {
-                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
-                                        anyhow::bail!(LanguageModelKnownError::RateLimitExceeded { retry_after });
-                                    }
-                                    LanguageModelCompletionError::Overloaded => {
-                                        anyhow::bail!(LanguageModelKnownError::Overloaded);
-                                    }
-                                    LanguageModelCompletionError::ApiInternalServerError =>{
-                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
-                                    }
-                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
-                                        let tokens = tokens.unwrap_or_else(|| {
-                                            // We didn't get an exact token count from the API, so fall back on our estimate.
-                                            thread.total_token_usage()
-                                                .map(|usage| usage.total)
-                                                .unwrap_or(0)
-                                                // We know the context window was exceeded in practice, so if our estimate was
-                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
-                                                .max(model.max_token_count().saturating_add(1))
-                                        });
-
-                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
-                                    }
-                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
-                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
-                                    }
-                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
-                                    }
-                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
-                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body) {
-                                            anyhow::bail!(known_error);
-                                        } else {
-                                            return Err(error.into());
-                                        }
-                                    }
-                                    LanguageModelCompletionError::DeserializeResponse(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
-                                    }
-                                    LanguageModelCompletionError::BadInputJson {
-                                        id,
-                                        tool_name,
-                                        raw_input: invalid_input_json,
-                                        json_parse_error,
-                                    } => {
-                                        thread.receive_invalid_tool_json(
-                                            id,
-                                            tool_name,
-                                            invalid_input_json,
-                                            json_parse_error,
-                                            window,
-                                            cx,
-                                        );
-                                        return Ok(());
-                                    }
-                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
-                                    err @ LanguageModelCompletionError::BadRequestFormat |
-                                    err @ LanguageModelCompletionError::AuthenticationError |
-                                    err @ LanguageModelCompletionError::PermissionError |
-                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
-                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
-                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
-                                    err @ LanguageModelCompletionError::HttpSend(_) => {
-                                        anyhow::bail!(err);
-                                    }
-                                    LanguageModelCompletionError::Other(error) => {
-                                        return Err(error);
-                                    }
-                                }
-                            }
-                        };
-
-                        match event {
+                        match event? {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 request_assistant_message_id =
                                     Some(thread.insert_assistant_message(
@@ -1682,9 +1608,7 @@ impl Thread {
                                     };
                                 }
                             }
-                            LanguageModelCompletionEvent::RedactedThinking {
-                                data
-                            } => {
+                            LanguageModelCompletionEvent::RedactedThinking { data } => {
                                 thread.received_chunk();
 
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -1733,6 +1657,21 @@ impl Thread {
                                     });
                                 }
                             }
+                            LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id,
+                                tool_name,
+                                raw_input: invalid_input_json,
+                                json_parse_error,
+                            } => {
+                                thread.receive_invalid_tool_json(
+                                    id,
+                                    tool_name,
+                                    invalid_input_json,
+                                    json_parse_error,
+                                    window,
+                                    cx,
+                                );
+                            }
                             LanguageModelCompletionEvent::StatusUpdate(status_update) => {
                                 if let Some(completion) = thread
                                     .pending_completions
@@ -1740,23 +1679,34 @@ impl Thread {
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
                                     match status_update {
-                                        CompletionRequestStatus::Queued {
-                                            position,
-                                        } => {
-                                            completion.queue_state = QueueState::Queued { position };
+                                        CompletionRequestStatus::Queued { position } => {
+                                            completion.queue_state =
+                                                QueueState::Queued { position };
                                         }
                                         CompletionRequestStatus::Started => {
-                                            completion.queue_state =  QueueState::Started;
+                                            completion.queue_state = QueueState::Started;
                                         }
                                         CompletionRequestStatus::Failed {
-                                            code, message, request_id
+                                            code,
+                                            message,
+                                            request_id: _,
+                                            retry_after,
                                         } => {
-                                            anyhow::bail!("completion request failed. request_id: {request_id}, code: {code}, message: {message}");
+                                            return Err(
+                                                LanguageModelCompletionError::from_cloud_failure(
+                                                    model.upstream_provider_name(),
+                                                    code,
+                                                    message,
+                                                    retry_after.map(Duration::from_secs_f64),
+                                                ),
+                                            );
                                         }
-                                        CompletionRequestStatus::UsageUpdated {
-                                            amount, limit
-                                        } => {
-                                            thread.update_model_request_usage(amount as u32, limit, cx);
+                                        CompletionRequestStatus::UsageUpdated { amount, limit } => {
+                                            thread.update_model_request_usage(
+                                                amount as u32,
+                                                limit,
+                                                cx,
+                                            );
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1807,10 +1757,11 @@ impl Thread {
                         Ok(stop_reason) => {
                             match stop_reason {
                                 StopReason::ToolUse => {
-                                    let tool_uses = thread.use_pending_tools(window, model.clone(), cx);
+                                    let tool_uses =
+                                        thread.use_pending_tools(window, model.clone(), cx);
                                     cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                                 }
-                                StopReason::EndTurn | StopReason::MaxTokens  => {
+                                StopReason::EndTurn | StopReason::MaxTokens => {
                                     thread.project.update(cx, |project, cx| {
                                         project.set_agent_location(None, cx);
                                     });
@@ -1826,7 +1777,9 @@ impl Thread {
                                     {
                                         let mut messages_to_remove = Vec::new();
 
-                                        for (ix, message) in thread.messages.iter().enumerate().rev() {
+                                        for (ix, message) in
+                                            thread.messages.iter().enumerate().rev()
+                                        {
                                             messages_to_remove.push(message.id);
 
                                             if message.role == Role::User {
@@ -1834,7 +1787,9 @@ impl Thread {
                                                     break;
                                                 }
 
-                                                if let Some(prev_message) = thread.messages.get(ix - 1) {
+                                                if let Some(prev_message) =
+                                                    thread.messages.get(ix - 1)
+                                                {
                                                     if prev_message.role == Role::Assistant {
                                                         break;
                                                     }
@@ -1849,14 +1804,16 @@ impl Thread {
 
                                     cx.emit(ThreadEvent::ShowError(ThreadError::Message {
                                         header: "Language model refusal".into(),
-                                        message: "Model refused to generate content for safety reasons.".into(),
+                                        message:
+                                            "Model refused to generate content for safety reasons."
+                                                .into(),
                                     }));
                                 }
                             }
 
                             // We successfully completed, so cancel any remaining retries.
                             thread.retry_state = None;
-                        },
+                        }
                         Err(error) => {
                             thread.project.update(cx, |project, cx| {
                                 project.set_agent_location(None, cx);
@@ -1882,26 +1839,38 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::ModelRequestLimitReached { plan: error.plan },
                                 ));
-                            } else if let Some(known_error) =
-                                error.downcast_ref::<LanguageModelKnownError>()
+                            } else if let Some(completion_error) =
+                                error.downcast_ref::<LanguageModelCompletionError>()
                             {
-                                match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
+                                use LanguageModelCompletionError::*;
+                                match &completion_error {
+                                    PromptTooLarge { tokens, .. } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread
+                                                .total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(model.max_token_count().saturating_add(1))
+                                        });
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
-                                            token_count: *tokens,
+                                            token_count: tokens,
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimitExceeded { retry_after } => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API rate limit exceeded",
-                                            provider_name.0.as_ref()
-                                        );
-
+                                    RateLimitExceeded {
+                                        retry_after: Some(retry_after),
+                                        ..
+                                    }
+                                    | ServerOverloaded {
+                                        retry_after: Some(retry_after),
+                                        ..
+                                    } => {
                                         thread.handle_rate_limit_error(
-                                            &error_message,
+                                            &completion_error,
                                             *retry_after,
                                             model.clone(),
                                             intent,
@@ -1910,15 +1879,9 @@ impl Thread {
                                         );
                                         retry_scheduled = true;
                                     }
-                                    LanguageModelKnownError::Overloaded => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API servers are overloaded right now",
-                                            provider_name.0.as_ref()
-                                        );
-
+                                    RateLimitExceeded { .. } | ServerOverloaded { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
-                                            &error_message,
+                                            &completion_error,
                                             model.clone(),
                                             intent,
                                             window,
@@ -1928,15 +1891,11 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
-                                    LanguageModelKnownError::ApiInternalServerError => {
-                                        let provider_name = model.provider_name();
-                                        let error_message = format!(
-                                            "{}'s API server reported an internal server error",
-                                            provider_name.0.as_ref()
-                                        );
-
+                                    ApiInternalServerError { .. }
+                                    | ApiReadResponseError { .. }
+                                    | HttpSend { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
-                                            &error_message,
+                                            &completion_error,
                                             model.clone(),
                                             intent,
                                             window,
@@ -1946,12 +1905,16 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
-                                    LanguageModelKnownError::ReadResponseError(_) |
-                                    LanguageModelKnownError::DeserializeResponse(_) |
-                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
-                                        // In the future we will attempt to re-roll response, but only once
-                                        emit_generic_error(error, cx);
-                                    }
+                                    NoApiKey { .. }
+                                    | HttpResponseError { .. }
+                                    | BadRequestFormat { .. }
+                                    | AuthenticationError { .. }
+                                    | PermissionError { .. }
+                                    | ApiEndpointNotFound { .. }
+                                    | SerializeRequest { .. }
+                                    | BuildRequestBody { .. }
+                                    | DeserializeResponse { .. }
+                                    | Other { .. } => emit_generic_error(error, cx),
                                 }
                             } else {
                                 emit_generic_error(error, cx);
@@ -2083,7 +2046,7 @@ impl Thread {
 
     fn handle_rate_limit_error(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         retry_after: Duration,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
@@ -2091,9 +2054,10 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         // For rate limit errors, we only retry once with the specified duration
-        let retry_message = format!(
-            "{error_message}. Retrying in {} seconds…",
-            retry_after.as_secs()
+        let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
+        log::warn!(
+            "Retrying completion request in {} seconds: {error:?}",
+            retry_after.as_secs(),
         );
 
         // Add a UI-only message instead of a regular message
@@ -2126,18 +2090,18 @@ impl Thread {
 
     fn handle_retryable_error(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.handle_retryable_error_with_delay(error_message, None, model, intent, window, cx)
+        self.handle_retryable_error_with_delay(error, None, model, intent, window, cx)
     }
 
     fn handle_retryable_error_with_delay(
         &mut self,
-        error_message: &str,
+        error: &LanguageModelCompletionError,
         custom_delay: Option<Duration>,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
@@ -2167,8 +2131,12 @@ impl Thread {
             // Add a transient message to inform the user
             let delay_secs = delay.as_secs();
             let retry_message = format!(
-                "{}. Retrying (attempt {} of {}) in {} seconds...",
-                error_message, attempt, max_attempts, delay_secs
+                "{error}. Retrying (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds..."
+            );
+            log::warn!(
+                "Retrying completion request (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds: {error:?}",
             );
 
             // Add a UI-only message instead of a regular message
@@ -2419,7 +2387,7 @@ impl Thread {
 
         let tool_list = available_tools
             .iter()
-            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .map(|(name, tool)| format!("- {}: {}", name, tool.description()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -2639,7 +2607,7 @@ impl Thread {
             .profile
             .enabled_tools(cx)
             .iter()
-            .map(|tool| tool.name())
+            .map(|(name, _)| name.clone().into())
             .collect();
 
         self.message_feedback.insert(message_id, feedback);
@@ -3177,85 +3145,6 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-/// Resolves tool name conflicts by ensuring all tool names are unique.
-///
-/// When multiple tools have the same name, this function applies the following rules:
-/// 1. Native tools always keep their original name
-/// 2. Context server tools get prefixed with their server ID and an underscore
-/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
-/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
-///
-/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
-fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
-    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
-        let mut tool_name = tool.name();
-        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-        tool_name
-    }
-
-    const MAX_TOOL_NAME_LENGTH: usize = 64;
-
-    let mut duplicated_tool_names = HashSet::default();
-    let mut seen_tool_names = HashSet::default();
-    for tool in tools {
-        let tool_name = resolve_tool_name(tool);
-        if seen_tool_names.contains(&tool_name) {
-            debug_assert!(
-                tool.source() != assistant_tool::ToolSource::Native,
-                "There are two built-in tools with the same name: {}",
-                tool_name
-            );
-            duplicated_tool_names.insert(tool_name);
-        } else {
-            seen_tool_names.insert(tool_name);
-        }
-    }
-
-    if duplicated_tool_names.is_empty() {
-        return tools
-            .into_iter()
-            .map(|tool| (resolve_tool_name(tool), tool.clone()))
-            .collect();
-    }
-
-    tools
-        .into_iter()
-        .filter_map(|tool| {
-            let mut tool_name = resolve_tool_name(tool);
-            if !duplicated_tool_names.contains(&tool_name) {
-                return Some((tool_name, tool.clone()));
-            }
-            match tool.source() {
-                assistant_tool::ToolSource::Native => {
-                    // Built-in tools always keep their original name
-                    Some((tool_name, tool.clone()))
-                }
-                assistant_tool::ToolSource::ContextServer { id } => {
-                    // Context server tools are prefixed with the context server ID, and truncated if necessary
-                    tool_name.insert(0, '_');
-                    if tool_name.len() + id.len() > MAX_TOOL_NAME_LENGTH {
-                        let len = MAX_TOOL_NAME_LENGTH - tool_name.len();
-                        let mut id = id.to_string();
-                        id.truncate(len);
-                        tool_name.insert_str(0, &id);
-                    } else {
-                        tool_name.insert_str(0, &id);
-                    }
-
-                    tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-
-                    if seen_tool_names.contains(&tool_name) {
-                        log::error!("Cannot resolve tool name conflict for tool {}", tool.name());
-                        None
-                    } else {
-                        Some((tool_name, tool.clone()))
-                    }
-                }
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3271,7 +3160,6 @@ mod tests {
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
-    use icons::IconName;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3916,148 +3804,6 @@ fn main() {{
         });
     }
 
-    #[gpui::test]
-    fn test_resolve_tool_name_conflicts() {
-        use assistant_tool::{Tool, ToolSource};
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3"],
-        );
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
-        );
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
-        );
-
-        // Test that tool with very long name is always truncated
-        assert_resolve_tool_name_conflicts(
-            vec![TestTool::new(
-                "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
-                ToolSource::Native,
-            )],
-            vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
-        );
-
-        // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
-                TestTool::new(
-                    "tool-with-very-very-very-long-name",
-                    ToolSource::ContextServer {
-                        id: "mcp-with-very-very-very-long-name".into(),
-                    },
-                ),
-            ],
-            vec![
-                "tool-with-very-very-very-long-name",
-                "mcp-with-very-very-very-long-_tool-with-very-very-very-long-name",
-            ],
-        );
-
-        fn assert_resolve_tool_name_conflicts(
-            tools: Vec<TestTool>,
-            expected: Vec<impl Into<String>>,
-        ) {
-            let tools: Vec<Arc<dyn Tool>> = tools
-                .into_iter()
-                .map(|t| Arc::new(t) as Arc<dyn Tool>)
-                .collect();
-            let tools = resolve_tool_name_conflicts(&tools);
-            assert_eq!(tools.len(), expected.len());
-            for (i, expected_name) in expected.into_iter().enumerate() {
-                let expected_name = expected_name.into();
-                let actual_name = &tools[i].0;
-                assert_eq!(
-                    actual_name, &expected_name,
-                    "Expected '{}' got '{}' at index {}",
-                    expected_name, actual_name, i
-                );
-            }
-        }
-
-        struct TestTool {
-            name: String,
-            source: ToolSource,
-        }
-
-        impl TestTool {
-            fn new(name: impl Into<String>, source: ToolSource) -> Self {
-                Self {
-                    name: name.into(),
-                    source,
-                }
-            }
-        }
-
-        impl Tool for TestTool {
-            fn name(&self) -> String {
-                self.name.clone()
-            }
-
-            fn icon(&self) -> IconName {
-                IconName::Ai
-            }
-
-            fn may_perform_edits(&self) -> bool {
-                false
-            }
-
-            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
-                true
-            }
-
-            fn source(&self) -> ToolSource {
-                self.source.clone()
-            }
-
-            fn description(&self) -> String {
-                "Test tool".to_string()
-            }
-
-            fn ui_text(&self, _input: &serde_json::Value) -> String {
-                "Test tool".to_string()
-            }
-
-            fn run(
-                self: Arc<Self>,
-                _input: serde_json::Value,
-                _request: Arc<LanguageModelRequest>,
-                _project: Entity<Project>,
-                _action_log: Entity<ActionLog>,
-                _model: Arc<dyn LanguageModel>,
-                _window: Option<AnyWindowHandle>,
-                _cx: &mut App,
-            ) -> assistant_tool::ToolResult {
-                assistant_tool::ToolResult {
-                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
-                    card: None,
-                }
-            }
-        }
-    }
-
     // Helper to create a model that returns errors
     enum TestError {
         Overloaded,
@@ -4138,9 +3884,15 @@ fn main() {{
             >,
         > {
             let error = match self.error_type {
-                TestError::Overloaded => LanguageModelCompletionError::Overloaded,
+                TestError::Overloaded => LanguageModelCompletionError::ServerOverloaded {
+                    provider: self.provider_name(),
+                    retry_after: None,
+                },
                 TestError::InternalServerError => {
-                    LanguageModelCompletionError::ApiInternalServerError
+                    LanguageModelCompletionError::ApiInternalServerError {
+                        provider: self.provider_name(),
+                        message: "I'm a teapot orbiting the sun".to_string(),
+                    }
                 }
             };
             async move {
@@ -4648,9 +4400,13 @@ fn main() {{
             > {
                 if !*self.failed_once.lock() {
                     *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
                     // Return error on first attempt
                     let stream = futures::stream::once(async move {
-                        Err(LanguageModelCompletionError::Overloaded)
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
                     });
                     async move { Ok(stream.boxed()) }.boxed()
                 } else {
@@ -4813,9 +4569,13 @@ fn main() {{
             > {
                 if !*self.failed_once.lock() {
                     *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
                     // Return error on first attempt
                     let stream = futures::stream::once(async move {
-                        Err(LanguageModelCompletionError::Overloaded)
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
                     });
                     async move { Ok(stream.boxed()) }.boxed()
                 } else {
@@ -4968,10 +4728,12 @@ fn main() {{
                     LanguageModelCompletionError,
                 >,
             > {
+                let provider = self.provider_name();
                 async move {
                     let stream = futures::stream::once(async move {
                         Err(LanguageModelCompletionError::RateLimitExceeded {
-                            retry_after: Duration::from_secs(TEST_RATE_LIMIT_RETRY_SECS),
+                            provider,
+                            retry_after: Some(Duration::from_secs(TEST_RATE_LIMIT_RETRY_SECS)),
                         })
                     });
                     Ok(stream.boxed())

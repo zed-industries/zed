@@ -258,18 +258,12 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .map(|menu| {
-                                if has_diff_hunks {
-                                    menu.action("Next Hunk", Box::new(GoToHunk))
-                                        .action("Previous Hunk", Box::new(GoToPreviousHunk))
-                                } else {
-                                    menu.disabled_action("Next Hunk", Box::new(GoToHunk))
-                                        .disabled_action(
-                                            "Previous Hunk",
-                                            Box::new(GoToPreviousHunk),
-                                        )
-                                }
-                            })
+                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                "Previous Hunk",
+                                Box::new(GoToPreviousHunk),
+                            )
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))

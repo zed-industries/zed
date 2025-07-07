@@ -32,34 +32,67 @@ pub mod tests;
 actions!(
     debugger,
     [
+        /// Starts a new debugging session.
         Start,
+        /// Continues execution until the next breakpoint.
         Continue,
+        /// Detaches the debugger from the running process.
         Detach,
+        /// Pauses the currently running program.
         Pause,
+        /// Restarts the current debugging session.
         Restart,
+        /// Reruns the current debugging session with the same configuration.
+        RerunSession,
+        /// Steps into the next function call.
         StepInto,
+        /// Steps over the current line.
         StepOver,
+        /// Steps out of the current function.
         StepOut,
+        /// Steps back to the previous statement.
         StepBack,
+        /// Stops the debugging session.
         Stop,
+        /// Toggles whether to ignore all breakpoints.
         ToggleIgnoreBreakpoints,
+        /// Clears all breakpoints in the project.
         ClearAllBreakpoints,
+        /// Focuses on the debugger console panel.
         FocusConsole,
+        /// Focuses on the variables panel.
         FocusVariables,
+        /// Focuses on the breakpoint list panel.
         FocusBreakpointList,
+        /// Focuses on the call stack frames panel.
         FocusFrames,
+        /// Focuses on the loaded modules panel.
         FocusModules,
+        /// Focuses on the loaded sources panel.
         FocusLoadedSources,
+        /// Focuses on the terminal panel.
         FocusTerminal,
+        /// Shows the stack trace for the current thread.
         ShowStackTrace,
+        /// Toggles the thread picker dropdown.
         ToggleThreadPicker,
+        /// Toggles the session picker dropdown.
         ToggleSessionPicker,
-        RerunLastSession,
+        /// Reruns the last debugging session.
+        #[action(deprecated_aliases = ["debugger::RerunLastSession"])]
+        Rerun,
+        /// Toggles expansion of the selected item in the debugger UI.
         ToggleExpandItem,
     ]
 );
 
-actions!(dev, [CopyDebugAdapterArguments]);
+actions!(
+    dev,
+    [
+        /// Copies debug adapter launch arguments to clipboard.
+        CopyDebugAdapterArguments
+    ]
+);
 
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);
@@ -74,17 +107,15 @@ pub fn init(cx: &mut App) {
             .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                 NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
             })
-            .register_action(
-                |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
-                    let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
-                        return;
-                    };
+            .register_action(|workspace: &mut Workspace, _: &Rerun, window, cx| {
+                let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                    return;
+                };
 
-                    debug_panel.update(cx, |debug_panel, cx| {
-                        debug_panel.rerun_last_session(workspace, window, cx);
-                    })
-                },
-            )
+                debug_panel.update(cx, |debug_panel, cx| {
+                    debug_panel.rerun_last_session(workspace, window, cx);
+                })
+            })
             .register_action(
                 |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
@@ -207,6 +238,14 @@ pub fn init(cx: &mut App) {
                     move |_: &Restart, _, cx| {
                         active_item
                             .update(cx, |item, cx| item.restart_session(cx))
+                            .ok();
+                    }
+                })
+                .on_action({
+                    let active_item = active_item.clone();
+                    move |_: &RerunSession, window, cx| {
+                        active_item
+                            .update(cx, |item, cx| item.rerun_session(window, cx))
                             .ok();
                     }
                 })

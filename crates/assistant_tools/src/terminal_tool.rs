@@ -218,7 +218,7 @@ impl Tool for TerminalTool {
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
-                                command: program,
+                                command: Some(program),
                                 args,
                                 cwd,
                                 env,

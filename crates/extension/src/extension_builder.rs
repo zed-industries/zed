@@ -1,5 +1,6 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
+    parse_wasm_extension_version,
 };
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
@@ -99,12 +100,8 @@ impl ExtensionBuilder {
         }
 
         for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
-            let debug_adapter_relative_schema_path =
-                meta.schema_path.clone().unwrap_or_else(|| {
-                    Path::new("debug_adapter_schemas")
-                        .join(Path::new(debug_adapter_name.as_ref()).with_extension("json"))
-                });
-            let debug_adapter_schema_path = extension_dir.join(debug_adapter_relative_schema_path);
+            let debug_adapter_schema_path =
+                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
 
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {

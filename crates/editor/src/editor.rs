@@ -547,6 +547,7 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct EditorStyle {
     pub background: Hsla,
+    pub border: Hsla,
     pub local_player: PlayerColor,
     pub text: TextStyle,
     pub scrollbar_width: Pixels,
@@ -562,6 +563,7 @@ impl Default for EditorStyle {
     fn default() -> Self {
         Self {
             background: Hsla::default(),
+            border: Hsla::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
             scrollbar_width: Pixels::default(),
@@ -1845,13 +1847,13 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded(server_id, ..)
-                        | project::Event::LanguageServerRemoved(server_id) => {
+                        project::Event::LanguageServerAdded(..)
+                        | project::Event::LanguageServerRemoved(..) => {
                             if editor.tasks_update_task.is_none() {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(Some(*server_id), None, window, cx);
+                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -2291,7 +2293,7 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
-            editor.update_lsp_data(None, None, window, cx);
+            editor.update_lsp_data(false, None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -2358,6 +2360,10 @@ impl Editor {
                 key_context.add("showing_code_actions")
             }
             None => {}
+        }
+
+        if self.signature_help_state.has_multiple_signatures() {
+            key_context.add("showing_signature_help");
         }
 
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
@@ -5103,7 +5109,7 @@ impl Editor {
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
             reason_description,
-            self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
+            self.visible_excerpts(required_languages.as_ref(), cx),
             invalidate_cache,
             ignore_debounce,
             cx,
@@ -5121,7 +5127,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn excerpts_for_inlay_hints_query(
+    pub fn visible_excerpts(
         &self,
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut Context<Editor>,
@@ -6184,7 +6190,14 @@ impl Editor {
 
                 workspace.update(cx, |workspace, cx| {
                     dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
-                    workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
+                    workspace.start_debug_session(
+                        scenario,
+                        context,
+                        Some(buffer),
+                        None,
+                        window,
+                        cx,
+                    );
                 });
                 Some(Task::ready(Ok(())))
             }
@@ -8702,7 +8715,7 @@ impl Editor {
                 h_flex()
                     .bg(cx.theme().colors().editor_background)
                     .border(BORDER_WIDTH)
-                    .shadow_sm()
+                    .shadow_xs()
                     .border_color(cx.theme().colors().border)
                     .rounded_l_lg()
                     .when(line_count > 1, |el| el.rounded_br_lg())
@@ -8902,7 +8915,7 @@ impl Editor {
             .border_1()
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
-            .shadow_sm()
+            .shadow_xs()
             .when(!has_keybind, |el| {
                 let status_colors = cx.theme().status();
 
@@ -11539,66 +11552,90 @@ impl Editor {
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
+            let indent_and_prefix_for_row =
+                |row: u32| -> (IndentSize, Option<String>, Option<String>) {
+                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    let (comment_prefix, rewrap_prefix) =
+                        if let Some(language_scope) = &language_scope {
+                            let indent_end = Point::new(row, indent.len);
+                            let comment_prefix = language_scope
+                                .line_comment_prefixes()
+                                .iter()
+                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                .map(|prefix| prefix.to_string());
+                            let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                            let line_text_after_indent = buffer
+                                .text_for_range(indent_end..line_end)
+                                .collect::<String>();
+                            let rewrap_prefix = language_scope
+                                .rewrap_prefixes()
+                                .iter()
+                                .find_map(|prefix_regex| {
+                                    prefix_regex.find(&line_text_after_indent).map(|mat| {
+                                        if mat.start() == 0 {
+                                            Some(mat.as_str().to_string())
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .flatten();
+                            (comment_prefix, rewrap_prefix)
+                        } else {
+                            (None, None)
+                        };
+                    (indent, comment_prefix, rewrap_prefix)
+                };
+
             let mut ranges = Vec::new();
-            let mut current_range_start = first_row;
             let from_empty_selection = selection.is_empty();
 
+            let mut current_range_start = first_row;
             let mut prev_row = first_row;
-            let mut prev_indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
-            let mut prev_comment_prefix = if let Some(language_scope) = &language_scope {
-                let indent = buffer.indent_size_for_line(MultiBufferRow(first_row));
-                let indent_end = Point::new(first_row, indent.len);
-                language_scope
-                    .line_comment_prefixes()
-                    .iter()
-                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                    .cloned()
-            } else {
-                None
-            };
+            let (
+                mut current_range_indent,
+                mut current_range_comment_prefix,
+                mut current_range_rewrap_prefix,
+            ) = indent_and_prefix_for_row(first_row);
 
             for row in non_blank_rows_iter.skip(1) {
                 let has_paragraph_break = row > prev_row + 1;
 
-                let row_indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                let row_comment_prefix = if let Some(language_scope) = &language_scope {
-                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                    let indent_end = Point::new(row, indent.len);
-                    language_scope
-                        .line_comment_prefixes()
-                        .iter()
-                        .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                        .cloned()
-                } else {
-                    None
-                };
+                let (row_indent, row_comment_prefix, row_rewrap_prefix) =
+                    indent_and_prefix_for_row(row);
 
-                let has_boundary_change =
-                    row_indent != prev_indent || row_comment_prefix != prev_comment_prefix;
+                let has_indent_change = row_indent != current_range_indent;
+                let has_comment_change = row_comment_prefix != current_range_comment_prefix;
+
+                let has_boundary_change = has_comment_change
+                    || row_rewrap_prefix.is_some()
+                    || (has_indent_change && current_range_comment_prefix.is_some());
 
                 if has_paragraph_break || has_boundary_change {
                     ranges.push((
                         language_settings.clone(),
                         Point::new(current_range_start, 0)
                             ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
-                        prev_indent,
-                        prev_comment_prefix.clone(),
+                        current_range_indent,
+                        current_range_comment_prefix.clone(),
+                        current_range_rewrap_prefix.clone(),
                         from_empty_selection,
                     ));
                     current_range_start = row;
+                    current_range_indent = row_indent;
+                    current_range_comment_prefix = row_comment_prefix;
+                    current_range_rewrap_prefix = row_rewrap_prefix;
                 }
-
                 prev_row = row;
-                prev_indent = row_indent;
-                prev_comment_prefix = row_comment_prefix;
             }
 
             ranges.push((
                 language_settings.clone(),
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
-                prev_indent,
-                prev_comment_prefix,
+                current_range_indent,
+                current_range_comment_prefix,
+                current_range_rewrap_prefix,
                 from_empty_selection,
             ));
 
@@ -11608,8 +11645,14 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (language_settings, wrap_range, indent_size, comment_prefix, from_empty_selection) in
-            wrap_ranges
+        for (
+            language_settings,
+            wrap_range,
+            indent_size,
+            comment_prefix,
+            rewrap_prefix,
+            from_empty_selection,
+        ) in wrap_ranges
         {
             let mut start_row = wrap_range.start.row;
             let mut end_row = wrap_range.end.row;
@@ -11625,11 +11668,15 @@ impl Editor {
 
             let tab_size = language_settings.tab_size;
 
-            let mut line_prefix = indent_size.chars().collect::<String>();
+            let indent_prefix = indent_size.chars().collect::<String>();
+            let mut line_prefix = indent_prefix.clone();
             let mut inside_comment = false;
             if let Some(prefix) = &comment_prefix {
                 line_prefix.push_str(prefix);
                 inside_comment = true;
+            }
+            if let Some(prefix) = &rewrap_prefix {
+                line_prefix.push_str(prefix);
             }
 
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
@@ -11677,12 +11724,18 @@ impl Editor {
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
             let Some(lines_without_prefixes) = selection_text
                 .lines()
-                .map(|line| {
-                    line.strip_prefix(&line_prefix)
-                        .or_else(|| line.trim_start().strip_prefix(&line_prefix.trim_start()))
-                        .with_context(|| {
-                            format!("line did not start with prefix {line_prefix:?}: {line:?}")
-                        })
+                .enumerate()
+                .map(|(ix, line)| {
+                    let line_trimmed = line.trim_start();
+                    if rewrap_prefix.is_some() && ix > 0 {
+                        Ok(line_trimmed)
+                    } else {
+                        line_trimmed
+                            .strip_prefix(&line_prefix.trim_start())
+                            .with_context(|| {
+                                format!("line did not start with prefix {line_prefix:?}: {line:?}")
+                            })
+                    }
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .log_err()
@@ -11695,8 +11748,16 @@ impl Editor {
                     .language_settings_at(Point::new(start_row, 0), cx)
                     .preferred_line_length as usize
             });
+
+            let subsequent_lines_prefix = if let Some(rewrap_prefix_str) = &rewrap_prefix {
+                format!("{}{}", indent_prefix, " ".repeat(rewrap_prefix_str.len()))
+            } else {
+                line_prefix.clone()
+            };
+
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
+                subsequent_lines_prefix,
                 lines_without_prefixes.join("\n"),
                 wrap_column,
                 tab_size,
@@ -12522,6 +12583,38 @@ impl Editor {
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_last(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn signature_help_prev(
+        &mut self,
+        _: &SignatureHelpPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            if popover.current_signature == 0 {
+                popover.current_signature = popover.signatures.len() - 1;
+            } else {
+                popover.current_signature -= 1;
+            }
+            cx.notify();
+        }
+    }
+
+    pub fn signature_help_next(
+        &mut self,
+        _: &SignatureHelpNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(popover) = self.signature_help_state.popover_mut() {
+            if popover.current_signature + 1 == popover.signatures.len() {
+                popover.current_signature = 0;
+            } else {
+                popover.current_signature += 1;
+            }
+            cx.notify();
         }
     }
 
@@ -17331,9 +17424,9 @@ impl Editor {
         self.active_indent_guides_state.dirty = true;
     }
 
-    pub fn update_fold_widths(
+    pub fn update_renderer_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         self.display_map
@@ -19562,7 +19655,7 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if let Some(buffer) = edited_buffer {
-                    self.update_lsp_data(None, Some(buffer.read(cx).remote_id()), window, cx);
+                    self.update_lsp_data(false, Some(buffer.read(cx).remote_id()), window, cx);
                 }
 
                 if *singleton_buffer_edited {
@@ -19627,7 +19720,7 @@ impl Editor {
                         .detach();
                     }
                 }
-                self.update_lsp_data(None, Some(buffer_id), window, cx);
+                self.update_lsp_data(false, Some(buffer_id), window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -19749,6 +19842,7 @@ impl Editor {
         self.tasks_update_task = Some(self.refresh_runnables(window, cx));
         self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(true, false, window, cx);
+        self.refresh_inline_values(cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
@@ -19813,7 +19907,7 @@ impl Editor {
             if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }
-            self.refresh_colors(None, None, window, cx);
+            self.refresh_colors(false, None, window, cx);
         }
 
         cx.notify();
@@ -20714,13 +20808,13 @@ impl Editor {
 
     fn update_lsp_data(
         &mut self,
-        for_server_id: Option<LanguageServerId>,
+        ignore_cache: bool,
         for_buffer: Option<BufferId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
-        self.refresh_colors(for_server_id, for_buffer, window, cx);
+        self.refresh_colors(ignore_cache, for_buffer, window, cx);
     }
 }
 
@@ -21198,18 +21292,22 @@ fn test_word_breaking_tokenizer() {
 }
 
 fn wrap_with_prefix(
-    line_prefix: String,
+    first_line_prefix: String,
+    subsequent_lines_prefix: String,
     unwrapped_text: String,
     wrap_column: usize,
     tab_size: NonZeroU32,
     preserve_existing_whitespace: bool,
 ) -> String {
-    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let first_line_prefix_len = char_len_with_expanded_tabs(0, &first_line_prefix, tab_size);
+    let subsequent_lines_prefix_len =
+        char_len_with_expanded_tabs(0, &subsequent_lines_prefix, tab_size);
     let mut wrapped_text = String::new();
-    let mut current_line = line_prefix.clone();
+    let mut current_line = first_line_prefix.clone();
+    let mut is_first_line = true;
 
     let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
-    let mut current_line_len = line_prefix_len;
+    let mut current_line_len = first_line_prefix_len;
     let mut in_whitespace = false;
     for token in tokenizer {
         let have_preceding_whitespace = in_whitespace;
@@ -21219,13 +21317,19 @@ fn wrap_with_prefix(
                 grapheme_len,
             } => {
                 in_whitespace = false;
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if current_line_len + grapheme_len > wrap_column
-                    && current_line_len != line_prefix_len
+                    && current_line_len != current_prefix_len
                 {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
                 }
                 current_line.push_str(token);
                 current_line_len += grapheme_len;
@@ -21242,32 +21346,46 @@ fn wrap_with_prefix(
                     token = " ";
                     grapheme_len = 1;
                 }
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if current_line_len + grapheme_len > wrap_column {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
+                } else if current_line_len != current_prefix_len || preserve_existing_whitespace {
                     current_line.push_str(token);
                     current_line_len += grapheme_len;
                 }
             }
             WordBreakToken::Newline => {
                 in_whitespace = true;
+                let current_prefix_len = if is_first_line {
+                    first_line_prefix_len
+                } else {
+                    subsequent_lines_prefix_len
+                };
                 if preserve_existing_whitespace {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
                 } else if have_preceding_whitespace {
                     continue;
-                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                } else if current_line_len + 1 > wrap_column
+                    && current_line_len != current_prefix_len
                 {
                     wrapped_text.push_str(current_line.trim_end());
                     wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len {
+                    is_first_line = false;
+                    current_line = subsequent_lines_prefix.clone();
+                    current_line_len = subsequent_lines_prefix_len;
+                } else if current_line_len != current_prefix_len {
                     current_line.push(' ');
                     current_line_len += 1;
                 }
@@ -21286,6 +21404,7 @@ fn test_wrap_with_prefix() {
     assert_eq!(
         wrap_with_prefix(
             "# ".to_string(),
+            "# ".to_string(),
             "abcdefg".to_string(),
             4,
             NonZeroU32::new(4).unwrap(),
@@ -21295,6 +21414,7 @@ fn test_wrap_with_prefix() {
     );
     assert_eq!(
         wrap_with_prefix(
+            "".to_string(),
             "".to_string(),
             "\thello world".to_string(),
             8,
@@ -21306,6 +21426,7 @@ fn test_wrap_with_prefix() {
     assert_eq!(
         wrap_with_prefix(
             "// ".to_string(),
+            "// ".to_string(),
             "xx \nyy zz aa bb cc".to_string(),
             12,
             NonZeroU32::new(4).unwrap(),
@@ -21315,6 +21436,7 @@ fn test_wrap_with_prefix() {
     );
     assert_eq!(
         wrap_with_prefix(
+            String::new(),
             String::new(),
             "这是什么 \n 钢笔".to_string(),
             3,
@@ -21823,10 +21945,10 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<Result<Vec<LocationLink>>>> {
         Some(self.update(cx, |project, cx| match kind {
-            GotoDefinitionKind::Symbol => project.definition(&buffer, position, cx),
-            GotoDefinitionKind::Declaration => project.declaration(&buffer, position, cx),
-            GotoDefinitionKind::Type => project.type_definition(&buffer, position, cx),
-            GotoDefinitionKind::Implementation => project.implementation(&buffer, position, cx),
+            GotoDefinitionKind::Symbol => project.definitions(&buffer, position, cx),
+            GotoDefinitionKind::Declaration => project.declarations(&buffer, position, cx),
+            GotoDefinitionKind::Type => project.type_definitions(&buffer, position, cx),
+            GotoDefinitionKind::Implementation => project.implementations(&buffer, position, cx),
         }))
     }
 
@@ -22405,6 +22527,7 @@ impl Render for Editor {
             &cx.entity(),
             EditorStyle {
                 background,
+                border: cx.theme().colors().border,
                 local_player: cx.theme().players().local(),
                 text: text_style,
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,

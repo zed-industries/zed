@@ -221,15 +221,30 @@ impl PackageJsonData {
             });
         }
 
+        let script_name_counts: HashMap<_, usize> =
+            self.scripts
+                .iter()
+                .fold(HashMap::default(), |mut acc, (_, script)| {
+                    *acc.entry(script).or_default() += 1;
+                    acc
+                });
         for (path, script) in &self.scripts {
+            let label = if script_name_counts.get(script).copied().unwrap_or_default() > 1
+                && let Some(parent) = path.parent().and_then(|parent| parent.file_name())
+            {
+                let parent = parent.to_string_lossy();
+                format!("{parent}/package.json > {script}")
+            } else {
+                format!("package.json > {script}")
+            };
             task_templates.0.push(TaskTemplate {
-                label: format!("package.json > {script}",),
+                label,
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec!["run".to_owned(), script.to_owned()],
                 tags: vec!["package-script".into()],
                 cwd: Some(
                     path.parent()
-                        .unwrap_or(Path::new(""))
+                        .unwrap_or(Path::new("/"))
                         .to_string_lossy()
                         .to_string(),
                 ),
@@ -767,8 +782,8 @@ pub struct EsLintLspAdapter {
 }
 
 impl EsLintLspAdapter {
-    const CURRENT_VERSION: &'static str = "3.0.10";
-    const CURRENT_VERSION_TAG_NAME: &'static str = "release/3.0.10";
+    const CURRENT_VERSION: &'static str = "2.4.4";
+    const CURRENT_VERSION_TAG_NAME: &'static str = "release/2.4.4";
 
     #[cfg(not(windows))]
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -846,7 +861,9 @@ impl LspAdapter for EsLintLspAdapter {
                     "enable": true
                 }
             },
-            "useFlatConfig": use_flat_config,
+            "experimental": {
+                "useFlatConfig": use_flat_config,
+            },
         });
 
         let override_options = cx.update(|cx| {
@@ -1012,6 +1029,7 @@ mod tests {
     use language::language_settings;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use task::TaskTemplates;
     use unindent::Unindent;
     use util::path;
 
@@ -1132,6 +1150,43 @@ mod tests {
                 .collect(),
                 package_manager: None,
             }
+        );
+
+        let mut task_templates = TaskTemplates::default();
+        package_json_data.fill_task_templates(&mut task_templates);
+        let task_templates = task_templates
+            .0
+            .into_iter()
+            .map(|template| (template.label, template.cwd))
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(
+            task_templates,
+            [
+                (
+                    "vitest file test".into(),
+                    Some("$ZED_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
+                ),
+                (
+                    "vitest test $ZED_SYMBOL".into(),
+                    Some("$ZED_CUSTOM_TYPESCRIPT_VITEST_PACKAGE_PATH".into()),
+                ),
+                (
+                    "mocha file test".into(),
+                    Some("$ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
+                ),
+                (
+                    "mocha test $ZED_SYMBOL".into(),
+                    Some("$ZED_CUSTOM_TYPESCRIPT_MOCHA_PACKAGE_PATH".into()),
+                ),
+                (
+                    "root/package.json > test".into(),
+                    Some(path!("/root").into())
+                ),
+                (
+                    "sub/package.json > test".into(),
+                    Some(path!("/root/sub").into())
+                ),
+            ]
         );
     }
 }

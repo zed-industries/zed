@@ -420,6 +420,15 @@ impl RunningMode {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        // From spec (on initialization sequence):
+        // client sends a setExceptionBreakpoints request if one or more exceptionBreakpointFilters have been defined (or if supportsConfigurationDoneRequest is not true)
+        //
+        // Thus we should send setExceptionBreakpoints even if `exceptionFilters` variable is empty (as long as there were some options in the first place).
+        let should_send_exception_breakpoints = capabilities
+            .exception_breakpoint_filters
+            .as_ref()
+            .map_or(false, |filters| !filters.is_empty())
+            || !configuration_done_supported;
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
             .unwrap_or_default();
@@ -461,9 +470,12 @@ impl RunningMode {
                     }
                 })?;
 
-                this.send_exception_breakpoints(exception_filters, supports_exception_filters)
-                    .await
-                    .ok();
+                if should_send_exception_breakpoints {
+                    this.send_exception_breakpoints(exception_filters, supports_exception_filters)
+                        .await
+                        .ok();
+                }
+
                 let ret = if configuration_done_supported {
                     this.request(ConfigurationDone {})
                 } else {
@@ -1004,7 +1016,7 @@ impl Session {
 
         cx.spawn(async move |this, cx| {
             while let Some(output) = rx.next().await {
-                this.update(cx, |this, cx| {
+                this.update(cx, |this, _| {
                     let event = dap::OutputEvent {
                         category: None,
                         output,
@@ -1016,7 +1028,7 @@ impl Session {
                         data: None,
                         location_reference: None,
                     };
-                    this.push_output(event, cx);
+                    this.push_output(event);
                 })?;
             }
             anyhow::Ok(())
@@ -1035,10 +1047,6 @@ impl Session {
 
     pub fn is_building(&self) -> bool {
         matches!(self.mode, Mode::Building)
-    }
-
-    pub fn is_running(&self) -> bool {
-        matches!(self.mode, Mode::Running(_))
     }
 
     pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
@@ -1450,7 +1458,7 @@ impl Session {
                     return;
                 }
 
-                self.push_output(event, cx);
+                self.push_output(event);
                 cx.notify();
             }
             Events::Breakpoint(event) => self.breakpoint_store.update(cx, |store, _| {
@@ -1483,6 +1491,28 @@ impl Session {
             }
             Events::Capabilities(event) => {
                 self.capabilities = self.capabilities.merge(event.capabilities);
+
+                // The adapter might've enabled new exception breakpoints (or disabled existing ones).
+                let recent_filters = self
+                    .capabilities
+                    .exception_breakpoint_filters
+                    .iter()
+                    .flatten()
+                    .map(|filter| (filter.filter.clone(), filter.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                for filter in recent_filters.values() {
+                    let default = filter.default.unwrap_or_default();
+                    self.exception_breakpoints
+                        .entry(filter.filter.clone())
+                        .or_insert_with(|| (filter.clone(), default));
+                }
+                self.exception_breakpoints
+                    .retain(|k, _| recent_filters.contains_key(k));
+                if self.is_started() {
+                    self.send_exception_breakpoints(cx);
+                }
+
+                // Remove the ones that no longer exist.
                 cx.notify();
             }
             Events::Memory(_) => {}
@@ -1615,10 +1645,9 @@ impl Session {
             });
     }
 
-    fn push_output(&mut self, event: OutputEvent, cx: &mut Context<Self>) {
+    fn push_output(&mut self, event: OutputEvent) {
         self.output.push_back(event);
         self.output_token.0 += 1;
-        cx.emit(SessionEvent::ConsoleOutput);
     }
 
     pub fn any_stopped_thread(&self) -> bool {
@@ -1906,12 +1935,14 @@ impl Session {
     }
 
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
         self.thread_states.continue_thread(thread_id);
         self.request(
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: Some(true),
+                    single_thread: supports_single_thread_execution_requests,
                 },
             },
             Self::on_step_response::<ContinueCommand>(thread_id),
@@ -2322,7 +2353,7 @@ impl Session {
             data: None,
             location_reference: None,
         };
-        self.push_output(event, cx);
+        self.push_output(event);
         let request = self.mode.request_dap(EvaluateCommand {
             expression,
             context,
@@ -2345,7 +2376,7 @@ impl Session {
                             data: None,
                             location_reference: None,
                         };
-                        this.push_output(event, cx);
+                        this.push_output(event);
                     }
                     Err(e) => {
                         let event = dap::OutputEvent {
@@ -2359,7 +2390,7 @@ impl Session {
                             data: None,
                             location_reference: None,
                         };
-                        this.push_output(event, cx);
+                        this.push_output(event);
                     }
                 };
                 cx.notify();
