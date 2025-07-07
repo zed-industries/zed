@@ -462,7 +462,7 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
-    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` this returns `None`)
+    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` is `false` this returns `None`)
     fn max_token_count_in_burn_mode(&self) -> Option<u64> {
         None
     }
