@@ -34,6 +34,7 @@ pub struct LspTool {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Debug)]
 struct LanguageServerState {
     items: Vec<LspItem>,
     other_servers_start_index: Option<usize>,
@@ -47,6 +48,15 @@ struct ActiveEditor {
     editor: WeakEntity<Editor>,
     _editor_subscription: Subscription,
     editor_buffers: HashSet<BufferId>,
+}
+
+impl std::fmt::Debug for ActiveEditor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActiveEditor")
+            .field("editor", &self.editor)
+            .field("editor_buffers", &self.editor_buffers)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -100,7 +110,9 @@ impl LanguageServerHealthStatus {
 
 impl LanguageServerState {
     fn fill_menu(&self, mut menu: ContextMenu, cx: &mut Context<Self>) -> ContextMenu {
-        let lsp_logs = cx.global::<GlobalLogStore>().0.upgrade();
+        let lsp_logs = cx
+            .try_global::<GlobalLogStore>()
+            .and_then(|lsp_logs| lsp_logs.0.upgrade());
         let lsp_store = self.lsp_store.upgrade();
         let Some((lsp_logs, lsp_store)) = lsp_logs.zip(lsp_store) else {
             return menu;
@@ -596,9 +608,8 @@ impl LspTool {
                 }
             }
 
-            let mut can_stop_all = false;
-            let mut can_restart_all = true;
-
+            let mut can_stop_all = !state.language_servers.health_statuses.is_empty();
+            let mut can_restart_all = state.language_servers.health_statuses.is_empty();
             for (server_name, status) in state
                 .language_servers
                 .binary_statuses
@@ -608,19 +619,23 @@ impl LspTool {
                 match status.status {
                     BinaryStatus::None => {
                         can_restart_all = false;
-                        can_stop_all = true;
+                        can_stop_all |= true;
                     }
                     BinaryStatus::CheckingForUpdate => {
                         can_restart_all = false;
+                        can_stop_all = false;
                     }
                     BinaryStatus::Downloading => {
                         can_restart_all = false;
+                        can_stop_all = false;
                     }
                     BinaryStatus::Starting => {
                         can_restart_all = false;
+                        can_stop_all = false;
                     }
                     BinaryStatus::Stopping => {
                         can_restart_all = false;
+                        can_stop_all = false;
                     }
                     BinaryStatus::Stopped => {}
                     BinaryStatus::Failed { .. } => {}
