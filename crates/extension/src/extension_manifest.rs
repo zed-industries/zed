@@ -130,6 +130,12 @@ impl ExtensionManifest {
 
         Ok(())
     }
+
+    pub fn allow_remote_load(&self) -> bool {
+        !self.language_servers.is_empty()
+            || !self.debug_adapters.is_empty()
+            || !self.debug_locators.is_empty()
+    }
 }
 
 pub fn build_debug_adapter_schema_path(
