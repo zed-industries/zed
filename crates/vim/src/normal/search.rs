@@ -10,10 +10,7 @@ use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
 
 use crate::{
-    Vim,
-    command::CommandRange,
-    motion::Motion,
-    state::{Mode, SearchState},
+    command::CommandRange, motion::Motion, replace, state::{Mode, SearchState}, Vim
 };
 
 /// Moves to the next search match.
@@ -71,11 +68,12 @@ pub struct ReplaceCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Replacement {
+pub struct Replacement {
     search: String,
     replacement: String,
     should_replace_all: bool,
     is_case_sensitive: bool,
+    continue_replacing: bool,
 }
 
 actions!(
@@ -169,7 +167,7 @@ impl Vim {
                     search_bar.select_query(window, cx);
                     cx.focus_self(window);
 
-                    search_bar.set_replacement(None, cx);
+                    search_bar.set_replacement(None, false, window, cx);
                     let mut options = SearchOptions::NONE;
                     if action.regex {
                         options |= SearchOptions::REGEX;
@@ -499,7 +497,7 @@ impl Vim {
                     options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
                 }
 
-                search_bar.set_replacement(Some(&replacement.replacement), cx);
+                search_bar.set_replacement(Some(&replacement.replacement), replacement.continue_replacing, window, cx);
                 Some(search_bar.search(&search, Some(options), window, cx))
             });
             let Some(search) = search else { return };
@@ -595,12 +593,17 @@ impl Replacement {
             replacement,
             should_replace_all: false,
             is_case_sensitive: true,
+            continue_replacing: false,
         };
 
         for c in flags.chars() {
             match c {
                 'g' => replacement.should_replace_all = true,
-                'c' | 'n' => replacement.should_replace_all = false,
+                'n' => replacement.should_replace_all = false,
+                'c' => {
+                    replacement.should_replace_all = false;
+                    replacement.continue_replacing = true;
+                },
                 'i' => replacement.is_case_sensitive = false,
                 'I' => replacement.is_case_sensitive = true,
                 _ => {}

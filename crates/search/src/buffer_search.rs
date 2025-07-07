@@ -922,7 +922,7 @@ impl BufferSearchBar {
             .filter(|suggestion| !suggestion.is_empty())
     }
 
-    pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut Context<Self>) {
+    pub fn set_replacement(&mut self, replacement: Option<&str>, continue_replacing: bool, window: &mut Window, cx: &mut Context<Self>) {
         if replacement.is_none() {
             self.replace_enabled = false;
             return;
@@ -937,6 +937,11 @@ impl BufferSearchBar {
                         replacement_buffer.edit([(0..len, replacement.unwrap())], None, cx);
                     });
             });
+        if continue_replacing {
+            let handle = self.replacement_editor.focus_handle(cx);
+            self.focus(&handle, window, cx);
+            cx.notify();
+        }
     }
 
     pub fn search(
@@ -1145,7 +1150,7 @@ impl BufferSearchBar {
         }
     }
 
-    fn on_replacement_editor_event(
+    pub fn on_replacement_editor_event(
         &mut self,
         _: Entity<Editor>,
         event: &editor::EditorEvent,
