@@ -469,7 +469,7 @@ fn handle_keyup_msg(
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     println!("=> WM_CHAR: wparam: {wparam:x}", wparam = wparam.0);
-    let input = parse_char_message(wparam)?;
+    let input = parse_char_message(wparam, &state_ptr)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
@@ -1227,16 +1227,33 @@ fn handle_input_language_changed(
 }
 
 #[inline]
-fn parse_char_message(wparam: WPARAM) -> Option<String> {
+fn parse_char_message(wparam: WPARAM, state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<String> {
     let code_point = wparam.loword();
+    let mut lock = state_ptr.state.borrow_mut();
     // https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G2630
-    if code_point >= 0xDC00 && code_point <= 0xDFFF {
-        // This is a surrogate code point, which is not valid on its own.
-        return None;
+    match code_point {
+        0xD800..=0xDBFF => {
+            // High surrogate, wait for low surrogate
+            lock.pending_surrogate = Some(code_point);
+            None
+        }
+        0xDC00..=0xDFFF => {
+            if let Some(high_surrogate) = lock.pending_surrogate.take() {
+                // Low surrogate, combine with pending high surrogate
+                String::from_utf16(&[high_surrogate, code_point]).ok()
+            } else {
+                // Invalid low surrogate without a preceding high surrogate
+                log::warn!(
+                    "Received low surrogate without a preceding high surrogate: {code_point:x}"
+                );
+                None
+            }
+        }
+        _ => {
+            lock.pending_surrogate = None;
+            char::from_u32(code_point as u32).map(|c| c.to_string())
+        }
     }
-    char::from_u32(wparam.0 as u32)
-        .filter(|c| !c.is_control())
-        .map(String::from)
 }
 
 #[inline]
