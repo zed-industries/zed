@@ -18359,7 +18359,6 @@ dependencies = [
  "language",
  "picker",
  "project",
- "schemars",
  "serde",
  "settings",
  "telemetry",

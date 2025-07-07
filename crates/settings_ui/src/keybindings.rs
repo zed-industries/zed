@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use collections::HashSet;
-use editor::{Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -14,8 +14,8 @@ use gpui::{
     Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
     WeakEntity, actions, div, transparent_black,
 };
-use language::{Language, LanguageConfig};
-use settings::KeybindSource;
+use language::{Language, LanguageConfig, ToOffset as _};
+use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
 
@@ -850,8 +850,10 @@ impl KeybindingEditorModal {
         cx: &mut App,
     ) -> Self {
         let keybind_editor = cx.new(KeystrokeInput::new);
+
         let context_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
+
             if let Some(context) = editing_keybind
                 .context
                 .as_ref()
@@ -861,6 +863,21 @@ impl KeybindingEditorModal {
             } else {
                 editor.set_placeholder_text("Keybinding context", cx);
             }
+
+            cx.spawn(async |editor, cx| {
+                let contexts = cx
+                    .background_spawn(async { collect_contexts_from_assets() })
+                    .await;
+
+                editor
+                    .update(cx, |editor, _cx| {
+                        editor.set_completion_provider(Some(std::rc::Rc::new(
+                            KeyContextCompletionProvider { contexts },
+                        )));
+                    })
+                    .context("Failed to load completions for keybinding context")
+            })
+            .detach_and_log_err(cx);
 
             editor
         });
@@ -998,6 +1015,69 @@ impl Render for KeybindingEditorModal {
                         .child(error),
                 )
             });
+    }
+}
+
+struct KeyContextCompletionProvider {
+    contexts: Vec<SharedString>,
+}
+
+impl CompletionProvider for KeyContextCompletionProvider {
+    fn completions(
+        &self,
+        _excerpt_id: editor::ExcerptId,
+        buffer: &Entity<language::Buffer>,
+        buffer_position: language::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> gpui::Task<anyhow::Result<Vec<project::CompletionResponse>>> {
+        let buffer = buffer.read(cx);
+        let mut count_back = 0;
+        for char in buffer.reversed_chars_at(buffer_position) {
+            if char.is_ascii_alphanumeric() || char == '_' {
+                count_back += 1;
+            } else {
+                break;
+            }
+        }
+        let start_anchor = buffer.anchor_before(
+            buffer_position
+                .to_offset(&buffer)
+                .saturating_sub(count_back),
+        );
+        let replace_range = start_anchor..buffer_position;
+        gpui::Task::ready(Ok(vec![project::CompletionResponse {
+            completions: self
+                .contexts
+                .iter()
+                .map(|context| project::Completion {
+                    replace_range: replace_range.clone(),
+                    label: language::CodeLabel::plain(context.to_string(), None),
+                    new_text: context.to_string(),
+                    documentation: None,
+                    source: project::CompletionSource::Custom,
+                    icon_path: None,
+                    insert_text_mode: None,
+                    confirm: None,
+                })
+                .collect(),
+            is_incomplete: false,
+        }]))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Entity<language::Buffer>,
+        _position: language::Anchor,
+        text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
+        _cx: &mut Context<Editor>,
+    ) -> bool {
+        text.chars().last().map_or(false, |last_char| {
+            last_char.is_ascii_alphanumeric() || last_char == '_'
+        })
     }
 }
 
@@ -1252,6 +1332,72 @@ fn build_keybind_context_menu(
                 Box::new(CopyContext),
             )
     })
+}
+
+fn collect_contexts_from_assets() -> Vec<SharedString> {
+    let mut keymap_assets = vec![
+        util::asset_str::<SettingsAssets>(settings::DEFAULT_KEYMAP_PATH),
+        util::asset_str::<SettingsAssets>(settings::VIM_KEYMAP_PATH),
+    ];
+    keymap_assets.extend(
+        BaseKeymap::OPTIONS
+            .iter()
+            .filter_map(|(_, base_keymap)| base_keymap.asset_path())
+            .map(util::asset_str::<SettingsAssets>),
+    );
+
+    let mut contexts = HashSet::default();
+
+    for keymap_asset in keymap_assets {
+        let Ok(keymap) = KeymapFile::parse(&keymap_asset) else {
+            continue;
+        };
+
+        for section in keymap.sections() {
+            let context_expr = &section.context;
+            let mut queue = Vec::new();
+            let Ok(root_context) = gpui::KeyBindingContextPredicate::parse(context_expr) else {
+                continue;
+            };
+
+            queue.push(root_context);
+            while let Some(context) = queue.pop() {
+                match context {
+                    gpui::KeyBindingContextPredicate::Identifier(ident) => {
+                        contexts.insert(ident);
+                    }
+                    gpui::KeyBindingContextPredicate::Equal(ident_a, ident_b) => {
+                        contexts.insert(ident_a);
+                        contexts.insert(ident_b);
+                    }
+                    gpui::KeyBindingContextPredicate::NotEqual(ident_a, ident_b) => {
+                        contexts.insert(ident_a);
+                        contexts.insert(ident_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Child(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Not(ctx) => {
+                        queue.push(*ctx);
+                    }
+                    gpui::KeyBindingContextPredicate::And(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Or(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut contexts = contexts.into_iter().collect::<Vec<_>>();
+    contexts.sort();
+
+    return contexts;
 }
 
 impl SerializableItem for KeymapEditor {
