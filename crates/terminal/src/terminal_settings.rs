@@ -230,15 +230,19 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
-    /// The minimum contrast ratio between foreground and background colors.
+    /// The minimum APCA perceptual contrast between foreground and background colors.
     ///
-    /// The contrast ratio is a value between 1 and 21. A value of 1 allows for no
-    /// contrast (e.g. black on black). Higher values ensure greater legibility.
-    /// If the contrast between text and background is below this threshold,
-    /// the text color will be adjusted to either black or white, whichever
-    /// provides better contrast.
+    /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    /// especially for dark mode. Values range from 0 to 106.
+    /// - 0: No contrast adjustment
+    /// - 15: Minimum for large text
+    /// - 30: Minimum for incidental text
+    /// - 45: Minimum for placeholders
+    /// - 60: Minimum for body text (WCAG 2.x AA equivalent)
+    /// - 75: Recommended for body text
+    /// - 90: Enhanced contrast
     ///
-    /// Default: 1.0 (no adjustment)
+    /// Default: 0 (no adjustment)
     pub minimum_contrast: Option<f32>,
 }
 
@@ -250,11 +254,11 @@ impl settings::Settings for TerminalSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let settings: Self = sources.json_merge()?;
 
-        // Validate minimum_contrast
-        if settings.minimum_contrast < 1.0 || settings.minimum_contrast > 21.0 {
+        // Validate minimum_contrast for APCA
+        if settings.minimum_contrast < 0.0 || settings.minimum_contrast > 106.0 {
             anyhow::bail!(
-                "terminal.minimum_contrast must be between 1.0 and 21.0, but got {}. \
-                A value of 1.0 means no contrast adjustment, and 21.0 is maximum contrast.",
+                "terminal.minimum_contrast must be between 0 and 106, but got {}. \
+                APCA values: 0 = no adjustment, 75 = recommended for body text, 106 = maximum contrast.",
                 settings.minimum_contrast
             );
         }

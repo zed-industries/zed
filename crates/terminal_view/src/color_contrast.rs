@@ -1,57 +1,162 @@
 use gpui::Hsla;
 
-/// Calculates the contrast ratio between two colors according to WCAG 2.0.
-/// The contrast ratio is a value between 1 and 21 where 1 is no contrast
-/// and 21 is maximum contrast.
-///
-/// https://www.w3.org/TR/WCAG20/#contrast-ratiodef
-pub fn contrast_ratio(foreground: Hsla, background: Hsla) -> f32 {
-    let fg_luminance = luminance(foreground);
-    let bg_luminance = luminance(background);
+/// APCA (Accessible Perceptual Contrast Algorithm) constants
+/// Based on APCA 0.0.98G-4g W3 compatible constants
+/// https://github.com/Myndex/apca-w3
+struct APCAConstants {
+    // Main TRC exponent for monitor perception
+    main_trc: f32,
 
-    let lighter = fg_luminance.max(bg_luminance);
-    let darker = fg_luminance.min(bg_luminance);
+    // sRGB coefficients
+    s_rco: f32,
+    s_gco: f32,
+    s_bco: f32,
 
-    (lighter + 0.05) / (darker + 0.05)
+    // G-4g constants for use with 2.4 exponent
+    norm_bg: f32,
+    norm_txt: f32,
+    rev_txt: f32,
+    rev_bg: f32,
+
+    // G-4g Clamps and Scalers
+    blk_thrs: f32,
+    blk_clmp: f32,
+    scale_bow: f32,
+    scale_wob: f32,
+    lo_bow_offset: f32,
+    lo_wob_offset: f32,
+    delta_y_min: f32,
+    lo_clip: f32,
 }
 
-/// Calculates the relative luminance of a color according to WCAG 2.0.
-/// Returns a value between 0 and 1 where 0 is black and 1 is white.
-///
-/// https://www.w3.org/TR/WCAG20/#relativeluminancedef
-pub fn luminance(color: Hsla) -> f32 {
-    // Convert HSLA to RGB using GPUI's built-in method
-    let rgba = color.to_rgb();
-
-    // Calculate luminance using the WCAG formula
-    let r_linear = srgb_to_linear(rgba.r);
-    let g_linear = srgb_to_linear(rgba.g);
-    let b_linear = srgb_to_linear(rgba.b);
-
-    0.2126 * r_linear + 0.7152 * g_linear + 0.0722 * b_linear
-}
-
-/// Converts a single sRGB color component to linear RGB.
-/// This is part of the WCAG luminance calculation.
-fn srgb_to_linear(component: f32) -> f32 {
-    if component <= 0.03928 {
-        component / 12.92
-    } else {
-        ((component + 0.055) / 1.055).powf(2.4)
+impl Default for APCAConstants {
+    fn default() -> Self {
+        Self {
+            main_trc: 2.4,
+            s_rco: 0.2126729,
+            s_gco: 0.7151522,
+            s_bco: 0.0721750,
+            norm_bg: 0.56,
+            norm_txt: 0.57,
+            rev_txt: 0.62,
+            rev_bg: 0.65,
+            blk_thrs: 0.022,
+            blk_clmp: 1.414,
+            scale_bow: 1.14,
+            scale_wob: 1.14,
+            lo_bow_offset: 0.027,
+            lo_wob_offset: 0.027,
+            delta_y_min: 0.0005,
+            lo_clip: 0.1,
+        }
     }
 }
 
-/// Adjusts the foreground color to meet the minimum contrast ratio against the background.
+/// Calculates the perceptual lightness contrast using APCA.
+/// Returns a value between approximately -108 and 106.
+/// Negative values indicate light text on dark background.
+/// Positive values indicate dark text on light background.
+///
+/// The APCA algorithm is more perceptually accurate than WCAG 2.x,
+/// especially for dark mode interfaces. Key improvements include:
+/// - Better accuracy for dark backgrounds
+/// - Polarity-aware (direction matters)
+/// - Perceptually uniform across the range
+///
+/// Common APCA Lc thresholds:
+/// - Lc 15: Minimum for large text
+/// - Lc 30: Minimum for incidental text
+/// - Lc 45: Minimum for placeholders
+/// - Lc 60: Minimum for body text (similar to WCAG 2.x 4.5:1)
+/// - Lc 75: Recommended minimum for body text
+/// - Lc 90: Preferred for body text
+///
+/// https://github.com/Myndex/apca-w3
+pub fn apca_contrast(text_color: Hsla, background_color: Hsla) -> f32 {
+    let constants = APCAConstants::default();
+
+    let text_y = srgb_to_y(text_color, &constants);
+    let bg_y = srgb_to_y(background_color, &constants);
+
+    // Apply soft clamp to near-black colors
+    let text_y_clamped = if text_y > constants.blk_thrs {
+        text_y
+    } else {
+        text_y + (constants.blk_thrs - text_y).powf(constants.blk_clmp)
+    };
+
+    let bg_y_clamped = if bg_y > constants.blk_thrs {
+        bg_y
+    } else {
+        bg_y + (constants.blk_thrs - bg_y).powf(constants.blk_clmp)
+    };
+
+    // Return 0 for extremely low delta Y
+    if (bg_y_clamped - text_y_clamped).abs() < constants.delta_y_min {
+        return 0.0;
+    }
+
+    let sapc;
+    let output_contrast;
+
+    if bg_y_clamped > text_y_clamped {
+        // Normal polarity: dark text on light background
+        sapc = (bg_y_clamped.powf(constants.norm_bg) - text_y_clamped.powf(constants.norm_txt))
+            * constants.scale_bow;
+
+        // Low contrast smooth rollout to prevent polarity reversal
+        output_contrast = if sapc < constants.lo_clip {
+            0.0
+        } else {
+            sapc - constants.lo_bow_offset
+        };
+    } else {
+        // Reverse polarity: light text on dark background
+        sapc = (bg_y_clamped.powf(constants.rev_bg) - text_y_clamped.powf(constants.rev_txt))
+            * constants.scale_wob;
+
+        output_contrast = if sapc > -constants.lo_clip {
+            0.0
+        } else {
+            sapc + constants.lo_wob_offset
+        };
+    }
+
+    // Return Lc (lightness contrast) scaled to percentage
+    output_contrast * 100.0
+}
+
+/// Converts sRGB color to Y (luminance) for APCA calculation
+fn srgb_to_y(color: Hsla, constants: &APCAConstants) -> f32 {
+    let rgba = color.to_rgb();
+
+    // Linearize and apply coefficients
+    let r_linear = (rgba.r).powf(constants.main_trc);
+    let g_linear = (rgba.g).powf(constants.main_trc);
+    let b_linear = (rgba.b).powf(constants.main_trc);
+
+    constants.s_rco * r_linear + constants.s_gco * g_linear + constants.s_bco * b_linear
+}
+
+/// Adjusts the foreground color to meet the minimum APCA contrast against the background.
+/// The minimum_apca_contrast should be an absolute value (e.g., 75 for Lc 75).
 /// If the current contrast is below the minimum, it returns either black or white,
 /// whichever provides better contrast.
-pub fn ensure_minimum_contrast(foreground: Hsla, background: Hsla, minimum_contrast: f32) -> Hsla {
-    if minimum_contrast <= 1.0 {
+///
+/// Note: This is a simple implementation that only tries black or white.
+/// A more sophisticated approach could adjust lightness while preserving hue.
+pub fn ensure_minimum_contrast(
+    foreground: Hsla,
+    background: Hsla,
+    minimum_apca_contrast: f32,
+) -> Hsla {
+    if minimum_apca_contrast <= 0.0 {
         return foreground;
     }
 
-    let current_contrast = contrast_ratio(foreground, background);
+    let current_contrast = apca_contrast(foreground, background).abs();
 
-    if current_contrast >= minimum_contrast {
+    if current_contrast >= minimum_apca_contrast {
         return foreground;
     }
 
@@ -70,8 +175,8 @@ pub fn ensure_minimum_contrast(foreground: Hsla, background: Hsla, minimum_contr
         a: foreground.a, // Preserve alpha
     };
 
-    let black_contrast = contrast_ratio(black, background);
-    let white_contrast = contrast_ratio(white, background);
+    let black_contrast = apca_contrast(black, background).abs();
+    let white_contrast = apca_contrast(white, background).abs();
 
     if white_contrast > black_contrast {
         white
@@ -126,39 +231,60 @@ mod tests {
     }
 
     #[test]
-    fn test_contrast_ratio() {
-        // Black on white should have maximum contrast (21:1)
+    fn test_apca_contrast() {
+        // Test black text on white background (should be positive)
         let black = hsla(0.0, 0.0, 0.0, 1.0);
         let white = hsla(0.0, 0.0, 1.0, 1.0);
-        let ratio = contrast_ratio(black, white);
-        assert!((ratio - 21.0).abs() < 0.1, "Expected ~21, got {}", ratio);
+        let contrast = apca_contrast(black, white);
+        assert!(
+            contrast > 100.0,
+            "Black on white should have high positive contrast, got {}",
+            contrast
+        );
 
-        // Same color should have minimum contrast (1:1)
+        // Test white text on black background (should be negative)
+        let contrast_reversed = apca_contrast(white, black);
+        assert!(
+            contrast_reversed < -100.0,
+            "White on black should have high negative contrast, got {}",
+            contrast_reversed
+        );
+
+        // Same color should have zero contrast
         let gray = hsla(0.0, 0.0, 0.5, 1.0);
-        let ratio = contrast_ratio(gray, gray);
-        assert!((ratio - 1.0).abs() < 0.01, "Expected ~1, got {}", ratio);
+        let contrast_same = apca_contrast(gray, gray);
+        assert!(
+            contrast_same.abs() < 1.0,
+            "Same color should have near-zero contrast, got {}",
+            contrast_same
+        );
 
-        // Test commutative property
-        assert_eq!(contrast_ratio(black, white), contrast_ratio(white, black));
+        // APCA is NOT commutative - polarity matters
+        assert!(
+            (contrast + contrast_reversed).abs() > 1.0,
+            "APCA should not be commutative"
+        );
     }
 
     #[test]
-    fn test_luminance() {
-        // Test known luminance values
+    fn test_srgb_to_y() {
+        let constants = APCAConstants::default();
+
+        // Test known Y values
         let black = hsla(0.0, 0.0, 0.0, 1.0);
-        assert!((luminance(black) - 0.0).abs() < 0.001);
+        let y_black = srgb_to_y(black, &constants);
+        assert!(
+            y_black.abs() < 0.001,
+            "Black should have Y near 0, got {}",
+            y_black
+        );
 
         let white = hsla(0.0, 0.0, 1.0, 1.0);
-        assert!((luminance(white) - 1.0).abs() < 0.001);
-
-        // Middle gray should have luminance around 0.2159
-        // (This is the sRGB middle gray, not perceptual middle gray)
-        let gray = hsla(0.0, 0.0, 0.5, 1.0);
-        let gray_lum = luminance(gray);
+        let y_white = srgb_to_y(white, &constants);
         assert!(
-            (gray_lum - 0.2159).abs() < 0.01,
-            "Expected ~0.2159, got {}",
-            gray_lum
+            (y_white - 1.0).abs() < 0.001,
+            "White should have Y near 1, got {}",
+            y_white
         );
     }
 
@@ -168,11 +294,15 @@ mod tests {
         let light_gray = hsla(0.0, 0.0, 0.9, 1.0);
 
         // Light gray on white has poor contrast
-        let initial_contrast = contrast_ratio(light_gray, white_bg);
-        assert!(initial_contrast < 2.0);
+        let initial_contrast = apca_contrast(light_gray, white_bg).abs();
+        assert!(
+            initial_contrast < 15.0,
+            "Initial contrast should be low, got {}",
+            initial_contrast
+        );
 
-        // Should be adjusted to black for better contrast
-        let adjusted = ensure_minimum_contrast(light_gray, white_bg, 3.0);
+        // Should be adjusted to black for better contrast (using APCA Lc 75 as minimum)
+        let adjusted = ensure_minimum_contrast(light_gray, white_bg, 75.0);
         assert_eq!(adjusted.l, 0.0); // Should be black
         assert_eq!(adjusted.a, light_gray.a); // Alpha preserved
 
@@ -181,16 +311,20 @@ mod tests {
         let dark_gray = hsla(0.0, 0.0, 0.1, 1.0);
 
         // Dark gray on black has poor contrast
-        let initial_contrast = contrast_ratio(dark_gray, black_bg);
-        assert!(initial_contrast < 2.0);
+        let initial_contrast = apca_contrast(dark_gray, black_bg).abs();
+        assert!(
+            initial_contrast < 15.0,
+            "Initial contrast should be low, got {}",
+            initial_contrast
+        );
 
         // Should be adjusted to white for better contrast
-        let adjusted = ensure_minimum_contrast(dark_gray, black_bg, 3.0);
+        let adjusted = ensure_minimum_contrast(dark_gray, black_bg, 75.0);
         assert_eq!(adjusted.l, 1.0); // Should be white
 
         // Test when contrast is already sufficient
         let black = hsla(0.0, 0.0, 0.0, 1.0);
-        let adjusted = ensure_minimum_contrast(black, white_bg, 3.0);
+        let adjusted = ensure_minimum_contrast(black, white_bg, 75.0);
         assert_eq!(adjusted, black); // Should remain unchanged
     }
 
@@ -204,27 +338,27 @@ mod tests {
         let bg = fafafa;
         let fg = fafafa;
 
-        // Contrast ratio should be 1.0 (no contrast)
-        let ratio = contrast_ratio(fg, bg);
+        // Contrast should be 0 (no contrast)
+        let contrast = apca_contrast(fg, bg);
         assert!(
-            (ratio - 1.0).abs() < 0.01,
-            "Same color should have contrast ratio 1.0, got {}",
-            ratio
+            contrast.abs() < 1.0,
+            "Same color should have near-zero APCA contrast, got {}",
+            contrast
         );
 
-        // With minimum contrast 1.1, it should adjust
-        let adjusted = ensure_minimum_contrast(fg, bg, 1.1);
+        // With minimum APCA contrast of 15 (very low, but detectable), it should adjust
+        let adjusted = ensure_minimum_contrast(fg, bg, 15.0);
         assert!(
             adjusted.l < 0.1 || adjusted.l > 0.9,
             "Color should be adjusted to black or white"
         );
 
         // The adjusted color should have sufficient contrast
-        let new_ratio = contrast_ratio(adjusted, bg);
+        let new_contrast = apca_contrast(adjusted, bg).abs();
         assert!(
-            new_ratio >= 1.1,
-            "Adjusted contrast {} should be >= 1.1",
-            new_ratio
+            new_contrast >= 15.0,
+            "Adjusted APCA contrast {} should be >= 15.0",
+            new_contrast
         );
     }
 }

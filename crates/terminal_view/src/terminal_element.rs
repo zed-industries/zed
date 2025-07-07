@@ -1429,14 +1429,15 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::contrast_ratio(white_fg, light_gray_bg);
+        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
         assert!(
-            actual_contrast < 2.0,
-            "White on light gray should have poor contrast"
+            actual_contrast < 30.0,
+            "White on light gray should have poor APCA contrast: {}",
+            actual_contrast
         );
 
-        // After adjustment with minimum contrast of 4.5, should be dark
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 4.5);
+        // After adjustment with minimum APCA contrast of 75, should be dark
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 75.0);
         assert!(adjusted.l < 0.1, "Adjusted color should be dark");
 
         // Test case 2: Dark colors (poor contrast)
@@ -1454,18 +1455,19 @@ mod tests {
         };
 
         // Should have poor contrast
-        let actual_contrast = color_contrast::contrast_ratio(black_fg, dark_gray_bg);
+        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
         assert!(
-            actual_contrast < 2.0,
-            "Black on dark gray should have poor contrast"
+            actual_contrast < 30.0,
+            "Black on dark gray should have poor APCA contrast: {}",
+            actual_contrast
         );
 
-        // After adjustment with minimum contrast of 4.5, should be light
-        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 4.5);
+        // After adjustment with minimum APCA contrast of 75, should be light
+        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 75.0);
         assert!(adjusted.l > 0.9, "Adjusted color should be light");
 
         // Test case 3: Already good contrast
-        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 4.5);
+        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 75.0);
         assert_eq!(
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
@@ -1491,23 +1493,23 @@ mod tests {
             a: 1.0,
         };
 
-        // With minimum contrast of 1.0, no adjustment should happen
-        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 1.0);
-        assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 1.0");
+        // With minimum contrast of 0.0, no adjustment should happen
+        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
+        assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
 
-        // With minimum contrast of 1.1, it should adjust to black
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 1.1);
+        // With minimum APCA contrast of 15, it should adjust to black
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
         assert!(
             adjusted.l < 0.1,
-            "White on white with min_contrast 1.1 should become dark, got l={}",
+            "White on white with min_contrast 15.0 should become dark, got l={}",
             adjusted.l
         );
 
-        // Verify the contrast ratio is now acceptable
-        let new_contrast = color_contrast::contrast_ratio(adjusted, white_bg);
+        // Verify the contrast is now acceptable
+        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
         assert!(
-            new_contrast >= 1.1,
-            "Adjusted contrast {} should be >= 1.1",
+            new_contrast >= 15.0,
+            "Adjusted APCA contrast {} should be >= 15.0",
             new_contrast
         );
     }
