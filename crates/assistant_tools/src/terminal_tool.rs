@@ -218,7 +218,7 @@ impl Tool for TerminalTool {
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
-                                command: program,
+                                command: Some(program),
                                 args,
                                 cwd,
                                 env,
@@ -691,7 +691,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }

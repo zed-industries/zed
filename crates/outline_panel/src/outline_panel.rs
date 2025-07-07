@@ -19,10 +19,10 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
+    scroll::{Autoscroll, ScrollAnchor, ScrollbarAutoHide},
 };
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -65,17 +65,28 @@ use worktree::{Entry, ProjectEntryId, WorktreeId};
 actions!(
     outline_panel,
     [
+        /// Collapses all entries in the outline tree.
         CollapseAllEntries,
+        /// Collapses the currently selected entry.
         CollapseSelectedEntry,
+        /// Expands all entries in the outline tree.
         ExpandAllEntries,
+        /// Expands the currently selected entry.
         ExpandSelectedEntry,
+        /// Folds the selected directory.
         FoldDirectory,
+        /// Opens the selected entry in the editor.
         OpenSelectedEntry,
+        /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Selects the parent of the current entry.
         SelectParent,
+        /// Toggles the pin status of the active editor.
         ToggleActiveEditorPin,
-        ToggleFocus,
+        /// Unfolds the selected directory.
         UnfoldDirectory,
+        /// Toggles focus on the outline panel.
+        ToggleFocus,
     ]
 );
 
@@ -1099,7 +1110,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
+                            SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),

@@ -70,6 +70,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("templ", &["templ"]),
     ("terraform", &["tf", "tfvars", "hcl"]),
     ("toml", &["Cargo.lock", "toml"]),
+    ("typst", &["typ"]),
     ("vue", &["vue"]),
     ("wgsl", &["wgsl"]),
     ("wit", &["wit"]),

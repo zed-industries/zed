@@ -31,40 +31,67 @@ actions!(
     git,
     [
         // per-hunk
+        /// Toggles the staged state of the hunk at cursor.
         ToggleStaged,
+        /// Stages the current hunk and moves to the next one.
         StageAndNext,
+        /// Unstages the current hunk and moves to the next one.
         UnstageAndNext,
+        /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
         // per-file
+        /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
+        /// Stages the current file.
         StageFile,
+        /// Unstages the current file.
         UnstageFile,
         // repo-wide
+        /// Stages all changes in the repository.
         StageAll,
+        /// Unstages all changes in the repository.
         UnstageAll,
+        /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
+        /// Moves all untracked files to trash.
         TrashUntrackedFiles,
+        /// Undoes the last commit, keeping changes in the working directory.
         Uncommit,
+        /// Pushes commits to the remote repository.
         Push,
+        /// Pushes commits to a specific remote branch.
         PushTo,
+        /// Force pushes commits to the remote repository.
         ForcePush,
+        /// Pulls changes from the remote repository.
         Pull,
+        /// Fetches changes from the remote repository.
         Fetch,
+        /// Fetches changes from a specific remote.
         FetchFrom,
+        /// Creates a new commit with staged changes.
         Commit,
+        /// Amends the last commit with staged changes.
         Amend,
+        /// Cancels the current git operation.
         Cancel,
+        /// Expands the commit message editor.
         ExpandCommitEditor,
+        /// Generates a commit message using AI.
         GenerateCommitMessage,
+        /// Initializes a new git repository.
         Init,
+        /// Opens all modified files in the editor.
         OpenModifiedFiles,
     ]
 );
 
+/// Restores a file to its last committed state, discarding local changes.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = git, deprecated_aliases = ["editor::RevertFile"])]
+#[serde(deny_unknown_fields)]
 pub struct RestoreFile {
     #[serde(default)]
     pub skip_prompt: bool,

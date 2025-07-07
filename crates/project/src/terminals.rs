@@ -148,8 +148,8 @@ impl Project {
         let ssh_details = self.ssh_details(cx);
         let settings = self.terminal_settings(&path, cx).clone();
 
-        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell);
-        let (command, args) = builder.build(command, &Vec::new());
+        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell).non_interactive();
+        let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self
             .environment
@@ -297,7 +297,10 @@ impl Project {
                             .or_insert_with(|| "xterm-256color".to_string());
                         let (program, args) = wrap_for_ssh(
                             &ssh_command,
-                            Some((&spawn_task.command, &spawn_task.args)),
+                            spawn_task
+                                .command
+                                .as_ref()
+                                .map(|command| (command, &spawn_task.args)),
                             path.as_deref(),
                             env,
                             python_venv_directory.as_deref(),
@@ -317,14 +320,16 @@ impl Project {
                             add_environment_path(&mut env, &venv_path.join("bin")).log_err();
                         }
 
-                        (
-                            task_state,
+                        let shell = if let Some(program) = spawn_task.command {
                             Shell::WithArguments {
-                                program: spawn_task.command,
+                                program,
                                 args: spawn_task.args,
                                 title_override: None,
-                            },
-                        )
+                            }
+                        } else {
+                            Shell::System
+                        };
+                        (task_state, shell)
                     }
                 }
             }

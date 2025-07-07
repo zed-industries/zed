@@ -26,7 +26,7 @@ use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    Point, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -51,10 +51,12 @@ pub trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -198,8 +200,8 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
-        // execute the script using /bin/bash
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = Command::new("/usr/bin/env")
+            .arg("bash")
             .arg("-c")
             .arg(script)
             .process_group(0)
@@ -235,13 +237,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         self.is_screen_capture_supported()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 

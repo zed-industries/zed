@@ -7,8 +7,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
     Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled, Window,
-    point, size,
+    ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size, StyleRefinement, Styled,
+    Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -42,6 +42,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
+        top_slot: None,
         decorations: Vec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
@@ -61,6 +62,7 @@ pub struct UniformList {
     render_items: Box<
         dyn for<'a> Fn(Range<usize>, &'a mut Window, &'a mut App) -> SmallVec<[AnyElement; 64]>,
     >,
+    top_slot: Option<Box<dyn UniformListTopSlot>>,
     decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
@@ -71,6 +73,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
+    top_slot_items: SmallVec<[AnyElement; 8]>,
     decorations: SmallVec<[AnyElement; 1]>,
 }
 
@@ -88,6 +91,8 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
+    /// Scrolls the element to be at the given item index from the top of the viewport.
+    ToPosition(usize),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -212,6 +217,7 @@ impl Element for UniformList {
             UniformListFrameState {
                 items: SmallVec::new(),
                 decorations: SmallVec::new(),
+                top_slot_items: SmallVec::new(),
             },
         )
     }
@@ -345,6 +351,15 @@ impl Element for UniformList {
                                     }
                                 }
                             }
+                            ScrollStrategy::ToPosition(sticky_index) => {
+                                let target_y_in_viewport = item_height * sticky_index;
+                                let target_scroll_top = item_top - target_y_in_viewport;
+                                let max_scroll_top =
+                                    (content_height - list_height).max(Pixels::ZERO);
+                                let new_scroll_top =
+                                    target_scroll_top.clamp(Pixels::ZERO, max_scroll_top);
+                                updated_scroll_offset.y = -new_scroll_top;
+                            }
                         }
                         scroll_offset = *updated_scroll_offset
                     }
@@ -354,7 +369,17 @@ impl Element for UniformList {
                     let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
                         / item_height)
                         .ceil() as usize;
-                    let visible_range = first_visible_element_ix
+                    let initial_range = first_visible_element_ix
+                        ..cmp::min(last_visible_element_ix, self.item_count);
+
+                    let mut top_slot_elements = if let Some(ref mut top_slot) = self.top_slot {
+                        top_slot.compute(initial_range, window, cx)
+                    } else {
+                        SmallVec::new()
+                    };
+                    let top_slot_offset = top_slot_elements.len();
+
+                    let visible_range = (top_slot_offset + first_visible_element_ix)
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let items = if y_flipped {
@@ -392,6 +417,20 @@ impl Element for UniformList {
                             item.prepaint_at(item_origin, window, cx);
                             frame_state.items.push(item);
                         }
+
+                        if let Some(ref top_slot) = self.top_slot {
+                            top_slot.prepaint(
+                                &mut top_slot_elements,
+                                padded_bounds,
+                                item_height,
+                                scroll_offset,
+                                padding,
+                                can_scroll_horizontally,
+                                window,
+                                cx,
+                            );
+                        }
+                        frame_state.top_slot_items = top_slot_elements;
 
                         let bounds = Bounds::new(
                             padded_bounds.origin
@@ -454,6 +493,9 @@ impl Element for UniformList {
                 for decoration in &mut request_layout.decorations {
                     decoration.paint(window, cx);
                 }
+                if let Some(ref top_slot) = self.top_slot {
+                    top_slot.paint(&mut request_layout.top_slot_items, window, cx);
+                }
             },
         )
     }
@@ -481,6 +523,35 @@ pub trait UniformListDecoration {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement;
+}
+
+/// A trait for implementing top slots in a [`UniformList`].
+/// Top slots are elements that appear at the top of the list and can adjust
+/// the visible range of list items.
+pub trait UniformListTopSlot {
+    /// Returns elements to render at the top slot for the given visible range.
+    fn compute(
+        &mut self,
+        visible_range: Range<usize>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> SmallVec<[AnyElement; 8]>;
+
+    /// Layout and prepaint the top slot elements.
+    fn prepaint(
+        &self,
+        elements: &mut SmallVec<[AnyElement; 8]>,
+        bounds: Bounds<Pixels>,
+        item_height: Pixels,
+        scroll_offset: Point<Pixels>,
+        padding: crate::Edges<Pixels>,
+        can_scroll_horizontally: bool,
+        window: &mut Window,
+        cx: &mut App,
+    );
+
+    /// Paint the top slot elements.
+    fn paint(&self, elements: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App);
 }
 
 impl UniformList {
@@ -518,6 +589,12 @@ impl UniformList {
     /// Adds a decoration element to the list.
     pub fn with_decoration(mut self, decoration: impl UniformListDecoration + 'static) -> Self {
         self.decorations.push(Box::new(decoration));
+        self
+    }
+
+    /// Sets a top slot for the list.
+    pub fn with_top_slot(mut self, top_slot: impl UniformListTopSlot + 'static) -> Self {
+        self.top_slot = Some(Box::new(top_slot));
         self
     }
 

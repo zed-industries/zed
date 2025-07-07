@@ -1,5 +1,6 @@
 use crate::{Vim, motion::Motion, object::Object, state::Mode};
 use collections::HashMap;
+use editor::SelectionEffects;
 use editor::{Bias, Editor, display_map::ToDisplayPoint};
 use gpui::actions;
 use gpui::{Context, Window};
@@ -12,7 +13,17 @@ pub(crate) enum IndentDirection {
     Auto,
 }
 
-actions!(vim, [Indent, Outdent, AutoIndent]);
+actions!(
+    vim,
+    [
+        /// Increases indentation of selected lines.
+        Indent,
+        /// Decreases indentation of selected lines.
+        Outdent,
+        /// Automatically adjusts indentation based on syntax.
+        AutoIndent
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
@@ -88,7 +99,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         selection_starts.insert(selection.id, anchor);
@@ -106,7 +117,7 @@ impl Vim {
                     IndentDirection::Out => editor.outdent(&Default::default(), window, cx),
                     IndentDirection::Auto => editor.autoindent(&Default::default(), window, cx),
                 }
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
@@ -121,6 +132,7 @@ impl Vim {
         object: Object,
         around: bool,
         dir: IndentDirection,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -128,11 +140,11 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         original_positions.insert(selection.id, anchor);
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                     });
                 });
                 match dir {
@@ -140,7 +152,7 @@ impl Vim {
                     IndentDirection::Out => editor.outdent(&Default::default(), window, cx),
                     IndentDirection::Auto => editor.autoindent(&Default::default(), window, cx),
                 }
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);

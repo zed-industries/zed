@@ -426,6 +426,7 @@ impl ContextPicker {
                             this.add_recent_file(project_path.clone(), window, cx);
                         })
                     },
+                    None,
                 )
             }
             RecentEntry::Thread(thread) => {
@@ -443,6 +444,7 @@ impl ContextPicker {
                                 .detach_and_log_err(cx);
                         })
                     },
+                    None,
                 )
             }
         }
@@ -930,8 +932,8 @@ impl MentionLink {
         format!(
             "[@{} ({}-{})]({}:{}:{}-{})",
             file_name,
-            line_range.start,
-            line_range.end,
+            line_range.start + 1,
+            line_range.end + 1,
             Self::SELECTION,
             full_path,
             line_range.start,

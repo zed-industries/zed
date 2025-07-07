@@ -143,7 +143,14 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.start_debug_session(scenario, task_context.clone(), None, window, cx)
+                workspace.start_debug_session(
+                    scenario,
+                    task_context.clone(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
 
@@ -285,7 +292,6 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         "Debugpy",
         "PHP",
         "JavaScript",
-        "Ruby",
         "Delve",
         "GDB",
         "fake-adapter",

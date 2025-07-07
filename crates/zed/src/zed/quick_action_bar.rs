@@ -1,5 +1,6 @@
-mod markdown_preview;
+mod preview;
 mod repl_menu;
+
 use agent_settings::AgentSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
@@ -257,18 +258,12 @@ impl Render for QuickActionBar {
                             .action("Next Problem", Box::new(GoToDiagnostic))
                             .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
                             .separator()
-                            .map(|menu| {
-                                if has_diff_hunks {
-                                    menu.action("Next Hunk", Box::new(GoToHunk))
-                                        .action("Previous Hunk", Box::new(GoToPreviousHunk))
-                                } else {
-                                    menu.disabled_action("Next Hunk", Box::new(GoToHunk))
-                                        .disabled_action(
-                                            "Previous Hunk",
-                                            Box::new(GoToPreviousHunk),
-                                        )
-                                }
-                            })
+                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                "Previous Hunk",
+                                Box::new(GoToPreviousHunk),
+                            )
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
@@ -571,7 +566,7 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
                 AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,

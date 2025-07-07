@@ -25,6 +25,7 @@ mod test;
 mod windows;
 
 #[cfg(all(
+    feature = "screen-capture",
     any(target_os = "linux", target_os = "freebsd"),
     any(feature = "wayland", feature = "x11"),
 ))]
@@ -151,7 +152,7 @@ pub fn guess_compositor() -> &'static str {
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
     Rc::new(
         WindowsPlatform::new()
-            .inspect_err(|err| show_error("Error: Zed failed to launch", err.to_string()))
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
             .unwrap(),
     )
 }
@@ -176,10 +177,28 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(not(feature = "screen-capture"))]
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    #[cfg(not(feature = "screen-capture"))]
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow::anyhow!(
+                "gpui was compiled without the screen-capture feature"
+            )))
+            .ok();
+        sources_rx
+    }
 
     fn open_window(
         &self,
@@ -770,7 +789,6 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
-    Path = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -751,7 +751,7 @@ fn string_match_candidates<'a>(
 mod tests {
     use std::{path::PathBuf, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::{TestAppContext, VisualTestContext};
     use language::{Language, LanguageConfig, LanguageMatcher, Point};
     use project::{ContextProviderWithTasks, FakeFs, Project};
@@ -1028,7 +1028,7 @@ mod tests {
             .update(|_window, cx| second_item.act_as::<Editor>(cx))
             .unwrap();
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
             })
         });
