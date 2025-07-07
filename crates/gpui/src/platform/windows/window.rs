@@ -37,11 +37,13 @@ pub struct WindowsWindowState {
     pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
+    pub appearance: WindowAppearance,
     pub scale_factor: f32,
     pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
     pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
@@ -84,6 +86,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         gpu_context: &BladeContext,
         min_size: Option<Size<Pixels>>,
+        appearance: WindowAppearance,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -103,6 +106,7 @@ impl WindowsWindowState {
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let pending_surrogate = None;
         let last_reported_modifiers = None;
         let last_reported_capslock = None;
         let system_key_handled = false;
@@ -118,11 +122,13 @@ impl WindowsWindowState {
             logical_size,
             fullscreen_restore_bounds,
             border_offset,
+            appearance,
             scale_factor,
             restore_from_minimized,
             min_size,
             callbacks,
             input_handler,
+            pending_surrogate,
             last_reported_modifiers,
             last_reported_capslock,
             system_key_handled,
@@ -206,6 +212,7 @@ impl WindowsWindowStatePtr {
             context.display,
             context.gpu_context,
             context.min_size,
+            context.appearance,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -338,6 +345,7 @@ struct WindowCreateContext<'a> {
     main_receiver: flume::Receiver<Runnable>,
     gpu_context: &'a BladeContext,
     main_thread_id_win32: u32,
+    appearance: WindowAppearance,
 }
 
 impl WindowsWindow {
@@ -387,6 +395,7 @@ impl WindowsWindow {
         } else {
             WindowsDisplay::primary_monitor().unwrap()
         };
+        let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -403,6 +412,7 @@ impl WindowsWindow {
             main_receiver,
             gpu_context,
             main_thread_id_win32,
+            appearance,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -426,7 +436,7 @@ impl WindowsWindow {
         let state_ptr = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
-        configure_dwm_dark_mode(hwnd);
+        configure_dwm_dark_mode(hwnd, appearance);
         state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
@@ -543,7 +553,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        system_appearance().log_err().unwrap_or_default()
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -951,7 +961,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
@@ -993,10 +1003,25 @@ impl ClickState {
         self.current_count
     }
 
-    pub fn system_update(&mut self) {
-        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
-        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
-        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    pub fn system_update(&mut self, wparam: usize) {
+        match wparam {
+            // SPI_SETDOUBLECLKWIDTH
+            29 => {
+                self.double_click_spatial_tolerance_width =
+                    unsafe { GetSystemMetrics(SM_CXDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLKHEIGHT
+            30 => {
+                self.double_click_spatial_tolerance_height =
+                    unsafe { GetSystemMetrics(SM_CYDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLICKTIME
+            32 => {
+                self.double_click_interval =
+                    Duration::from_millis(unsafe { GetDoubleClickTime() } as u64)
+            }
+            _ => {}
+        }
     }
 
     #[inline]

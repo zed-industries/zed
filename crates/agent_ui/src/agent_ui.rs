@@ -54,42 +54,76 @@ pub use ui::preview::{all_agent_previews, get_agent_preview};
 actions!(
     agent,
     [
+        /// Creates a new text-based conversation thread.
         NewTextThread,
+        /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
+        /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
+        /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
+        /// Toggles the profile selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Removes all added context from the current conversation.
         RemoveAllContext,
+        /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Opens the conversation history view.
         OpenHistory,
+        /// Adds a context server to the configuration.
         AddContextServer,
+        /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Starts a chat conversation with the agent.
         Chat,
+        /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
+        /// Cycles to the next inline assist suggestion.
         CycleNextInlineAssist,
+        /// Cycles to the previous inline assist suggestion.
         CyclePreviousInlineAssist,
+        /// Moves focus up in the interface.
         FocusUp,
+        /// Moves focus down in the interface.
         FocusDown,
+        /// Moves focus left in the interface.
         FocusLeft,
+        /// Moves focus right in the interface.
         FocusRight,
+        /// Removes the currently focused context item.
         RemoveFocusedContext,
+        /// Accepts the suggested context item.
         AcceptSuggestedContext,
+        /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
+        /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Keeps the current suggestion or change.
         Keep,
+        /// Rejects the current suggestion or change.
         Reject,
+        /// Rejects all suggestions or changes.
         RejectAll,
+        /// Keeps all suggestions or changes.
         KeepAll,
+        /// Follows the agent's suggestions.
         Follow,
+        /// Resets the trial upsell notification.
         ResetTrialUpsell,
+        /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Continues the current thread.
         ContinueThread,
+        /// Continues the thread with burn mode enabled.
         ContinueWithBurnMode,
+        /// Toggles burn mode for faster responses.
         ToggleBurnMode,
     ]
 );
 
+/// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +132,7 @@ pub struct NewThread {
     from_thread_id: Option<ThreadId>,
 }
 
+/// Opens the profile management interface for configuring agent tools and settings.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]

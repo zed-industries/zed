@@ -1,24 +1,24 @@
+use crate::prelude::*;
 use gpui::{Animation, AnimationExt, FontWeight, pulsating_between};
 use std::time::Duration;
-use ui::prelude::*;
 
 #[derive(IntoElement)]
-pub struct AnimatedLabel {
+pub struct LoadingLabel {
     base: Label,
     text: SharedString,
 }
 
-impl AnimatedLabel {
+impl LoadingLabel {
     pub fn new(text: impl Into<SharedString>) -> Self {
         let text = text.into();
-        AnimatedLabel {
+        LoadingLabel {
             base: Label::new(text.clone()),
             text,
         }
     }
 }
 
-impl LabelCommon for AnimatedLabel {
+impl LabelCommon for LoadingLabel {
     fn size(mut self, size: LabelSize) -> Self {
         self.base = self.base.size(size);
         self
@@ -80,14 +80,14 @@ impl LabelCommon for AnimatedLabel {
     }
 }
 
-impl RenderOnce for AnimatedLabel {
+impl RenderOnce for LoadingLabel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let text = self.text.clone();
 
         self.base
             .color(Color::Muted)
             .with_animations(
-                "animated-label",
+                "loading_label",
                 vec![
                     Animation::new(Duration::from_secs(1)),
                     Animation::new(Duration::from_secs(1)).repeat(),

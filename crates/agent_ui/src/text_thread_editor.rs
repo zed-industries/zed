@@ -85,16 +85,24 @@ use assistant_context::{
 actions!(
     assistant,
     [
+        /// Sends the current message to the assistant.
         Assist,
+        /// Confirms and executes the entered slash command.
         ConfirmCommand,
+        /// Copies code from the assistant's response to the clipboard.
         CopyCode,
+        /// Cycles between user and assistant message roles.
         CycleMessageRole,
+        /// Inserts the selected text into the active editor.
         InsertIntoEditor,
+        /// Quotes the current selection in the assistant conversation.
         QuoteSelection,
+        /// Splits the conversation at the current cursor position.
         Split,
     ]
 );
 
+/// Inserts files that were dragged and dropped into the assistant conversation.
 #[derive(PartialEq, Clone, Action)]
 #[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {

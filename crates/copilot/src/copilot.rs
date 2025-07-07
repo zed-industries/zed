@@ -46,11 +46,17 @@ pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_an
 actions!(
     copilot,
     [
+        /// Requests a code completion suggestion from Copilot.
         Suggest,
+        /// Cycles to the next Copilot suggestion.
         NextSuggestion,
+        /// Cycles to the previous Copilot suggestion.
         PreviousSuggestion,
+        /// Reinstalls the Copilot language server.
         Reinstall,
+        /// Signs in to GitHub Copilot.
         SignIn,
+        /// Signs out of GitHub Copilot.
         SignOut
     ]
 );

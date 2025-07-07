@@ -41,7 +41,15 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-actions!(git, [Diff, Add]);
+actions!(
+    git,
+    [
+        /// Shows the diff between the working directory and the index.
+        Diff,
+        /// Adds files to the git staging area.
+        Add
+    ]
+);
 
 pub struct ProjectDiff {
     project: Entity<Project>,
