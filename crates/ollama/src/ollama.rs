@@ -437,7 +437,7 @@ mod tests {
                 num_predict: Some(150),
                 temperature: Some(0.1),
                 top_p: Some(0.95),
-                stop: Some(vec!["<|endoftext|>".to_string()]),
+                stop: None,
             }),
             keep_alive: None,
             context: None,
