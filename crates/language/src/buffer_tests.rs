@@ -2006,7 +2006,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut App) {
 #[gpui::test]
 fn test_autoindent_with_injected_languages(cx: &mut App) {
     init_settings(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "HTML".into(),
                 LanguageSettingsContent {
@@ -3701,6 +3701,7 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
+#[track_caller]
 fn assert_bracket_pairs(
     selection_text: &'static str,
     bracket_pair_texts: Vec<&'static str>,

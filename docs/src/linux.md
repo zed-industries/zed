@@ -126,15 +126,17 @@ If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it m
 
 ### Graphics issues
 
-### Zed fails to open windows
+#### Zed fails to open windows
 
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
 
-If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can begin troubleshooting Vulkan by installing the `vulkan-tools` package and running:
+If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` or `vulkan-tools` package on various distributions) to try to troubleshoot where the issue is coming from like so:
 
-```sh
+```
 vkcube
 ```
+
+> **_Note_**: Try running in both X11 and wayland modes by running `vkcube -m [x11|wayland]`. Some versions of `vkcube` use `vkcube` to run in X11 and `vkcube-wayland` to run in wayland.
 
 This should output a line describing your current graphics setup and show a rotating cube. If this does not work, you should be able to fix it by installing Vulkan compatible GPU drivers, however in some cases (for example running Linux on an Arm-based MacBook) there is no Vulkan support yet.
 
@@ -146,16 +148,89 @@ On some systems the file `/etc/prime-discrete` can be used to enforce the use of
 
 On others, you may be able to the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
 
-If you're using an AMD GPU and Zed crashes when selecting long lines, try setting the `ZED_PATH_SAMPLE_COUNT=0` environment variable. (See [#26143](https://github.com/zed-industries/zed/issues/26143))
-If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
+If you're using an AMD GPU and Zed crashes when selecting long lines, try setting the `ZED_SAMPLE_COUNT=0` environment variable. (See [#26143](https://github.com/zed-industries/zed/issues/26143))
 
-If you are using Mesa, and want more control over which GPU is selected you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
+If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
 If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141)).
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
+#### Forcing Zed to use a specific GPU
+
+There are a few different ways to force Zed to use a specific GPU:
+
+##### Option A
+
+You can use the `ZED_DEVICE_ID={device_id}` environment variable to specify the device ID of the GPU you wish to have Zed use.
+
+You can obtain the device ID of your GPU by running `lspci -nn | grep VGA` which will output each GPU on one line like:
+
+```
+08:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
+```
+
+where the device ID here is `2484`. This value is in hexadecimal, so to force Zed to use this specific GPU you would set the environment variable like so:
+
+```
+ZED_DEVICE_ID=0x2484 zed
+```
+
+Make sure to export the variable if you choose to define it globally in a `.bashrc` or similar.
+
+##### Option B
+
+If you are using Mesa, you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
+
+##### Option C
+
+Using [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser).
+
+#### Reporting graphics issues
+
 If Vulkan is configured correctly, and Zed is still not working for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
+
+When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the `zed: copy system specs into clipboard` command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
+
+Passing the `--system-specs` flag to Zed like
+
+```sh
+zed --system-specs
+```
+
+will print the system specs to the terminal like so. It is strongly recommended to copy the output verbatim into the issue on GitHub, as it uses markdown formatting to ensure the output is readable.
+
+Additionally, it is extremely beneficial to provide the contents of your Zed log when reporting such issues. The log is usually located at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
+
+```sh
+truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
+ZED_LOG=blade_graphics=info zed .
+cat ~/.local/share/zed/logs/Zed.log
+# copy the output
+```
+
+Or, if you have the Zed cli setup, you can do
+
+```sh
+ZED_LOG=blade_graphics=info /path/to/zed/cli --foreground .
+# copy the output
+```
+
+It is also highly recommended when pasting the log into a github issue, to do so with the following template:
+
+> **_Note_**: The whitespace in the template is important, and will cause incorrect formatting if not preserved.
+
+````
+<details><summary>Zed Log</summary>
+
+```
+{zed log contents}
+```
+
+</details>
+````
+
+This will cause the logs to be collapsed by default, making it easier to read the issue.
 
 ### I can't open any files
 

@@ -13,7 +13,14 @@ use crate::TitleBar;
 
 actions!(
     collab,
-    [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
+    [
+        /// Toggles screen sharing on or off.
+        ToggleScreenSharing,
+        /// Toggles microphone mute.
+        ToggleMute,
+        /// Toggles deafen mode (mute both microphone and speakers).
+        ToggleDeafen
+    ]
 );
 
 fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut App) {

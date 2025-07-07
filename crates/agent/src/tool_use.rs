@@ -1,23 +1,22 @@
-use std::sync::Arc;
-
+use crate::{
+    thread::{MessageId, PromptId, ThreadId},
+    thread_store::SerializedMessage,
+};
 use anyhow::Result;
 use assistant_tool::{
     AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
 };
 use collections::HashMap;
-use futures::FutureExt as _;
-use futures::future::Shared;
-use gpui::{App, Entity, SharedString, Task};
+use futures::{FutureExt as _, future::Shared};
+use gpui::{App, Entity, SharedString, Task, Window};
+use icons::IconName;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
-use ui::{IconName, Window};
+use std::sync::Arc;
 use util::truncate_lines_to_byte_limit;
-
-use crate::thread::{MessageId, PromptId, ThreadId};
-use crate::thread_store::SerializedMessage;
 
 #[derive(Debug)]
 pub struct ToolUse {
@@ -26,7 +25,7 @@ pub struct ToolUse {
     pub ui_text: SharedString,
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
-    pub icon: ui::IconName,
+    pub icon: icons::IconName,
     pub needs_confirmation: bool,
 }
 
@@ -337,6 +336,12 @@ impl ToolUseState {
             )
             .into();
 
+        let may_perform_edits = self
+            .tools
+            .read(cx)
+            .tool(&tool_use.name, cx)
+            .is_some_and(|tool| tool.may_perform_edits());
+
         self.pending_tool_uses_by_id.insert(
             tool_use.id.clone(),
             PendingToolUse {
@@ -345,6 +350,7 @@ impl ToolUseState {
                 name: tool_use.name.clone(),
                 ui_text: ui_text.clone(),
                 input: tool_use.input,
+                may_perform_edits,
                 status,
             },
         );
@@ -420,7 +426,7 @@ impl ToolUseState {
 
                 // Protect from overly large output
                 let tool_output_limit = configured_model
-                    .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
+                    .map(|model| model.model.max_token_count() as usize * BYTES_PER_TOKEN_ESTIMATE)
                     .unwrap_or(usize::MAX);
 
                 let content = match tool_result {
@@ -518,6 +524,7 @@ pub struct PendingToolUse {
     pub ui_text: Arc<str>,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
+    pub may_perform_edits: bool,
 }
 
 #[derive(Debug, Clone)]

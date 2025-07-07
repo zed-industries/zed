@@ -59,6 +59,10 @@ impl Tool for FindPathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./find_path_tool/description.md").into()
     }

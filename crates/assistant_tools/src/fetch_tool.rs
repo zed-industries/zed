@@ -118,7 +118,11 @@ impl Tool for FetchTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {

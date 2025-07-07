@@ -55,3 +55,5 @@ apps:
   zed:
     command: usr/bin/zed
     common-id: dev.zed.Zed
+    environment:
+      ZED_BUNDLE_TYPE: snap

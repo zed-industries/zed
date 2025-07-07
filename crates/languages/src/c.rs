@@ -131,8 +131,16 @@ impl super::LspAdapter for CLspAdapter {
                 let text = format!("{} {}", detail, label);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
                 let runs = language.highlight_text(&source, 11..11 + text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(detail.len() + 1..text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range,
                     text,
                     runs,
                 });
@@ -143,8 +151,16 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or(detail.len() + 1..text.len());
                 return Some(CodeLabel {
-                    filter_range: detail.len() + 1..text.len(),
+                    filter_range,
                     text,
                     runs,
                 });
@@ -155,16 +171,24 @@ impl super::LspAdapter for CLspAdapter {
                 let detail = completion.detail.as_ref().unwrap();
                 let text = format!("{} {}", detail, label);
                 let runs = language.highlight_text(&Rope::from(text.as_str()), 0..text.len());
-                let filter_start = detail.len() + 1;
-                let filter_end =
-                    if let Some(end) = text.rfind('(').filter(|end| *end > filter_start) {
-                        end
-                    } else {
-                        text.len()
-                    };
+                let filter_range = completion
+                    .filter_text
+                    .as_deref()
+                    .and_then(|filter_text| {
+                        text.find(filter_text)
+                            .map(|start| start..start + filter_text.len())
+                    })
+                    .unwrap_or_else(|| {
+                        let filter_start = detail.len() + 1;
+                        let filter_end = text
+                            .rfind('(')
+                            .filter(|end| *end > filter_start)
+                            .unwrap_or(text.len());
+                        filter_start..filter_end
+                    });
 
                 return Some(CodeLabel {
-                    filter_range: filter_start..filter_end,
+                    filter_range,
                     text,
                     runs,
                 });
@@ -186,7 +210,8 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label = CodeLabel::plain(label.to_string(), None);
+                    let mut label =
+                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -196,7 +221,10 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(label.to_string(), None))
+        Some(CodeLabel::plain(
+            label.to_string(),
+            completion.filter_text.as_deref(),
+        ))
     }
 
     async fn label_for_symbol(

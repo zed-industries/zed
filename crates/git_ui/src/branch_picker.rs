@@ -245,7 +245,7 @@ impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select branch...".into()
+        "Select branch…".into()
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -304,6 +304,7 @@ impl PickerDelegate for BranchListDelegate {
                 fuzzy::match_strings(
                     &candidates,
                     &query,
+                    true,
                     true,
                     10000,
                     &Default::default(),
@@ -412,10 +413,6 @@ impl PickerDelegate for BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn render_header(&self, _: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        None
-    }
-
     fn render_match(
         &self,
         ix: usize,
@@ -442,44 +439,43 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
+        let branch_name = if entry.is_new {
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new(format!("Create branch \"{}\"…", entry.branch.name()))
+                        .single_line()
+                        .truncate(),
+                )
+                .into_any_element()
+        } else {
+            HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
+                .truncate()
+                .into_any_element()
+        };
+
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
-                .spacing(match self.style {
-                    BranchListStyle::Modal => ListItemSpacing::default(),
-                    BranchListStyle::Popover => ListItemSpacing::ExtraDense,
-                })
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
                     v_flex()
                         .w_full()
+                        .overflow_hidden()
                         .child(
                             h_flex()
-                                .w_full()
-                                .flex_shrink()
-                                .overflow_x_hidden()
-                                .gap_2()
+                                .gap_6()
                                 .justify_between()
-                                .child(div().flex_shrink().overflow_x_hidden().child(
-                                    if entry.is_new {
-                                        Label::new(format!(
-                                            "Create branch \"{}\"…",
-                                            entry.branch.name()
-                                        ))
-                                        .single_line()
-                                        .into_any_element()
-                                    } else {
-                                        HighlightedLabel::new(
-                                            entry.branch.name().to_owned(),
-                                            entry.positions.clone(),
-                                        )
-                                        .truncate()
-                                        .into_any_element()
-                                    },
-                                ))
-                                .when_some(commit_time, |el, commit_time| {
-                                    el.child(
+                                .overflow_x_hidden()
+                                .child(branch_name)
+                                .when_some(commit_time, |label, commit_time| {
+                                    label.child(
                                         Label::new(commit_time)
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)

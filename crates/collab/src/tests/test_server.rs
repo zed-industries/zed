@@ -258,6 +258,7 @@ impl TestServer {
                             None,
                             Some(connection_id_tx),
                             Executor::Deterministic(cx.background_executor().clone()),
+                            None,
                         ))
                         .detach();
                         let connection_id = connection_id_rx.await.map_err(|e| {
@@ -312,7 +313,7 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_context_editor::init(client.clone(), cx);
+            assistant_context::init(client.clone(), cx);
             agent_settings::init(cx);
         });
 

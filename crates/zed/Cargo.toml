@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.190.0"
+version = "0.195.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -12,19 +12,22 @@ workspace = true
 
 [[bin]]
 name = "zed"
+path = "src/zed-main.rs"
+
+[lib]
+name = "zed"
 path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
 agent.workspace = true
+agent_ui.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-assistant_context_editor.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
-async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
@@ -52,7 +55,6 @@ env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true
 extensions_ui.workspace = true
-feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true
@@ -61,8 +63,14 @@ git.workspace = true
 git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true
-gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
+gpui = { workspace = true, features = [
+    "wayland",
+    "x11",
+    "font-kit",
+    "windows-manifest",
+] }
 gpui_tokio.workspace = true
+
 http_client.workspace = true
 image_viewer.workspace = true
 indoc.workspace = true
@@ -82,10 +90,11 @@ libc.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
+svg_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }
-nix = { workspace = true, features = ["pthread", "signal", "user"] }
+nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
@@ -138,6 +147,7 @@ util.workspace = true
 uuid.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
+watch.workspace = true
 web_search.workspace = true
 web_search_providers.workspace = true
 welcome.workspace = true
@@ -163,7 +173,9 @@ dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
+itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true

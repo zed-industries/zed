@@ -1028,7 +1028,11 @@ impl BufferDiff {
         let (base_text_changed, mut changed_range) =
             match (state.base_text_exists, new_state.base_text_exists) {
                 (false, false) => (true, None),
-                (true, true) if state.base_text.remote_id() == new_state.base_text.remote_id() => {
+                (true, true)
+                    if state.base_text.remote_id() == new_state.base_text.remote_id()
+                        && state.base_text.syntax_update_count()
+                            == new_state.base_text.syntax_update_count() =>
+                {
                     (false, new_state.compare(&state, buffer))
                 }
                 _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
@@ -1863,7 +1867,7 @@ mod tests {
             let hunk = diff.hunks(&buffer, cx).next().unwrap();
 
             let new_index_text = diff
-                .stage_or_unstage_hunks(true, &[hunk.clone()], &buffer, true, cx)
+                .stage_or_unstage_hunks(true, std::slice::from_ref(&hunk), &buffer, true, cx)
                 .unwrap()
                 .to_string();
             assert_eq!(new_index_text, buffer_text);

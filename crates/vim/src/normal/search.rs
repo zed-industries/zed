@@ -1,9 +1,10 @@
-use editor::Editor;
-use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
+use editor::{Editor, EditorSettings};
+use gpui::{Action, Context, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
 use serde_derive::Deserialize;
+use settings::Settings;
 use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
 use workspace::{notifications::NotifyResultExt, searchable::Direction};
@@ -15,7 +16,9 @@ use crate::{
     state::{Mode, SearchState},
 };
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the next search match.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveToNext {
     #[serde(default = "default_true")]
@@ -26,7 +29,9 @@ pub(crate) struct MoveToNext {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the previous search match.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveToPrevious {
     #[serde(default = "default_true")]
@@ -37,7 +42,9 @@ pub(crate) struct MoveToPrevious {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+/// Initiates a search operation with the specified parameters.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Search {
     #[serde(default)]
@@ -46,14 +53,18 @@ pub(crate) struct Search {
     regex: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+/// Executes a find command to search for patterns in the buffer.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// Executes a search and replace command within the specified range.
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 pub struct ReplaceCommand {
     pub(crate) range: CommandRange,
     pub(crate) replacement: Replacement,
@@ -67,9 +78,17 @@ pub(crate) struct Replacement {
     is_case_sensitive: bool,
 }
 
-actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPreviousMatch]);
-impl_actions!(vim, [FindCommand, Search, MoveToPrevious, MoveToNext]);
-impl_internal_actions!(vim, [ReplaceCommand]);
+actions!(
+    vim,
+    [
+        /// Submits the current search query.
+        SearchSubmit,
+        /// Moves to the next search match.
+        MoveToNextMatch,
+        /// Moves to the previous search match.
+        MoveToPreviousMatch
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
@@ -157,6 +176,9 @@ impl Vim {
                     }
                     if action.backwards {
                         options |= SearchOptions::BACKWARDS;
+                    }
+                    if EditorSettings::get_global(cx).search.case_sensitive {
+                        options |= SearchOptions::CASE_SENSITIVE;
                     }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {

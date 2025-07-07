@@ -14,9 +14,9 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
     Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
-    ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions, anchored,
-    canvas, deferred, div, fill, list, point, prelude::*, px,
+    KeyContext, ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions,
+    anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
@@ -44,14 +44,26 @@ use workspace::{
 actions!(
     collab_panel,
     [
+        /// Toggles focus on the collaboration panel.
         ToggleFocus,
+        /// Removes the selected channel or contact.
         Remove,
+        /// Opens the context menu for the selected item.
         Secondary,
+        /// Collapses the selected channel in the tree view.
         CollapseSelectedChannel,
+        /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
+        /// Starts moving a channel to a new location.
         StartMoveChannel,
+        /// Moves the selected item to the current location.
         MoveSelected,
+        /// Inserts a space character in the filter input.
         InsertSpace,
+        /// Moves the selected channel up in the list.
+        MoveChannelUp,
+        /// Moves the selected channel down in the list.
+        MoveChannelDown,
     ]
 );
 
@@ -497,6 +509,7 @@ impl CollabPanel {
                         &self.match_candidates,
                         &query,
                         true,
+                        true,
                         usize::MAX,
                         &Default::default(),
                         executor.clone(),
@@ -539,6 +552,7 @@ impl CollabPanel {
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
                     &query,
+                    true,
                     true,
                     usize::MAX,
                     &Default::default(),
@@ -591,6 +605,7 @@ impl CollabPanel {
                     &self.match_candidates,
                     &query,
                     true,
+                    true,
                     usize::MAX,
                     &Default::default(),
                     executor.clone(),
@@ -620,6 +635,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
@@ -697,6 +713,7 @@ impl CollabPanel {
                 &self.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
@@ -732,6 +749,7 @@ impl CollabPanel {
                 &self.match_candidates,
                 &query,
                 true,
+                true,
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
@@ -755,6 +773,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
@@ -788,6 +807,7 @@ impl CollabPanel {
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
+                true,
                 true,
                 usize::MAX,
                 &Default::default(),
@@ -1635,6 +1655,10 @@ impl CollabPanel {
             self.channel_name_editor.update(cx, |editor, cx| {
                 editor.insert(" ", window, cx);
             });
+        } else if self.filter_editor.focus_handle(cx).is_focused(window) {
+            self.filter_editor.update(cx, |editor, cx| {
+                editor.insert(" ", window, cx);
+            });
         }
     }
 
@@ -1961,6 +1985,33 @@ impl CollabPanel {
             })
     }
 
+    fn move_channel_up(&mut self, _: &MoveChannelUp, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(channel) = self.selected_channel() {
+            self.channel_store.update(cx, |store, cx| {
+                store
+                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
+                    .detach_and_prompt_err("Failed to move channel up", window, cx, |_, _, _| None)
+            });
+        }
+    }
+
+    fn move_channel_down(
+        &mut self,
+        _: &MoveChannelDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.channel_store.update(cx, |store, cx| {
+                store
+                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
+                    .detach_and_prompt_err("Failed to move channel down", window, cx, |_, _, _| {
+                        None
+                    })
+            });
+        }
+    }
+
     fn open_channel_notes(
         &mut self,
         channel_id: ChannelId,
@@ -1974,7 +2025,7 @@ impl CollabPanel {
 
     fn show_inline_context_menu(
         &mut self,
-        _: &menu::SecondaryConfirm,
+        _: &Secondary,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2001,6 +2052,23 @@ impl CollabPanel {
             self.deploy_contact_context_menu(bounds.center(), contact, window, cx);
             cx.stop_propagation();
         }
+    }
+
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("CollabPanel");
+        dispatch_context.add("menu");
+
+        let identifier = if self.channel_name_editor.focus_handle(cx).is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window)
+        {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+        dispatch_context
     }
 
     fn selected_channel(&self) -> Option<&Arc<Channel>> {
@@ -2965,7 +3033,7 @@ fn render_tree_branch(
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("CollabPanel")
+            .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
             .on_action(cx.listener(CollabPanel::select_previous))
@@ -2977,7 +3045,9 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
-            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(CollabPanel::move_channel_up))
+            .on_action(cx.listener(CollabPanel::move_channel_down))
+            .track_focus(&self.focus_handle)
             .size_full()
             .child(if self.user_store.read(cx).current_user().is_none() {
                 self.render_signed_out(cx)

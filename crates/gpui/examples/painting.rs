@@ -1,13 +1,18 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    PathStyle, Pixels, Point, Render, SharedString, StrokeOptions, Window, WindowBounds,
+    WindowOptions, canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb,
+    size,
 };
+
+const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
+const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
+    dashed: bool,
     _painting: bool,
 }
 
@@ -140,19 +145,18 @@ impl PaintingViewer {
             .with_line_join(lyon::path::LineJoin::Bevel);
         let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
         builder.move_to(point(px(40.), px(320.)));
-        for i in 0..50 {
+        for i in 1..50 {
             builder.line_to(point(
                 px(40.0 + i as f32 * 10.0),
                 px(320.0 + (i as f32 * 10.0).sin() * 40.0),
             ));
         }
-        let path = builder.build().unwrap();
-        lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
             lines: vec![],
             start: point(px(0.), px(0.)),
+            dashed: false,
             _painting: false,
         }
     }
@@ -162,10 +166,34 @@ impl PaintingViewer {
         cx.notify();
     }
 }
+
+fn button(
+    text: &str,
+    cx: &mut Context<PaintingViewer>,
+    on_click: impl Fn(&mut PaintingViewer, &mut Context<PaintingViewer>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(text.to_string()))
+        .child(text.to_string())
+        .bg(gpui::black())
+        .text_color(gpui::white())
+        .active(|this| this.opacity(0.8))
+        .flex()
+        .px_3()
+        .py_1()
+        .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+}
+
 impl Render for PaintingViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.request_animation_frame();
+
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
+        let window_size = window.bounds().size;
+        let scale = window_size.width / DEFAULT_WINDOW_WIDTH;
+        let dashed = self.dashed;
+
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -182,17 +210,14 @@ impl Render for PaintingViewer {
                     .child("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)")
                     .child(
                         div()
-                            .id("clear")
-                            .child("Clean up")
-                            .bg(gpui::black())
-                            .text_color(gpui::white())
-                            .active(|this| this.opacity(0.8))
                             .flex()
-                            .px_3()
-                            .py_1()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear(cx);
-                            })),
+                            .gap_x_2()
+                            .child(button(
+                                if dashed { "Solid" } else { "Dashed" },
+                                cx,
+                                move |this, _| this.dashed = !dashed,
+                            ))
+                            .child(button("Clear", cx, |this, cx| this.clear(cx))),
                     ),
             )
             .child(
@@ -202,9 +227,8 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _, _| {},
                             move |_, _, window, _| {
-
                                 for (path, color) in default_lines {
-                                    window.paint_path(path, color);
+                                    window.paint_path(path.clone().scale(scale), color);
                                 }
 
                                 for points in lines {
@@ -213,6 +237,9 @@ impl Render for PaintingViewer {
                                     }
 
                                     let mut builder = PathBuilder::stroke(px(1.));
+                                    if dashed {
+                                        builder = builder.dash_array(&[px(4.), px(2.)]);
+                                    }
                                     for (i, p) in points.into_iter().enumerate() {
                                         if i == 0 {
                                             builder.move_to(p);
@@ -277,6 +304,11 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 focus: true,
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT),
+                    cx,
+                ))),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),

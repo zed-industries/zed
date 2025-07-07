@@ -52,6 +52,7 @@ impl ThemeColors {
             element_active: neutral().light_alpha().step_5(),
             element_selected: neutral().light_alpha().step_5(),
             element_disabled: neutral().light_alpha().step_3(),
+            element_selection_background: blue().light().step_3().alpha(0.25),
             drop_target_background: blue().light_alpha().step_2(),
             ghost_element_background: system.transparent,
             ghost_element_hover: neutral().light_alpha().step_3(),
@@ -148,11 +149,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
             version_control_ignored: gray().light().step_12(),
-            version_control_conflict_ours_background: green().light().step_10().alpha(0.5),
-            version_control_conflict_theirs_background: blue().light().step_10().alpha(0.5),
-            version_control_conflict_ours_marker_background: green().light().step_10().alpha(0.7),
-            version_control_conflict_theirs_marker_background: blue().light().step_10().alpha(0.7),
-            version_control_conflict_divider_background: Hsla::default(),
+            version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
+            version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
         }
     }
 
@@ -177,6 +175,7 @@ impl ThemeColors {
             element_active: neutral().dark_alpha().step_5(),
             element_selected: neutral().dark_alpha().step_5(),
             element_disabled: neutral().dark_alpha().step_3(),
+            element_selection_background: blue().dark().step_3().alpha(0.25),
             drop_target_background: blue().dark_alpha().step_2(),
             ghost_element_background: system.transparent,
             ghost_element_hover: neutral().dark_alpha().step_4(),
@@ -273,11 +272,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
             version_control_ignored: gray().dark().step_12(),
-            version_control_conflict_ours_background: green().dark().step_10().alpha(0.5),
-            version_control_conflict_theirs_background: blue().dark().step_10().alpha(0.5),
-            version_control_conflict_ours_marker_background: green().dark().step_10().alpha(0.7),
-            version_control_conflict_theirs_marker_background: blue().dark().step_10().alpha(0.7),
-            version_control_conflict_divider_background: Hsla::default(),
+            version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
+            version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
         }
     }
 }

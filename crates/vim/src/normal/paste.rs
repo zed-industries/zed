@@ -1,9 +1,11 @@
-use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
-use gpui::{Context, Window, impl_actions};
+use editor::{DisplayPoint, RowExt, SelectionEffects, display_map::ToDisplayPoint, movement};
+use gpui::{Action, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::cmp;
+use vim_mode_setting::HelixModeSetting;
 
 use crate::{
     Vim,
@@ -12,7 +14,9 @@ use crate::{
     state::{Mode, Register},
 };
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Pastes text from the specified register at the cursor position.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct Paste {
     #[serde(default)]
@@ -20,8 +24,6 @@ pub struct Paste {
     #[serde(default)]
     preserve_clipboard: bool,
 }
-
-impl_actions!(vim, [Paste]);
 
 impl Vim {
     pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -186,7 +188,7 @@ impl Vim {
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
                 // otherwise vim will insert the next text at (or before) the current cursor position,
                 // the cursor will go to the last (or first, if is_multiline) inserted character.
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.replace_cursors_with(|map| {
                         let mut cursors = Vec::new();
                         for (anchor, line_mode, is_multiline) in &new_selections {
@@ -218,7 +220,11 @@ impl Vim {
             });
         });
 
-        self.switch_mode(self.default_mode(cx), true, window, cx);
+        if HelixModeSetting::get_global(cx).0 {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        } else {
+            self.switch_mode(Mode::Normal, true, window, cx);
+        }
     }
 
     pub fn replace_with_register_object(
@@ -233,9 +239,9 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, None);
                     });
                 });
 
@@ -247,7 +253,7 @@ impl Vim {
                 };
                 editor.insert(&text, window, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         selection.start = map.clip_point(selection.start, Bias::Left);
                         selection.end = selection.start
@@ -271,7 +277,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         motion.expand_selection(
                             map,
@@ -291,7 +297,7 @@ impl Vim {
                 };
                 editor.insert(&text, window, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         selection.start = map.clip_point(selection.start, Bias::Left);
                         selection.end = selection.start
@@ -706,7 +712,7 @@ mod test {
         );
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),

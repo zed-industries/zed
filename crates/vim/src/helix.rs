@@ -1,16 +1,21 @@
-use editor::{DisplayPoint, Editor, movement, scroll::Autoscroll};
+use editor::{DisplayPoint, Editor, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
+use text::SelectionGoal;
 
-use crate::motion::MotionKind;
 use crate::{Vim, motion::Motion, state::Mode};
 
-actions!(vim, [HelixNormalAfter, HelixDelete]);
+actions!(
+    vim,
+    [
+        /// Switches to normal mode after the cursor (Helix-style).
+        HelixNormalAfter
+    ]
+);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
-    Vim::action(editor, cx, Vim::helix_delete);
 }
 
 impl Vim {
@@ -48,46 +53,46 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
+                    let new_goal = SelectionGoal::None;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
 
-                    if selection.head() == map.max_point() {
+                    if head == map.max_point() {
                         return;
                     }
 
                     // collapse to block cursor
-                    if selection.tail() < selection.head() {
-                        selection.set_tail(movement::left(map, selection.head()), selection.goal);
+                    if tail < head {
+                        tail = movement::left(map, head);
                     } else {
-                        selection.set_tail(selection.head(), selection.goal);
-                        selection.set_head(movement::right(map, selection.head()), selection.goal);
+                        tail = head;
+                        head = movement::right(map, head);
                     }
 
                     // create a classifier
-                    let classifier = map
-                        .buffer_snapshot
-                        .char_classifier_at(selection.head().to_point(map));
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
 
-                    let mut last_selection = selection.clone();
                     for _ in 0..times {
-                        let (new_tail, new_head) =
-                            movement::find_boundary_trail(map, selection.head(), |left, right| {
+                        let (maybe_next_tail, next_head) =
+                            movement::find_boundary_trail(map, head, |left, right| {
                                 is_boundary(left, right, &classifier)
                             });
 
-                        selection.set_head(new_head, selection.goal);
-                        if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, selection.goal);
-                        }
-
-                        if selection.head() == last_selection.head()
-                            && selection.tail() == last_selection.tail()
-                        {
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
                             break;
                         }
-                        last_selection = selection.clone();
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
                     }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
                 });
             });
         });
@@ -101,50 +106,53 @@ impl Vim {
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let times = times.unwrap_or(1);
+                    let new_goal = SelectionGoal::None;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
 
-                    if selection.head() == DisplayPoint::zero() {
+                    if head == DisplayPoint::zero() {
                         return;
                     }
 
                     // collapse to block cursor
-                    if selection.tail() < selection.head() {
-                        selection.set_tail(movement::left(map, selection.head()), selection.goal);
+                    if tail < head {
+                        tail = movement::left(map, head);
                     } else {
-                        selection.set_tail(selection.head(), selection.goal);
-                        selection.set_head(movement::right(map, selection.head()), selection.goal);
+                        tail = head;
+                        head = movement::right(map, head);
                     }
 
+                    selection.set_head(head, new_goal);
+                    selection.set_tail(tail, new_goal);
                     // flip the selection
                     selection.swap_head_tail();
+                    head = selection.head();
+                    tail = selection.tail();
 
                     // create a classifier
-                    let classifier = map
-                        .buffer_snapshot
-                        .char_classifier_at(selection.head().to_point(map));
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
 
-                    let mut last_selection = selection.clone();
                     for _ in 0..times {
-                        let (new_tail, new_head) = movement::find_preceding_boundary_trail(
-                            map,
-                            selection.head(),
-                            |left, right| is_boundary(left, right, &classifier),
-                        );
+                        let (maybe_next_tail, next_head) =
+                            movement::find_preceding_boundary_trail(map, head, |left, right| {
+                                is_boundary(left, right, &classifier)
+                            });
 
-                        selection.set_head(new_head, selection.goal);
-                        if let Some(new_tail) = new_tail {
-                            selection.set_tail(new_tail, selection.goal);
-                        }
-
-                        if selection.head() == last_selection.head()
-                            && selection.tail() == last_selection.tail()
-                        {
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
                             break;
                         }
-                        last_selection = selection.clone();
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
                     }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
                 });
             })
         });
@@ -159,7 +167,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;
                     let cursor = if selection.is_empty() || selection.reversed {
@@ -190,10 +198,10 @@ impl Vim {
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found =
-                        left_kind != right_kind && right_kind != CharKind::Whitespace || at_newline;
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -202,10 +210,10 @@ impl Vim {
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && (left_kind != CharKind::Whitespace || at_newline);
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -214,10 +222,10 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && (left_kind != CharKind::Whitespace || at_newline);
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -226,11 +234,10 @@ impl Vim {
                 self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
-                    let at_newline = right == '\n';
+                    let at_newline = (left == '\n') ^ (right == '\n');
 
-                    let found = left_kind != right_kind
-                        && right_kind != CharKind::Whitespace
-                        && !at_newline;
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
 
                     found
                 })
@@ -238,7 +245,7 @@ impl Vim {
             Motion::FindForward { .. } => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
                             let cursor = if selection.is_empty() || selection.reversed {
@@ -265,7 +272,7 @@ impl Vim {
             Motion::FindBackward { .. } => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             let goal = selection.goal;
                             let cursor = if selection.is_empty() || selection.reversed {
@@ -292,27 +299,6 @@ impl Vim {
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }
-
-    pub fn helix_delete(&mut self, _: &HelixDelete, window: &mut Window, cx: &mut Context<Self>) {
-        self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
-            // Fixup selections so they have helix's semantics.
-            // Specifically:
-            //  - Make sure that each cursor acts as a 1 character wide selection
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.move_with(|map, selection| {
-                        if selection.is_empty() && !selection.reversed {
-                            selection.end = movement::right(map, selection.end);
-                        }
-                    });
-                });
-            });
-
-            vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
-            editor.insert("", window, cx);
-        });
-    }
 }
 
 #[cfg(test)]
@@ -322,14 +308,14 @@ mod test {
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_next_word_start(cx: &mut gpui::TestAppContext) {
+    async fn test_word_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         // «
         // ˇ
         // »
         cx.set_state(
             indoc! {"
-            The quˇick brown
+            Th«e quiˇ»ck brown
             fox jumps over
             the lazy dog."},
             Mode::HelixNormal,
@@ -354,6 +340,32 @@ mod test {
             the lazy dog."},
             Mode::HelixNormal,
         );
+
+        cx.simulate_keystrokes("2 b");
+
+        cx.assert_state(
+            indoc! {"
+            The «ˇquick »brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("down e up");
+
+        cx.assert_state(
+            indoc! {"
+            The quicˇk brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state("aa\n  «ˇbb»", Mode::HelixNormal);
+
+        cx.simulate_keystroke("b");
+
+        cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
     }
 
     // #[gpui::test]
@@ -435,4 +447,54 @@ mod test {
     //         Mode::HelixNormal,
     //     );
     // }
+
+    #[gpui::test]
+    async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("f z");
+
+        cx.assert_state(
+            indoc! {"
+                The qu«ick brown
+                fox jumps over
+                the lazˇ»y dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("2 T r");
+
+        cx.assert_state(
+            indoc! {"
+                The quick br«ˇown
+                fox jumps over
+                the laz»y dog."},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_newline_char(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("aa«\nˇ»bb cc", Mode::HelixNormal);
+
+        cx.simulate_keystroke("w");
+
+        cx.assert_state("aa\n«bb ˇ»cc", Mode::HelixNormal);
+
+        cx.set_state("aa«\nˇ»", Mode::HelixNormal);
+
+        cx.simulate_keystroke("b");
+
+        cx.assert_state("«ˇaa»\n", Mode::HelixNormal);
+    }
 }

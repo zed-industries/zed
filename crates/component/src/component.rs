@@ -161,7 +161,7 @@ impl ComponentMetadata {
 }
 
 /// Implement this trait to define a UI component. This will allow you to
-/// derive `RegisterComponent` on it, in tutn allowing you to preview the
+/// derive `RegisterComponent` on it, in turn allowing you to preview the
 /// contents of the preview fn in `workspace: open component preview`.
 ///
 /// This can be useful for visual debugging and testing, documenting UI

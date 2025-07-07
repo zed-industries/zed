@@ -4,7 +4,8 @@ use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearan
 
 use crate::{
     AccentColors, Appearance, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, default_color_scales,
+    SystemColors, Theme, ThemeColors, ThemeColorsRefinement, ThemeFamily, ThemeStyles,
+    default_color_scales,
 };
 
 /// The default theme family for Zed.
@@ -41,6 +42,19 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
     }
 }
 
+pub(crate) fn apply_theme_color_defaults(
+    theme_colors: &mut ThemeColorsRefinement,
+    player_colors: &PlayerColors,
+) {
+    if theme_colors.element_selection_background.is_none() {
+        let mut selection = player_colors.local().selection;
+        if selection.a == 1.0 {
+            selection.a = 0.25;
+        }
+        theme_colors.element_selection_background = Some(selection);
+    }
+}
+
 pub(crate) fn zed_default_dark() -> Theme {
     let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
     let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
@@ -74,6 +88,7 @@ pub(crate) fn zed_default_dark() -> Theme {
         a: 1.0,
     };
 
+    let player = PlayerColors::dark();
     Theme {
         id: "one_dark".to_string(),
         name: "One Dark".into(),
@@ -97,6 +112,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
                 element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
                 element_disabled: SystemColors::default().transparent,
+                element_selection_background: player.local().selection.alpha(0.25),
                 drop_target_background: hsla(220.0 / 360., 8.3 / 100., 21.4 / 100., 1.0),
                 ghost_element_background: SystemColors::default().transparent,
                 ghost_element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
@@ -211,23 +227,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_renamed: MODIFIED_COLOR,
                 version_control_conflict: crate::orange().light().step_12(),
                 version_control_ignored: crate::gray().light().step_12(),
-                version_control_conflict_ours_background: crate::green()
-                    .light()
-                    .step_12()
-                    .alpha(0.5),
-                version_control_conflict_theirs_background: crate::blue()
-                    .light()
-                    .step_12()
-                    .alpha(0.5),
-                version_control_conflict_ours_marker_background: crate::green()
-                    .light()
-                    .step_12()
-                    .alpha(0.7),
-                version_control_conflict_theirs_marker_background: crate::blue()
-                    .light()
-                    .step_12()
-                    .alpha(0.7),
-                version_control_conflict_divider_background: Hsla::default(),
+                version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
+                version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
             },
             status: StatusColors {
                 conflict: yellow,
@@ -273,7 +274,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_background: yellow,
                 warning_border: yellow,
             },
-            player: PlayerColors::dark(),
+            player,
             syntax: Arc::new(SyntaxTheme {
                 highlights: vec![
                     ("attribute".into(), purple.into()),

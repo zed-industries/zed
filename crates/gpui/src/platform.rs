@@ -25,6 +25,7 @@ mod test;
 mod windows;
 
 #[cfg(all(
+    feature = "screen-capture",
     any(target_os = "linux", target_os = "freebsd"),
     any(feature = "wayland", feature = "x11"),
 ))]
@@ -36,7 +37,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    hash, point, px, size,
+    WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -93,6 +94,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
     if headless {
         return Rc::new(HeadlessClient::new());
     }
@@ -102,7 +106,11 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
         "Wayland" => Rc::new(WaylandClient::new()),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(X11Client::new()),
+        "X11" => Rc::new(
+            X11Client::new()
+                .context("Failed to initialize X11 client.")
+                .unwrap(),
+        ),
 
         "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
@@ -142,7 +150,11 @@ pub fn guess_compositor() -> &'static str {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
-    Rc::new(WindowsPlatform::new())
+    Rc::new(
+        WindowsPlatform::new()
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
+            .unwrap(),
+    )
 }
 
 pub(crate) trait Platform: 'static {
@@ -165,10 +177,28 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(not(feature = "screen-capture"))]
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    #[cfg(not(feature = "screen-capture"))]
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow::anyhow!(
+                "gpui was compiled without the screen-capture feature"
+            )))
+            .ok();
+        sources_rx
+    }
 
     fn open_window(
         &self,
@@ -411,6 +441,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
+    fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(
@@ -436,6 +467,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
@@ -717,7 +749,7 @@ impl<T> ops::Index<usize> for AtlasTextureList<T> {
 
 impl<T> AtlasTextureList<T> {
     #[allow(unused)]
-    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+    fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
         self.textures.drain(..)
     }
@@ -757,7 +789,6 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
-    Path = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -838,7 +869,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    fn replace_and_mark_text_in_range(
+    pub fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,

@@ -146,6 +146,7 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
+                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -300,11 +301,13 @@ impl HeadlessProject {
         match event {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
+                name,
                 message,
             } => {
                 self.session
                     .send(proto::UpdateLanguageServer {
                         project_id: SSH_PROJECT_ID,
+                        server_name: name.as_ref().map(|name| name.to_string()),
                         language_server_id: language_server_id.to_proto(),
                         variant: Some(message.clone()),
                     })

@@ -42,6 +42,7 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_thread_id_win32: u32,
 }
@@ -81,9 +82,9 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> Result<Self> {
         unsafe {
-            OleInitialize(None).expect("unable to initialize Windows OLE");
+            OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
@@ -97,19 +98,23 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .expect("Error creating bitmap factory.")
+                .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Error creating DirectWriteTextSystem"),
+                .context("Error creating DirectWriteTextSystem")?,
         );
+        let drop_target_helper: IDropTargetHelper = unsafe {
+            CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
+                .context("Error creating drop target helper.")?
+        };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
-        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
-        Self {
+        Ok(Self {
             state,
             raw_window_handles,
             gpu_context,
@@ -120,9 +125,10 @@ impl WindowsPlatform {
             text_system,
             windows_version,
             bitmap_factory,
+            drop_target_helper,
             validation_number,
             main_thread_id_win32,
-        }
+        })
     }
 
     fn redraw_all(&self) {
@@ -177,6 +183,7 @@ impl WindowsPlatform {
             executor: self.foreground_executor.clone(),
             current_cursor: self.state.borrow().current_cursor,
             windows_version: self.windows_version,
+            drop_target_helper: self.drop_target_helper.clone(),
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
             main_thread_id_win32: self.main_thread_id_win32,
@@ -231,9 +238,6 @@ impl WindowsPlatform {
                         }
                     }
                     _ => {
-                        // todo(windows)
-                        // crate `windows 0.56` reports true as Err
-                        TranslateMessage(&msg).as_bool();
                         DispatchMessageW(&msg);
                     }
                 }
@@ -297,6 +301,18 @@ impl WindowsPlatform {
         update_jump_list(&lock.jump_list)
             .log_err()
             .unwrap_or_default()
+    }
+
+    fn find_current_active_window(&self) -> Option<HWND> {
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        if active_window_hwnd.is_invalid() {
+            return None;
+        }
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|&&hwnd| hwnd == active_window_hwnd)
+            .copied()
     }
 }
 
@@ -416,10 +432,12 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
@@ -476,9 +494,10 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_open_dialog(options));
+                let _ = tx.send(file_open_dialog(options, window));
             })
             .detach();
 
@@ -488,9 +507,10 @@ impl Platform for WindowsPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory));
+                let _ = tx.send(file_save_dialog(directory, window));
             })
             .detach();
 
@@ -717,6 +737,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
     pub(crate) windows_version: WindowsVersion,
+    pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) main_thread_id_win32: u32,
@@ -757,7 +778,10 @@ fn open_target_in_explorer(target: &str) {
     }
 }
 
-fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> {
+fn file_open_dialog(
+    options: PathPromptOptions,
+    window: Option<HWND>,
+) -> Result<Option<Vec<PathBuf>>> {
     let folder_dialog: IFileOpenDialog =
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)? };
 
@@ -771,7 +795,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
-        if folder_dialog.Show(None).is_err() {
+        if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }
@@ -783,7 +807,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
         return Ok(None);
     }
 
-    let mut paths = Vec::new();
+    let mut paths = Vec::with_capacity(file_count as usize);
     for i in 0..file_count {
         let item = unsafe { results.GetItemAt(i)? };
         let path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
@@ -793,7 +817,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
+fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
@@ -809,7 +833,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(None).is_err() {
+        if dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }

@@ -100,7 +100,7 @@ impl ExampleContext {
     pub fn new(
         meta: ExampleMetadata,
         log_prefix: String,
-        agent_thread: Entity<agent::Thread>,
+        agent_thread: Entity<Thread>,
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
@@ -221,6 +221,9 @@ impl ExampleContext {
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
+                ThreadEvent::RetriesFailed { .. } => {
+                    // Ignore retries failed events
+                }
                 ThreadEvent::Stopped(reason) => match reason {
                     Ok(StopReason::EndTurn) => {
                         tx.close_channel();
@@ -294,6 +297,7 @@ impl ExampleContext {
                 | ThreadEvent::MessageDeleted(_)
                 | ThreadEvent::SummaryChanged
                 | ThreadEvent::SummaryGenerated
+                | ThreadEvent::ProfileChanged
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged

@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
@@ -123,7 +112,7 @@ Non-negative `float` values
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On MacOS:
 
@@ -388,6 +377,20 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+
+## Close on File Delete
+
+- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
+- Setting: `close_on_file_delete`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
+
+Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Confirm Quit
 
@@ -1213,6 +1216,16 @@ or
 
 `boolean` values
 
+### Drag And Drop Selection
+
+- Description: Whether to allow drag and drop text selection in buffer.
+- Setting: `drag_and_drop_selection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -1921,6 +1934,30 @@ Example:
 
 `boolean` values
 
+## Multi Cursor Modifier
+
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "alt"
+}
+```
+
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
+}
+```
+
 ## Hover Popover Enabled
 
 - Description: Whether or not to show the informational hover box when moving the mouse over symbols in the editor.
@@ -2175,7 +2212,7 @@ The following URI schemes are supported:
 
 `http` will be used when no scheme is specified.
 
-By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`, `no_proxy` and `NO_PROXY`.
 
 For example, to set an `http` proxy, add the following to your settings:
 
@@ -2192,6 +2229,8 @@ Or to set a `socks5` proxy:
   "proxy": "socks5h://localhost:10808"
 }
 ```
+
+If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
 
 ## Preview tabs
 
@@ -2525,6 +2564,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "keep_selection_on_copy": false,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -2645,6 +2685,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Keep Selection On Copy
+
+- Description: Whether or not to keep the selection in the terminal after copying text.
+- Setting: `keep_selection_on_copy`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "keep_selection_on_copy": true
   }
 }
 ```
@@ -3061,7 +3121,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
-    }
+    },
+    "hide_root": false
   }
 }
 ```
@@ -3286,10 +3347,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_view": "thread",
   "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "editor_model": {
     "provider": "zed.dev",
     "model": "claude-sonnet-4"
   },

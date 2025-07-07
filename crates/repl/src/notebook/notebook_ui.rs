@@ -15,7 +15,7 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{Tooltip, prelude::*};
-use workspace::item::{ItemEvent, TabContentParams};
+use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
@@ -28,12 +28,19 @@ use nbformat::v4::Metadata as NotebookMetadata;
 actions!(
     notebook,
     [
+        /// Opens a Jupyter notebook file.
         OpenNotebook,
+        /// Runs all cells in the notebook.
         RunAll,
+        /// Clears all cell outputs.
         ClearOutputs,
+        /// Moves the current cell up.
         MoveCellUp,
+        /// Moves the current cell down.
         MoveCellDown,
+        /// Adds a new markdown cell.
         AddMarkdownBlock,
+        /// Adds a new code cell.
         AddCodeBlock,
     ]
 );
@@ -782,7 +789,7 @@ impl Item for NotebookEditor {
     // TODO
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,

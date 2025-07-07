@@ -10,8 +10,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
     FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point,
-    px, size,
+    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
+    Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -289,6 +289,31 @@ impl ListState {
     /// Get the current scroll offset, in terms of the list's items.
     pub fn logical_scroll_top(&self) -> ListOffset {
         self.0.borrow().logical_scroll_top()
+    }
+
+    /// Scroll the list by the given offset
+    pub fn scroll_by(&self, distance: Pixels) {
+        if distance == px(0.) {
+            return;
+        }
+
+        let current_offset = self.logical_scroll_top();
+        let state = &mut *self.0.borrow_mut();
+        let mut cursor = state.items.cursor::<ListItemSummary>(&());
+        cursor.seek(&Count(current_offset.item_ix), Bias::Right, &());
+
+        let start_pixel_offset = cursor.start().height + current_offset.offset_in_item;
+        let new_pixel_offset = (start_pixel_offset + distance).max(px(0.));
+        if new_pixel_offset > start_pixel_offset {
+            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
+        } else {
+            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
+        }
+
+        state.logical_scroll_top = Some(ListOffset {
+            item_ix: cursor.start().count,
+            offset_in_item: new_pixel_offset - cursor.start().height,
+        });
     }
 
     /// Scroll the list to the given offset
@@ -962,12 +987,15 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
+        let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
+                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
+                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
-                    event.delta.pixel_delta(px(20.)),
+                    pixel_delta,
                     current_view,
                     window,
                     cx,
@@ -1115,5 +1143,53 @@ mod test {
         // Scroll position should stay at the top of the list
         assert_eq!(state.logical_scroll_top().item_ix, 0);
         assert_eq!(state.logical_scroll_top().offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_scroll_by_positive_and_negative_distance(cx: &mut TestAppContext) {
+        use crate::{
+            AppContext, Context, Element, IntoElement, ListState, Render, Styled, Window, div,
+            list, point, px, size,
+        };
+
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(5, crate::ListAlignment::Top, px(10.), |_, _, _| {
+            div().h(px(20.)).w_full().into_any()
+        });
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone()).w_full().h_full()
+            }
+        }
+
+        // Paint
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone()))
+        });
+
+        // Test positive distance: start at item 1, move down 30px
+        state.scroll_by(px(30.));
+
+        // Should move to item 2
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.offset_in_item, px(10.));
+
+        // Test negative distance: start at item 2, move up 30px
+        state.scroll_by(px(-30.));
+
+        // Should move back to item 1
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 0);
+        assert_eq!(offset.offset_in_item, px(0.));
+
+        // Test zero distance
+        state.scroll_by(px(0.));
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 0);
+        assert_eq!(offset.offset_in_item, px(0.));
     }
 }

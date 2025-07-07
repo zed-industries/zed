@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::{UserStore, zed_urls};
 use copilot::{Copilot, Status};
 use editor::{
-    Editor,
+    Editor, SelectionEffects,
     actions::{ShowEditPrediction, ToggleEditPrediction},
     scroll::Autoscroll,
 };
@@ -37,7 +37,13 @@ use zed_actions::OpenBrowser;
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
-actions!(edit_prediction, [ToggleMenu]);
+actions!(
+    edit_prediction,
+    [
+        /// Toggles the inline completion menu.
+        ToggleMenu
+    ]
+);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -829,10 +835,6 @@ impl InlineCompletionButton {
 
         cx.notify();
     }
-
-    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.popover_menu_handle.toggle(window, cx);
-    }
 }
 
 impl StatusItemView for InlineCompletionButton {
@@ -929,9 +931,14 @@ async fn open_disabled_globs_setting_in_editor(
                     .map(|inner_match| inner_match.start()..inner_match.end())
             });
             if let Some(range) = range {
-                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_ranges(vec![range]);
-                });
+                item.change_selections(
+                    SelectionEffects::scroll(Autoscroll::newest()),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.select_ranges(vec![range]);
+                    },
+                );
             }
         })?;
 
@@ -962,6 +969,7 @@ fn toggle_show_inline_completions_for_language(
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
+            .0
             .entry(language.name())
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);

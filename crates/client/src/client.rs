@@ -81,7 +81,17 @@ pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-actions!(client, [SignIn, SignOut, Reconnect]);
+actions!(
+    client,
+    [
+        /// Signs in to Zed account.
+        SignIn,
+        /// Signs out of Zed account.
+        SignOut,
+        /// Reconnects to the collaboration server.
+        Reconnect
+    ]
+);
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ClientSettingsContent {
@@ -1887,8 +1897,16 @@ mod tests {
             .set_entity(&entity3, &mut cx.to_async());
         drop(subscription3);
 
-        server.send(proto::JoinProject { project_id: 1 });
-        server.send(proto::JoinProject { project_id: 2 });
+        server.send(proto::JoinProject {
+            project_id: 1,
+            committer_name: None,
+            committer_email: None,
+        });
+        server.send(proto::JoinProject {
+            project_id: 2,
+            committer_name: None,
+            committer_email: None,
+        });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();
     }

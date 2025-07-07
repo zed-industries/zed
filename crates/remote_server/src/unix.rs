@@ -164,7 +164,7 @@ fn init_panic_hook() {
             }),
             app_version: format!("remote-server-{version}"),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.display_name().into(),
+            release_channel: release_channel.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
@@ -756,7 +756,7 @@ fn initialize_settings(
     session: Arc<ChannelClient>,
     fs: Arc<dyn Fs>,
     cx: &mut App,
-) -> async_watch::Receiver<Option<NodeBinaryOptions>> {
+) -> watch::Receiver<Option<NodeBinaryOptions>> {
     let user_settings_file_rx = watch_config_file(
         &cx.background_executor(),
         fs,
@@ -791,7 +791,7 @@ fn initialize_settings(
         }
     });
 
-    let (tx, rx) = async_watch::channel(None);
+    let (mut tx, rx) = watch::channel(None);
     cx.observe_global::<SettingsStore>(move |cx| {
         let settings = &ProjectSettings::get_global(cx).node;
         log::info!("Got new node settings: {:?}", settings);

@@ -2,12 +2,13 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_context_editor",
+    "crates/assistant_context",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
     "crates/assistant_tool",
@@ -65,6 +66,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
+
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -93,6 +95,7 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/svg_preview",
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
@@ -100,6 +103,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/open_ai",
+    "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -162,8 +166,10 @@ members = [
     "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
+    "crates/vercel",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -211,12 +217,13 @@ edition = "2024"
 
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
+agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_context_editor = { path = "crates/assistant_context_editor" }
+assistant_context = { path = "crates/assistant_context" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
@@ -298,6 +305,7 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
@@ -307,6 +315,7 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
+open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
@@ -369,8 +378,11 @@ ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
+vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+
+watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
@@ -401,7 +413,6 @@ async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
-async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
@@ -430,14 +441,15 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+cpal = "0.16"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "7f39295b441614ca9dbf44293e53c32f666897f9" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
 documented = "0.9.1"
-dotenv = "0.15.0"
+dotenvy = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
@@ -449,7 +461,6 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
-hashbrown = "0.15.3"
 handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -469,7 +480,7 @@ json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -477,11 +488,10 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
-mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -512,7 +522,6 @@ rand = "0.8.5"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
-repair_json = "0.1.0"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
     "charset",
     "http2",
@@ -522,7 +531,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
+runtimelib = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -531,7 +540,7 @@ rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
 scap = { git = "https://github.com/zed-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
-schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
+schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -544,7 +553,6 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
-signal-hook = "0.3.17"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
@@ -572,8 +580,8 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.5", features = ["wasm"] }
-tree-sitter-bash = "0.23"
+tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"
@@ -589,7 +597,7 @@ tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
-tree-sitter-python = "0.23"
+tree-sitter-python = { git = "https://github.com/zed-industries/tree-sitter-python", rev = "218fcbf3fda3d029225f3dec005cb497d111b35e" }
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
@@ -617,7 +625,7 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.4"
+zed_llm_client = "= 0.8.5"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -679,9 +687,7 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
-# TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
@@ -695,6 +701,8 @@ codegen-units = 16
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+cranelift-codegen-meta = { opt-level = 3 }
+cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }

@@ -4,12 +4,11 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use std::borrow::Cow;
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -218,6 +217,10 @@ pub struct ThemeColorsContent {
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
     #[serde(rename = "element.disabled")]
     pub element_disabled: Option<String>,
+
+    /// Background Color. Used for the background of selections in a UI element.
+    #[serde(rename = "element.selection_background")]
+    pub element_selection_background: Option<String>,
 
     /// Background Color. Used for the area that shows where a dragged element will be dropped.
     #[serde(rename = "drop_target.background")]
@@ -620,24 +623,20 @@ pub struct ThemeColorsContent {
     pub version_control_ignored: Option<String>,
 
     /// Background color for row highlights of "ours" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_background")]
-    pub version_control_conflict_ours_background: Option<String>,
+    #[serde(rename = "version_control.conflict_marker.ours")]
+    pub version_control_conflict_marker_ours: Option<String>,
 
     /// Background color for row highlights of "theirs" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_background")]
+    #[serde(rename = "version_control.conflict_marker.theirs")]
+    pub version_control_conflict_marker_theirs: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_ours`.
+    #[deprecated]
+    pub version_control_conflict_ours_background: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_theirs`.
+    #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
-
-    /// Background color for row highlights of "ours" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_marker_background")]
-    pub version_control_conflict_ours_marker_background: Option<String>,
-
-    /// Background color for row highlights of "theirs" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_marker_background")]
-    pub version_control_conflict_theirs_marker_background: Option<String>,
-
-    /// Background color for row highlights of the "ours"/"theirs" divider in merge conflicts.
-    #[serde(rename = "version_control.conflict.divider_background")]
-    pub version_control_conflict_divider_background: Option<String>,
 }
 
 impl ThemeColorsContent {
@@ -728,6 +727,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             element_disabled: self
                 .element_disabled
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            element_selection_background: self
+                .element_selection_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             drop_target_background: self
@@ -1118,25 +1121,17 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 // Fall back to `conflict`, for backwards compatibility.
                 .or(status_colors.ignored),
-            version_control_conflict_ours_background: self
-                .version_control_conflict_ours_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_ours: self
+                .version_control_conflict_marker_ours
                 .as_ref()
+                .or(self.version_control_conflict_ours_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_background: self
-                .version_control_conflict_theirs_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_theirs: self
+                .version_control_conflict_marker_theirs
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_ours_marker_background: self
-                .version_control_conflict_ours_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_marker_background: self
-                .version_control_conflict_theirs_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_divider_background: self
-                .version_control_conflict_divider_background
-                .as_ref()
+                .or(self.version_control_conflict_theirs_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
         }
     }
@@ -1506,30 +1501,15 @@ pub enum FontWeightContent {
 }
 
 impl JsonSchema for FontWeightContent {
-    fn schema_name() -> String {
-        "FontWeightContent".to_owned()
+    fn schema_name() -> Cow<'static, str> {
+        "FontWeightContent".into()
     }
 
-    fn is_referenceable() -> bool {
-        false
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            enum_values: Some(vec![
-                100.into(),
-                200.into(),
-                300.into(),
-                400.into(),
-                500.into(),
-                600.into(),
-                700.into(),
-                800.into(),
-                900.into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "integer",
+            "enum": [100, 200, 300, 400, 500, 600, 700, 800, 900]
+        })
     }
 }
 

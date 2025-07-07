@@ -1,16 +1,27 @@
 use anyhow::{Context as _, bail};
+use collections::HashMap;
 use dap::{
     StartDebuggingRequestArguments,
     adapters::{
-        DebugTaskDefinition, DownloadedFileType, download_adapter_from_github,
+        DebugTaskDefinition, DownloadedFileType, TcpArguments, download_adapter_from_github,
         latest_github_release,
     },
 };
-
+use fs::Fs;
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
-use std::{collections::HashMap, env::consts, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use log::warn;
+use serde_json::{Map, Value};
+use task::TcpArgumentsTemplate;
 use util;
+
+use std::{
+    env::consts,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::OnceLock,
+};
 
 use crate::*;
 
@@ -94,7 +105,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         // Create common properties shared between launch and attach
         let common_properties = json!({
             "debugAdapter": {
@@ -341,7 +352,7 @@ impl DebugAdapter for GoDebugAdapter {
                         },
                         {
                             "type": "object",
-                            "required": ["processId", "mode"],
+                            "required": ["mode"],
                             "properties": attach_properties
                         }
                     ]
@@ -350,7 +361,7 @@ impl DebugAdapter for GoDebugAdapter {
         })
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
@@ -397,6 +408,7 @@ impl DebugAdapter for GoDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
@@ -433,45 +445,124 @@ impl DebugAdapter for GoDebugAdapter {
 
             adapter_path.join("dlv").to_string_lossy().to_string()
         };
-        let minidelve_path = self.install_shim(delegate).await?;
-        let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
 
-        let (host, port, _) = crate::configure_tcp_connection(tcp_connection).await?;
+        let cwd = Some(
+            task_definition
+                .config
+                .get("cwd")
+                .and_then(|s| s.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf()),
+        );
 
-        let cwd = task_definition
-            .config
-            .get("cwd")
-            .and_then(|s| s.as_str())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf());
+        let arguments;
+        let command;
+        let connection;
 
-        let arguments = if cfg!(windows) {
-            vec![
-                delve_path,
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-                "--headless".into(),
-            ]
+        let mut configuration = task_definition.config.clone();
+        let mut envs = HashMap::default();
+
+        if let Some(configuration) = configuration.as_object_mut() {
+            configuration
+                .entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+
+            handle_envs(
+                configuration,
+                &mut envs,
+                cwd.as_deref(),
+                delegate.fs().clone(),
+            )
+            .await;
+        }
+
+        if let Some(connection_options) = &task_definition.tcp_connection {
+            command = None;
+            arguments = vec![];
+            let (host, port, timeout) =
+                crate::configure_tcp_connection(connection_options.clone()).await?;
+            connection = Some(TcpArguments {
+                host,
+                port,
+                timeout,
+            });
         } else {
-            vec![
-                delve_path,
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-            ]
-        };
-
+            let minidelve_path = self.install_shim(delegate).await?;
+            let (host, port, _) =
+                crate::configure_tcp_connection(TcpArgumentsTemplate::default()).await?;
+            command = Some(minidelve_path.to_string_lossy().into_owned());
+            connection = None;
+            arguments = if let Some(mut args) = user_args {
+                args.insert(0, delve_path);
+                args
+            } else if cfg!(windows) {
+                vec![
+                    delve_path,
+                    "dap".into(),
+                    "--listen".into(),
+                    format!("{}:{}", host, port),
+                    "--headless".into(),
+                ]
+            } else {
+                vec![
+                    delve_path,
+                    "dap".into(),
+                    "--listen".into(),
+                    format!("{}:{}", host, port),
+                ]
+            };
+        }
         Ok(DebugAdapterBinary {
-            command: minidelve_path.to_string_lossy().into_owned(),
+            command,
             arguments,
-            cwd: Some(cwd),
-            envs: HashMap::default(),
-            connection: None,
+            cwd,
+            envs,
+            connection,
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
-                request: self.request_kind(&task_definition.config)?,
+                configuration,
+                request: self.request_kind(&task_definition.config).await?,
             },
         })
     }
+}
+
+// delve doesn't do anything with the envFile setting, so we intercept it
+async fn handle_envs(
+    config: &mut Map<String, Value>,
+    envs: &mut HashMap<String, String>,
+    cwd: Option<&Path>,
+    fs: Arc<dyn Fs>,
+) -> Option<()> {
+    let env_files = match config.get("envFile")? {
+        Value::Array(arr) => arr.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+        Value::String(s) => vec![Some(s.as_str())],
+        _ => return None,
+    };
+
+    let rebase_path = |path: PathBuf| {
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            cwd.map(|p| p.join(path))
+        }
+    };
+
+    for path in env_files {
+        let Some(path) = path
+            .and_then(|s| PathBuf::from_str(s).ok())
+            .and_then(rebase_path)
+        else {
+            continue;
+        };
+
+        if let Ok(file) = fs.open_sync(&path).await {
+            envs.extend(dotenvy::from_read_iter(file).filter_map(Result::ok))
+        } else {
+            warn!("While starting Go debug session: failed to read env file {path:?}");
+        };
+    }
+
+    // remove envFile now that it's been handled
+    config.remove("entry");
+    Some(())
 }

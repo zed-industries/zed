@@ -19,22 +19,24 @@ pub(crate) struct CodeLldbDebugAdapter {
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
 
-    fn request_args(
+    async fn request_args(
         &self,
-        task_definition: &DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        mut configuration: Value,
+        label: &str,
     ) -> Result<dap::StartDebuggingRequestArguments> {
-        // CodeLLDB uses `name` for a terminal label.
-        let mut configuration = task_definition.config.clone();
-
-        configuration
+        let obj = configuration
             .as_object_mut()
-            .context("CodeLLDB is not a valid json object")?
-            .insert(
-                "name".into(),
-                Value::String(String::from(task_definition.label.as_ref())),
-            );
+            .context("CodeLLDB is not a valid json object")?;
 
-        let request = self.request_kind(&configuration)?;
+        // CodeLLDB uses `name` for a terminal label.
+        obj.entry("name")
+            .or_insert(Value::String(String::from(label)));
+
+        obj.entry("cwd")
+            .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+        let request = self.request_kind(&configuration).await?;
 
         Ok(dap::StartDebuggingRequestArguments {
             request,
@@ -86,7 +88,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -130,7 +132,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -326,6 +328,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -357,15 +360,31 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };
-
+        let mut json_config = config.config.clone();
         Ok(DebugAdapterBinary {
-            command: command.unwrap(),
+            command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            arguments: vec![
-                "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-            ],
-            request_args: self.request_args(&config)?,
+            arguments: user_args.unwrap_or_else(|| {
+                if let Some(config) = json_config.as_object_mut()
+                    && let Some(source_languages) = config.get("sourceLanguages").filter(|value| {
+                        value
+                            .as_array()
+                            .map_or(false, |array| array.iter().all(Value::is_string))
+                    })
+                {
+                    let ret = vec![
+                        "--settings".into(),
+                        json!({"sourceLanguages": source_languages}).to_string(),
+                    ];
+                    config.remove("sourceLanguages");
+                    ret
+                } else {
+                    vec![]
+                }
+            }),
+            request_args: self
+                .request_args(delegate, json_config, &config.label)
+                .await?,
             envs: HashMap::default(),
             connection: None,
         })

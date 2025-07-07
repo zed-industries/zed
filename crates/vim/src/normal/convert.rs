@@ -1,5 +1,5 @@
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
+use editor::{SelectionEffects, display_map::ToDisplayPoint};
 use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
@@ -36,7 +36,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
                         selection_starts.insert(selection.id, anchor);
@@ -66,7 +66,7 @@ impl Vim {
                         editor.convert_to_rot47(&Default::default(), window, cx)
                     }
                 }
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
@@ -82,6 +82,7 @@ impl Vim {
         object: Object,
         around: bool,
         mode: ConvertTarget,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -90,9 +91,9 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                         original_positions.insert(
                             selection.id,
                             map.display_point_to_anchor(selection.start, Bias::Left),
@@ -116,7 +117,7 @@ impl Vim {
                         editor.convert_to_rot47(&Default::default(), window, cx)
                     }
                 }
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
@@ -220,7 +221,9 @@ impl Vim {
                         }
                         ranges.push(start..end);
 
-                        if end.column == snapshot.line_len(MultiBufferRow(end.row)) {
+                        if end.column == snapshot.line_len(MultiBufferRow(end.row))
+                            && end.column > 0
+                        {
                             end = snapshot.clip_point(end - Point::new(0, 1), Bias::Left);
                         }
                         cursor_positions.push(end..end)
@@ -237,7 +240,7 @@ impl Vim {
                         .collect::<String>();
                     editor.edit([(range, text)], cx)
                 }
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges(cursor_positions)
                 })
             });

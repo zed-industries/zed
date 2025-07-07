@@ -8,6 +8,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use editor::SelectionEffects;
 use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
@@ -477,7 +478,7 @@ impl Session {
         if move_down {
             editor.update(cx, move |editor, cx| {
                 editor.change_selections(
-                    Some(Autoscroll::top_relative(8)),
+                    SelectionEffects::scroll(Autoscroll::top_relative(8)),
                     window,
                     cx,
                     |selections| {

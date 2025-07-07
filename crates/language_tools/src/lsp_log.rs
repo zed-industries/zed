@@ -3,13 +3,14 @@ use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
+    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
+use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    IoKind, LanguageServer, LanguageServerName, MessageType, SetTraceParams, TraceValue,
-    notification::SetTrace,
+    IoKind, LanguageServer, LanguageServerName, LanguageServerSelector, MessageType,
+    SetTraceParams, TraceValue, notification::SetTrace,
 };
 use project::{Project, WorktreeId, search::SearchQuery};
 use std::{any::TypeId, borrow::Cow, sync::Arc};
@@ -20,8 +21,10 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
-const SEND_LINE: &str = "// Send:\n";
-const RECEIVE_LINE: &str = "// Receive:\n";
+use crate::get_or_create_tool;
+
+const SEND_LINE: &str = "\n// Send:";
+const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
@@ -43,7 +46,7 @@ trait Message: AsRef<str> {
     }
 }
 
-struct LogMessage {
+pub(super) struct LogMessage {
     message: String,
     typ: MessageType,
 }
@@ -70,7 +73,7 @@ impl Message for LogMessage {
     }
 }
 
-struct TraceMessage {
+pub(super) struct TraceMessage {
     message: String,
 }
 
@@ -98,7 +101,7 @@ impl Message for RpcMessage {
     type Level = ();
 }
 
-struct LanguageServerState {
+pub(super) struct LanguageServerState {
     name: Option<LanguageServerName>,
     worktree_id: Option<WorktreeId>,
     kind: LanguageServerKind,
@@ -201,10 +204,21 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(dev, [OpenLanguageServerLogs]);
+actions!(
+    dev,
+    [
+        /// Opens the language server protocol logs viewer.
+        OpenLanguageServerLogs
+    ]
+);
+
+pub(super) struct GlobalLogStore(pub WeakEntity<LogStore>);
+
+impl Global for GlobalLogStore {}
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
+    cx.set_global(GlobalLogStore(log_store.downgrade()));
 
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
@@ -218,13 +232,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() || project.is_via_ssh() {
-                workspace.split_item(
+                let project = workspace.project().clone();
+                let log_store = log_store.clone();
+                get_or_create_tool(
+                    workspace,
                     SplitDirection::Right,
-                    Box::new(cx.new(|cx| {
-                        LspLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
-                    })),
                     window,
                     cx,
+                    move |window, cx| LspLogView::new(project, log_store, window, cx),
                 );
             }
         });
@@ -353,7 +368,7 @@ impl LogStore {
         );
     }
 
-    fn get_language_server_state(
+    pub(super) fn get_language_server_state(
         &mut self,
         id: LanguageServerId,
     ) -> Option<&mut LanguageServerState> {
@@ -444,7 +459,7 @@ impl LogStore {
             log_lines,
             id,
             TraceMessage {
-                message: message.trim_end().to_string(),
+                message: message.trim().to_string(),
             },
             (),
             LogKind::Trace,
@@ -461,15 +476,15 @@ impl LogStore {
         kind: LogKind,
         cx: &mut Context<Self>,
     ) {
-        while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
+        while log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-        let entry = format!("{}\n", message.as_ref().trim());
+        let text = message.as_ref().to_string();
         let visible = message.should_include(current_severity);
         log_lines.push_back(message);
 
         if visible {
-            cx.emit(Event::NewServerLogEntry { id, entry, kind });
+            cx.emit(Event::NewServerLogEntry { id, kind, text });
             cx.notify();
         }
     }
@@ -479,11 +494,14 @@ impl LogStore {
         cx.notify();
     }
 
-    fn server_logs(&self, server_id: LanguageServerId) -> Option<&VecDeque<LogMessage>> {
+    pub(super) fn server_logs(&self, server_id: LanguageServerId) -> Option<&VecDeque<LogMessage>> {
         Some(&self.language_servers.get(&server_id)?.log_messages)
     }
 
-    fn server_trace(&self, server_id: LanguageServerId) -> Option<&VecDeque<TraceMessage>> {
+    pub(super) fn server_trace(
+        &self,
+        server_id: LanguageServerId,
+    ) -> Option<&VecDeque<TraceMessage>> {
         Some(&self.language_servers.get(&server_id)?.trace_messages)
     }
 
@@ -528,6 +546,110 @@ impl LogStore {
         Some(())
     }
 
+    pub fn has_server_logs(&self, server: &LanguageServerSelector) -> bool {
+        match server {
+            LanguageServerSelector::Id(id) => self.language_servers.contains_key(id),
+            LanguageServerSelector::Name(name) => self
+                .language_servers
+                .iter()
+                .any(|(_, state)| state.name.as_ref() == Some(name)),
+        }
+    }
+
+    pub fn open_server_log(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        server: LanguageServerSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |log_store, cx| {
+            let Some(log_store) = log_store.upgrade() else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let tool_log_store = log_store.clone();
+                    let log_view = get_or_create_tool(
+                        workspace,
+                        SplitDirection::Right,
+                        window,
+                        cx,
+                        move |window, cx| LspLogView::new(project, tool_log_store, window, cx),
+                    );
+                    log_view.update(cx, |log_view, cx| {
+                        let server_id = match server {
+                            LanguageServerSelector::Id(id) => Some(id),
+                            LanguageServerSelector::Name(name) => {
+                                log_store.read(cx).language_servers.iter().find_map(
+                                    |(id, state)| {
+                                        if state.name.as_ref() == Some(&name) {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )
+                            }
+                        };
+                        if let Some(server_id) = server_id {
+                            log_view.show_logs_for_server(server_id, window, cx);
+                        }
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    pub fn open_server_trace(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        server: LanguageServerSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |log_store, cx| {
+            let Some(log_store) = log_store.upgrade() else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let tool_log_store = log_store.clone();
+                    let log_view = get_or_create_tool(
+                        workspace,
+                        SplitDirection::Right,
+                        window,
+                        cx,
+                        move |window, cx| LspLogView::new(project, tool_log_store, window, cx),
+                    );
+                    log_view.update(cx, |log_view, cx| {
+                        let server_id = match server {
+                            LanguageServerSelector::Id(id) => Some(id),
+                            LanguageServerSelector::Name(name) => {
+                                log_store.read(cx).language_servers.iter().find_map(
+                                    |(id, state)| {
+                                        if state.name.as_ref() == Some(&name) {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                )
+                            }
+                        };
+                        if let Some(server_id) = server_id {
+                            log_view.show_rpc_trace_for_server(server_id, window, cx);
+                        }
+                    });
+                })
+                .ok();
+        })
+        .detach();
+    }
+
     fn on_io(
         &mut self,
         language_server_id: LanguageServerId,
@@ -556,6 +678,9 @@ impl LogStore {
 
         let rpc_log_lines = &mut state.rpc_messages;
         if state.last_message_kind != Some(kind) {
+            while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
+                rpc_log_lines.pop_front();
+            }
             let line_before_message = match kind {
                 MessageKind::Send => SEND_LINE,
                 MessageKind::Receive => RECEIVE_LINE,
@@ -565,22 +690,23 @@ impl LogStore {
             });
             cx.emit(Event::NewServerLogEntry {
                 id: language_server_id,
-                entry: line_before_message.to_string(),
                 kind: LogKind::Rpc,
+                text: line_before_message.to_string(),
             });
         }
 
-        while rpc_log_lines.len() >= MAX_STORED_LOG_ENTRIES {
+        while rpc_log_lines.len() + 1 >= MAX_STORED_LOG_ENTRIES {
             rpc_log_lines.pop_front();
         }
+
         let message = message.trim();
         rpc_log_lines.push_back(RpcMessage {
             message: message.to_string(),
         });
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
-            entry: format!("{}\n\n", message),
             kind: LogKind::Rpc,
+            text: message.to_string(),
         });
         cx.notify();
         Some(())
@@ -634,24 +760,37 @@ impl LspLogView {
             &log_store,
             window,
             move |log_view, _, e, window, cx| match e {
-                Event::NewServerLogEntry { id, entry, kind } => {
+                Event::NewServerLogEntry { id, kind, text } => {
                     if log_view.current_server_id == Some(*id)
                         && *kind == log_view.active_entry_kind
                     {
                         log_view.editor.update(cx, |editor, cx| {
                             editor.set_read_only(false);
-                            let last_point = editor.buffer().read(cx).len(cx);
+                            let last_offset = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end =
-                                editor.selections.newest::<usize>(cx).start >= last_point;
-                            editor.edit(vec![(last_point..last_point, entry.as_str())], cx);
-                            let entry_length = entry.len();
-                            if entry_length > 1024 {
-                                editor.fold_ranges(
-                                    vec![last_point + 1024..last_point + entry_length],
-                                    false,
-                                    window,
-                                    cx,
-                                );
+                                editor.selections.newest::<usize>(cx).start >= last_offset;
+                            editor.edit(
+                                vec![
+                                    (last_offset..last_offset, text.as_str()),
+                                    (last_offset..last_offset, "\n"),
+                                ],
+                                cx,
+                            );
+                            if text.len() > 1024 {
+                                if let Some((fold_offset, _)) =
+                                    text.char_indices().dropping(1024).next()
+                                {
+                                    if fold_offset < text.len() {
+                                        editor.fold_ranges(
+                                            vec![
+                                                last_offset + fold_offset..last_offset + text.len(),
+                                            ],
+                                            false,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
                             }
 
                             if newest_cursor_is_at_end {
@@ -838,7 +977,7 @@ impl LspLogView {
             self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn update_log_level(
@@ -864,7 +1003,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn show_trace_for_server(
@@ -886,7 +1025,7 @@ impl LspLogView {
             self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn show_rpc_trace_for_server(
@@ -929,7 +1068,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn toggle_rpc_trace_for_server(
@@ -993,27 +1132,16 @@ impl LspLogView {
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 }
 
-fn log_filter<T: Message>(line: &T, cmp: <T as Message>::Level) -> Option<&str> {
-    if line.should_include(cmp) {
-        Some(line.as_ref())
-    } else {
-        None
-    }
-}
-
-fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> String {
-    let (a, b) = lines.as_slices();
-    let a = a.iter().filter_map(move |v| log_filter(v, cmp));
-    let b = b.iter().filter_map(move |v| log_filter(v, cmp));
-    a.chain(b).fold(String::new(), |mut acc, el| {
-        acc.push_str(el);
-        acc.push('\n');
-        acc
-    })
+fn log_contents<T: Message>(lines: &VecDeque<T>, level: <T as Message>::Level) -> String {
+    lines
+        .iter()
+        .filter(|message| message.should_include(level))
+        .flat_map(|message| [message.as_ref(), "\n"])
+        .collect()
 }
 
 impl Render for LspLogView {
@@ -1597,8 +1725,8 @@ impl LspLogToolbarItemView {
 pub enum Event {
     NewServerLogEntry {
         id: LanguageServerId,
-        entry: String,
         kind: LogKind,
+        text: String,
     },
 }
 

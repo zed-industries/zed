@@ -148,6 +148,18 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_05_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_29,
         ),
+        (
+            migrations::m_2025_06_16::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_16,
+        ),
+        (
+            migrations::m_2025_06_25::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_25,
+        ),
+        (
+            migrations::m_2025_06_27::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_06_27,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -246,6 +258,18 @@ define_query!(
     SETTINGS_QUERY_2025_05_29,
     migrations::m_2025_05_29::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2025_06_16,
+    migrations::m_2025_06_16::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_06_25,
+    migrations::m_2025_06_25::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_06_27,
+    migrations::m_2025_06_27::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -267,6 +291,15 @@ mod tests {
 
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
         let migrated = migrate_settings(&input).unwrap();
+        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+    }
+
+    fn assert_migrate_settings_with_migrations(
+        migrations: &[(MigrationPatterns, &Query)],
+        input: &str,
+        output: Option<&str>,
+    ) {
+        let migrated = run_migrations(input, migrations).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
@@ -851,6 +884,374 @@ mod tests {
                     "preferred_completion_mode": "burn"
                 }
             }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_mcp_settings_migration() {
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
+            r#"{
+    "context_servers": {
+        "empty_server": {},
+        "extension_server": {
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "empty_server2": {},
+        "extension_server2": {
+            "foo": "bar",
+            "settings": {
+                "foo": "bar"
+            },
+            "bar": "foo"
+        },
+        "custom_server2": {
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "empty_server": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "empty_server2": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server2": {
+            "source": "extension",
+            "foo": "bar",
+            "settings": {
+                "foo": "bar"
+            },
+            "bar": "foo"
+        },
+        "custom_server2": {
+            "source": "custom",
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo"
+        },
+        "invalid_server2": {
+            "source": "custom",
+            "foo": "bar",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "bar": "foo",
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_mcp_settings_migration_doesnt_change_valid_settings() {
+        let settings = r#"{
+    "context_servers": {
+        "empty_server": {
+            "source": "extension",
+            "settings": {}
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {
+                "foo": "bar"
+            }
+        },
+        "custom_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            }
+        },
+        "invalid_server": {
+            "source": "custom",
+            "command": {
+                "path": "foo",
+                "args": ["bar"],
+                "env": {
+                    "FOO": "BAR"
+                }
+            },
+            "settings": {
+                "foo": "bar"
+            }
+        }
+    }
+}"#;
+        assert_migrate_settings_with_migrations(
+            &[(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
+            settings,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_remove_version_fields() {
+        assert_migrate_settings(
+            r#"{
+    "language_models": {
+        "anthropic": {
+            "version": "1",
+            "api_url": "https://api.anthropic.com"
+        },
+        "openai": {
+            "version": "1",
+            "api_url": "https://api.openai.com/v1"
+        }
+    },
+    "agent": {
+        "version": "2",
+        "enabled": true,
+        "preferred_completion_mode": "normal",
+        "button": true,
+        "dock": "right",
+        "default_width": 640,
+        "default_height": 320,
+        "default_model": {
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4"
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "language_models": {
+        "anthropic": {
+            "api_url": "https://api.anthropic.com"
+        },
+        "openai": {
+            "api_url": "https://api.openai.com/v1"
+        }
+    },
+    "agent": {
+        "enabled": true,
+        "preferred_completion_mode": "normal",
+        "button": true,
+        "dock": "right",
+        "default_width": 640,
+        "default_height": 320,
+        "default_model": {
+            "provider": "zed.dev",
+            "model": "claude-sonnet-4"
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test that version fields in other contexts are not removed
+        assert_migrate_settings(
+            r#"{
+    "language_models": {
+        "other_provider": {
+            "version": "1",
+            "api_url": "https://api.example.com"
+        }
+    },
+    "other_section": {
+        "version": "1"
+    }
+}"#,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_flatten_context_server_command() {
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": {
+                "path": "npx",
+                "args": [
+                    "-y",
+                    "@supabase/mcp-server-supabase@latest",
+                    "--read-only",
+                    "--project-ref=<project-ref>"
+                ],
+                "env": {
+                    "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+                }
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "some-mcp-server": {
+            "source": "custom",
+            "command": "npx",
+            "args": [
+                "-y",
+                "@supabase/mcp-server-supabase@latest",
+                "--read-only",
+                "--project-ref=<project-ref>"
+            ],
+            "env": {
+                "SUPABASE_ACCESS_TOKEN": "<personal-access-token>"
+            }
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test with additional keys in server object
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": {
+                "path": "/usr/bin/node",
+                "args": ["server.js"]
+            },
+            "settings": {}
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "server-with-extras": {
+            "source": "custom",
+            "command": "/usr/bin/node",
+            "args": ["server.js"],
+            "settings": {}
+        }
+    }
+}"#,
+            ),
+        );
+
+        // Test command without args or env
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": {
+                "path": "simple-mcp-server"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "simple-server": {
+            "source": "custom",
+            "command": "simple-mcp-server"
+        }
+    }
+}"#,
             ),
         );
     }

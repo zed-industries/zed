@@ -32,7 +32,7 @@ To workaround this behavior you can add the following to your `.prettierrc` conf
 
 ## JSON Language Server
 
-Zed automatically out of the box supports JSON Schema validation of `package.json` and `tsconfig.json` files, but `json-language-server` can use JSON Schema definitions in project files, from the [JSON Schema Store](https://www.schemastore.org/json/) or other publicly available URLs for JSON validation.
+Zed automatically out of the box supports JSON Schema validation of `package.json` and `tsconfig.json` files, but `json-language-server` can use JSON Schema definitions in project files, from the [JSON Schema Store](https://www.schemastore.org) or other publicly available URLs for JSON validation.
 
 ### Inline Schema Specification
 

@@ -487,8 +487,9 @@ impl Editor {
         if opened_first_time {
             cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(cx, |editor, cx| {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
+                    .update_in(cx, |editor, window, cx| {
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                        editor.refresh_colors(false, None, window, cx);
                     })
                     .ok()
             })
@@ -599,6 +600,7 @@ impl Editor {
         );
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_colors(false, None, window, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {
@@ -669,12 +671,23 @@ impl Editor {
             return;
         }
 
-        let cur_position = self.scroll_position(cx);
+        let mut current_position = self.scroll_position(cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
-        let new_pos = cur_position + point(0., amount.lines(visible_line_count));
-        self.set_scroll_position(new_pos, window, cx);
+
+        // If the scroll position is currently at the left edge of the document
+        // (x == 0.0) and the intent is to scroll right, the gutter's margin
+        // should first be added to the current position, otherwise the cursor
+        // will end at the column position minus the margin, which looks off.
+        if current_position.x == 0.0 && amount.columns() > 0. {
+            if let Some(last_position_map) = &self.last_position_map {
+                current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+            }
+        }
+        let new_position =
+            current_position + point(amount.columns(), amount.lines(visible_line_count));
+        self.set_scroll_position(new_position, window, cx);
     }
 
     /// Returns an ordering. The newest selection is:

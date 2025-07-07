@@ -2,10 +2,10 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
-    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, IsZero, LayoutId,
-    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
+    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, CursorStyle,
+    Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
+    IsZero, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollHandle, ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
 };
 
 pub struct Scrollbar {
@@ -20,6 +20,12 @@ enum ThumbState {
     Inactive,
     Hover,
     Dragging(Pixels),
+}
+
+impl ThumbState {
+    fn is_dragging(&self) -> bool {
+        matches!(*self, ThumbState::Dragging(_))
+    }
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
@@ -236,7 +242,7 @@ impl Element for Scrollbar {
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -244,7 +250,8 @@ impl Element for Scrollbar {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let axis = self.kind;
             let colors = cx.theme().colors();
-            let thumb_base_color = match self.state.thumb_state.get() {
+            let thumb_state = self.state.thumb_state.get();
+            let thumb_base_color = match thumb_state {
                 ThumbState::Dragging(_) => colors.scrollbar_thumb_active_background,
                 ThumbState::Hover => colors.scrollbar_thumb_hover_background,
                 ThumbState::Inactive => colors.scrollbar_thumb_background,
@@ -284,6 +291,12 @@ impl Element for Scrollbar {
                 Hsla::transparent_black(),
                 BorderStyle::default(),
             ));
+
+            if thumb_state.is_dragging() {
+                window.set_window_cursor_style(CursorStyle::Arrow);
+            } else {
+                window.set_cursor_style(CursorStyle::Arrow, hitbox);
+            }
 
             let scroll = self.state.scroll_handle.clone();
 
