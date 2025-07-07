@@ -1160,7 +1160,7 @@ impl MessageEditor {
                                 })
                                 .child(
                                     h_flex()
-                                        .id("file-name")
+                                        .id(("file-name", index))
                                         .pr_8()
                                         .gap_1p5()
                                         .max_w_full()
@@ -1171,9 +1171,16 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(file_name)
                                                 .children(file_path),
-                                        ), // TODO: Implement line diff
-                                           // .child(Label::new("+").color(Color::Created))
-                                           // .child(Label::new("-").color(Color::Deleted)),
+                                        )
+                                        .on_click({
+                                            let buffer = buffer.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.handle_file_click(buffer.clone(), window, cx);
+                                            })
+                                        }), // TODO: Implement line diff
+                                            // .child(Label::new("+").color(Color::Created))
+                                            // .child(Label::new("-").color(Color::Deleted)),
+                                            //
                                 )
                                 .child(
                                     h_flex()
