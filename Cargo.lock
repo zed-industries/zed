@@ -255,7 +255,6 @@ name = "agentic-coding-protocol"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "async-trait",
  "chrono",
  "futures 0.3.31",
  "log",

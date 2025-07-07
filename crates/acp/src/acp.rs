@@ -1,6 +1,5 @@
 use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result};
-use async_trait::async_trait;
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
@@ -723,7 +722,7 @@ impl AcpThread {
         }
     }
 
-    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<acp::AuthenticateResponse>> {
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
         let connection = self.connection.clone();
         async move {
             connection
@@ -864,12 +863,11 @@ impl AcpClientDelegate {
     }
 }
 
-#[async_trait(?Send)]
 impl acp::Client for AcpClientDelegate {
     async fn stream_assistant_message_chunk(
         &self,
         params: acp::StreamAssistantMessageChunkParams,
-    ) -> Result<acp::StreamAssistantMessageChunkResponse> {
+    ) -> Result<()> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -880,7 +878,7 @@ impl acp::Client for AcpClientDelegate {
                 .ok();
         })?;
 
-        Ok(acp::StreamAssistantMessageChunkResponse)
+        Ok(())
     }
 
     async fn request_tool_call_confirmation(
@@ -926,10 +924,7 @@ impl acp::Client for AcpClientDelegate {
         })
     }
 
-    async fn update_tool_call(
-        &self,
-        request: acp::UpdateToolCallParams,
-    ) -> Result<acp::UpdateToolCallResponse> {
+    async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<()> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -944,7 +939,7 @@ impl acp::Client for AcpClientDelegate {
         })?
         .context("Failed to update thread")??;
 
-        Ok(acp::UpdateToolCallResponse)
+        Ok(())
     }
 }
 
@@ -970,7 +965,6 @@ pub struct ToolCallRequest {
 mod tests {
     use super::*;
     use async_pipe::{PipeReader, PipeWriter};
-    use async_trait::async_trait;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
     use indoc::indoc;
@@ -1024,7 +1018,7 @@ mod tests {
                     .await
                     .unwrap();
 
-                Ok(acp::SendUserMessageResponse)
+                Ok(())
             })
         });
 
@@ -1378,8 +1372,7 @@ mod tests {
                     acp::SendUserMessageParams,
                     Entity<FakeAcpServer>,
                     AsyncApp,
-                )
-                    -> LocalBoxFuture<'static, Result<acp::SendUserMessageResponse>>,
+                ) -> LocalBoxFuture<'static, Result<()>>,
             >,
         >,
     }
@@ -1390,35 +1383,22 @@ mod tests {
         cx: AsyncApp,
     }
 
-    #[async_trait(?Send)]
     impl acp::Agent for FakeAgent {
-        async fn initialize(
-            &self,
-            _request: acp::InitializeParams,
-        ) -> Result<acp::InitializeResponse> {
+        async fn initialize(&self) -> Result<acp::InitializeResponse> {
             Ok(acp::InitializeResponse {
                 is_authenticated: true,
             })
         }
 
-        async fn authenticate(
-            &self,
-            _request: acp::AuthenticateParams,
-        ) -> Result<acp::AuthenticateResponse> {
-            Ok(acp::AuthenticateResponse)
+        async fn authenticate(&self) -> Result<()> {
+            Ok(())
         }
 
-        async fn cancel_send_message(
-            &self,
-            _request: acp::CancelSendMessageParams,
-        ) -> Result<acp::CancelSendMessageResponse> {
-            Ok(acp::CancelSendMessageResponse)
+        async fn cancel_send_message(&self) -> Result<()> {
+            Ok(())
         }
 
-        async fn send_user_message(
-            &self,
-            request: acp::SendUserMessageParams,
-        ) -> Result<acp::SendUserMessageResponse> {
+        async fn send_user_message(&self, request: acp::SendUserMessageParams) -> Result<()> {
             let mut cx = self.cx.clone();
             let handler = self
                 .server
@@ -1457,7 +1437,7 @@ mod tests {
             handler: impl for<'a> Fn(acp::SendUserMessageParams, Entity<FakeAcpServer>, AsyncApp) -> F
             + 'static,
         ) where
-            F: Future<Output = Result<acp::SendUserMessageResponse>> + 'static,
+            F: Future<Output = Result<()>> + 'static,
         {
             self.on_user_message
                 .replace(Rc::new(move |request, server, cx| {
