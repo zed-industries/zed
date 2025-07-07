@@ -108,13 +108,20 @@ impl TomlExtension {
 
             zed::make_file_executable(&binary_path)?;
 
+            let mut paths_to_delete = Vec::new();
             let entries = fs::read_dir(".")
                 .map_err(|err| format!("failed to list working directory {err}"))?;
+
             for entry in entries {
                 let entry = entry.map_err(|err| format!("failed to load directory entry {err}"))?;
-                if entry.file_name().to_str() != Some(&version_dir) {
-                    fs::remove_dir_all(entry.path()).ok();
+                let path = entry.path();
+                if path.is_dir() && entry.file_name().to_str() != Some(&version_dir) {
+                    paths_to_delete.push(path);
                 }
+            }
+
+            for path in paths_to_delete {
+                fs::remove_dir_all(path).ok();
             }
         }
 
