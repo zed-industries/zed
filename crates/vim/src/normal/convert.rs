@@ -212,7 +212,19 @@ impl Vim {
                         }
                     }
 
-                    Mode::HelixNormal => {}
+                    Mode::HelixNormal => {
+                        if selection.is_empty() {
+                            // Handle empty selection by operating on the whole word
+                            let (word_range, _) = snapshot.surrounding_word(selection.start, false);
+                            let word_start = snapshot.offset_to_point(word_range.start);
+                            let word_end = snapshot.offset_to_point(word_range.end);
+                            ranges.push(word_start..word_end);
+                            cursor_positions.push(selection.start..selection.start);
+                        } else {
+                            ranges.push(selection.start..selection.end);
+                            cursor_positions.push(selection.start..selection.end);
+                        }
+                    }
                     Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
                         let mut end = start;
@@ -245,7 +257,9 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx)
+        if self.mode != Mode::HelixNormal {
+            self.switch_mode(Mode::Normal, true, window, cx)
+        }
     }
 }
 
