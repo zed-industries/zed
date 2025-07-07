@@ -1,7 +1,6 @@
 use anyhow::{Context as _, bail};
 use collections::{FxHashMap, HashMap};
 use language::LanguageRegistry;
-use paths::local_debug_file_relative_path;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},

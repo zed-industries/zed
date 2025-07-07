@@ -1046,17 +1046,13 @@ impl DebugPanel {
             // identify them. to jump to the one that you just created or an
             // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
             editor.update_in(cx, |editor, window, cx| {
-                let row = editor
-                    .text(cx)
-                    .lines()
-                    .enumerate()
-                    .find_map(|(row, text)| {
-                        if text.contains(scenario.label.as_ref()) && text.contains("\"label\": ") {
-                            Some(row)
-                        } else {
-                            None
-                        }
-                    });
+                let row = editor.text(cx).lines().enumerate().find_map(|(row, text)| {
+                    if text.contains(scenario.label.as_ref()) && text.contains("\"label\": ") {
+                        Some(row)
+                    } else {
+                        None
+                    }
+                });
                 if let Some(row) = row {
                     editor.go_to_singleton_buffer_point(
                         text::Point::new(row as u32, 4),
