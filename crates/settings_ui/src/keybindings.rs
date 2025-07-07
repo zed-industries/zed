@@ -1025,8 +1025,8 @@ impl KeystrokeInput {
             self.keystrokes.push(Keystroke {
                 modifiers: event.modifiers,
                 key: "".to_string(),
+                key_en: None,
                 key_char: None,
-                key_code: None,
             });
         }
         cx.stop_propagation();
@@ -1066,8 +1066,8 @@ impl KeystrokeInput {
             self.keystrokes.push(Keystroke {
                 modifiers: event.keystroke.modifiers,
                 key: "".to_string(),
+                key_en: None,
                 key_char: None,
-                key_code: None,
             });
         }
         cx.stop_propagation();

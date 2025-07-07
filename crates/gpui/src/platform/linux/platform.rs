@@ -22,6 +22,9 @@ use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
+#[cfg(feature = "x11")]
+use crate::keycode_to_key;
+
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
@@ -792,11 +795,12 @@ impl crate::Keystroke {
         let key_char = (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.clone().is_empty())
             .then_some(key_utf8.clone());
 
+        let key_en = keycode_to_key(keycode.raw());
         Self {
             modifiers,
             key,
+            key_en,
             key_char,
-            key_code: Some(keycode.raw()),
         }
     }
 
