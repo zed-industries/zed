@@ -1355,7 +1355,7 @@ mod windows_renderer {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{DevicePixels, MouseButton, point};
+    use crate::{MouseButton, phypx, point};
     use std::time::Duration;
 
     #[test]
