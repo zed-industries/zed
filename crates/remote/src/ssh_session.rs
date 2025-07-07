@@ -65,7 +65,7 @@ pub struct SshSocket {
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
     #[cfg(target_os = "windows")]
-    askpass_script: String,
+    envs: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
@@ -358,23 +358,17 @@ impl SshSocket {
     }
 
     #[cfg(target_os = "windows")]
-    fn new(options: SshConnectionOptions, temp_dir: &TempDir, secrete: String) -> Result<Self> {
-        let pwsh_script_path = temp_dir.path().join("askpass.ps1");
-        let pwsh_script_content = format!(
-            r#"
-            $ErrorActionPreference = 'Stop';
-            Write-Host "{secrete}"
-            "#,
-            secrete = secrete
-        );
-        std::fs::write(&pwsh_script_path, pwsh_script_content)?;
-        let askpass_script = format!(
-            "powershell.exe -ExecutionPolicy Bypass -File {}",
-            pwsh_script_path.display()
-        );
+    fn new(options: SshConnectionOptions, temp_dir: &TempDir, secret: String) -> Result<Self> {
+        let askpass_script = temp_dir.path().join("askpass.bat");
+        let askpass_script_content = format!("@ECHO OFF\necho %ZED_SSH_ASKPASS%");
+        std::fs::write(&askpass_script, askpass_script_content)?;
+        let mut envs = HashMap::default();
+        envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
+        envs.insert("SSH_ASKPASS".into(), askpass_script.display().to_string());
+        envs.insert("ZED_SSH_ASKPASS".into(), secret);
         Ok(Self {
             connection_options: options,
-            askpass_script,
+            envs,
         })
     }
 
@@ -431,8 +425,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &self.askpass_script)
+            .envs(self.envs.clone())
     }
 
     // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
