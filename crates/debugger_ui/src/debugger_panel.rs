@@ -16,18 +16,18 @@ use dap::{
     client::SessionId, debugger_settings::DebuggerSettings,
 };
 use dap::{DapRegistry, StartDebuggingRequestArguments};
-use editor::{Anchor, Editor, scroll::Autoscroll};
+use editor::Editor;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
     WeakEntity, anchored, deferred,
 };
-use text::{Selection, ToPoint as _};
+use text::ToPoint as _;
 
 use itertools::Itertools as _;
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{DebugScenarioContext, Fs, ProjectPath, WorktreeId};
+use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -991,6 +991,85 @@ impl DebugPanel {
         cx.notify();
     }
 
+    pub(crate) fn go_to_scenario_definition(
+        &self,
+        kind: TaskSourceKind,
+        scenario: DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+        let project_path = match kind {
+            TaskSourceKind::AbsPath { abs_path, .. } => {
+                let Some(project_path) = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(&abs_path, cx)
+                else {
+                    return Task::ready(Err(anyhow!("no abs path")));
+                };
+
+                project_path
+            }
+            TaskSourceKind::Worktree {
+                id,
+                directory_in_worktree: dir,
+                ..
+            } => {
+                let relative_path = if dir.ends_with(".vscode") {
+                    dir.join("launch.json")
+                } else {
+                    dir.join("debug.json")
+                };
+                ProjectPath {
+                    worktree_id: id,
+                    path: Arc::from(relative_path),
+                }
+            }
+            _ => return self.save_scenario(scenario, worktree_id, window, cx),
+        };
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.open_path(project_path, None, true, window, cx)
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let editor = editor.await?;
+            let editor = cx
+                .update(|_, cx| editor.act_as::<Editor>(cx))?
+                .context("expected editor")?;
+
+            // unfortunately debug tasks don't have an easy way to globally
+            // identify them. to jump to the one that you just created or an
+            // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
+            editor.update_in(cx, |editor, window, cx| {
+                let row = editor
+                    .text(cx)
+                    .lines()
+                    .enumerate()
+                    .find_map(|(row, text)| {
+                        if text.contains(scenario.label.as_ref()) && text.contains("\"label\": ") {
+                            Some(row)
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(row) = row {
+                    editor.go_to_singleton_buffer_point(
+                        text::Point::new(row as u32, 4),
+                        window,
+                        cx,
+                    );
+                }
+            })?;
+
+            Ok(())
+        })
+    }
+
     pub(crate) fn save_scenario(
         &self,
         scenario: DebugScenario,
@@ -1006,7 +1085,6 @@ impl DebugPanel {
                     return Task::ready(Err(anyhow!("Couldn't get worktree path")));
                 };
 
-                let label = scenario.label.clone();
                 let serialized_scenario = serde_json::to_value(scenario);
 
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -1064,43 +1142,6 @@ impl DebugPanel {
                             Self::insert_task_into_editor(editor, new_scenario, project, window, cx)
                         })??
                         .await
-
-                    // let project_path = workspace.update(cx, |workspace, cx| {
-                    //     workspace
-                    //         .project()
-                    //         .read(cx)
-                    //         .project_path_for_absolute_path(&path, cx)
-                    //         .context(
-                    //             "Couldn't get project path for .zed/debug.json in active worktree",
-                    //         )
-                    // })??;
-
-                    // unfortunately debug tasks don't have an easy way to globally
-                    // identify them. to jump to the one that you just created or an
-                    // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
-                    // editor.update(cx, |editor, cx| {
-                    //     let row =
-                    //         editor
-                    //             .text(cx)
-                    //             .lines()
-                    //             .rev()
-                    //             .enumerate()
-                    //             .find_map(|(row, text)| {
-                    //                 if text.contains(label.as_ref()) && text.contains("\"label\": ") {
-                    //                     dbg!(text, row);
-                    //                     Some(row)
-                    //                 } else {
-                    //                     None
-                    //                 }
-                    //             })?;
-
-                    //     editor.go_to_singleton_buffer_point(
-                    //         text::Point::new(row as u32, 0),
-                    //         window,
-                    //         cx,
-                    //     );
-                    //     Some(())
-                    // });
                 })
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))
@@ -1172,7 +1213,13 @@ impl DebugPanel {
         }
         editor.transact(window, cx, |editor, window, cx| {
             editor.edit(edits, cx);
-            let snapshot = editor.buffer().read(cx).as_singleton().unwrap().read(cx).snapshot();
+            let snapshot = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .snapshot();
             let point = cursor_position.to_point(&snapshot);
             editor.go_to_singleton_buffer_point(point, window, cx);
         });

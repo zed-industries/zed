@@ -21,12 +21,8 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
+use project::{DebugScenarioContext, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use project::{
-    DebugScenarioContext, ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore,
-};
-use settings::{Settings, initial_local_debug_tasks_content};
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
@@ -1344,57 +1340,23 @@ impl PickerDelegate for DebugDelegate {
         });
         let DebugScenarioContext {
             task_context,
-            active_buffer,
+            active_buffer: _,
             worktree_id,
         } = context;
-        let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
         if secondary {
-            match kind {
-                Some(TaskSourceKind::Worktree {
-                    id: _,
-                    directory_in_worktree: dir,
-                    id_base: id,
-                }) => {
-                    dbg!(id);
-                    dbg!(&dir);
-                    dbg!(dir.join(local_debug_file_relative_path()));
-                    return;
-                }
-                Some(TaskSourceKind::AbsPath {
-                    id_base: id,
-                    abs_path: path,
-                }) => {
-                    dbg!(id);
-                    dbg!(path);
-                    return;
-                }
-                // TODO: handle tasks from debug.json separately, just open the file and scroll to it
-                _ => {}
-            }
-
+            let Some(kind) = kind else { return };
             let Some(id) = worktree_id else { return };
             let debug_panel = self.debug_panel.clone();
             cx.spawn_in(window, async move |_, cx| {
-                // TODO: switch to calling save_debug_scenario(window, cx);
-                dbg!(debug_panel.update_in(cx, |debug_panel, window, cx| {
-                    debug_panel.save_scenario(debug_scenario, id, window, cx)
-                })?)
-                .await?;
+                debug_panel
+                    .update_in(cx, |debug_panel, window, cx| {
+                        debug_panel.go_to_scenario_definition(kind, debug_scenario, id, window, cx)
+                    })?
+                    .await?;
                 anyhow::Ok(())
-        send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
-        self.debug_panel
-            .update(cx, |panel, cx| {
-                panel.start_session(
-                    debug_scenario,
-                    task_context,
-                    active_buffer,
-                    worktree_id,
-                    window,
-                    cx,
-                );
             })
-            .detach_and_log_err(cx);
+            .detach();
         } else {
             send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
             self.debug_panel
