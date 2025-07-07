@@ -6,7 +6,7 @@ use crate::{
 };
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{Tool, ToolId, ToolWorkingSet};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -576,7 +576,8 @@ impl ThreadStore {
                                         context_server_store.clone(),
                                         server.id(),
                                         tool,
-                                    )) as Arc<dyn Tool>
+                                    ))
+                                    .into()
                                 }),
                                 cx,
                             )

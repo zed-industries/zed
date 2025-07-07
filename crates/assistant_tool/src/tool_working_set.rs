@@ -1,6 +1,6 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::borrow::Borrow;
 
-use crate::{Tool, ToolRegistry, ToolSource};
+use crate::{AnyTool, ToolRegistry, ToolSource};
 use collections::{HashMap, HashSet, IndexMap};
 use gpui::{App, SharedString};
 use util::debug_panic;
@@ -45,20 +45,20 @@ impl std::fmt::Display for UniqueToolName {
 /// A working set of tools for use in one instance of the Assistant Panel.
 #[derive(Default)]
 pub struct ToolWorkingSet {
-    context_server_tools_by_id: HashMap<ToolId, Arc<dyn Tool>>,
-    context_server_tools_by_name: HashMap<UniqueToolName, Arc<dyn Tool>>,
+    context_server_tools_by_id: HashMap<ToolId, AnyTool>,
+    context_server_tools_by_name: HashMap<UniqueToolName, AnyTool>,
     next_tool_id: ToolId,
 }
 
 impl ToolWorkingSet {
-    pub fn tool(&self, name: &str, cx: &App) -> Option<Arc<dyn Tool>> {
+    pub fn tool(&self, name: &str, cx: &App) -> Option<AnyTool> {
         self.context_server_tools_by_name
             .get(name)
             .cloned()
             .or_else(|| ToolRegistry::global(cx).tool(name))
     }
 
-    pub fn tools(&self, cx: &App) -> Vec<(UniqueToolName, Arc<dyn Tool>)> {
+    pub fn tools(&self, cx: &App) -> Vec<(UniqueToolName, AnyTool)> {
         let mut tools = ToolRegistry::global(cx)
             .tools()
             .into_iter()
@@ -68,7 +68,7 @@ impl ToolWorkingSet {
         tools
     }
 
-    pub fn tools_by_source(&self, cx: &App) -> IndexMap<ToolSource, Vec<Arc<dyn Tool>>> {
+    pub fn tools_by_source(&self, cx: &App) -> IndexMap<ToolSource, Vec<AnyTool>> {
         let mut tools_by_source = IndexMap::default();
 
         for (_, tool) in self.tools(cx) {
@@ -87,13 +87,13 @@ impl ToolWorkingSet {
         tools_by_source
     }
 
-    pub fn insert(&mut self, tool: Arc<dyn Tool>, cx: &App) -> ToolId {
+    pub fn insert(&mut self, tool: AnyTool, cx: &App) -> ToolId {
         let tool_id = self.register_tool(tool);
         self.tools_changed(cx);
         tool_id
     }
 
-    pub fn extend(&mut self, tools: impl Iterator<Item = Arc<dyn Tool>>, cx: &App) -> Vec<ToolId> {
+    pub fn extend(&mut self, tools: impl Iterator<Item = AnyTool>, cx: &App) -> Vec<ToolId> {
         let ids = tools.map(|tool| self.register_tool(tool)).collect();
         self.tools_changed(cx);
         ids
@@ -105,7 +105,7 @@ impl ToolWorkingSet {
         self.tools_changed(cx);
     }
 
-    fn register_tool(&mut self, tool: Arc<dyn Tool>) -> ToolId {
+    fn register_tool(&mut self, tool: AnyTool) -> ToolId {
         let tool_id = self.next_tool_id;
         self.next_tool_id.0 += 1;
         self.context_server_tools_by_id
@@ -126,10 +126,10 @@ impl ToolWorkingSet {
 }
 
 fn resolve_context_server_tool_name_conflicts(
-    context_server_tools: &[Arc<dyn Tool>],
-    native_tools: &[Arc<dyn Tool>],
-) -> HashMap<UniqueToolName, Arc<dyn Tool>> {
-    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
+    context_server_tools: &[AnyTool],
+    native_tools: &[AnyTool],
+) -> HashMap<UniqueToolName, AnyTool> {
+    fn resolve_tool_name(tool: &AnyTool) -> String {
         let mut tool_name = tool.name();
         tool_name.truncate(MAX_TOOL_NAME_LENGTH);
         tool_name
@@ -201,11 +201,13 @@ fn resolve_context_server_tool_name_conflicts(
 }
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui::{AnyWindowHandle, Entity, Task, TestAppContext};
     use language_model::{LanguageModel, LanguageModelRequest};
     use project::Project;
 
-    use crate::{ActionLog, ToolResult};
+    use crate::{ActionLog, Tool, ToolResult};
 
     use super::*;
 
@@ -234,11 +236,13 @@ mod tests {
                     Arc::new(TestTool::new(
                         "tool2",
                         ToolSource::ContextServer { id: "mcp-1".into() },
-                    )) as Arc<dyn Tool>,
+                    ))
+                    .into(),
                     Arc::new(TestTool::new(
                         "tool2",
                         ToolSource::ContextServer { id: "mcp-2".into() },
-                    )) as Arc<dyn Tool>,
+                    ))
+                    .into(),
                 ]
                 .into_iter(),
                 cx,
@@ -324,13 +328,13 @@ mod tests {
             context_server_tools: Vec<TestTool>,
             expected: Vec<&'static str>,
         ) {
-            let context_server_tools: Vec<Arc<dyn Tool>> = context_server_tools
+            let context_server_tools: Vec<AnyTool> = context_server_tools
                 .into_iter()
-                .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                .map(|t| Arc::new(t).into())
                 .collect();
-            let builtin_tools: Vec<Arc<dyn Tool>> = builtin_tools
+            let builtin_tools: Vec<AnyTool> = builtin_tools
                 .into_iter()
-                .map(|t| Arc::new(t) as Arc<dyn Tool>)
+                .map(|t| Arc::new(t).into())
                 .collect();
             let tools =
                 resolve_context_server_tool_name_conflicts(&context_server_tools, &builtin_tools);
@@ -363,6 +367,8 @@ mod tests {
     }
 
     impl Tool for TestTool {
+        type Input = ();
+
         fn name(&self) -> String {
             self.name.clone()
         }
@@ -375,7 +381,7 @@ mod tests {
             false
         }
 
-        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        fn needs_confirmation(&self, _input: &Self::Input, _cx: &App) -> bool {
             true
         }
 
@@ -387,13 +393,13 @@ mod tests {
             "Test tool".to_string()
         }
 
-        fn ui_text(&self, _input: &serde_json::Value) -> String {
+        fn ui_text(&self, _input: &Self::Input) -> String {
             "Test tool".to_string()
         }
 
         fn run(
             self: Arc<Self>,
-            _input: serde_json::Value,
+            _input: Self::Input,
             _request: Arc<LanguageModelRequest>,
             _project: Entity<Project>,
             _action_log: Entity<ActionLog>,

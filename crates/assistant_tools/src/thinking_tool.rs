@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -20,11 +20,13 @@ pub struct ThinkingToolInput {
 pub struct ThinkingTool;
 
 impl Tool for ThinkingTool {
+    type Input = ThinkingToolInput;
+
     fn name(&self) -> String {
         "thinking".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -44,13 +46,13 @@ impl Tool for ThinkingTool {
         json_schema_for::<ThinkingToolInput>(format)
     }
 
-    fn ui_text(&self, _input: &serde_json::Value) -> String {
+    fn ui_text(&self, _input: &Self::Input) -> String {
         "Thinking".to_string()
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        _input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -59,10 +61,6 @@ impl Tool for ThinkingTool {
         _cx: &mut App,
     ) -> ToolResult {
         // This tool just "thinks out loud" and doesn't perform any actions.
-        Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
-            Ok(_input) => Ok("Finished thinking.".to_string().into()),
-            Err(err) => Err(anyhow!(err)),
-        })
-        .into()
+        Task::ready(Ok("Finished thinking.".to_string().into())).into()
     }
 }

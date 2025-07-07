@@ -1736,7 +1736,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let exists_result = cx.update(|cx| {
         ReadFileTool::run(
             Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
+            input,
             request.clone(),
             project.clone(),
             action_log.clone(),
@@ -1756,7 +1756,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let does_not_exist_result = cx.update(|cx| {
         ReadFileTool::run(
             Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
+            input,
             request.clone(),
             project.clone(),
             action_log.clone(),

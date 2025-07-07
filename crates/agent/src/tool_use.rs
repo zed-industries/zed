@@ -5,7 +5,7 @@ use crate::{
 use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_tool::{
-    AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
+    AnyTool, AnyToolCard, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
 };
 use collections::HashMap;
 use futures::{FutureExt as _, future::Shared};
@@ -380,7 +380,7 @@ impl ToolUseState {
         ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
         request: Arc<LanguageModelRequest>,
-        tool: Arc<dyn Tool>,
+        tool: AnyTool,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             let ui_text = ui_text.into();
@@ -539,7 +539,7 @@ pub struct Confirmation {
     pub input: serde_json::Value,
     pub ui_text: Arc<str>,
     pub request: Arc<LanguageModelRequest>,
-    pub tool: Arc<dyn Tool>,
+    pub tool: AnyTool,
 }
 
 #[derive(Debug, Clone)]

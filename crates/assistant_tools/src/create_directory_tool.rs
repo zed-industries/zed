@@ -29,6 +29,8 @@ pub struct CreateDirectoryToolInput {
 pub struct CreateDirectoryTool;
 
 impl Tool for CreateDirectoryTool {
+    type Input = CreateDirectoryToolInput;
+
     fn name(&self) -> String {
         "create_directory".into()
     }
@@ -37,7 +39,7 @@ impl Tool for CreateDirectoryTool {
         include_str!("./create_directory_tool/description.md").into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -53,18 +55,13 @@ impl Tool for CreateDirectoryTool {
         json_schema_for::<CreateDirectoryToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<CreateDirectoryToolInput>(input.clone()) {
-            Ok(input) => {
-                format!("Create directory {}", MarkdownInlineCode(&input.path))
-            }
-            Err(_) => "Create directory".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        format!("Create directory {}", MarkdownInlineCode(&input.path))
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -72,10 +69,6 @@ impl Tool for CreateDirectoryTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
             None => {

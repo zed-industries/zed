@@ -4,25 +4,19 @@ mod tool_registry;
 mod tool_schema;
 mod tool_working_set;
 
-use std::fmt;
-use std::fmt::Debug;
-use std::fmt::Formatter;
-use std::ops::Deref;
-use std::sync::Arc;
+use std::{fmt, fmt::Debug, fmt::Formatter, ops::Deref, sync::Arc};
 
 use anyhow::Result;
-use gpui::AnyElement;
-use gpui::AnyWindowHandle;
-use gpui::Context;
-use gpui::IntoElement;
-use gpui::Window;
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{
+    AnyElement, AnyWindowHandle, App, Context, Entity, IntoElement, SharedString, Task, WeakEntity,
+    Window,
+};
 use icons::IconName;
-use language_model::LanguageModel;
-use language_model::LanguageModelImage;
-use language_model::LanguageModelRequest;
-use language_model::LanguageModelToolSchemaFormat;
+use language_model::{
+    LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
+};
 use project::Project;
+use serde::de::DeserializeOwned;
 use workspace::Workspace;
 
 pub use crate::action_log::*;
@@ -199,7 +193,10 @@ pub enum ToolSource {
 }
 
 /// A tool that can be used by a language model.
-pub trait Tool: 'static + Send + Sync {
+pub trait Tool: Send + Sync + 'static {
+    /// The input type that is accepted by the tool.
+    type Input: DeserializeOwned;
+
     /// Returns the name of the tool.
     fn name(&self) -> String;
 
@@ -216,7 +213,7 @@ pub trait Tool: 'static + Send + Sync {
 
     /// Returns true if the tool needs the users's confirmation
     /// before having permission to run.
-    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
+    fn needs_confirmation(&self, input: &Self::Input, cx: &App) -> bool;
 
     /// Returns true if the tool may perform edits.
     fn may_perform_edits(&self) -> bool;
@@ -227,18 +224,18 @@ pub trait Tool: 'static + Send + Sync {
     }
 
     /// Returns markdown to be displayed in the UI for this tool.
-    fn ui_text(&self, input: &serde_json::Value) -> String;
+    fn ui_text(&self, input: &Self::Input) -> String;
 
     /// Returns markdown to be displayed in the UI for this tool, while the input JSON is still streaming
     /// (so information may be missing).
-    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+    fn still_streaming_ui_text(&self, input: &Self::Input) -> String {
         self.ui_text(input)
     }
 
     /// Runs the tool with the provided input.
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -258,7 +255,199 @@ pub trait Tool: 'static + Send + Sync {
     }
 }
 
-impl Debug for dyn Tool {
+#[derive(Clone)]
+pub struct AnyTool {
+    inner: Arc<dyn ErasedTool>,
+}
+
+/// Copy of `Tool` where the Input type is erased.
+trait ErasedTool: Send + Sync {
+    fn name(&self) -> String;
+    fn description(&self) -> String;
+    fn icon(&self) -> IconName;
+    fn source(&self) -> ToolSource;
+    fn may_perform_edits(&self) -> bool;
+    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn ui_text(&self, input: &serde_json::Value) -> String;
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String;
+    fn run(
+        &self,
+        input: serde_json::Value,
+        request: Arc<LanguageModelRequest>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> ToolResult;
+    fn deserialize_card(
+        &self,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard>;
+}
+
+struct ErasedToolWrapper<T: Tool> {
+    tool: Arc<T>,
+}
+
+impl<T: Tool> ErasedTool for ErasedToolWrapper<T> {
+    fn name(&self) -> String {
+        self.tool.name()
+    }
+
+    fn description(&self) -> String {
+        self.tool.description()
+    }
+
+    fn icon(&self) -> IconName {
+        self.tool.icon()
+    }
+
+    fn source(&self) -> ToolSource {
+        self.tool.source()
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        self.tool.may_perform_edits()
+    }
+
+    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool {
+        match serde_json::from_value::<T::Input>(input.clone()) {
+            Ok(parsed_input) => self.tool.needs_confirmation(&parsed_input, cx),
+            Err(_) => true,
+        }
+    }
+
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        self.tool.input_schema(format)
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<T::Input>(input.clone()) {
+            Ok(parsed_input) => self.tool.ui_text(&parsed_input),
+            Err(_) => "Invalid input".to_string(),
+        }
+    }
+
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<T::Input>(input.clone()) {
+            Ok(parsed_input) => self.tool.still_streaming_ui_text(&parsed_input),
+            Err(_) => "Invalid input".to_string(),
+        }
+    }
+
+    fn run(
+        &self,
+        input: serde_json::Value,
+        request: Arc<LanguageModelRequest>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> ToolResult {
+        match serde_json::from_value::<T::Input>(input) {
+            Ok(parsed_input) => self.tool.clone().run(
+                parsed_input,
+                request,
+                project,
+                action_log,
+                model,
+                window,
+                cx,
+            ),
+            Err(err) => ToolResult::from(Task::ready(Err(err.into()))),
+        }
+    }
+
+    fn deserialize_card(
+        &self,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        self.tool
+            .clone()
+            .deserialize_card(output, project, window, cx)
+    }
+}
+
+impl<T: Tool> From<Arc<T>> for AnyTool {
+    fn from(tool: Arc<T>) -> Self {
+        Self {
+            inner: Arc::new(ErasedToolWrapper { tool }),
+        }
+    }
+}
+
+impl AnyTool {
+    pub fn name(&self) -> String {
+        self.inner.name()
+    }
+
+    pub fn description(&self) -> String {
+        self.inner.description()
+    }
+
+    pub fn icon(&self) -> IconName {
+        self.inner.icon()
+    }
+
+    pub fn source(&self) -> ToolSource {
+        self.inner.source()
+    }
+
+    pub fn may_perform_edits(&self) -> bool {
+        self.inner.may_perform_edits()
+    }
+
+    pub fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool {
+        self.inner.needs_confirmation(input, cx)
+    }
+
+    pub fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        self.inner.input_schema(format)
+    }
+
+    pub fn ui_text(&self, input: &serde_json::Value) -> String {
+        self.inner.ui_text(input)
+    }
+
+    pub fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        self.inner.still_streaming_ui_text(input)
+    }
+
+    pub fn run(
+        &self,
+        input: serde_json::Value,
+        request: Arc<LanguageModelRequest>,
+        project: Entity<Project>,
+        action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> ToolResult {
+        self.inner
+            .run(input, request, project, action_log, model, window, cx)
+    }
+
+    pub fn deserialize_card(
+        &self,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        self.inner.deserialize_card(output, project, window, cx)
+    }
+}
+
+impl Debug for AnyTool {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Tool").field("name", &self.name()).finish()
     }

@@ -53,11 +53,13 @@ const RESULTS_PER_PAGE: u32 = 20;
 pub struct GrepTool;
 
 impl Tool for GrepTool {
+    type Input = GrepToolInput;
+
     fn name(&self) -> String {
         "grep".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -77,30 +79,25 @@ impl Tool for GrepTool {
         json_schema_for::<GrepToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<GrepToolInput>(input.clone()) {
-            Ok(input) => {
-                let page = input.page();
-                let regex_str = MarkdownInlineCode(&input.regex);
-                let case_info = if input.case_sensitive {
-                    " (case-sensitive)"
-                } else {
-                    ""
-                };
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let page = input.page();
+        let regex_str = MarkdownInlineCode(&input.regex);
+        let case_info = if input.case_sensitive {
+            " (case-sensitive)"
+        } else {
+            ""
+        };
 
-                if page > 1 {
-                    format!("Get page {page} of search results for regex {regex_str}{case_info}")
-                } else {
-                    format!("Search files for regex {regex_str}{case_info}")
-                }
-            }
-            Err(_) => "Search with regex".to_string(),
+        if page > 1 {
+            format!("Get page {page} of search results for regex {regex_str}{case_info}")
+        } else {
+            format!("Search files for regex {regex_str}{case_info}")
         }
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -110,13 +107,6 @@ impl Tool for GrepTool {
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
-
-        let input = match serde_json::from_value::<GrepToolInput>(input) {
-            Ok(input) => input,
-            Err(error) => {
-                return Task::ready(Err(anyhow!("Failed to parse input: {error}"))).into();
-            }
-        };
 
         let include_matcher = match PathMatcher::new(
             input
@@ -348,13 +338,12 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         // Test with include pattern for Rust files inside the root of the project
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "println".to_string(),
             include_pattern: Some("root/**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(result.contains("main.rs"), "Should find matches in main.rs");
@@ -368,13 +357,12 @@ mod tests {
         );
 
         // Test with include pattern for src directory only
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "fn".to_string(),
             include_pattern: Some("root/**/src/**".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(
@@ -391,13 +379,12 @@ mod tests {
         );
 
         // Test with empty include pattern (should default to all files)
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "fn".to_string(),
             include_pattern: None,
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(result.contains("main.rs"), "Should find matches in main.rs");
@@ -428,13 +415,12 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         // Test case-insensitive search (default)
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "uppercase".to_string(),
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(
@@ -443,13 +429,12 @@ mod tests {
         );
 
         // Test case-sensitive search
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "uppercase".to_string(),
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(
@@ -458,13 +443,12 @@ mod tests {
         );
 
         // Test case-sensitive search
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "LOWERCASE".to_string(),
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
 
@@ -474,13 +458,12 @@ mod tests {
         );
 
         // Test case-sensitive search for lowercase pattern
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "lowercase".to_string(),
             include_pattern: Some("**/*.txt".to_string()),
             offset: 0,
             case_sensitive: true,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         assert!(
@@ -576,13 +559,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line at the top level of the file
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "This is at the top level".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -606,13 +588,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line inside a function body
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "Function in nested module".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -638,13 +619,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line with a function argument
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "second_arg".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -674,13 +654,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line inside an if block
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "Inside if block".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -705,13 +684,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line in the middle of a long function - should show message about remaining lines
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "Line 5".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -746,13 +724,12 @@ mod tests {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line in the long function
-        let input = serde_json::to_value(GrepToolInput {
+        let input = GrepToolInput {
             regex: "Line 12".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
-        })
-        .unwrap();
+        };
 
         let result = run_grep_tool(input, project.clone(), cx).await;
         let expected = r#"
@@ -774,7 +751,7 @@ mod tests {
     }
 
     async fn run_grep_tool(
-        input: serde_json::Value,
+        input: GrepToolInput,
         project: Entity<Project>,
         cx: &mut TestAppContext,
     ) -> String {
@@ -876,9 +853,12 @@ mod tests {
         // Searching for files outside the project worktree should return no results
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "outside_function"
-                });
+                let input = GrepToolInput {
+                    regex: "outside_function".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -902,9 +882,12 @@ mod tests {
         // Searching within the project should succeed
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "main"
-                });
+                let input = GrepToolInput {
+                    regex: "main".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -928,9 +911,12 @@ mod tests {
         // Searching files that match file_scan_exclusions should return no results
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "special_configuration"
-                });
+                let input = GrepToolInput {
+                    regex: "special_configuration".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -953,9 +939,12 @@ mod tests {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "custom_metadata"
-                });
+                let input = GrepToolInput {
+                    regex: "custom_metadata".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -979,9 +968,12 @@ mod tests {
         // Searching private files should return no results
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "SECRET_KEY"
-                });
+                let input = GrepToolInput {
+                    regex: "SECRET_KEY".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1004,9 +996,12 @@ mod tests {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "private_key_content"
-                });
+                let input = GrepToolInput {
+                    regex: "private_key_content".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1029,9 +1024,12 @@ mod tests {
 
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "sensitive_data"
-                });
+                let input = GrepToolInput {
+                    regex: "sensitive_data".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1055,9 +1053,12 @@ mod tests {
         // Searching a normal file should still work, even with private_files configured
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "normal_file_content"
-                });
+                let input = GrepToolInput {
+                    regex: "normal_file_content".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1081,10 +1082,12 @@ mod tests {
         // Path traversal attempts with .. in include_pattern should not escape project
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "outside_function",
-                    "include_pattern": "../outside_project/**/*.rs"
-                });
+                let input = GrepToolInput {
+                    regex: "outside_function".to_string(),
+                    include_pattern: Some("../outside_project/**/*.rs".to_string()),
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1185,10 +1188,12 @@ mod tests {
         // Search for "secret" - should exclude files based on worktree-specific settings
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "secret",
-                    "case_sensitive": false
-                });
+                let input = GrepToolInput {
+                    regex: "secret".to_string(),
+                    include_pattern: None,
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,
@@ -1250,10 +1255,12 @@ mod tests {
         // Test with `include_pattern` specific to one worktree
         let result = cx
             .update(|cx| {
-                let input = json!({
-                    "regex": "secret",
-                    "include_pattern": "worktree1/**/*.rs"
-                });
+                let input = GrepToolInput {
+                    regex: "secret".to_string(),
+                    include_pattern: Some("worktree1/**/*.rs".to_string()),
+                    offset: 0,
+                    case_sensitive: false,
+                };
                 Arc::new(GrepTool)
                     .run(
                         input,

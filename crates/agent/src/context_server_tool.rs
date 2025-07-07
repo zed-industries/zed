@@ -29,6 +29,8 @@ impl ContextServerTool {
 }
 
 impl Tool for ContextServerTool {
+    type Input = serde_json::Value;
+
     fn name(&self) -> String {
         self.tool.name.clone()
     }
@@ -47,7 +49,7 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         true
     }
 
@@ -69,13 +71,13 @@ impl Tool for ContextServerTool {
         })
     }
 
-    fn ui_text(&self, _input: &serde_json::Value) -> String {
+    fn ui_text(&self, _input: &Self::Input) -> String {
         format!("Run MCP tool `{}`", self.tool.name)
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,

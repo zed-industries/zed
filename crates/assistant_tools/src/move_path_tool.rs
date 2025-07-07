@@ -38,11 +38,13 @@ pub struct MovePathToolInput {
 pub struct MovePathTool;
 
 impl Tool for MovePathTool {
+    type Input = MovePathToolInput;
+
     fn name(&self) -> String {
         "move_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -62,34 +64,29 @@ impl Tool for MovePathTool {
         json_schema_for::<MovePathToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<MovePathToolInput>(input.clone()) {
-            Ok(input) => {
-                let src = MarkdownInlineCode(&input.source_path);
-                let dest = MarkdownInlineCode(&input.destination_path);
-                let src_path = Path::new(&input.source_path);
-                let dest_path = Path::new(&input.destination_path);
+    fn ui_text(&self, input: &Self::Input) -> String {
+        let src = MarkdownInlineCode(&input.source_path);
+        let dest = MarkdownInlineCode(&input.destination_path);
+        let src_path = Path::new(&input.source_path);
+        let dest_path = Path::new(&input.destination_path);
 
-                match dest_path
-                    .file_name()
-                    .and_then(|os_str| os_str.to_os_string().into_string().ok())
-                {
-                    Some(filename) if src_path.parent() == dest_path.parent() => {
-                        let filename = MarkdownInlineCode(&filename);
-                        format!("Rename {src} to {filename}")
-                    }
-                    _ => {
-                        format!("Move {src} to {dest}")
-                    }
-                }
+        match dest_path
+            .file_name()
+            .and_then(|os_str| os_str.to_os_string().into_string().ok())
+        {
+            Some(filename) if src_path.parent() == dest_path.parent() => {
+                let filename = MarkdownInlineCode(&filename);
+                format!("Rename {src} to {filename}")
             }
-            Err(_) => "Move path".to_string(),
+            _ => {
+                format!("Move {src} to {dest}")
+            }
         }
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -97,10 +94,6 @@ impl Tool for MovePathTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<MovePathToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
         let rename_task = project.update(cx, |project, cx| {
             match project
                 .find_project_path(&input.source_path, cx)

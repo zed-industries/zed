@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -19,11 +19,13 @@ pub struct OpenToolInput {
 pub struct OpenTool;
 
 impl Tool for OpenTool {
+    type Input = OpenToolInput;
+
     fn name(&self) -> String {
         "open".to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         true
     }
     fn may_perform_edits(&self) -> bool {
@@ -41,16 +43,13 @@ impl Tool for OpenTool {
         json_schema_for::<OpenToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<OpenToolInput>(input.clone()) {
-            Ok(input) => format!("Open `{}`", MarkdownEscaped(&input.path_or_url)),
-            Err(_) => "Open file or URL".to_string(),
-        }
+    fn ui_text(&self, input: &Self::Input) -> String {
+        format!("Open `{}`", MarkdownEscaped(&input.path_or_url))
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
@@ -58,11 +57,6 @@ impl Tool for OpenTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input: OpenToolInput = match serde_json::from_value(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
-        };
-
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, project, cx);
 

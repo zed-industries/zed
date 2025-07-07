@@ -42,11 +42,13 @@ where
 pub struct DiagnosticsTool;
 
 impl Tool for DiagnosticsTool {
+    type Input = DiagnosticsToolInput;
+
     fn name(&self) -> String {
         "diagnostics".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &Self::Input, _: &App) -> bool {
         false
     }
 
@@ -66,15 +68,9 @@ impl Tool for DiagnosticsTool {
         json_schema_for::<DiagnosticsToolInput>(format)
     }
 
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
-            .ok()
-            .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(path),
-                _ => None,
-            })
-        {
-            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
+    fn ui_text(&self, input: &Self::Input) -> String {
+        if let Some(path) = input.path.as_ref().filter(|p| !p.is_empty()) {
+            format!("Check diagnostics for {}", MarkdownInlineCode(path))
         } else {
             "Check project diagnostics".to_string()
         }
@@ -82,7 +78,7 @@ impl Tool for DiagnosticsTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
+        input: Self::Input,
         _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
@@ -90,10 +86,7 @@ impl Tool for DiagnosticsTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        match serde_json::from_value::<DiagnosticsToolInput>(input)
-            .ok()
-            .and_then(|input| input.path)
-        {
+        match input.path {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
                     return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
