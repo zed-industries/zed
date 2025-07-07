@@ -6,10 +6,10 @@ use theme::ActiveTheme;
 
 use crate::{h_flex, utils::CornerSolver};
 
-/// A ring is a stylistic focus indicator that draws a ring around
+/// An outline is a stylistic focus indicator that draws a ring around
 /// an element with some space between the element and ring.
 #[derive(IntoElement)]
-pub struct Ring {
+pub struct FocusOutline {
     corner_radius: Pixels,
     border_width: Pixels,
     padding: Pixels,
@@ -18,16 +18,15 @@ pub struct Ring {
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl Ring {
-    pub fn new(child_corner_radius: Pixels, focused: bool) -> Self {
-        let border_width = px(1.);
-        let padding = px(2.);
+impl FocusOutline {
+    pub fn new(child_corner_radius: Pixels, focused: bool, offset: Pixels) -> Self {
+        let ring_width = px(1.);
         let corner_radius =
-            CornerSolver::parent_radius(child_corner_radius, border_width, padding, px(0.));
+            CornerSolver::parent_radius(child_corner_radius, ring_width, offset, px(0.));
         Self {
             corner_radius,
-            border_width,
-            padding,
+            border_width: ring_width,
+            padding: offset,
             focused,
             active: false,
             children: SmallVec::new(),
@@ -40,7 +39,7 @@ impl Ring {
     }
 }
 
-impl RenderOnce for Ring {
+impl RenderOnce for FocusOutline {
     fn render(self, _window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
         let border_color = if self.focused && self.active {
             cx.theme().colors().border_focused.opacity(0.48)
@@ -59,7 +58,7 @@ impl RenderOnce for Ring {
     }
 }
 
-impl ParentElement for Ring {
+impl ParentElement for FocusOutline {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
