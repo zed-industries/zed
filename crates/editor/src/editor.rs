@@ -1143,6 +1143,7 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
     drag_and_drop_selection_enabled: bool,
+    drag_and_drop_selection_delay: Duration,
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
@@ -2174,7 +2175,14 @@ impl Editor {
             change_list: ChangeList::new(),
             mode,
             selection_drag_state: SelectionDragState::None,
-            drag_and_drop_selection_enabled: EditorSettings::get_global(cx).drag_and_drop_selection,
+            drag_and_drop_selection_enabled: EditorSettings::get_global(cx)
+                .drag_and_drop_selection
+                .enabled,
+            drag_and_drop_selection_delay: Duration::from_millis(
+                EditorSettings::get_global(cx)
+                    .drag_and_drop_selection
+                    .delay_ms,
+            ),
             folding_newlines: Task::ready(()),
         };
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
@@ -8715,7 +8723,7 @@ impl Editor {
                 h_flex()
                     .bg(cx.theme().colors().editor_background)
                     .border(BORDER_WIDTH)
-                    .shadow_xs()
+                    .shadow_sm()
                     .border_color(cx.theme().colors().border)
                     .rounded_l_lg()
                     .when(line_count > 1, |el| el.rounded_br_lg())
@@ -8915,7 +8923,7 @@ impl Editor {
             .border_1()
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
-            .shadow_xs()
+            .shadow_sm()
             .when(!has_keybind, |el| {
                 let status_colors = cx.theme().status();
 
@@ -19842,7 +19850,6 @@ impl Editor {
         self.tasks_update_task = Some(self.refresh_runnables(window, cx));
         self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(true, false, window, cx);
-        self.refresh_inline_values(cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
@@ -19860,7 +19867,9 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
-            self.drag_and_drop_selection_enabled = editor_settings.drag_and_drop_selection;
+            self.drag_and_drop_selection_enabled = editor_settings.drag_and_drop_selection.enabled;
+            self.drag_and_drop_selection_delay =
+                Duration::from_millis(editor_settings.drag_and_drop_selection.delay_ms);
         }
 
         if old_cursor_shape != self.cursor_shape {
