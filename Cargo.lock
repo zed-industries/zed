@@ -12312,7 +12312,6 @@ dependencies = [
  "gpui",
  "indexmap",
  "language",
- "lsp",
  "menu",
  "pretty_assertions",
  "project",
