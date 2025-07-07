@@ -290,31 +290,31 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-## File Opening Behavior
+## Item Opening Behavior
 
-- Description: Controls which center pane files open in when opened from the project panel, file finder, and other sources
-- Setting: `file_opening_behavior`
+- Description: Controls which center pane new items and tool windows open in
+- Setting: `item_opening_behavior`
 - Default: `"active_pane"`
 
 **Options**
 
-1. Open files in the last active center pane
+1. Open items in the last active center pane
 
 ```json
 {
-  "file_opening_behavior": "active_pane"
+  "item_opening_behavior": "active_pane"
 }
 ```
 
-2. Open files in the first center pane
+2. Open items in the leftmost center pane
 
 ```json
 {
-  "file_opening_behavior": "first_pane"
+  "item_opening_behavior": "leftmost_pane"
 }
 ```
 
-When set to `"first_pane"`, files opened from the project panel, file finder, and other sources will consistently open in the first center pane instead of whichever pane was last active. This prevents files from unexpectedly opening in auxiliary panels that have been moved to the center area.
+When set to `"leftmost_pane"`, new items and tool windows will consistently open in the leftmost center pane instead of whichever pane was last active. This provides predictable behavior regardless of which pane was previously focused.
 
 ## Buffer Font Family
 

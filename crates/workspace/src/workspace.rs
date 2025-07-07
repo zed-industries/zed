@@ -104,7 +104,7 @@ use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, FileOpeningBehavior, RestoreOnStartupBehavior,
+    AutosaveSetting, BottomDockLayout, ItemOpeningBehavior, RestoreOnStartupBehavior,
     TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
@@ -3123,6 +3123,22 @@ impl Workspace {
         )
     }
 
+    pub fn add_item_to_preferred_pane(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        destination_index: Option<usize>,
+        focus_item: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let pane = match WorkspaceSettings::get_global(cx).item_opening_behavior {
+            ItemOpeningBehavior::ActivePane => self.active_pane.clone(),
+            ItemOpeningBehavior::LeftmostPane => self.center.first_pane(),
+        };
+
+        self.add_item(pane, item, destination_index, false, focus_item, window, cx)
+    }
+
     pub fn add_item(
         &mut self,
         pane: Entity<Pane>,
@@ -3229,9 +3245,9 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
-            let target_pane = match WorkspaceSettings::get_global(cx).file_opening_behavior {
-                FileOpeningBehavior::ActivePane => self.last_active_center_pane.clone(),
-                FileOpeningBehavior::FirstPane => None,
+            let target_pane = match WorkspaceSettings::get_global(cx).item_opening_behavior {
+                ItemOpeningBehavior::ActivePane => self.last_active_center_pane.clone(),
+                ItemOpeningBehavior::LeftmostPane => Some(self.center.first_pane().downgrade()),
             };
             target_pane.unwrap_or_else(|| {
                 self.panes
