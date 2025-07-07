@@ -635,6 +635,8 @@ actions!(
         SignatureHelpNext,
         /// Navigates to the previous signature in the signature help popup.
         SignatureHelpPrevious,
+        /// Sorts selected lines by length.
+        SortLinesByLength,
         /// Sorts selected lines case-insensitively.
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.
