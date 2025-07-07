@@ -1553,27 +1553,21 @@ impl Thread {
     }
 
     fn attach_tracked_files_state(&mut self, model: Arc<dyn LanguageModel>, cx: &mut App) {
-        dbg!("here");
         let action_log = self.action_log.read(cx);
 
         if action_log.stale_buffers(cx).next().is_none() {
-            dbg!("no stale buffers");
             return;
         }
 
-        // Represent notification as a simulated `project_updates` tool call
-        let tool_name = Arc::from("project_updates");
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
         let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            return debug_panic!("`project_updates` tool not found");
+            return debug_panic!("`project_notifications` tool not found");
         };
 
-        dbg!(&self.profile);
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
-            dbg!("no tool enabled");
             return;
         }
-
-        dbg!("2");
 
         let input = serde_json::json!({});
         let request = Arc::new(LanguageModelRequest::default()); // unused
@@ -1589,7 +1583,7 @@ impl Thread {
         );
 
         let tool_use_id =
-            LanguageModelToolUseId::from(format!("project_updates_{}", self.messages.len()));
+            LanguageModelToolUseId::from(format!("project_notifications_{}", self.messages.len()));
 
         let tool_use = LanguageModelToolUse {
             id: tool_use_id.clone(),
@@ -1655,8 +1649,8 @@ impl Thread {
         // Ass -- tool use
         // User -- tool result
         // <file changed>
-        // Ass - project_updates()
-        // User - project_updates() result
+        // Ass - project_notifications()
+        // User - project_notifications() result
 
         // let insert_position = messages
         //     .iter()
@@ -3712,8 +3706,9 @@ fn main() {{
         });
 
         // We shouldn't have a stale buffer notification yet
-        let notification =
-            thread.read_with(cx, |thread, _| find_tool_use(thread, "project_update"));
+        let notification = thread.read_with(cx, |thread, _| {
+            find_tool_use(thread, "project_notifications")
+        });
         assert!(
             notification.is_none(),
             "Should not have stale buffer notification before buffer is modified"
@@ -3744,14 +3739,14 @@ fn main() {{
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
-        let Some(notification_result) =
-            thread.read_with(cx, |thread, _cx| find_tool_use(thread, "project_updates"))
-        else {
-            panic!("Should have a `project_updates` tool use");
+        let Some(notification_result) = thread.read_with(cx, |thread, _cx| {
+            find_tool_use(thread, "project_notifications")
+        }) else {
+            panic!("Should have a `project_notifications` tool use");
         };
 
         let Some(notification_content) = notification_result.content.to_str() else {
-            panic!("`project_updates` should return text");
+            panic!("`project_notifications` should return text");
         };
 
         let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
@@ -5342,7 +5337,7 @@ fn main() {{
             ToolRegistry::default_global(cx);
             assistant_tool::init(cx);
 
-            // Initialize assistant tools including project_updates
+            // Initialize assistant tools including project_notifications
             let http_client = Arc::new(http_client::HttpClientWithUrl::new(
                 http_client::FakeHttpClient::with_200_response(),
                 "http://localhost".to_string(),
