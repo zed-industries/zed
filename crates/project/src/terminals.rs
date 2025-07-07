@@ -54,7 +54,7 @@ impl SshCommand {
 pub struct SshDetails {
     pub host: String,
     pub ssh_command: SshCommand,
-    pub askpass: Option<String>,
+    pub envs: Option<HashMap<String, String>>,
     pub path_style: PathStyle,
 }
 
@@ -82,11 +82,11 @@ impl Project {
     pub fn ssh_details(&self, cx: &App) -> Option<SshDetails> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
-            if let Some((SshArgs { arguments, askpass }, path_style)) = ssh_client.ssh_info() {
+            if let Some((SshArgs { arguments, envs }, path_style)) = ssh_client.ssh_info() {
                 return Some(SshDetails {
                     host: ssh_client.connection_options().host.clone(),
                     ssh_command: SshCommand { arguments },
-                    askpass,
+                    envs,
                     path_style,
                 });
             }
@@ -174,7 +174,7 @@ impl Project {
         match self.ssh_details(cx) {
             Some(SshDetails {
                 ssh_command,
-                askpass,
+                envs,
                 path_style,
                 ..
             }) => {
@@ -188,9 +188,8 @@ impl Project {
                 );
                 let mut command = std::process::Command::new(command);
                 command.args(args);
-                if let Some(askpass) = askpass {
-                    command.env("SSH_ASKPASS_REQUIRE", "force");
-                    command.env("SSH_ASKPASS", askpass);
+                if let Some(envs) = envs {
+                    command.envs(envs);
                 }
                 command
             }
@@ -265,7 +264,7 @@ impl Project {
                     Some(SshDetails {
                         host,
                         ssh_command,
-                        askpass,
+                        envs,
                         path_style,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
@@ -286,9 +285,8 @@ impl Project {
                             path_style,
                         );
                         env = HashMap::default();
-                        if let Some(askpass) = askpass {
-                            env.insert("SSH_ASKPASS".to_string(), askpass);
-                            env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+                        if let Some(envs) = envs {
+                            env.extend(envs);
                         }
                         (
                             Option::<TaskState>::None,
@@ -329,7 +327,7 @@ impl Project {
                     Some(SshDetails {
                         host,
                         ssh_command,
-                        askpass,
+                        envs,
                         path_style,
                     }) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
@@ -344,9 +342,8 @@ impl Project {
                             path_style,
                         );
                         env = HashMap::default();
-                        if let Some(askpass) = askpass {
-                            env.insert("SSH_ASKPASS".to_string(), askpass);
-                            env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+                        if let Some(envs) = envs {
+                            env.extend(envs);
                         }
                         (
                             task_state,

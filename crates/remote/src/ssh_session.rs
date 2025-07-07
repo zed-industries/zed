@@ -93,7 +93,7 @@ pub struct SshConnectionOptions {
 
 pub struct SshArgs {
     pub arguments: Vec<String>,
-    pub askpass: Option<String>,
+    pub envs: Option<HashMap<String, String>>,
 }
 
 #[macro_export]
@@ -440,7 +440,7 @@ impl SshSocket {
                 format!("ControlPath={}", self.socket_path.display()),
                 self.connection_options.ssh_url(),
             ],
-            askpass: None,
+            envs: None,
         }
     }
 
@@ -448,7 +448,7 @@ impl SshSocket {
     fn ssh_args(&self) -> SshArgs {
         SshArgs {
             arguments: vec![self.connection_options.ssh_url()],
-            askpass: Some(self.askpass_script.clone()),
+            envs: Some(self.envs.clone()),
         }
     }
 
@@ -2608,7 +2608,7 @@ mod fake {
         fn ssh_args(&self) -> SshArgs {
             SshArgs {
                 arguments: Vec::new(),
-                askpass: None,
+                envs: None,
             }
         }
 
