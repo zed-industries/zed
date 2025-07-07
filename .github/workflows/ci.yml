@@ -398,10 +398,6 @@ jobs:
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
     steps:
-      # more info here:- https://github.com/rust-lang/cargo/issues/13020
-      - name: Enable longer pathnames for git
-        run: git config --system core.longpaths true
-
       - name: Environment Setup
         run: |
           $RunnerDir = Split-Path -Parent $env:RUNNER_WORKSPACE
@@ -824,7 +820,7 @@ jobs:
   bundle-windows-x64:
     timeout-minutes: 120
     name: Create a Windows installer
-    runs-on: hosted-windows-2
+    runs-on: [self-hosted, Windows, X64]
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [windows_tests]
     env:
@@ -838,10 +834,6 @@ jobs:
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
     steps:
-      # more info here:- https://github.com/rust-lang/cargo/issues/13020
-      - name: Enable longer pathnames for git
-        run: git config --system core.longpaths true
-
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
