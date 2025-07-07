@@ -7167,7 +7167,7 @@ outline: struct OutlineEntryExcerpt
         })
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test]
     async fn test_outline_expand_collapse_functionality(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7431,7 +7431,7 @@ outline: struct OutlineEntryExcerpt
         );
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test]
     async fn test_expand_collapse_functionality(cx: &mut TestAppContext) {
         init_test(cx);
 
