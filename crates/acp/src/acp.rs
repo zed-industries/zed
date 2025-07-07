@@ -824,10 +824,12 @@ impl AcpThread {
                 AgentThreadEntryContent::UserMessage(user_message) => {
                     result.push_str("# User\n");
                     result.push_str(user_message.content.read(cx).source());
+                    result.push('\n');
                 }
                 AgentThreadEntryContent::AssistantMessage(assistant_message) => {
                     result.push_str("# Assistant\n");
                     result.push_str(&assistant_message.to_string(cx));
+                    result.push('\n');
                 }
                 AgentThreadEntryContent::ToolCall(tool_call) => {
                     result.push_str("# Tool Call\n");
