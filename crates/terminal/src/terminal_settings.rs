@@ -234,16 +234,14 @@ pub struct TerminalSettingsContent {
     ///
     /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     /// especially for dark mode. Values range from 0 to 106.
-    /// - 0: No contrast adjustment
-    /// - 15: Minimum for non-text elements
-    /// - 30: Minimum for large text (24px+)
-    /// - 45: Minimum for medium text (18px+)
-    /// - 60: Minimum for body text (similar to WCAG 3:1)
-    /// - 75: Enhanced contrast (similar to WCAG 4.5:1)
-    /// - 90: High contrast (similar to WCAG 7:1)
     ///
-    /// Most terminal themes use colors with APCA values of 40-70.
-    /// A value of 45 provides good legibility while preserving colors.
+    /// Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    /// https://readtech.org/ARC/tests/bronze-simple-mode/
+    /// - 0: No contrast adjustment
+    /// - 45: Minimum for large fluent text (36px+)
+    /// - 60: Minimum for other content text
+    /// - 75: Minimum for body text
+    /// - 90: Preferred for body text
     ///
     /// Default: 0 (no adjustment)
     pub minimum_contrast: Option<f32>,

@@ -63,13 +63,12 @@ impl Default for APCAConstants {
 /// - Polarity-aware (direction matters)
 /// - Perceptually uniform across the range
 ///
-/// Common APCA Lc thresholds:
-/// - Lc 15: Minimum for non-text elements
-/// - Lc 30: Minimum for large text (24px+)
-/// - Lc 45: Minimum for medium text (18px+)
-/// - Lc 60: Minimum for body text (similar to WCAG 3:1)
-/// - Lc 75: Enhanced contrast (similar to WCAG 4.5:1)
-/// - Lc 90: High contrast (similar to WCAG 7:1)
+/// Common APCA Lc thresholds per ARC Bronze Simple Mode:
+/// https://readtech.org/ARC/tests/bronze-simple-mode/
+/// - Lc 45: Minimum for large fluent text (36px+)
+/// - Lc 60: Minimum for other content text
+/// - Lc 75: Minimum for body text
+/// - Lc 90: Preferred for body text
 ///
 /// Most terminal themes use colors with APCA values of 40-70.
 ///
@@ -142,11 +141,9 @@ fn srgb_to_y(color: Hsla, constants: &APCAConstants) -> f32 {
 
 /// Adjusts the foreground color to meet the minimum APCA contrast against the background.
 /// The minimum_apca_contrast should be an absolute value (e.g., 75 for Lc 75).
-/// If the current contrast is below the minimum, it returns either black or white,
-/// whichever provides better contrast.
 ///
-/// Note: This is a simple implementation that only tries black or white.
-/// A more sophisticated approach could adjust lightness while preserving hue.
+/// This implementation gradually adjusts the lightness while preserving the hue and
+/// saturation as much as possible, only falling back to black/white when necessary.
 pub fn ensure_minimum_contrast(
     foreground: Hsla,
     background: Hsla,
@@ -162,19 +159,36 @@ pub fn ensure_minimum_contrast(
         return foreground;
     }
 
-    // Try black and white to see which provides better contrast
+    // First, try to adjust lightness while preserving hue and saturation
+    let adjusted = adjust_lightness_for_contrast(foreground, background, minimum_apca_contrast);
+
+    let adjusted_contrast = apca_contrast(adjusted, background).abs();
+    if adjusted_contrast >= minimum_apca_contrast {
+        return adjusted;
+    }
+
+    // If that's not enough, gradually reduce saturation while adjusting lightness
+    let desaturated =
+        adjust_lightness_and_saturation_for_contrast(foreground, background, minimum_apca_contrast);
+
+    let desaturated_contrast = apca_contrast(desaturated, background).abs();
+    if desaturated_contrast >= minimum_apca_contrast {
+        return desaturated;
+    }
+
+    // Last resort: use black or white
     let black = Hsla {
         h: 0.0,
         s: 0.0,
         l: 0.0,
-        a: foreground.a, // Preserve alpha
+        a: foreground.a,
     };
 
     let white = Hsla {
         h: 0.0,
         s: 0.0,
         l: 1.0,
-        a: foreground.a, // Preserve alpha
+        a: foreground.a,
     };
 
     let black_contrast = apca_contrast(black, background).abs();
@@ -184,6 +198,97 @@ pub fn ensure_minimum_contrast(
         white
     } else {
         black
+    }
+}
+
+/// Adjusts only the lightness to meet the minimum contrast, preserving hue and saturation
+fn adjust_lightness_for_contrast(
+    foreground: Hsla,
+    background: Hsla,
+    minimum_apca_contrast: f32,
+) -> Hsla {
+    // Determine if we need to go lighter or darker
+    let bg_luminance = srgb_to_y(background, &APCAConstants::default());
+    let should_go_darker = bg_luminance > 0.5;
+
+    // Binary search for the optimal lightness
+    let mut low = if should_go_darker { 0.0 } else { foreground.l };
+    let mut high = if should_go_darker { foreground.l } else { 1.0 };
+    let mut best_l = foreground.l;
+
+    for _ in 0..20 {
+        let mid = (low + high) / 2.0;
+        let test_color = Hsla {
+            h: foreground.h,
+            s: foreground.s,
+            l: mid,
+            a: foreground.a,
+        };
+
+        let contrast = apca_contrast(test_color, background).abs();
+
+        if contrast >= minimum_apca_contrast {
+            best_l = mid;
+            // Try to get closer to the minimum
+            if should_go_darker {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        } else {
+            if should_go_darker {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+
+        // If we're close enough to the target, stop
+        if (contrast - minimum_apca_contrast).abs() < 1.0 {
+            best_l = mid;
+            break;
+        }
+    }
+
+    Hsla {
+        h: foreground.h,
+        s: foreground.s,
+        l: best_l,
+        a: foreground.a,
+    }
+}
+
+/// Adjusts both lightness and saturation to meet the minimum contrast
+fn adjust_lightness_and_saturation_for_contrast(
+    foreground: Hsla,
+    background: Hsla,
+    minimum_apca_contrast: f32,
+) -> Hsla {
+    // Try different saturation levels
+    let saturation_steps = [1.0, 0.8, 0.6, 0.4, 0.2, 0.0];
+
+    for &sat_multiplier in &saturation_steps {
+        let test_color = Hsla {
+            h: foreground.h,
+            s: foreground.s * sat_multiplier,
+            l: foreground.l,
+            a: foreground.a,
+        };
+
+        let adjusted = adjust_lightness_for_contrast(test_color, background, minimum_apca_contrast);
+        let contrast = apca_contrast(adjusted, background).abs();
+
+        if contrast >= minimum_apca_contrast {
+            return adjusted;
+        }
+    }
+
+    // If we get here, even grayscale didn't work, so return the grayscale attempt
+    Hsla {
+        h: foreground.h,
+        s: 0.0,
+        l: foreground.l,
+        a: foreground.a,
     }
 }
 
@@ -350,9 +455,12 @@ mod tests {
 
         // With minimum APCA contrast of 15 (very low, but detectable), it should adjust
         let adjusted = ensure_minimum_contrast(fg, bg, 15.0);
+        // The new algorithm preserves colors, so we just need to check contrast
+        let new_contrast = apca_contrast(adjusted, bg).abs();
         assert!(
-            adjusted.l < 0.1 || adjusted.l > 0.9,
-            "Color should be adjusted to black or white"
+            new_contrast >= 15.0,
+            "Adjusted contrast {} should be >= 15.0",
+            new_contrast
         );
 
         // The adjusted color should have sufficient contrast

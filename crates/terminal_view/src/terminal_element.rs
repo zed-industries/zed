@@ -1436,9 +1436,14 @@ mod tests {
             actual_contrast
         );
 
-        // After adjustment with minimum APCA contrast of 45, should be dark
+        // After adjustment with minimum APCA contrast of 45, should be darker
         let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
-        assert!(adjusted.l < 0.1, "Adjusted color should be dark");
+        assert!(
+            adjusted.l < white_fg.l,
+            "Adjusted color should be darker than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 2: Dark colors (poor contrast)
         let black_fg = gpui::Hsla {
@@ -1462,9 +1467,14 @@ mod tests {
             actual_contrast
         );
 
-        // After adjustment with minimum APCA contrast of 45, should be light
+        // After adjustment with minimum APCA contrast of 45, should be lighter
         let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
-        assert!(adjusted.l > 0.9, "Adjusted color should be light");
+        assert!(
+            adjusted.l > black_fg.l,
+            "Adjusted color should be lighter than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
 
         // Test case 3: Already good contrast
         let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
@@ -1497,11 +1507,11 @@ mod tests {
         let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
         assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
 
-        // With minimum APCA contrast of 15, it should adjust to black
+        // With minimum APCA contrast of 15, it should adjust to a darker color
         let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
         assert!(
-            adjusted.l < 0.1,
-            "White on white with min_contrast 15.0 should become dark, got l={}",
+            adjusted.l < white_fg.l,
+            "White on white should become darker, got l={}",
             adjusted.l
         );
 
