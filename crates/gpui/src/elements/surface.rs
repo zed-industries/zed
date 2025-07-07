@@ -94,7 +94,10 @@ impl Element for Surface {
         match &self.source {
             #[cfg(target_os = "macos")]
             SurfaceSource::Surface(surface) => {
-                let size = crate::size(surface.get_width().into(), surface.get_height().into());
+                let size = crate::size(
+                    crate::physical_px(surface.get_width().try_into().unwrap()),
+                    crate::physical_px(surface.get_height().try_into().unwrap()),
+                );
                 let new_bounds = self.object_fit.get_bounds(bounds, size);
                 // TODO: Add support for corner_radii
                 window.paint_surface(new_bounds, surface.clone());

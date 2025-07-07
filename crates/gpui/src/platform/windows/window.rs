@@ -1297,7 +1297,7 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{DevicePixels, MouseButton, point};
+    use crate::{MouseButton, physical_px, point};
     use std::time::Duration;
 
     #[test]

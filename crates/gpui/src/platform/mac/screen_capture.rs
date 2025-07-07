@@ -1,5 +1,5 @@
 use crate::{
-    DevicePixels, ForegroundExecutor, SharedString, SourceMetadata,
+    DevicePixels, ForegroundExecutor, SharedString, SourceMetadata, physical_px,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     size,
 };
