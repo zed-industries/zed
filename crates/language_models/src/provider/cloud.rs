@@ -727,7 +727,13 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count as u64
+        if self.model.supports_max_mode
+            && let Some(max_token_count) = self.model.max_token_count_in_max_mode
+        {
+            max_token_count as u64
+        } else {
+            self.model.max_token_count as u64
+        }
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
