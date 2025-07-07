@@ -49,6 +49,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
+    pub minimum_contrast: f32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -229,6 +230,16 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// The minimum contrast ratio between foreground and background colors.
+    ///
+    /// The contrast ratio is a value between 1 and 21. A value of 1 allows for no
+    /// contrast (e.g. black on black). Higher values ensure greater legibility.
+    /// If the contrast between text and background is below this threshold,
+    /// the text color will be adjusted to either black or white, whichever
+    /// provides better contrast.
+    ///
+    /// Default: 1.0 (no adjustment)
+    pub minimum_contrast: Option<f32>,
 }
 
 impl settings::Settings for TerminalSettings {
@@ -237,7 +248,18 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
+        let settings: Self = sources.json_merge()?;
+
+        // Validate minimum_contrast
+        if settings.minimum_contrast < 1.0 || settings.minimum_contrast > 21.0 {
+            anyhow::bail!(
+                "terminal.minimum_contrast must be between 1.0 and 21.0, but got {}. \
+                A value of 1.0 means no contrast adjustment, and 21.0 is maximum contrast.",
+                settings.minimum_contrast
+            );
+        }
+
+        Ok(settings)
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {

@@ -1350,7 +1350,7 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
@@ -1367,6 +1367,13 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
+    // The minimum contrast ratio between foreground and background colors.
+    // The contrast ratio is a value between 1 and 21. A value of 1 allows for no
+    // contrast (e.g. black on black). Higher values ensure greater legibility.
+    // If the contrast between text and background is below this threshold,
+    // the text color will be adjusted to either black or white, whichever
+    // provides better contrast.
+    "minimum_contrast": 1.1
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
