@@ -4,12 +4,12 @@ use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
 };
 use super::dap_command::{
-    self, Attach, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand,
-    EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
-    ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
-    ScopesCommand, SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand,
-    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
-    TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    self, Attach, ConfigurationDone, ContinueCommand, DisconnectCommand, EvaluateCommand,
+    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
+    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
+    SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand, StepBackCommand,
+    StepCommand, StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand,
+    ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
@@ -555,7 +555,7 @@ impl RunningMode {
 }
 
 impl Mode {
-    pub(super) fn request_dap<R: DapCommand>(&self, request: R) -> Task<Result<R::Response>>
+    pub(super) fn request_dap<R: LocalDapCommand>(&self, request: R) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
@@ -689,7 +689,7 @@ trait CacheableCommand: Any + Send + Sync {
 
 impl<T> CacheableCommand for T
 where
-    T: DapCommand + PartialEq + Eq + Hash,
+    T: LocalDapCommand + PartialEq + Eq + Hash,
 {
     fn dyn_eq(&self, rhs: &dyn CacheableCommand) -> bool {
         (rhs as &dyn Any)
@@ -708,7 +708,7 @@ where
 
 pub(crate) struct RequestSlot(Arc<dyn CacheableCommand>);
 
-impl<T: DapCommand + PartialEq + Eq + Hash> From<T> for RequestSlot {
+impl<T: LocalDapCommand + PartialEq + Eq + Hash> From<T> for RequestSlot {
     fn from(request: T) -> Self {
         Self(Arc::new(request))
     }
@@ -1534,7 +1534,7 @@ impl Session {
     }
 
     /// Ensure that there's a request in flight for the given command, and if not, send it. Use this to run requests that are idempotent.
-    fn fetch<T: DapCommand + PartialEq + Eq + Hash>(
+    fn fetch<T: LocalDapCommand + PartialEq + Eq + Hash>(
         &mut self,
         request: T,
         process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) + 'static,
@@ -1585,7 +1585,7 @@ impl Session {
         }
     }
 
-    fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
+    fn request_inner<T: LocalDapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
         mode: &Mode,
         request: T,
@@ -1621,7 +1621,7 @@ impl Session {
         })
     }
 
-    fn request<T: DapCommand + PartialEq + Eq + Hash>(
+    fn request<T: LocalDapCommand + PartialEq + Eq + Hash>(
         &self,
         request: T,
         process_result: impl FnOnce(
@@ -1635,7 +1635,7 @@ impl Session {
         Self::request_inner(&self.capabilities, &self.mode, request, process_result, cx)
     }
 
-    fn invalidate_command_type<Command: DapCommand>(&mut self) {
+    fn invalidate_command_type<Command: LocalDapCommand>(&mut self) {
         self.requests.remove(&std::any::TypeId::of::<Command>());
     }
 
@@ -1816,7 +1816,7 @@ impl Session {
         Some(())
     }
 
-    fn on_step_response<T: DapCommand + PartialEq + Eq + Hash>(
+    fn on_step_response<T: LocalDapCommand + PartialEq + Eq + Hash>(
         thread_id: ThreadId,
     ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
     {
