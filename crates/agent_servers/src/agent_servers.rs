@@ -3,14 +3,14 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
-use util::paths;
+use util::{ResultExt, paths};
 
 pub fn init(cx: &mut App) {
     AllAgentServersSettings::register(cx);
@@ -36,44 +36,80 @@ pub struct AgentServerCommand {
     pub env: Option<HashMap<String, String>>,
 }
 
-impl AgentServerCommand {
-    pub async fn gemini(project: &Entity<Project>, cx: &mut AsyncApp) -> Result<Self> {
-        const ACP_ARG: &str = "--acp";
+pub struct Gemini;
 
-        let custom_command = cx.read_global(|settings: &SettingsStore, _| {
-            let settings = settings.get::<AllAgentServersSettings>(None);
-            settings.gemini.as_ref().map(|gemini| AgentServerCommand {
-                path: gemini.command.path.clone(),
-                args: gemini
-                    .command
-                    .args
-                    .iter()
-                    .cloned()
-                    .chain(std::iter::once(ACP_ARG.into()))
-                    .collect(),
-                env: gemini.command.env.clone(),
+pub trait AgentServer {
+    fn command(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> impl Future<Output = Option<AgentServerCommand>>;
+
+    fn version_supported(&self, command: &AgentServerCommand) -> impl Future<Output = bool>;
+}
+
+const GEMINI_ACP_ARG: &str = "--acp";
+
+impl AgentServer for Gemini {
+    async fn command(
+        &self,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Option<AgentServerCommand> {
+        let custom_command = cx
+            .read_global(|settings: &SettingsStore, _| {
+                let settings = settings.get::<AllAgentServersSettings>(None);
+                settings
+                    .gemini
+                    .as_ref()
+                    .map(|gemini_settings| AgentServerCommand {
+                        path: gemini_settings.command.path.clone(),
+                        args: gemini_settings
+                            .command
+                            .args
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(GEMINI_ACP_ARG.into()))
+                            .collect(),
+                        env: gemini_settings.command.env.clone(),
+                    })
             })
-        })?;
+            .log_err()?;
 
-        if let Some(custom_command) = custom_command {
-            return Ok(custom_command);
+        if custom_command.is_some() {
+            return custom_command;
         }
 
-        let path = Self::find_bin_in_path("gemini", project, cx).await?;
+        let path = find_bin_in_path("gemini", project, cx).await?;
 
-        Ok(Self {
+        Some(AgentServerCommand {
             path,
-            args: vec![ACP_ARG.into()],
+            args: vec![GEMINI_ACP_ARG.into()],
             env: None,
         })
     }
 
-    async fn find_bin_in_path(
-        bin_name: &'static str,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<PathBuf> {
-        let (env_task, root_dir) = project.update(cx, |project, cx| {
+    async fn version_supported(&self, command: &AgentServerCommand) -> bool {
+        util::command::new_smol_command(&command.path)
+            .args(command.args.iter())
+            .arg("--help")
+            .kill_on_drop(true)
+            .output()
+            .await
+            .log_err()
+            .map_or(false, |help_output| {
+                String::from_utf8_lossy(&help_output.stdout).contains(GEMINI_ACP_ARG)
+            })
+    }
+}
+
+async fn find_bin_in_path(
+    bin_name: &'static str,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Option<PathBuf> {
+    let (env_task, root_dir) = project
+        .update(cx, |project, cx| {
             let worktree = project.visible_worktrees(cx).next();
             match worktree {
                 Some(worktree) => {
@@ -92,17 +128,22 @@ impl AgentServerCommand {
                     (env_task, path)
                 }
             }
-        })?;
+        })
+        .log_err()?;
 
-        if cfg!(windows) {
-            which::which(bin_name)
-        } else {
-            let env = env_task.await.unwrap_or_default();
-            let shell_path = env.get("PATH").cloned();
-            which::which_in(bin_name, shell_path.as_ref(), root_dir.as_ref())
-        }
-        .context(format!("Failed to find `{}` in your PATH", bin_name))
+    let which_result = if cfg!(windows) {
+        which::which(bin_name)
+    } else {
+        let env = env_task.await.unwrap_or_default();
+        let shell_path = env.get("PATH").cloned();
+        which::which_in(bin_name, shell_path.as_ref(), root_dir.as_ref())
+    };
+
+    if let Err(which::Error::CannotFindBinaryPath) = which_result {
+        return None;
     }
+
+    which_result.log_err()
 }
 
 impl std::fmt::Debug for AgentServerCommand {

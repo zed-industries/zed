@@ -3,7 +3,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_servers::AgentServerCommand;
 use agentic_coding_protocol::{self as acp};
 use collections::HashSet;
 use editor::{
@@ -11,10 +10,10 @@ use editor::{
     EditorStyle, MinimapVisibility, MultiBuffer,
 };
 use gpui::{
-    Animation, AnimationExt, App, AsyncApp, BorderStyle, EdgesRefinement, Empty, Entity, Focusable,
-    Hsla, Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage,
-    prelude::*, pulsating_between,
+    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, Focusable, Hsla,
+    Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage, prelude::*,
+    pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
@@ -25,14 +24,14 @@ use project::Project;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
-use util::{ResultExt, paths};
+use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::agent::Chat;
 
 use ::acp::{
     AcpThread, AcpThreadEvent, AgentThreadEntryContent, AssistantMessage, AssistantMessageChunk,
-    Diff, MentionPath, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent,
-    ToolCallId, ToolCallStatus,
+    Diff, LoadError, MentionPath, ThreadEntry, ThreadStatus, ToolCall, ToolCallConfirmation,
+    ToolCallContent, ToolCallId, ToolCallStatus,
 };
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
@@ -65,7 +64,7 @@ enum ThreadState {
         thread: Entity<AcpThread>,
         _subscription: Subscription,
     },
-    LoadError(SharedString),
+    LoadError(LoadError),
     Unauthenticated {
         thread: Entity<AcpThread>,
     },
@@ -156,12 +155,20 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadState {
+        let root_dir = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path())
+            .unwrap_or_else(|| paths::home_dir().as_path().into());
+
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let thread = match Self::spawn_thread(project, cx).await {
+            let thread = match AcpThread::spawn(agent_servers::Gemini, &root_dir, project, cx).await
+            {
                 Ok(thread) => thread,
                 Err(err) => {
                     this.update(cx, |this, cx| {
-                        this.thread_state = ThreadState::LoadError(err.to_string().into());
+                        this.handle_load_error(err, None, cx);
                         cx.notify();
                     })
                     .log_err();
@@ -202,22 +209,12 @@ impl AcpThreadView {
                             thread,
                             _subscription: subscription,
                         };
+                        cx.notify();
                     }
-                    Err(e) => {
-                        if let Some(exit_status) = thread.read(cx).exit_status() {
-                            this.thread_state = ThreadState::LoadError(
-                                format!(
-                                    "Gemini exited with status {}",
-                                    exit_status.code().unwrap_or(-127)
-                                )
-                                .into(),
-                            )
-                        } else {
-                            this.thread_state = ThreadState::LoadError(e.to_string().into())
-                        }
+                    Err(err) => {
+                        this.handle_load_error(err, Some(thread), cx);
                     }
                 };
-                cx.notify();
             })
             .log_err();
         });
@@ -225,33 +222,20 @@ impl AcpThreadView {
         ThreadState::Loading { _task: load_task }
     }
 
-    async fn spawn_thread(
-        project: Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> anyhow::Result<Entity<AcpThread>> {
-        let command = AgentServerCommand::gemini(&project, cx).await?;
-
-        let root_dir = project.update(cx, |project, cx| {
-            project
-                .visible_worktrees(cx)
-                .next()
-                .map(|worktree| worktree.read(cx).abs_path())
-                .unwrap_or_else(|| paths::home_dir().as_path().into())
-        })?;
-
-        let child = util::command::new_smol_command(command.path)
-            .args(command.args)
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-
-        let thread = cx.new(|cx| AcpThread::stdio(child, project, cx))?;
-
-        Ok(thread)
+    fn handle_load_error(
+        &mut self,
+        err: anyhow::Error,
+        thread: Option<Entity<AcpThread>>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(load_err) = err.downcast_ref::<LoadError>() {
+            self.thread_state = ThreadState::LoadError(load_err.clone());
+        } else if let Some(load_err) = thread.and_then(|thread| thread.read(cx).load_error()) {
+            self.thread_state = ThreadState::LoadError(load_err.clone());
+        } else {
+            self.thread_state = ThreadState::LoadError(LoadError::Other(err.to_string().into()))
+        }
+        cx.notify();
     }
 
     fn thread(&self) -> Option<&Entity<AcpThread>> {

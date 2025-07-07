@@ -251,6 +251,7 @@ dependencies = [
  "terminal_view",
  "text",
  "theme",
+ "thiserror 2.0.12",
  "time",
  "time_format",
  "tree-sitter-md",

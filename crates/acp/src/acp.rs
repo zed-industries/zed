@@ -1,5 +1,6 @@
+use agent_servers::AgentServer;
 use agentic_coding_protocol::{self as acp, UserMessageChunk};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
@@ -7,13 +8,12 @@ use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Ta
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
 use markdown::Markdown;
 use project::Project;
-use smol::process::Child;
-use std::fmt::Write;
+use std::error::Error;
+use std::fmt::{Formatter, Write};
 use std::{
     fmt::Display,
     mem,
     path::{Path, PathBuf},
-    process::ExitStatus,
     sync::Arc,
 };
 use ui::{App, IconName};
@@ -378,9 +378,8 @@ pub struct AcpThread {
     title: SharedString,
     project: Entity<Project>,
     send_task: Option<Task<()>>,
-
     connection: Arc<acp::AgentConnection>,
-    exit_status: Option<ExitStatus>,
+    load_error: Option<LoadError>,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
@@ -390,6 +389,8 @@ pub enum AcpThreadEvent {
     EntryUpdated(usize),
 }
 
+impl EventEmitter<AcpThreadEvent> for AcpThread {}
+
 #[derive(PartialEq, Eq)]
 pub enum ThreadStatus {
     Idle,
@@ -397,38 +398,92 @@ pub enum ThreadStatus {
     Generating,
 }
 
-impl EventEmitter<AcpThreadEvent> for AcpThread {}
+#[derive(Debug, Clone)]
+pub enum LoadError {
+    Unavailable,
+    Unsupported,
+    Exited(i32),
+    Other(SharedString),
+}
+
+impl Display for LoadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Unavailable => write!(f, "Not installed yet"),
+            LoadError::Unsupported => write!(f, "This server version does not support ACP"),
+            LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
+            LoadError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl Error for LoadError {}
 
 impl AcpThread {
-    pub fn stdio(mut process: Child, project: Entity<Project>, cx: &mut Context<Self>) -> Self {
-        let stdin = process.stdin.take().expect("process didn't have stdin");
-        let stdout = process.stdout.take().expect("process didn't have stdout");
-        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-            stdin,
-            stdout,
-        );
+    pub async fn spawn(
+        server: impl AgentServer + 'static,
+        root_dir: &Path,
+        project: Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<Self>> {
+        let command = match server.command(&project, cx).await {
+            Some(command) => command,
+            None => return Err(anyhow!(LoadError::Unavailable)),
+        };
 
-        let io_task = cx.spawn(async move |this, cx| {
-            cx.background_spawn(async move {
-                io_fut.await.log_err();
-            })
-            .await;
-            let result = process.status().await.log_err();
-            this.update(cx, |this, _| this.exit_status = result).ok();
-        });
-
-        Self {
-            next_entry_id: Default::default(),
-            entries: Default::default(),
-            title: "ACP Thread".into(),
-            project,
-            send_task: None,
-            connection: Arc::new(connection),
-            exit_status: None,
-            _handler_task: cx.foreground_executor().spawn(handler_fut),
-            _io_task: io_task,
+        // todo! get this out of the happy path
+        if !server.version_supported(&command).await {
+            return Err(anyhow!(LoadError::Unsupported));
         }
+
+        let mut child = util::command::new_smol_command(&command.path)
+            .args(command.args.iter())
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        cx.new(|cx| {
+            let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+                AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+                stdin,
+                stdout,
+            );
+
+            let io_task = cx.spawn(async move |this, cx| {
+                cx.background_spawn(async move {
+                    io_fut.await.log_err();
+                })
+                .await;
+
+                if let Some(result) = child.status().await.log_err()
+                    && !result.success()
+                {
+                    this.update(cx, |this, _| {
+                        this.load_error = Some(LoadError::Exited(result.code().unwrap_or(-127)))
+                    })
+                    .log_err();
+                }
+            });
+
+            Self {
+                next_entry_id: Default::default(),
+                entries: Default::default(),
+                title: "ACP Thread".into(),
+                project,
+                send_task: None,
+                connection: Arc::new(connection),
+                load_error: None,
+                _handler_task: cx.foreground_executor().spawn(handler_fut),
+                _io_task: io_task,
+            }
+        })
     }
 
     #[cfg(test)]
@@ -458,7 +513,7 @@ impl AcpThread {
             project,
             send_task: None,
             connection: Arc::new(connection),
-            exit_status: None,
+            load_error: None,
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         }
@@ -811,8 +866,8 @@ impl AcpThread {
         }
     }
 
-    pub fn exit_status(&self) -> Option<&ExitStatus> {
-        self.exit_status.as_ref()
+    pub fn load_error(&self) -> Option<&LoadError> {
+        self.load_error.as_ref()
     }
 
     #[cfg(test)]
@@ -964,6 +1019,7 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_servers::AgentServerCommand;
     use async_pipe::{PipeReader, PipeWriter};
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
@@ -972,7 +1028,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{future::BoxedLocal, stream::StreamExt as _};
-    use std::{env, path::Path, process::Stdio, rc::Rc, time::Duration};
+    use std::{env, path::Path, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1326,24 +1382,35 @@ mod tests {
         current_dir: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> Entity<AcpThread> {
-        let cli_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-        let mut command = util::command::new_smol_command("node");
-        command
-            .arg(cli_path)
-            .arg("--acp")
-            .current_dir(current_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
+        struct DevGemini;
 
-        if let Ok(gemini_key) = std::env::var("GEMINI_API_KEY") {
-            command.env("GEMINI_API_KEY", gemini_key);
+        impl agent_servers::AgentServer for DevGemini {
+            async fn command(
+                &self,
+                _project: &Entity<Project>,
+                _cx: &mut AsyncApp,
+            ) -> Option<agent_servers::AgentServerCommand> {
+                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../gemini-cli/packages/cli")
+                    .to_string_lossy()
+                    .to_string();
+
+                Some(AgentServerCommand {
+                    path: "node".into(),
+                    args: vec![cli_path],
+                    env: None,
+                })
+            }
+
+            async fn version_supported(&self, _command: agent_servers::AgentServerCommand) -> bool {
+                true
+            }
         }
 
-        let child = command.spawn().unwrap();
-        let thread = cx.update(|cx| cx.new(|cx| AcpThread::stdio(child, project, cx)));
+        let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
+            .await
+            .unwrap();
+
         thread
             .update(cx, |thread, _| thread.initialize())
             .await
