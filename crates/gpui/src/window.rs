@@ -3502,6 +3502,7 @@ impl Window {
                         key: key.to_string(),
                         key_char: None,
                         modifiers: Modifiers::default(),
+                        key_code: None,
                     });
                 }
             }

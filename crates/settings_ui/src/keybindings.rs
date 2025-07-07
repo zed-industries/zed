@@ -1026,6 +1026,7 @@ impl KeystrokeInput {
                 modifiers: event.modifiers,
                 key: "".to_string(),
                 key_char: None,
+                key_code: None,
             });
         }
         cx.stop_propagation();
@@ -1066,6 +1067,7 @@ impl KeystrokeInput {
                 modifiers: event.keystroke.modifiers,
                 key: "".to_string(),
                 key_char: None,
+                key_code: None,
             });
         }
         cx.stop_propagation();

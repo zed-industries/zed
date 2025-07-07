@@ -19,6 +19,9 @@ pub struct Keystroke {
     /// this binding was pressed.
     /// e.g. for s this is "s", for option-s "ß", and cmd-s None
     pub key_char: Option<String>,
+
+    /// key_code is keyboard-layout independent key id
+    pub key_code: Option<u32>,
 }
 
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
@@ -70,6 +73,20 @@ impl Keystroke {
 
             if &target.key == key_char && target.modifiers == ime_modifiers {
                 return true;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        if let Some(key_code) = self.key_code.as_ref() {
+            if let Some(key_char) = keycode_to_char(*key_code) {
+                let ime_modifiers = Modifiers {
+                    control: self.modifiers.control,
+                    platform: self.modifiers.platform,
+                    ..Default::default()
+                };
+                if &target.key == &String::from(key_char) && target.modifiers == ime_modifiers {
+                    return true;
+                }
             }
         }
 
@@ -192,6 +209,7 @@ impl Keystroke {
             modifiers,
             key,
             key_char,
+            key_code: None,
         })
     }
 
@@ -545,4 +563,53 @@ pub struct Capslock {
     /// The capslock key is on
     #[serde(default)]
     pub on: bool,
+}
+
+/// Map a keycode (u32) to an ASCII character on US QWERTY layout.
+/// Optionally pass `shift = true` to get the shifted version (e.g. 'A' instead of 'a').
+pub fn keycode_to_char(keycode: u32) -> Option<char> {
+    let c = match keycode {
+        // Top row: QWERTYUIOP[]
+        24 => 'q',
+        25 => 'w',
+        26 => 'e',
+        27 => 'r',
+        28 => 't',
+        29 => 'y',
+        30 => 'u',
+        31 => 'i',
+        32 => 'o',
+        33 => 'p',
+        34 => '[',
+        35 => ']',
+
+        // Home row: ASDFGHJKL;'
+        38 => 'a',
+        39 => 's',
+        40 => 'd',
+        41 => 'f',
+        42 => 'g',
+        43 => 'h',
+        44 => 'j',
+        45 => 'k',
+        46 => 'l',
+        47 => ';',
+        48 => '\'',
+
+        // Bottom row: ZXCVBNM,./
+        52 => 'z',
+        53 => 'x',
+        54 => 'c',
+        55 => 'v',
+        56 => 'b',
+        57 => 'n',
+        58 => 'm',
+        59 => ',',
+        60 => '.',
+        61 => '/',
+
+        _ => return None,
+    };
+
+    Some(c)
 }
