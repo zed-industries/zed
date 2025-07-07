@@ -251,6 +251,8 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use crate::test::VimTestContext;
+
     use crate::{state::Mode, test::NeovimBackedTestContext};
 
     #[gpui::test]
@@ -418,5 +420,26 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("ˇnopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM");
+    }
+
+    #[gpui::test]
+    async fn test_change_case_helix_mode(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Explicit selection
+        cx.set_state("«hello worldˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("~");
+        cx.assert_state("«HELLO WORLDˇ»", Mode::HelixNormal);
+
+        // Cursor-only (empty) selection
+        cx.set_state("The ˇquick brown", Mode::HelixNormal);
+        cx.simulate_keystrokes("~");
+        cx.assert_state("The ˇQUICK brown", Mode::HelixNormal);
+
+        // With `e` motion (which extends selection to end of word in Helix)
+        cx.set_state("The ˇquick brown fox", Mode::HelixNormal);
+        cx.simulate_keystrokes("e");
+        cx.simulate_keystrokes("~");
+        cx.assert_state("The «QUICKˇ» brown fox", Mode::HelixNormal);
     }
 }
