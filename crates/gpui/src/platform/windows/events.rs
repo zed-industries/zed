@@ -404,7 +404,6 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYDOWN: wparam: {wparam:?}, lparam: {lparam:?}");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
@@ -448,7 +447,6 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYUP:   wparam: {wparam:?}, lparam: {lparam:?}");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
@@ -468,7 +466,6 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    println!("=> WM_CHAR: wparam: {wparam:x}", wparam = wparam.0);
     let input = parse_char_message(wparam, &state_ptr)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
