@@ -22348,6 +22348,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
         def f() -> list[str]:
             aˇ
     "});
+
+    // test does not outdent on typing : after case keyword
+    cx.set_state(indoc! {"
+        match 1:
+            caseˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(":", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        match 1:
+            case:ˇ
+    "});
 }
 
 #[gpui::test]
