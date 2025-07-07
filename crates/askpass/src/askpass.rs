@@ -125,7 +125,14 @@ impl AskPassSession {
 
         // Create an askpass script that communicates back to this process.
         let askpass_script = generate_askpass_script(&zed_path, &askpass_socket);
-        fs::write(&askpass_script_path, askpass_script).await?;
+        fs::write(&askpass_script_path, askpass_script)
+            .await
+            .with_context(|| {
+                format!(
+                    "creating askpass script at {}",
+                    askpass_script_path.display()
+                )
+            })?;
         make_file_executable(&askpass_script_path).await?;
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
