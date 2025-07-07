@@ -1280,6 +1280,10 @@ where
                 capslock: current_capslock(),
             }))
         }
+        VK_PACKET => {
+            translate_message(handle, wparam, lparam);
+            None
+        }
         VK_CAPITAL => {
             let capslock = current_capslock();
             if state
