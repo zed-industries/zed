@@ -11,7 +11,7 @@ pub trait StickyCandidate {
 }
 
 pub struct StickyItems<T> {
-    compute_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<T>>,
+    compute_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[T; 8]>>,
     render_fn: Box<dyn Fn(T, &mut Window, &mut App) -> SmallVec<[AnyElement; 8]>>,
     last_item_is_drifting: bool,
     anchor_index: Option<usize>,
@@ -19,7 +19,8 @@ pub struct StickyItems<T> {
 
 pub fn sticky_items<V, T>(
     entity: Entity<V>,
-    compute_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<T> + 'static,
+    compute_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> SmallVec<[T; 8]>
+    + 'static,
     render_fn: impl Fn(&mut V, T, &mut Window, &mut Context<V>) -> SmallVec<[AnyElement; 8]> + 'static,
 ) -> StickyItems<T>
 where
@@ -30,7 +31,7 @@ where
     let entity_render = entity.clone();
 
     let compute_fn = Box::new(
-        move |range: Range<usize>, window: &mut Window, cx: &mut App| -> Vec<T> {
+        move |range: Range<usize>, window: &mut Window, cx: &mut App| -> SmallVec<[T; 8]> {
             entity_compute.update(cx, |view, cx| compute_fn(view, range, window, cx))
         },
     );
