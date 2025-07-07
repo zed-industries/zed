@@ -640,11 +640,11 @@ mod tests {
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 $ZED_SELECTED_TEXT",
-                    "arg2 $ZED_COLUMN",
-                    "arg3 $ZED_SYMBOL",
+                    "arg1 test_selected_text",
+                    "arg2 5678",
+                    "arg3 010101010101010101010101010101010101010101010101010101010101",
                 ],
-                "Args should not be substituted with variables"
+                "Args should be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
