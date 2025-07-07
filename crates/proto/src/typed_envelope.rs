@@ -251,6 +251,7 @@ mod tests {
             let windows_path = WindowsPathBuf::from(windows_path_str);
             let proto = windows_path_to_proto(&windows_path);
             let recovered_path = windows_path_from_proto(proto);
+            assert_eq!(windows_path, recovered_path);
             assert_eq!(
                 recovered_path.to_string_lossy(),
                 windows_path_str.replace('/', "\\")
@@ -261,6 +262,7 @@ mod tests {
             let unix_path = UnixPathBuf::from(unix_path_str);
             let proto = unix_path_to_proto(&unix_path);
             let recovered_path = unix_path_from_proto(proto);
+            assert_eq!(unix_path, recovered_path);
             assert_eq!(recovered_path.to_string_lossy(), unix_path_str);
         }
         // Windows host, Unix client, host sends Windows path to client
