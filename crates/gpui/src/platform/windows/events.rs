@@ -1248,7 +1248,7 @@ fn parse_char_message(wparam: WPARAM, state_ptr: &Rc<WindowsWindowStatePtr>) -> 
         }
         _ => {
             lock.pending_surrogate = None;
-            char::from_u32(code_point as u32).map(|c| c.to_string())
+            String::from_utf16(&[code_point]).ok()
         }
     }
 }
