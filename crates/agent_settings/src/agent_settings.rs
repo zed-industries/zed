@@ -292,7 +292,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
-    /// Whether to have edit cards in the agent panel expanded.
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     ///
     /// Default: true
     expand_edit_card: Option<bool>,
