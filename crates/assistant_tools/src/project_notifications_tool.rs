@@ -53,13 +53,19 @@ impl Tool for ProjectNotificationsTool {
         cx: &mut App,
     ) -> ToolResult {
         let mut stale_files = String::new();
+        let mut notified_buffers = Vec::new();
 
-        let action_log = action_log.read(cx);
-
-        for stale_file in action_log.stale_buffers(cx) {
+        for stale_file in action_log.read(cx).unnotified_stale_buffers(cx) {
             if let Some(file) = stale_file.read(cx).file() {
                 writeln!(&mut stale_files, "- {}", file.path().display()).ok();
+                notified_buffers.push(stale_file.clone());
             }
+        }
+
+        if !notified_buffers.is_empty() {
+            action_log.update(cx, |log, cx| {
+                log.mark_buffers_as_notified(notified_buffers, cx);
+            });
         }
 
         let response = if stale_files.is_empty() {
@@ -155,11 +161,11 @@ mod tests {
 
         // Run the tool again
         let result = cx.update(|cx| {
-            tool.run(
+            tool.clone().run(
                 tool_input.clone(),
                 request.clone(),
                 project.clone(),
-                action_log,
+                action_log.clone(),
                 model.clone(),
                 None,
                 cx,
@@ -178,6 +184,31 @@ mod tests {
             response_text.as_str(),
             expected_content,
             "Tool should return the stale buffer notification"
+        );
+
+        // Run the tool once more without any changes - should get no new notifications
+        let result = cx.update(|cx| {
+            tool.run(
+                tool_input.clone(),
+                request.clone(),
+                project.clone(),
+                action_log,
+                model.clone(),
+                None,
+                cx,
+            )
+        });
+
+        let response = result.output.await.unwrap();
+        let response_text = match &response.content {
+            ToolResultContent::Text(text) => text.clone(),
+            _ => panic!("Expected text response"),
+        };
+
+        assert_eq!(
+            response_text.as_str(),
+            "No new notifications",
+            "Tool should return 'No new notifications' when running again without changes"
         );
     }
 
