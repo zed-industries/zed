@@ -1553,9 +1553,11 @@ impl Thread {
     }
 
     fn attach_tracked_files_state(&mut self, model: Arc<dyn LanguageModel>, cx: &mut App) {
+        dbg!("here");
         let action_log = self.action_log.read(cx);
 
         if action_log.stale_buffers(cx).next().is_none() {
+            dbg!("no stale buffers");
             return;
         }
 
@@ -1565,9 +1567,13 @@ impl Thread {
             return debug_panic!("`project_updates` tool not found");
         };
 
+        dbg!(&self.profile);
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            dbg!("no tool enabled");
             return;
         }
+
+        dbg!("2");
 
         let input = serde_json::json!({});
         let request = Arc::new(LanguageModelRequest::default()); // unused
@@ -3337,10 +3343,13 @@ mod tests {
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use assistant_tools;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
+    use http_client;
+    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3735,12 +3744,6 @@ fn main() {{
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
-        // Find the fake project_updates tool use and result
-        thread.update(cx, |thread, cx| {
-            let task = thread.serialize(cx);
-            let result = cx.background_executor().block(task).unwrap();
-            dbg!(&result);
-        });
         let Some(notification_result) =
             thread.read_with(cx, |thread, _cx| find_tool_use(thread, "project_updates"))
         else {
@@ -3751,16 +3754,15 @@ fn main() {{
             panic!("`project_updates` should return text");
         };
 
-        let expected_content = "[The following is an auto-generated notification; do not reply]
+        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
 
         These files have changed since the last read:
         - code.rs
-        ";
+        "};
         assert_eq!(notification_content, expected_content);
     }
 
     fn find_tool_use(thread: &Thread, tool_name: &str) -> Option<LanguageModelToolResult> {
-        dbg!(&thread.messages);
         thread
             .messages()
             .filter_map(|message| {
@@ -5338,6 +5340,15 @@ fn main() {{
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ToolRegistry::default_global(cx);
+            assistant_tool::init(cx);
+
+            // Initialize assistant tools including project_updates
+            let http_client = Arc::new(http_client::HttpClientWithUrl::new(
+                http_client::FakeHttpClient::with_200_response(),
+                "http://localhost".to_string(),
+                None,
+            ));
+            assistant_tools::init(http_client, cx);
         });
     }
 
