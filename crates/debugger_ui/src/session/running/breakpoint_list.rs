@@ -6,7 +6,7 @@ use std::{
 };
 
 use dap::{Capabilities, ExceptionBreakpointsFilter, adapters::DebugAdapterName};
-use db::kvp::{GlobalKeyValueStore, KEY_VALUE_STORE, KeyValueStore};
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -114,7 +114,7 @@ impl BreakpointList {
                 serialize_exception_breakpoints_task: None,
             };
             if let Some(name) = adapter_name {
-                this.deserialize_exception_breakpoints(name, cx);
+                _ = this.deserialize_exception_breakpoints(name, cx);
             }
             this
         })
@@ -502,7 +502,7 @@ impl BreakpointList {
                     .timer(EXCEPTION_SERIALIZATION_INTERVAL)
                     .await;
                 this.update(cx, |this, cx| this.serialize_exception_breakpoints(cx))?
-                    .await;
+                    .await?;
                 Ok(())
             }));
         }
