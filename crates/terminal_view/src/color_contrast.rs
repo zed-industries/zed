@@ -64,12 +64,14 @@ impl Default for APCAConstants {
 /// - Perceptually uniform across the range
 ///
 /// Common APCA Lc thresholds:
-/// - Lc 15: Minimum for large text
-/// - Lc 30: Minimum for incidental text
-/// - Lc 45: Minimum for placeholders
-/// - Lc 60: Minimum for body text (similar to WCAG 2.x 4.5:1)
-/// - Lc 75: Recommended minimum for body text
-/// - Lc 90: Preferred for body text
+/// - Lc 15: Minimum for non-text elements
+/// - Lc 30: Minimum for large text (24px+)
+/// - Lc 45: Minimum for medium text (18px+)
+/// - Lc 60: Minimum for body text (similar to WCAG 3:1)
+/// - Lc 75: Enhanced contrast (similar to WCAG 4.5:1)
+/// - Lc 90: High contrast (similar to WCAG 7:1)
+///
+/// Most terminal themes use colors with APCA values of 40-70.
 ///
 /// https://github.com/Myndex/apca-w3
 pub fn apca_contrast(text_color: Hsla, background_color: Hsla) -> f32 {
@@ -301,8 +303,8 @@ mod tests {
             initial_contrast
         );
 
-        // Should be adjusted to black for better contrast (using APCA Lc 75 as minimum)
-        let adjusted = ensure_minimum_contrast(light_gray, white_bg, 75.0);
+        // Should be adjusted to black for better contrast (using APCA Lc 45 as minimum)
+        let adjusted = ensure_minimum_contrast(light_gray, white_bg, 45.0);
         assert_eq!(adjusted.l, 0.0); // Should be black
         assert_eq!(adjusted.a, light_gray.a); // Alpha preserved
 
@@ -319,12 +321,12 @@ mod tests {
         );
 
         // Should be adjusted to white for better contrast
-        let adjusted = ensure_minimum_contrast(dark_gray, black_bg, 75.0);
+        let adjusted = ensure_minimum_contrast(dark_gray, black_bg, 45.0);
         assert_eq!(adjusted.l, 1.0); // Should be white
 
         // Test when contrast is already sufficient
         let black = hsla(0.0, 0.0, 0.0, 1.0);
-        let adjusted = ensure_minimum_contrast(black, white_bg, 75.0);
+        let adjusted = ensure_minimum_contrast(black, white_bg, 45.0);
         assert_eq!(adjusted, black); // Should remain unchanged
     }
 

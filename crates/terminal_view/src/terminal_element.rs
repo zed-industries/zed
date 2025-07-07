@@ -1436,8 +1436,8 @@ mod tests {
             actual_contrast
         );
 
-        // After adjustment with minimum APCA contrast of 75, should be dark
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 75.0);
+        // After adjustment with minimum APCA contrast of 45, should be dark
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
         assert!(adjusted.l < 0.1, "Adjusted color should be dark");
 
         // Test case 2: Dark colors (poor contrast)
@@ -1462,12 +1462,12 @@ mod tests {
             actual_contrast
         );
 
-        // After adjustment with minimum APCA contrast of 75, should be light
-        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 75.0);
+        // After adjustment with minimum APCA contrast of 45, should be light
+        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
         assert!(adjusted.l > 0.9, "Adjusted color should be light");
 
         // Test case 3: Already good contrast
-        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 75.0);
+        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
         assert_eq!(
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
