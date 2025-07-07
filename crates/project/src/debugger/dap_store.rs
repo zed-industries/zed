@@ -92,20 +92,21 @@ pub struct DapStore {
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
+    adapter_options: BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 #[derive(Clone, Serialize, Deserialize)]
-struct PersistedExceptionBreakpoint {
-    enabled: bool,
+pub struct PersistedExceptionBreakpoint {
+    pub enabled: bool,
 }
 
 /// Represents best-effort serialization of adapter state during last session (e.g. watches)
-#[derive(Clone, Serialize, Deserialize)]
-struct PersistedAdapterOptions {
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct PersistedAdapterOptions {
     /// Which exception breakpoints were enabled during the last session with this adapter?
-    exception_breakpoints: HashMap<String, PersistedExceptionBreakpoint>,
+    pub exception_breakpoints: BTreeMap<String, PersistedExceptionBreakpoint>,
 }
 
 impl DapStore {
@@ -184,6 +185,7 @@ impl DapStore {
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
+            adapter_options: Default::default(),
         }
     }
 
@@ -804,6 +806,45 @@ impl DapStore {
                     .ok();
             })
         })
+    }
+
+    pub fn sync_adapter_options(
+        &mut self,
+        session: &Entity<Session>,
+        cx: &App,
+    ) -> Arc<PersistedAdapterOptions> {
+        let session = session.read(cx);
+        let adapter = session.adapter();
+        let exceptions = session.exception_breakpoints();
+        let exception_breakpoints = exceptions
+            .map(|(exception, enabled)| {
+                (
+                    exception.filter.clone(),
+                    PersistedExceptionBreakpoint { enabled: *enabled },
+                )
+            })
+            .collect();
+        let options = Arc::new(PersistedAdapterOptions {
+            exception_breakpoints,
+        });
+        self.adapter_options.insert(adapter, options.clone());
+        options
+    }
+
+    pub fn set_adapter_options(
+        &mut self,
+        adapter: DebugAdapterName,
+        options: PersistedAdapterOptions,
+    ) {
+        self.adapter_options.insert(adapter, Arc::new(options));
+    }
+
+    pub fn adapter_options(&self, name: &str) -> Option<Arc<PersistedAdapterOptions>> {
+        self.adapter_options.get(name).cloned()
+    }
+
+    pub fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
+        &self.adapter_options
     }
 }
 
