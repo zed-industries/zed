@@ -88,7 +88,7 @@ pub(crate) fn handle_msg(
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(handle, wparam, lparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
@@ -467,21 +467,9 @@ fn handle_keyup_msg(
     if handled { Some(0) } else { Some(1) }
 }
 
-fn handle_char_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
-    println!(
-        "=> WM_CHAR: wparam: {wparam:x}, lparam: {lparam:?}",
-        wparam = wparam.0
-    );
-    let Some(input) = char::from_u32(wparam.0 as u32)
-        .filter(|c| !c.is_control())
-        .map(String::from)
-    else {
-        return Some(1);
-    };
+fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    println!("=> WM_CHAR: wparam: {wparam:x}", wparam = wparam.0);
+    let input = parse_char_message(wparam)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
@@ -1236,6 +1224,19 @@ fn handle_input_language_changed(
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
     Some(0)
+}
+
+#[inline]
+fn parse_char_message(wparam: WPARAM) -> Option<String> {
+    let code_point = wparam.loword();
+    // https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G2630
+    if code_point >= 0xDC00 && code_point <= 0xDFFF {
+        // This is a surrogate code point, which is not valid on its own.
+        return None;
+    }
+    char::from_u32(wparam.0 as u32)
+        .filter(|c| !c.is_control())
+        .map(String::from)
 }
 
 #[inline]
