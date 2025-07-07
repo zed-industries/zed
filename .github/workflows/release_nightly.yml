@@ -265,12 +265,12 @@ jobs:
     runs-on: hosted-windows-2
     needs: windows-clippy-and-tests
     env:
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ secrets.ENDPOINT }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ secrets.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
