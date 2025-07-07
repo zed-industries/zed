@@ -1025,11 +1025,11 @@ struct KeyContextCompletionProvider {
 impl CompletionProvider for KeyContextCompletionProvider {
     fn completions(
         &self,
-        excerpt_id: editor::ExcerptId,
+        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<language::Buffer>,
         buffer_position: language::Anchor,
-        trigger: editor::CompletionContext,
-        window: &mut Window,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> gpui::Task<anyhow::Result<Vec<project::CompletionResponse>>> {
         let buffer = buffer.read(cx);
@@ -1068,12 +1068,12 @@ impl CompletionProvider for KeyContextCompletionProvider {
 
     fn is_completion_trigger(
         &self,
-        buffer: &Entity<language::Buffer>,
-        position: language::Anchor,
+        _buffer: &Entity<language::Buffer>,
+        _position: language::Anchor,
         text: &str,
-        trigger_in_words: bool,
-        menu_is_open: bool,
-        cx: &mut Context<Editor>,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
+        _cx: &mut Context<Editor>,
     ) -> bool {
         text.chars().last().map_or(false, |last_char| {
             last_char.is_ascii_alphanumeric() || last_char == '_'
