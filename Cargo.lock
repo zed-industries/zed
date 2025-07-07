@@ -4322,6 +4322,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "log",

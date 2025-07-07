@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use collections::{FxHashMap, HashMap};
 use language::LanguageRegistry;
 use paths::local_debug_file_relative_path;
@@ -17,7 +17,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, PromptButton, PromptLevel, Render, Subscription, Task, TextStyle, WeakEntity,
+    KeyContext, Render, Subscription, Task, TextStyle, WeakEntity,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -34,7 +34,7 @@ use ui::{
     h_flex, relative, rems, v_flex,
 };
 use util::ResultExt;
-use workspace::{ModalView, Workspace, pane};
+use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
@@ -409,52 +409,28 @@ impl NewProcessModal {
     }
 
     pub fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let task_contents = self.task_contexts(cx);
+        let task_contexts = self.task_contexts(cx);
         let Some(adapter) = self.debugger.as_ref() else {
             return;
         };
         let scenario = self.debug_scenario(&adapter, cx);
-
         cx.spawn_in(window, async move |this, cx| {
-            let Some((scenario, worktree_id)) = scenario
-                .await
-                .zip(task_contents.and_then(|tcx| tcx.worktree()))
-            else {
-                let _ = cx.prompt(
-                    PromptLevel::Critical,
-                    "Cannot open debug.json",
-                    Some("You must have at least one project open"),
-                    &[PromptButton::ok("Ok")],
-                );
-                return Err(anyhow::anyhow!("No open project"));
-            };
-
-            let Ok(Ok(save_scenario)) = this.update_in(cx, |this, window, cx| {
-                this.debug_panel.update(cx, |panel, cx| {
-                    panel.save_scenario(&scenario, worktree_id, window, cx)
-                })
-            }) else {
-                return Err(anyhow::anyhow!("Failed to save debug scenario"));
-            };
-
-            let label = scenario.label.clone();
-            let Ok(path) = save_scenario.await else {
-                return Err(anyhow::anyhow!("Failed to save debug scenario"));
-            };
-
+            let scenario = scenario.await.context("no scenario to save")?;
+            let worktree_id = task_contexts
+                .context("no task contexts")?
+                .worktree()
+                .context("no active worktree")?;
             this.update_in(cx, |this, window, cx| {
                 this.debug_panel.update(cx, |panel, cx| {
-                    panel.open_in_debug_json(cx, window, path, label)
+                    panel.save_scenario(scenario, worktree_id, window, cx)
                 })
             })??
-            .await;
+            .await?;
             this.update_in(cx, |_, _, cx| {
                 cx.emit(DismissEvent);
             })
-            .ok();
-            Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach_and_prompt_err("Failed to edit debug.json", window, cx, |_, _, _| None);
     }
 
     fn adapter_drop_down_menu(
@@ -1381,7 +1357,7 @@ impl PickerDelegate for DebugDelegate {
             cx.spawn_in(window, async move |_, cx| {
                 // TODO: switch to calling save_debug_scenario(window, cx);
                 dbg!(debug_panel.update_in(cx, |debug_panel, window, cx| {
-                    debug_panel.save_scenario(&debug_scenario, id, window, cx)
+                    debug_panel.save_scenario(debug_scenario, id, window, cx)
                 })?)
                 .await?;
                 anyhow::Ok(())

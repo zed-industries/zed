@@ -1,10 +1,12 @@
 use dap::DapRegistry;
+use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Fs as _, Project};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
+use text::Point;
 use util::path;
 
 use crate::NewProcessMode;
@@ -197,27 +199,42 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     cx.executor().run_until_parked();
 
+    let editor = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        })
+        .unwrap();
+
     let debug_json_content = fs
         .load(path!("/project/.zed/debug.json").as_ref())
         .await
-        .expect("debug.json should exist");
+        .expect("debug.json should exist")
+        .lines()
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let expected_content = vec![
-        "[",
-        "  {",
-        r#"    "adapter": "fake-adapter","#,
-        r#"    "label": "main (fake-adapter)","#,
-        r#"    "request": "launch","#,
-        r#"    "program": "/project/main","#,
-        r#"    "cwd": "/project","#,
-        r#"    "args": [],"#,
-        r#"    "env": {}"#,
-        "  }",
-        "]",
-    ];
+    let expected_content = indoc::indoc! {r#"
+        [
+          {
+            "adapter": "fake-adapter",
+            "label": "main (fake-adapter)",
+            "request": "launch",
+            "program": "/project/main",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          }
+        ]"#};
 
-    let actual_lines: Vec<&str> = debug_json_content.lines().collect();
-    pretty_assertions::assert_eq!(expected_content, actual_lines);
+    pretty_assertions::assert_eq!(expected_content, debug_json_content);
+
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.selections.newest::<Point>(cx).head(),
+            Point::new(5, 2)
+        )
+    });
 
     modal.update_in(cx, |modal, window, cx| {
         modal.set_configure("/project/other", "/project", true, window, cx);
@@ -226,36 +243,37 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     cx.executor().run_until_parked();
 
+    let expected_content = indoc::indoc! {r#"
+        [
+          {
+            "adapter": "fake-adapter",
+            "label": "main (fake-adapter)",
+            "request": "launch",
+            "program": "/project/main",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          },
+          {
+            "adapter": "fake-adapter",
+            "label": "other (fake-adapter)",
+            "request": "launch",
+            "program": "/project/other",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          }
+        ]"#};
+
     let debug_json_content = fs
         .load(path!("/project/.zed/debug.json").as_ref())
         .await
-        .expect("debug.json should exist after second save");
-
-    let expected_content = vec![
-        "[",
-        "  {",
-        r#"    "adapter": "fake-adapter","#,
-        r#"    "label": "main (fake-adapter)","#,
-        r#"    "request": "launch","#,
-        r#"    "program": "/project/main","#,
-        r#"    "cwd": "/project","#,
-        r#"    "args": [],"#,
-        r#"    "env": {}"#,
-        "  },",
-        "  {",
-        r#"    "adapter": "fake-adapter","#,
-        r#"    "label": "other (fake-adapter)","#,
-        r#"    "request": "launch","#,
-        r#"    "program": "/project/other","#,
-        r#"    "cwd": "/project","#,
-        r#"    "args": [],"#,
-        r#"    "env": {}"#,
-        "  }",
-        "]",
-    ];
-
-    let actual_lines: Vec<&str> = debug_json_content.lines().collect();
-    pretty_assertions::assert_eq!(expected_content, actual_lines);
+        .expect("debug.json should exist")
+        .lines()
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pretty_assertions::assert_eq!(expected_content, debug_json_content);
 }
 
 #[gpui::test]
