@@ -3621,7 +3621,7 @@ fn main() {{
             .update(|cx| load_context(vec![context], &project, &None, cx))
             .await;
 
-        // Insert user message and assistant reponse
+        // Insert user message and assistant response
         thread.update(cx, |thread, cx| {
             thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx);
             thread.insert_assistant_message(
