@@ -144,8 +144,8 @@ mod tests {
         };
         assert_eq!(
             response_text.as_str(),
-            "Files up-to-date",
-            "Tool should return 'Files up-to-date' when no stale buffers"
+            "No new notifications",
+            "Tool should return 'No new notifications' when no stale buffers"
         );
 
         // Modify the buffer (makes it stale)
