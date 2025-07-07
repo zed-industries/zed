@@ -6,6 +6,7 @@ version = 4
 name = "acp"
 version = "0.1.0"
 dependencies = [
+ "agent_servers",
  "agentic-coding-protocol",
  "anyhow",
  "async-pipe",
@@ -143,6 +144,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_servers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "project",
+ "schemars",
+ "serde",
+ "settings",
+ "util",
+ "which 6.0.3",
+]
+
+[[package]]
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
@@ -167,6 +183,7 @@ version = "0.1.0"
 dependencies = [
  "acp",
  "agent",
+ "agent_servers",
  "agent_settings",
  "agentic-coding-protocol",
  "anyhow",
@@ -20003,6 +20020,7 @@ version = "0.195.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",

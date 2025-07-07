@@ -3,8 +3,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_servers::AgentServerCommand;
 use agentic_coding_protocol::{self as acp};
-use anyhow::Context as _;
 use collections::HashSet;
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
@@ -229,52 +229,18 @@ impl AcpThreadView {
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Entity<AcpThread>> {
-        let (env_task, root_dir) = project.update(cx, |project, cx| {
-            let worktree = project.visible_worktrees(cx).next();
-            match worktree {
-                Some(worktree) => {
-                    let env_task = project.environment().update(cx, |env, cx| {
-                        env.get_worktree_environment(worktree.clone(), cx)
-                    });
+        let command = AgentServerCommand::gemini(&project, cx).await?;
 
-                    let path = worktree.read(cx).abs_path();
-                    (env_task, path)
-                }
-                None => {
-                    let path: Arc<Path> = paths::home_dir().as_path().into();
-                    let env_task = project.environment().update(cx, |env, cx| {
-                        env.get_directory_environment(path.clone(), cx)
-                    });
-                    (env_task, path)
-                }
-            }
+        let root_dir = project.update(cx, |project, cx| {
+            project
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path())
+                .unwrap_or_else(|| paths::home_dir().as_path().into())
         })?;
 
-        const BIN_NAME: &str = "gemini";
-
-        // todo! remove ZED_GEMINI_LOCAL
-        let mut command = if std::env::var("ZED_GEMINI_LOCAL").is_ok() {
-            let cli_path =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../gemini-cli/packages/cli");
-
-            let mut command = util::command::new_smol_command("node");
-            command.arg(cli_path);
-            command
-        } else {
-            let gemini_path = if cfg!(windows) {
-                which::which(BIN_NAME)
-            } else {
-                let env = env_task.await.unwrap_or_default();
-                let shell_path = env.get("PATH").cloned();
-                which::which_in(BIN_NAME, shell_path.as_ref(), root_dir.as_ref())
-            }
-            .context(format!("Failed to find `{}` in your PATH", BIN_NAME))?;
-
-            util::command::new_smol_command(gemini_path)
-        };
-
-        let child = command
-            .arg("--acp")
+        let child = util::command::new_smol_command(command.path)
+            .args(command.args)
             .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

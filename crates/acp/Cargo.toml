@@ -16,6 +16,7 @@ doctest = false
 test-support = ["gpui/test-support", "project/test-support"]
 
 [dependencies]
+agent_servers.workspace = true
 agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
 anyhow.workspace = true
 async-trait.workspace = true
