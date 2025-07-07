@@ -7,8 +7,13 @@ OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
 
 fail_on_stderr() {
-    ! "$@" 2>&1 1>&3 | grep . >&2
-} 3>&1
+    local tmpfile=$(mktemp)
+    "$@" 2> >(tee "$tmpfile" >&2)
+    local rc=$?
+    [ -s "$tmpfile" ] && rc=1
+    rm "$tmpfile"
+    return $rc
+}
 
 echo -n "" >"$OUTPUT_FILE"
 
