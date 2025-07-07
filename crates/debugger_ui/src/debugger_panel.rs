@@ -2,7 +2,7 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::session::running::breakpoint_list::BreakpointList;
-use crate::session::running::memory_view::MemoryView;
+
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
@@ -74,7 +74,6 @@ pub struct DebugPanel {
     is_zoomed: bool,
     _subscriptions: [Subscription; 1],
     breakpoint_list: Entity<BreakpointList>,
-    memory_view: Entity<MemoryView>,
 }
 
 impl DebugPanel {
@@ -118,7 +117,6 @@ impl DebugPanel {
                 is_zoomed: false,
                 _subscriptions: [focus_subscription],
                 debug_scenario_scheduled_last: true,
-                memory_view: cx.new(|cx| MemoryView::new(window, cx)),
             }
         })
     }
@@ -1598,7 +1596,6 @@ impl Render for DebugPanel {
                                                 .child(Divider::vertical())
                                                 .child(welcome_experience)
                                                 .child(Divider::vertical())
-                                                .child(self.memory_view.clone())
                                         } else {
                                             this.items_end()
                                                 .child(welcome_experience)

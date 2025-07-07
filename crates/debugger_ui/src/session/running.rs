@@ -11,6 +11,7 @@ use crate::{
     ToggleExpandItem,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
+    session::running::memory_view::MemoryView,
 };
 
 use super::DebugPanelItemEvent;
@@ -81,6 +82,7 @@ pub struct RunningState {
     _schedule_serialize: Option<Task<()>>,
     pub(crate) scenario: Option<DebugScenario>,
     pub(crate) scenario_context: Option<DebugScenarioContext>,
+    memory_view: Entity<MemoryView>,
 }
 
 impl RunningState {
@@ -688,7 +690,7 @@ impl RunningState {
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
-
+        let memory_view = cx.new(|cx| MemoryView::new(session.clone(), window, cx));
         let console = cx.new(|cx| {
             Console::new(
                 session.clone(),
@@ -786,6 +788,7 @@ impl RunningState {
                 &breakpoint_list,
                 &loaded_source_list,
                 &debug_terminal,
+                &memory_view,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -814,6 +817,7 @@ impl RunningState {
         let active_pane = panes.first_pane();
 
         Self {
+            memory_view,
             session,
             workspace,
             focus_handle,
@@ -1221,6 +1225,12 @@ impl RunningState {
             DebuggerPaneItem::Terminal => Box::new(SubView::new(
                 self.debug_terminal.focus_handle(cx),
                 self.debug_terminal.clone().into(),
+                item_kind,
+                cx,
+            )),
+            DebuggerPaneItem::MemoryView => Box::new(SubView::new(
+                self.memory_view.focus_handle(cx),
+                self.memory_view.clone().into(),
                 item_kind,
                 cx,
             )),

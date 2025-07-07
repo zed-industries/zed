@@ -5,6 +5,7 @@ use gpui::{
     AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task,
     TextStyle, list,
 };
+use project::debugger::session::Session;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -22,6 +23,13 @@ pub(crate) struct MemoryView {
     focus_handle: FocusHandle,
     view_state: ViewState,
     query_editor: Entity<Editor>,
+    session: Entity<Session>,
+}
+
+impl Focusable for MemoryView {
+    fn focus_handle(&self, _: &ui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 #[derive(Clone, Debug)]
 struct Drag {
@@ -99,7 +107,11 @@ static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
 
 impl MemoryView {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let view_state = ViewState::new(0, 16);
         let state = ListState::new(
             view_state.row_count() as usize,
@@ -288,6 +300,7 @@ impl MemoryView {
             focus_handle: cx.focus_handle(),
             view_state,
             query_editor,
+            session,
         }
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
