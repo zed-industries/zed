@@ -1540,7 +1540,12 @@ impl Thread {
     ) {
         match intent {
             CompletionIntent::UserPrompt | CompletionIntent::ToolResults => {
-                self.attach_tracked_files_state(model, cx);
+                if let Some(pending_tool_use) = self.attach_tracked_files_state(model, cx) {
+                    cx.emit(ThreadEvent::ToolFinished {
+                        tool_use_id: pending_tool_use.id.clone(),
+                        pending_tool_use: Some(pending_tool_use),
+                    });
+                }
             }
             CompletionIntent::ThreadSummarization
             | CompletionIntent::ThreadContextSummarization
@@ -1552,21 +1557,26 @@ impl Thread {
         };
     }
 
-    fn attach_tracked_files_state(&mut self, model: Arc<dyn LanguageModel>, cx: &mut App) {
+    fn attach_tracked_files_state(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut App,
+    ) -> Option<PendingToolUse> {
         let action_log = self.action_log.read(cx);
 
         if action_log.stale_buffers(cx).next().is_none() {
-            return;
+            return None;
         }
 
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
         let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            return debug_panic!("`project_notifications` tool not found");
+            debug_panic!("`project_notifications` tool not found");
+            return None;
         };
 
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
-            return;
+            return None;
         }
 
         let input = serde_json::json!({});
@@ -1593,30 +1603,10 @@ impl Thread {
             is_input_complete: true,
         };
 
-        // let assistant_message = Message {
-        //     role: Role::Assistant,
-        //     content: vec![MessageContent::ToolUse(tool_use)],
-        //     cache: false,
-        // };
-
-        // let tool_result = LanguageModelToolResult {
-        //     tool_use_id,
-        //     tool_name,
-        //     is_error: false,
-        //     content: LanguageModelToolResultContent::Text(Arc::from(notification_text)),
-        //     output: None,
-        // };
-
-        // let user_message = LanguageModelRequestMessage {
-        //     role: Role::User,
-        //     content: vec![MessageContent::ToolResult(tool_result)],
-        //     cache: false,
-        // };
-
         let tool_output = cx.background_executor().block(tool_result.output);
 
         let Some(tool_message_id) = self.upsert_notification_message() else {
-            return;
+            return None;
         };
 
         let tool_use_metadata = ToolUseMetadata {
@@ -1628,38 +1618,14 @@ impl Thread {
         self.tool_use
             .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
 
-        self.tool_use.insert_tool_output(
+        let pending_tool_use = self.tool_use.insert_tool_output(
             tool_use_id.clone(),
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
         );
 
-        // Insert our messages before the last Assistant message.
-        // Inserting it to the tail distracts the agent too much
-
-        // User
-        // Ass
-        // <file changed>
-        // User
-        // Ass -- tool use
-        // User -- tool result
-
-        // User
-        // Ass -- tool use
-        // User -- tool result
-        // <file changed>
-        // Ass - project_notifications()
-        // User - project_notifications() result
-
-        // let insert_position = messages
-        //     .iter()
-        //     .enumerate()
-        //     .rfind(|(_, message)| message.role == Role::Assistant)
-        //     .map_or(messages.len(), |(i, _)| i);
-
-        // messages.insert(insert_position, assistant_message);
-        // messages.insert(insert_position + 1, user_message);
+        pending_tool_use
     }
 
     pub fn stream_completion(
