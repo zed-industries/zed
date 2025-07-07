@@ -65,7 +65,7 @@ jobs:
           else
             echo "run_docs=false" >> $GITHUB_OUTPUT
           fi
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^Cargo.lock') ]]; then
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -P '^(Cargo.lock|script/.*licenses)') ]]; then
             echo "run_license=true" >> $GITHUB_OUTPUT
           else
             echo "run_license=false" >> $GITHUB_OUTPUT

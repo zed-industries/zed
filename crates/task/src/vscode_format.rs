@@ -47,7 +47,10 @@ impl VsCodeTaskDefinition {
         replacer: &EnvVariableReplacer,
     ) -> anyhow::Result<Option<TaskTemplate>> {
         if self.other_attributes.contains_key("dependsOn") {
-            log::warn!("Skipping deserializing of a task with the unsupported `dependsOn` key");
+            log::warn!(
+                "Skipping deserializing of a task `{}` with the unsupported `dependsOn` key",
+                self.label
+            );
             return Ok(None);
         }
         // `type` might not be set in e.g. tasks that use `dependsOn`; we still want to deserialize the whole object though (hence command is an Option),

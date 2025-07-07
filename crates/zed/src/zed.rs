@@ -78,19 +78,33 @@ use zed_actions::{
 actions!(
     zed,
     [
+        /// Opens the element inspector for debugging UI.
         DebugElements,
+        /// Hides the application window.
         Hide,
+        /// Hides all other application windows.
         HideOthers,
+        /// Minimizes the current window.
         Minimize,
+        /// Opens the default settings file.
         OpenDefaultSettings,
+        /// Opens project-specific settings.
         OpenProjectSettings,
+        /// Opens the project tasks configuration.
         OpenProjectTasks,
+        /// Opens the tasks panel.
         OpenTasks,
+        /// Opens debug tasks configuration.
         OpenDebugTasks,
+        /// Resets the application database.
         ResetDatabase,
+        /// Shows all hidden windows.
         ShowAll,
+        /// Toggles fullscreen mode.
         ToggleFullScreen,
+        /// Zooms the window.
         Zoom,
+        /// Triggers a test panic for debugging.
         TestPanic,
     ]
 );

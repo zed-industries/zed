@@ -32,7 +32,7 @@ call.workspace = true
 chrono.workspace = true
 client.workspace = true
 db.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["screen-capture"] }
 notifications.workspace = true
 project.workspace = true
 remote.workspace = true

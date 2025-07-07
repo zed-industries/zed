@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
@@ -25,8 +25,8 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
-    Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError,
+    PaymentRequiredError, Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -45,7 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
+use util::{ResultExt as _, debug_panic, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -960,13 +960,14 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            resolve_tool_name_conflicts(self.profile.enabled_tools(cx).as_slice())
+            self.profile
+                .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|(name, tool)| {
                     // Skip tools that cannot be supported
                     let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
                     Some(LanguageModelRequestTool {
-                        name,
+                        name: name.into(),
                         description: tool.description(),
                         input_schema,
                     })
@@ -1247,6 +1248,8 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
+        self.flush_notifications(model.clone(), intent, cx);
+
         let request = self.to_completion_request(model.clone(), intent, cx);
 
         self.stream_completion(request, model, intent, window, cx);
@@ -1478,6 +1481,110 @@ impl Thread {
         });
 
         request
+    }
+
+    /// Insert auto-generated notifications (if any) to the thread
+    fn flush_notifications(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        cx: &mut Context<Self>,
+    ) {
+        match intent {
+            CompletionIntent::UserPrompt | CompletionIntent::ToolResults => {
+                if let Some(pending_tool_use) = self.attach_tracked_files_state(model, cx) {
+                    cx.emit(ThreadEvent::ToolFinished {
+                        tool_use_id: pending_tool_use.id.clone(),
+                        pending_tool_use: Some(pending_tool_use),
+                    });
+                }
+            }
+            CompletionIntent::ThreadSummarization
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => {}
+        };
+    }
+
+    fn attach_tracked_files_state(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut App,
+    ) -> Option<PendingToolUse> {
+        let action_log = self.action_log.read(cx);
+
+        action_log.unnotified_stale_buffers(cx).next()?;
+
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
+        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
+            debug_panic!("`project_notifications` tool not found");
+            return None;
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return None;
+        }
+
+        let input = serde_json::json!({});
+        let request = Arc::new(LanguageModelRequest::default()); // unused
+        let window = None;
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model.clone(),
+            window,
+            cx,
+        );
+
+        let tool_use_id =
+            LanguageModelToolUseId::from(format!("project_notifications_{}", self.messages.len()));
+
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: "{}".to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+        };
+
+        let tool_output = cx.background_executor().block(tool_result.output);
+
+        // Attach a project_notification tool call to the latest existing
+        // Assistant message. We cannot create a new Assistant message
+        // because thinking models require a `thinking` block that we
+        // cannot mock. We cannot send a notification as a normal
+        // (non-tool-use) User message because this distracts Agent
+        // too much.
+        let tool_message_id = self
+            .messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map(|(_, message)| message.id)?;
+
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: self.last_prompt_id.clone(),
+        };
+
+        self.tool_use
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            tool_output,
+            self.configured_model.as_ref(),
+        );
+
+        pending_tool_use
     }
 
     pub fn stream_completion(
@@ -2386,7 +2493,7 @@ impl Thread {
 
         let tool_list = available_tools
             .iter()
-            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .map(|(name, tool)| format!("- {}: {}", name, tool.description()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -2606,7 +2713,7 @@ impl Thread {
             .profile
             .enabled_tools(cx)
             .iter()
-            .map(|tool| tool.name())
+            .map(|(name, _)| name.clone().into())
             .collect();
 
         self.message_feedback.insert(message_id, feedback);
@@ -3144,85 +3251,6 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-/// Resolves tool name conflicts by ensuring all tool names are unique.
-///
-/// When multiple tools have the same name, this function applies the following rules:
-/// 1. Native tools always keep their original name
-/// 2. Context server tools get prefixed with their server ID and an underscore
-/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
-/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
-///
-/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
-fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
-    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
-        let mut tool_name = tool.name();
-        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-        tool_name
-    }
-
-    const MAX_TOOL_NAME_LENGTH: usize = 64;
-
-    let mut duplicated_tool_names = HashSet::default();
-    let mut seen_tool_names = HashSet::default();
-    for tool in tools {
-        let tool_name = resolve_tool_name(tool);
-        if seen_tool_names.contains(&tool_name) {
-            debug_assert!(
-                tool.source() != assistant_tool::ToolSource::Native,
-                "There are two built-in tools with the same name: {}",
-                tool_name
-            );
-            duplicated_tool_names.insert(tool_name);
-        } else {
-            seen_tool_names.insert(tool_name);
-        }
-    }
-
-    if duplicated_tool_names.is_empty() {
-        return tools
-            .into_iter()
-            .map(|tool| (resolve_tool_name(tool), tool.clone()))
-            .collect();
-    }
-
-    tools
-        .into_iter()
-        .filter_map(|tool| {
-            let mut tool_name = resolve_tool_name(tool);
-            if !duplicated_tool_names.contains(&tool_name) {
-                return Some((tool_name, tool.clone()));
-            }
-            match tool.source() {
-                assistant_tool::ToolSource::Native => {
-                    // Built-in tools always keep their original name
-                    Some((tool_name, tool.clone()))
-                }
-                assistant_tool::ToolSource::ContextServer { id } => {
-                    // Context server tools are prefixed with the context server ID, and truncated if necessary
-                    tool_name.insert(0, '_');
-                    if tool_name.len() + id.len() > MAX_TOOL_NAME_LENGTH {
-                        let len = MAX_TOOL_NAME_LENGTH - tool_name.len();
-                        let mut id = id.to_string();
-                        id.truncate(len);
-                        tool_name.insert_str(0, &id);
-                    } else {
-                        tool_name.insert_str(0, &id);
-                    }
-
-                    tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-
-                    if seen_tool_names.contains(&tool_name) {
-                        log::error!("Cannot resolve tool name conflict for tool {}", tool.name());
-                        None
-                    } else {
-                        Some((tool_name, tool.clone()))
-                    }
-                }
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3234,11 +3262,13 @@ mod tests {
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use assistant_tools;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
-    use icons::IconName;
+    use http_client;
+    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3567,6 +3597,134 @@ fn main() {{
     }
 
     #[gpui::test]
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Add a buffer to the context. This will be a tracked buffer
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context = context_store
+            .read_with(cx, |store, _| store.context().next().cloned())
+            .unwrap();
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message and assistant response
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx);
+            thread.insert_assistant_message(
+                vec![MessageSegment::Text("This code prints 42.".into())],
+                cx,
+            );
+        });
+
+        // We shouldn't have a stale buffer notification yet
+        let notifications = thread.read_with(cx, |thread, _| {
+            find_tool_uses(thread, "project_notifications")
+        });
+        assert!(
+            notifications.is_empty(),
+            "Should not have stale buffer notification before buffer is modified"
+        );
+
+        // Modify the buffer
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(1..1, "\n    println!(\"Added a new line\");\n")],
+                None,
+                cx,
+            );
+        });
+
+        // Insert another user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        // Check for the stale buffer warning
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        let [notification] = notifications.as_slice() else {
+            panic!("Should have a `project_notifications` tool use");
+        };
+
+        let Some(notification_content) = notification.content.to_str() else {
+            panic!("`project_notifications` should return text");
+        };
+
+        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
+
+        These files have changed since the last read:
+        - code.rs
+        "};
+        assert_eq!(notification_content, expected_content);
+
+        // Insert another user message and flush notifications again
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Can you tell me more?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // There should be no new notifications (we already flushed one)
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        assert_eq!(
+            notifications.len(),
+            1,
+            "Should still have only one notification after second flush - no duplicates"
+        );
+    }
+
+    fn find_tool_uses(thread: &Thread, tool_name: &str) -> Vec<LanguageModelToolResult> {
+        thread
+            .messages()
+            .flat_map(|message| {
+                thread
+                    .tool_results_for_message(message.id)
+                    .into_iter()
+                    .filter(|result| result.tool_name == tool_name.into())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[gpui::test]
     async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
@@ -3881,148 +4039,6 @@ fn main() {{
             assert!(matches!(thread.summary(), ThreadSummary::Ready(_)));
             assert_eq!(thread.summary().or_default(), "A successful summary");
         });
-    }
-
-    #[gpui::test]
-    fn test_resolve_tool_name_conflicts() {
-        use assistant_tool::{Tool, ToolSource};
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3"],
-        );
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
-        );
-
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
-        );
-
-        // Test that tool with very long name is always truncated
-        assert_resolve_tool_name_conflicts(
-            vec![TestTool::new(
-                "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
-                ToolSource::Native,
-            )],
-            vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
-        );
-
-        // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
-                TestTool::new(
-                    "tool-with-very-very-very-long-name",
-                    ToolSource::ContextServer {
-                        id: "mcp-with-very-very-very-long-name".into(),
-                    },
-                ),
-            ],
-            vec![
-                "tool-with-very-very-very-long-name",
-                "mcp-with-very-very-very-long-_tool-with-very-very-very-long-name",
-            ],
-        );
-
-        fn assert_resolve_tool_name_conflicts(
-            tools: Vec<TestTool>,
-            expected: Vec<impl Into<String>>,
-        ) {
-            let tools: Vec<Arc<dyn Tool>> = tools
-                .into_iter()
-                .map(|t| Arc::new(t) as Arc<dyn Tool>)
-                .collect();
-            let tools = resolve_tool_name_conflicts(&tools);
-            assert_eq!(tools.len(), expected.len());
-            for (i, expected_name) in expected.into_iter().enumerate() {
-                let expected_name = expected_name.into();
-                let actual_name = &tools[i].0;
-                assert_eq!(
-                    actual_name, &expected_name,
-                    "Expected '{}' got '{}' at index {}",
-                    expected_name, actual_name, i
-                );
-            }
-        }
-
-        struct TestTool {
-            name: String,
-            source: ToolSource,
-        }
-
-        impl TestTool {
-            fn new(name: impl Into<String>, source: ToolSource) -> Self {
-                Self {
-                    name: name.into(),
-                    source,
-                }
-            }
-        }
-
-        impl Tool for TestTool {
-            fn name(&self) -> String {
-                self.name.clone()
-            }
-
-            fn icon(&self) -> IconName {
-                IconName::Ai
-            }
-
-            fn may_perform_edits(&self) -> bool {
-                false
-            }
-
-            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
-                true
-            }
-
-            fn source(&self) -> ToolSource {
-                self.source.clone()
-            }
-
-            fn description(&self) -> String {
-                "Test tool".to_string()
-            }
-
-            fn ui_text(&self, _input: &serde_json::Value) -> String {
-                "Test tool".to_string()
-            }
-
-            fn run(
-                self: Arc<Self>,
-                _input: serde_json::Value,
-                _request: Arc<LanguageModelRequest>,
-                _project: Entity<Project>,
-                _action_log: Entity<ActionLog>,
-                _model: Arc<dyn LanguageModel>,
-                _window: Option<AnyWindowHandle>,
-                _cx: &mut App,
-            ) -> assistant_tool::ToolResult {
-                assistant_tool::ToolResult {
-                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
-                    card: None,
-                }
-            }
-        }
     }
 
     // Helper to create a model that returns errors
@@ -5273,6 +5289,14 @@ fn main() {{
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ToolRegistry::default_global(cx);
+            assistant_tool::init(cx);
+
+            let http_client = Arc::new(http_client::HttpClientWithUrl::new(
+                http_client::FakeHttpClient::with_200_response(),
+                "http://localhost".to_string(),
+                None,
+            ));
+            assistant_tools::init(http_client, cx);
         });
     }
 

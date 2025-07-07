@@ -4830,6 +4830,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "ui",
  "unicode-script",
  "unicode-segmentation",
@@ -9022,7 +9023,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
- "picker",
  "project",
  "release_channel",
  "serde_json",
@@ -12258,6 +12258,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "markdown",
  "node_runtime",
  "parking_lot",
  "pathdiff",
@@ -14589,6 +14590,7 @@ dependencies = [
  "settings",
  "theme",
  "tree-sitter-json",
+ "tree-sitter-rust",
  "ui",
  "util",
  "workspace",
@@ -17345,6 +17347,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -19942,7 +19945,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.194.0"
+version = "0.195.0"
 dependencies = [
  "activity_indicator",
  "agent",

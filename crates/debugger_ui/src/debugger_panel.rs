@@ -33,7 +33,7 @@ use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
-use util::maybe;
+use util::{ResultExt, maybe};
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -363,11 +363,17 @@ impl DebugPanel {
         let label = curr_session.read(cx).label().clone();
         let adapter = curr_session.read(cx).adapter().clone();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
-        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
         let task_context = curr_session.read(cx).task_context().clone();
 
+        let curr_session_id = curr_session.read(cx).session_id();
+        self.sessions
+            .retain(|session| session.read(cx).session_id(cx) != curr_session_id);
+        let task = dap_store_handle.update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(curr_session_id, cx)
+        });
+
         cx.spawn_in(window, async move |this, cx| {
-            task.await;
+            task.await.log_err();
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
                 let session = dap_store.new_session(label, adapter, task_context, None, cx);
@@ -1298,9 +1304,7 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_sessions = self.sessions.len() > 0;
         let this = cx.weak_entity();
-        debug_assert_eq!(has_sessions, self.active_session.is_some());
 
         if self
             .active_session
@@ -1487,8 +1491,8 @@ impl Render for DebugPanel {
                 }))
             })
             .map(|this| {
-                if has_sessions {
-                    this.children(self.active_session.clone())
+                if let Some(active_session) = self.active_session.clone() {
+                    this.child(active_session)
                 } else {
                     let docked_to_bottom = self.position(window, cx) == DockPosition::Bottom;
                     let welcome_experience = v_flex()

@@ -30,6 +30,7 @@ use settings::SettingsStore;
 use std::time::Duration;
 use ui::prelude::*;
 use util::debug_panic;
+use zed_llm_client::CompletionIntent;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -268,6 +269,19 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_user_initiated = request.intent.is_none_or(|intent| match intent {
+            CompletionIntent::UserPrompt
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => true,
+
+            CompletionIntent::ToolResults
+            | CompletionIntent::ThreadSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile => false,
+        });
+
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -276,7 +290,8 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let request = CopilotChat::stream_completion(copilot_request, cx.clone());
+            let request =
+                CopilotChat::stream_completion(copilot_request, is_user_initiated, cx.clone());
             request_limiter
                 .stream(async move {
                     let response = request.await?;

@@ -617,6 +617,8 @@
     // 3. Mark files with errors and warnings:
     //    "all"
     "show_diagnostics": "all",
+    // Whether to stick parent directories at top of the project panel.
+    "sticky_scroll": true,
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -746,8 +748,6 @@
     "default_width": 380
   },
   "agent": {
-    // Version of this setting.
-    "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
     /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -810,6 +810,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -829,6 +830,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -1292,6 +1294,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
+    // Whether to keep the text selection after copying it to the clipboard
+    "keep_selection_on_copy": false,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1656,7 +1660,6 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
-      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
     "google": {
@@ -1666,7 +1669,6 @@
       "api_url": "http://localhost:11434"
     },
     "openai": {
-      "version": "1",
       "api_url": "https://api.openai.com/v1"
     },
     "open_router": {

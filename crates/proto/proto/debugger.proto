@@ -535,7 +535,7 @@ message DebugScenario {
 
 message SpawnInTerminal {
     string label = 1;
-    string command = 2;
+    optional string command = 2;
     repeated string args = 3;
     map<string, string> env = 4;
     optional string cwd = 5;

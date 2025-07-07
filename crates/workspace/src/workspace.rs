@@ -169,44 +169,83 @@ pub trait DebuggerProvider {
 actions!(
     workspace,
     [
+        /// Activates the next pane in the workspace.
         ActivateNextPane,
+        /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
+        /// Switches to the next window.
         ActivateNextWindow,
+        /// Switches to the previous window.
         ActivatePreviousWindow,
+        /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Clears all notifications.
         ClearAllNotifications,
+        /// Closes the active dock.
         CloseActiveDock,
+        /// Closes all docks.
         CloseAllDocks,
+        /// Closes the current window.
         CloseWindow,
+        /// Opens the feedback dialog.
         Feedback,
+        /// Follows the next collaborator in the session.
         FollowNextCollaborator,
+        /// Moves the focused panel to the next position.
         MoveFocusedPanelToNextPosition,
+        /// Opens a new terminal in the center.
         NewCenterTerminal,
+        /// Creates a new file.
         NewFile,
+        /// Creates a new file in a vertical split.
         NewFileSplitVertical,
+        /// Creates a new file in a horizontal split.
         NewFileSplitHorizontal,
+        /// Opens a new search.
         NewSearch,
+        /// Opens a new terminal.
         NewTerminal,
+        /// Opens a new window.
         NewWindow,
+        /// Opens a file or directory.
         Open,
+        /// Opens multiple files.
         OpenFiles,
+        /// Opens the current location in terminal.
         OpenInTerminal,
+        /// Opens the component preview.
         OpenComponentPreview,
+        /// Reloads the active item.
         ReloadActiveItem,
+        /// Resets the active dock to its default size.
         ResetActiveDockSize,
+        /// Resets all open docks to their default sizes.
         ResetOpenDocksSize,
+        /// Saves the current file with a new name.
         SaveAs,
+        /// Saves without formatting.
         SaveWithoutFormat,
+        /// Shuts down all debug adapters.
         ShutdownDebugAdapters,
+        /// Suppresses the current notification.
         SuppressNotification,
+        /// Toggles the bottom dock.
         ToggleBottomDock,
+        /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles the left dock.
         ToggleLeftDock,
+        /// Toggles the right dock.
         ToggleRightDock,
+        /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Stops following a collaborator.
         Unfollow,
+        /// Shows the welcome screen.
         Welcome,
+        /// Restores the banner.
         RestoreBanner,
+        /// Toggles expansion of the selected item.
         ToggleExpandItem,
     ]
 );
@@ -216,14 +255,17 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
+/// Activates a specific pane by its index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
+/// Moves an item to a specific pane by index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
+    #[serde(default = "default_1")]
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -231,10 +273,16 @@ pub struct MoveItemToPane {
     pub clone: bool,
 }
 
+fn default_1() -> usize {
+    1
+}
+
+/// Moves an item to a pane in the specified direction.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
+    #[serde(default = "default_right")]
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -242,38 +290,52 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+fn default_right() -> SplitDirection {
+    SplitDirection::Right
+}
+
+/// Saves all open files in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Saves the current file with the specified options.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all items and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all inactive tabs and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Sends a sequence of keystrokes to the active element.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
+/// Reloads the active item or workspace.
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -284,11 +346,13 @@ pub struct Reload {
 actions!(
     project_symbols,
     [
+        /// Toggles the project symbols search.
         #[action(name = "Toggle")]
         ToggleProjectSymbols
     ]
 );
 
+/// Toggles the file finder interface.
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
 #[serde(deny_unknown_fields)]
@@ -340,13 +404,21 @@ pub struct DecreaseOpenDocksSize {
 actions!(
     workspace,
     [
+        /// Activates the pane to the left.
         ActivatePaneLeft,
+        /// Activates the pane to the right.
         ActivatePaneRight,
+        /// Activates the pane above.
         ActivatePaneUp,
+        /// Activates the pane below.
         ActivatePaneDown,
+        /// Swaps the current pane with the one to the left.
         SwapPaneLeft,
+        /// Swaps the current pane with the one to the right.
         SwapPaneRight,
+        /// Swaps the current pane with the one above.
         SwapPaneUp,
+        /// Swaps the current pane with the one below.
         SwapPaneDown,
     ]
 );
@@ -402,6 +474,7 @@ impl PartialEq for Toast {
     }
 }
 
+/// Opens a new terminal with the specified working directory.
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -2806,12 +2879,14 @@ impl Workspace {
         })
     }
 
-    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(dock) = self.active_dock(window, cx) {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
+            return true;
         }
+        false
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5450,7 +5525,9 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
-                    workspace.close_active_dock(window, cx);
+                    if !workspace.close_active_dock(window, cx) {
+                        cx.propagate();
+                    }
                 },
             ))
             .on_action(
@@ -6659,14 +6736,25 @@ actions!(
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
+        /// Mutes your microphone.
         Mute,
+        /// Deafens yourself (mute both microphone and speakers).
         Deafen,
+        /// Leaves the current call.
         LeaveCall,
+        /// Shares the current project with collaborators.
         ShareProject,
+        /// Shares your screen with collaborators.
         ScreenShare
     ]
 );
-actions!(zed, [OpenLog]);
+actions!(
+    zed,
+    [
+        /// Opens the Zed log file.
+        OpenLog
+    ]
+);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -7473,6 +7561,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
+/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -7481,8 +7570,9 @@ pub fn client_side_decorations(
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
 
-    if matches!(decorations, Decorations::Client { .. }) {
-        window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    match decorations {
+        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
+        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);

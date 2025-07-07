@@ -999,7 +999,7 @@ impl Extension {
     ) -> Result<Result<DebugRequest, String>> {
         match self {
             Extension::V0_6_0(ext) => {
-                let build_config_template = resolved_build_task.into();
+                let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
                     .call_run_dap_locator(store, &locator_name, &build_config_template)
                     .await?

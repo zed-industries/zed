@@ -4821,7 +4821,7 @@ async fn test_definition(
     );
 
     let definitions_1 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4852,7 +4852,7 @@ async fn test_definition(
     );
 
     let definitions_2 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 33, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4889,7 +4889,7 @@ async fn test_definition(
     );
 
     let type_definitions = project_b
-        .update(cx_b, |p, cx| p.type_definition(&buffer_b, 7, cx))
+        .update(cx_b, |p, cx| p.type_definitions(&buffer_b, 7, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -5057,7 +5057,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    references.await.unwrap_err();
+    assert_eq!(references.await.unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
@@ -5641,7 +5641,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let definitions;
     let buffer_b2;
     if rng.r#gen() {
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
                 p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
@@ -5655,7 +5655,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
             })
             .await
             .unwrap();
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
     let definitions = definitions.await.unwrap();

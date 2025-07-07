@@ -61,7 +61,7 @@ impl RenderOnce for ComponentExample {
                         12.0,
                         12.0,
                     ))
-                    .shadow_sm()
+                    .shadow_xs()
                     .child(self.element),
             )
             .into_any_element()
