@@ -15,7 +15,7 @@ use gpui::{
     WeakEntity, actions, div, transparent_black,
 };
 use language::{Language, LanguageConfig};
-use settings::KeybindSource;
+use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
 
@@ -1252,6 +1252,68 @@ fn build_keybind_context_menu(
                 Box::new(CopyContext),
             )
     })
+}
+
+fn collect_contexts_from_assets() -> HashSet<SharedString> {
+    let mut keymap_assets = vec![
+        util::asset_str::<SettingsAssets>(settings::DEFAULT_KEYMAP_PATH),
+        util::asset_str::<SettingsAssets>(settings::VIM_KEYMAP_PATH),
+    ];
+    keymap_assets.extend(
+        BaseKeymap::OPTIONS
+            .map(|(_, base_keymap)| base_keymap.asset_path().unwrap())
+            .map(util::asset_str::<SettingsAssets>),
+    );
+
+    let mut contexts = HashSet::default();
+
+    for keymap_asset in keymap_assets {
+        let Ok(keymap) = KeymapFile::parse(&keymap_asset) else {
+            continue;
+        };
+
+        for section in keymap.sections() {
+            let context_expr = &section.context;
+            let mut queue = Vec::new();
+            let Ok(root_context) = gpui::KeyBindingContextPredicate::parse(context_expr) else {
+                continue;
+            };
+
+            queue.push(root_context);
+            while let Some(context) = queue.pop() {
+                match context {
+                    gpui::KeyBindingContextPredicate::Identifier(ident) => {
+                        contexts.insert(ident);
+                    }
+                    gpui::KeyBindingContextPredicate::Equal(ident_a, ident_b) => {
+                        contexts.insert(ident_a);
+                        contexts.insert(ident_b);
+                    }
+                    gpui::KeyBindingContextPredicate::NotEqual(ident_a, ident_b) => {
+                        contexts.insert(ident_a);
+                        contexts.insert(ident_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Child(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Not(ctx) => {
+                        queue.push(*ctx);
+                    }
+                    gpui::KeyBindingContextPredicate::And(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                    gpui::KeyBindingContextPredicate::Or(ctx_a, ctx_b) => {
+                        queue.push(*ctx_a);
+                        queue.push(*ctx_b);
+                    }
+                }
+            }
+        }
+    }
+
+    return contexts;
 }
 
 impl SerializableItem for KeymapEditor {

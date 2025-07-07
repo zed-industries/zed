@@ -63,7 +63,7 @@ pub struct KeymapSection {
     /// current file extension are also supported - see [the
     /// documentation](https://zed.dev/docs/key-bindings#contexts) for more details.
     #[serde(default)]
-    context: String,
+    pub context: String,
     /// This option enables specifying keys based on their position on a QWERTY keyboard, by using
     /// position-equivalent mappings for some non-QWERTY keyboards. This is currently only supported
     /// on macOS. See the documentation for more details.
