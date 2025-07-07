@@ -2124,6 +2124,9 @@ impl SshRemoteConnection {
         smol::fs::create_dir_all("target/remote_server").await?;
 
         if build_remote_server.contains("cross") {
+            #[cfg(target_os = "windows")]
+            use util::paths::SanitizedPath;
+
             delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
             log::info!("installing cross");
             run_cmd(Command::new("cargo").args([
@@ -2145,11 +2148,8 @@ impl SshRemoteConnection {
 
             // On Windows, the binding needs to be set to the canonical path
             #[cfg(target_os = "windows")]
-            let src = smol::fs::canonicalize("./target")
-                .await?
-                .to_string_lossy()
-                .trim_start_matches("\\\\?\\")
-                .replace('\\', "/");
+            let src =
+                SanitizedPath::from(smol::fs::canonicalize("./target").await?).to_glob_string();
             #[cfg(not(target_os = "windows"))]
             let src = "./target";
             run_cmd(
