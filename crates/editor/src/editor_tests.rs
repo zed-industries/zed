@@ -4075,6 +4075,29 @@ async fn test_manipulate_immutable_lines_with_single_selection(cx: &mut TestAppC
         Zˇ»
     "});
 
+    // Test sort_lines_by_length()
+    //
+    // Demonstrates:
+    // - ∞ is 3 bytes UTF-8, but sorted by its char count (1)
+    // - sort is stable
+    cx.set_state(indoc! {"
+        «123
+        æ
+        12
+        ∞
+        1
+        æˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_by_length(&SortLinesByLength, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «æ
+        ∞
+        1
+        æ
+        12
+        123ˇ»
+    "});
+
     // Test reverse_lines()
     cx.set_state(indoc! {"
         «5
@@ -22324,6 +22347,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         def f() -> list[str]:
             aˇ
+    "});
+
+    // test does not outdent on typing : after case keyword
+    cx.set_state(indoc! {"
+        match 1:
+            caseˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(":", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        match 1:
+            case:ˇ
     "});
 }
 

@@ -617,6 +617,8 @@
     // 3. Mark files with errors and warnings:
     //    "all"
     "show_diagnostics": "all",
+    // Whether to stick parent directories at top of the project panel.
+    "sticky_scroll": true,
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -808,6 +810,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -827,6 +830,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "now": true,
           "find_path": true,
           "read_file": true,

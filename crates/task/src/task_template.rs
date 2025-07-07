@@ -255,7 +255,7 @@ impl TaskTemplate {
                         command_label
                     },
                 ),
-                command,
+                command: Some(command),
                 args: self.args.clone(),
                 env,
                 use_new_terminal: self.use_new_terminal,
@@ -635,7 +635,7 @@ mod tests {
                 "Human-readable label should have long substitutions trimmed"
             );
             assert_eq!(
-                spawn_in_terminal.command,
+                spawn_in_terminal.command.clone().unwrap(),
                 format!("echo test_file {long_value}"),
                 "Command should be substituted with variables and those should not be shortened"
             );
@@ -652,7 +652,7 @@ mod tests {
                 spawn_in_terminal.command_label,
                 format!(
                     "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
-                    spawn_in_terminal.command
+                    spawn_in_terminal.command.clone().unwrap()
                 ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
@@ -711,7 +711,7 @@ mod tests {
         assert_substituted_variables(&resolved_task, Vec::new());
         let resolved = resolved_task.resolved;
         assert_eq!(resolved.label, task.label);
-        assert_eq!(resolved.command, task.command);
+        assert_eq!(resolved.command, Some(task.command));
         assert_eq!(resolved.args, task.args);
     }
 

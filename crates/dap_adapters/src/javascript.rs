@@ -1,11 +1,11 @@
 use adapters::latest_github_release;
 use anyhow::Context as _;
+use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use serde_json::Value;
 use std::{
     borrow::Cow,
-    collections::HashMap,
     path::PathBuf,
     sync::{LazyLock, OnceLock},
 };
@@ -75,6 +75,8 @@ impl JsDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
+        let mut envs = HashMap::default();
+
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
             maybe!({
@@ -112,6 +114,12 @@ impl JsDebugAdapter {
                         }
                     }
                     _ => {}
+                }
+            }
+
+            if let Some(env) = configuration.get("env").cloned() {
+                if let Ok(env) = serde_json::from_value(env) {
+                    envs = env;
                 }
             }
 
@@ -163,7 +171,7 @@ impl JsDebugAdapter {
             ),
             arguments,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: HashMap::default(),
+            envs,
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
