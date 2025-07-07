@@ -25,6 +25,7 @@ use alacritty_terminal::{
 use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
+use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
@@ -257,8 +258,17 @@ impl Render for TerminalOutput {
                 point: ic.point,
                 cell: ic.cell.clone(),
             });
-        let (cells, rects) =
-            TerminalElement::layout_grid(grid, 0, &text_style, text_system, None, window, cx);
+        let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
+        let (cells, rects) = TerminalElement::layout_grid(
+            grid,
+            0,
+            &text_style,
+            text_system,
+            None,
+            minimum_contrast,
+            window,
+            cx,
+        );
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
