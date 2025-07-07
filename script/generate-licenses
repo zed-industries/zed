@@ -6,6 +6,10 @@ CARGO_ABOUT_VERSION="0.7"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
 
+fail_on_stderr() {
+    ! "$@" 2>&1 1>&3 | grep . >&2
+} 3>&1
+
 echo -n "" >"$OUTPUT_FILE"
 
 {
@@ -28,7 +32,7 @@ fi
 echo "Generating cargo licenses"
 if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then FAIL_FLAG=--fail; else FAIL_FLAG=""; fi
 set -x
-cargo about generate \
+fail_on_stderr cargo about generate \
     $FAIL_FLAG \
     -c script/licenses/zed-licenses.toml \
     "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
