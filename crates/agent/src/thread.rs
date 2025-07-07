@@ -1044,53 +1044,6 @@ impl Thread {
         )
     }
 
-    /// Finds or creates an appropriate assistant message to attach a notification.
-    pub fn upsert_notification_message(
-        &self,
-        // segments: Vec<MessageSegment>,
-    ) -> Option<MessageId> {
-        // Option 1: File changed while agent was idle
-        // User:  ...
-        // Agent: ...                <--- attach notification here
-        // // Dialog turn ends
-        // <file changes>
-        // User:  ...               // we are here
-
-        // Option 2: Files changed while agent is active
-        // User:  ...
-        // Agent: ...               <----- attach notification here
-        // <file changed>
-        // Agent: tool use 1
-        // User:  tool result 1    // we are here
-
-        // Option 3: File changes before we even start the conversion
-        // <user adds a file to the context>
-        // <user edits the file>
-        // User: ...              // we are here
-        //
-        // In this case, we don't need to do anything
-
-        self.messages
-            .iter()
-            .enumerate()
-            .rfind(|(_, message)| message.role == Role::Assistant)
-            .map(|(_, message)| message.id)
-
-        // let id = self.next_message_id.post_inc();
-        // let is_hidden = true;
-        // self.messages.push(Message {
-        //     id,
-        //     role: Role::Assistant,
-        //     segments,
-        //     loaded_context: LoadedContext::default(),
-        //     creases: Vec::new(),
-        //     is_hidden,
-        //     ui_only: false,
-        // });
-        // self.touch_updated_at();
-        // id
-    }
-
     pub fn insert_message(
         &mut self,
         role: Role,
@@ -1605,9 +1558,18 @@ impl Thread {
 
         let tool_output = cx.background_executor().block(tool_result.output);
 
-        let Some(tool_message_id) = self.upsert_notification_message() else {
-            return None;
-        };
+        // Attach a project_notification tool call to the latest existing
+        // Assistant message. We cannot create a new Assistant message
+        // because thinking models require a `thinking` block that we
+        // cannot mock. We cannot send a notification as a normal
+        // (non-tool-use) User message because this distracts Agent
+        // too much.
+        let tool_message_id = self
+            .messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map(|(_, message)| message.id)?;
 
         let tool_use_metadata = ToolUseMetadata {
             model: model.clone(),
@@ -5303,7 +5265,6 @@ fn main() {{
             ToolRegistry::default_global(cx);
             assistant_tool::init(cx);
 
-            // Initialize assistant tools including project_notifications
             let http_client = Arc::new(http_client::HttpClientWithUrl::new(
                 http_client::FakeHttpClient::with_200_response(),
                 "http://localhost".to_string(),
