@@ -727,11 +727,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |mut cx| {
-            let paths_with_position =
-                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+            let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_ssh_project(
                 connection_options,
-                paths_with_position.into_iter().map(|p| p.path).collect(),
+                paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

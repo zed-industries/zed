@@ -11,6 +11,7 @@ mod list_directory_tool;
 mod move_path_tool;
 mod now_tool;
 mod open_tool;
+mod project_notifications_tool;
 mod read_file_tool;
 mod schema;
 mod templates;
@@ -45,6 +46,7 @@ pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::FindPathToolInput;
 pub use grep_tool::{GrepTool, GrepToolInput};
 pub use open_tool::OpenTool;
+pub use project_notifications_tool::ProjectNotificationsTool;
 pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
@@ -61,6 +63,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);
+    registry.register_tool(ProjectNotificationsTool);
     registry.register_tool(FindPathTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(GrepTool);

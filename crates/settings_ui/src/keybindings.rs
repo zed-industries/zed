@@ -1,4 +1,7 @@
-use std::{ops::Range, sync::Arc};
+use std::{
+    ops::{Not, Range},
+    sync::Arc,
+};
 
 use anyhow::{Context as _, anyhow};
 use collections::HashSet;
@@ -824,6 +827,7 @@ impl RenderOnce for SyntaxHighlightedText {
 struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
     keybind_editor: Entity<KeystrokeInput>,
+    context_editor: Entity<Editor>,
     fs: Arc<dyn Fs>,
     error: Option<String>,
 }
@@ -842,16 +846,85 @@ impl KeybindingEditorModal {
     pub fn new(
         editing_keybind: ProcessedKeybinding,
         fs: Arc<dyn Fs>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Self {
         let keybind_editor = cx.new(KeystrokeInput::new);
+        let context_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            if let Some(context) = editing_keybind
+                .context
+                .as_ref()
+                .and_then(KeybindContextString::local)
+            {
+                editor.set_text(context.clone(), window, cx);
+            } else {
+                editor.set_placeholder_text("Keybinding context", cx);
+            }
+
+            editor
+        });
         Self {
             editing_keybind,
             fs,
             keybind_editor,
+            context_editor,
             error: None,
         }
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let existing_keybind = self.editing_keybind.clone();
+        let fs = self.fs.clone();
+        let new_keystrokes = self
+            .keybind_editor
+            .read_with(cx, |editor, _| editor.keystrokes().to_vec());
+        if new_keystrokes.is_empty() {
+            self.error = Some("Keystrokes cannot be empty".to_string());
+            cx.notify();
+            return;
+        }
+        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+        let new_context = self
+            .context_editor
+            .read_with(cx, |editor, cx| editor.text(cx));
+        let new_context = new_context.is_empty().not().then_some(new_context);
+        let new_context_err = new_context.as_deref().and_then(|context| {
+            gpui::KeyBindingContextPredicate::parse(context)
+                .context("Failed to parse key context")
+                .err()
+        });
+        if let Some(err) = new_context_err {
+            // TODO: store and display as separate error
+            // TODO: also, should be validating on keystroke
+            self.error = Some(err.to_string());
+            cx.notify();
+            return;
+        }
+
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = save_keybinding_update(
+                existing_keybind,
+                &new_keystrokes,
+                new_context.as_deref(),
+                &fs,
+                tab_size,
+            )
+            .await
+            {
+                this.update(cx, |this, cx| {
+                    this.error = Some(err.to_string());
+                    cx.notify();
+                })
+                .log_err();
+            } else {
+                this.update(cx, |_this, cx| {
+                    cx.emit(DismissEvent);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 }
 
@@ -868,13 +941,34 @@ impl Render for KeybindingEditorModal {
                     .gap_2()
                     .child(
                         v_flex().child(Label::new("Edit Keystroke")).child(
-                            Label::new(
-                                "Input the desired keystroke for the selected action and hit save.",
-                            )
-                            .color(Color::Muted),
+                            Label::new("Input the desired keystroke for the selected action.")
+                                .color(Color::Muted),
                         ),
                     )
                     .child(self.keybind_editor.clone()),
+            )
+            .child(
+                v_flex()
+                    .p_3()
+                    .gap_3()
+                    .child(
+                        v_flex().child(Label::new("Edit Keystroke")).child(
+                            Label::new("Input the desired keystroke for the selected action.")
+                                .color(Color::Muted),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .border_color(cx.theme().colors().border_variant)
+                            .border_1()
+                            .py_2()
+                            .px_3()
+                            .min_h_8()
+                            .rounded_md()
+                            .bg(theme.editor_background)
+                            .child(self.context_editor.clone()),
+                    ),
             )
             .child(
                 h_flex()
@@ -888,38 +982,11 @@ impl Render for KeybindingEditorModal {
                         Button::new("cancel", "Cancel")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                     )
-                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                        |this, _event, _window, cx| {
-                            let existing_keybind = this.editing_keybind.clone();
-                            let fs = this.fs.clone();
-                            let new_keystrokes = this
-                                .keybind_editor
-                                .read_with(cx, |editor, _| editor.keystrokes.clone());
-                            if new_keystrokes.is_empty() {
-                                this.error = Some("Keystrokes cannot be empty".to_string());
-                                cx.notify();
-                                return;
-                            }
-                            let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
-                            cx.spawn(async move |this, cx| {
-                                if let Err(err) = save_keybinding_update(
-                                    existing_keybind,
-                                    &new_keystrokes,
-                                    &fs,
-                                    tab_size,
-                                )
-                                .await
-                                {
-                                    this.update(cx, |this, cx| {
-                                        this.error = Some(err.to_string());
-                                        cx.notify();
-                                    })
-                                    .log_err();
-                                }
-                            })
-                            .detach();
-                        },
-                    ))),
+                    .child(
+                        Button::new("save-btn", "Save").on_click(
+                            cx.listener(|this, _event, _window, cx| Self::save(this, cx)),
+                        ),
+                    ),
             )
             .when_some(self.error.clone(), |this, error| {
                 this.child(
@@ -937,6 +1004,7 @@ impl Render for KeybindingEditorModal {
 async fn save_keybinding_update(
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
+    new_context: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
 ) -> anyhow::Result<()> {
@@ -950,7 +1018,7 @@ async fn save_keybinding_update(
         .map(|keybinding| keybinding.keystrokes.as_slice())
         .unwrap_or_default();
 
-    let context = existing
+    let existing_context = existing
         .context
         .as_ref()
         .and_then(KeybindContextString::local_str);
@@ -963,18 +1031,18 @@ async fn save_keybinding_update(
     let operation = if existing.ui_key_binding.is_some() {
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
-                context,
+                context: existing_context,
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
                 input,
             },
-            target_source: existing
+            target_keybind_source: existing
                 .source
                 .map(|(source, _name)| source)
                 .unwrap_or(KeybindSource::User),
             source: settings::KeybindUpdateTarget {
-                context,
+                context: new_context,
                 keystrokes: new_keystrokes,
                 action_name: &existing.action,
                 use_key_equivalents: false,
@@ -1070,6 +1138,17 @@ impl KeystrokeInput {
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn keystrokes(&self) -> &[Keystroke] {
+        if self
+            .keystrokes
+            .last()
+            .map_or(false, |last| last.key.is_empty())
+        {
+            return &self.keystrokes[..self.keystrokes.len() - 1];
+        }
+        return &self.keystrokes;
     }
 }
 
