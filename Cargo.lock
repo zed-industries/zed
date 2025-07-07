@@ -10827,6 +10827,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "language",
+ "log",
  "menu",
  "project",
  "serde_json",

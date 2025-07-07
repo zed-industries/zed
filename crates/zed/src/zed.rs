@@ -221,29 +221,13 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &EnableAiAssistance, cx| {
         with_active_or_new_workspace(cx, |workspace, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            update_settings_file::<language::language_settings::AllLanguageSettings>(
-                fs,
-                cx,
-                move |file, _| {
-                    file.features
-                        .get_or_insert(Default::default())
-                        .ai_assistance = Some(true);
-                },
-            );
+            language::language_settings::AllLanguageSettings::set_ai_assistance(true, fs, cx);
         });
     });
     cx.on_action(|_: &DisableAiAssistance, cx| {
         with_active_or_new_workspace(cx, |workspace, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            update_settings_file::<language::language_settings::AllLanguageSettings>(
-                fs,
-                cx,
-                move |file, _| {
-                    file.features
-                        .get_or_insert(Default::default())
-                        .ai_assistance = Some(false);
-                },
-            );
+            language::language_settings::AllLanguageSettings::set_ai_assistance(false, fs, cx);
         });
     });
 

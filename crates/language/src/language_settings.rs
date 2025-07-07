@@ -16,8 +16,10 @@ use serde::{
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 
+use fs::Fs;
 use settings::{
     ParameterizedJsonSchema, Settings, SettingsLocation, SettingsSources, SettingsStore,
+    update_settings_file,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -1136,6 +1138,21 @@ impl AllLanguageSettings {
     pub fn is_ai_assistance_enabled(&self) -> bool {
         self.ai_assistance
     }
+
+    /// Sets AI assistance to the specified state and updates the settings file.
+    pub fn set_ai_assistance(enabled: bool, fs: Arc<dyn Fs>, cx: &mut App) {
+        let current_state = Self::get_global(cx).ai_assistance;
+
+        if current_state == enabled {
+            return;
+        }
+
+        update_settings_file::<Self>(fs, cx, move |file, _| {
+            file.features
+                .get_or_insert(Default::default())
+                .ai_assistance = Some(enabled);
+        });
+    }
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
@@ -1261,7 +1278,7 @@ impl settings::Settings for AllLanguageSettings {
             .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
-        let ai_assistance = default_value
+        let mut ai_assistance = default_value
             .features
             .as_ref()
             .and_then(|f| f.ai_assistance)
@@ -1286,6 +1303,14 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|f| f.edit_prediction_provider)
             {
                 edit_prediction_provider = Some(provider);
+            }
+
+            if let Some(user_ai_assistance) = user_settings
+                .features
+                .as_ref()
+                .and_then(|f| f.ai_assistance)
+            {
+                ai_assistance = user_ai_assistance;
             }
 
             if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {

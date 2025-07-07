@@ -495,6 +495,22 @@ impl OnboardingUI {
         cx.notify();
     }
 
+    fn set_ai_assistance(
+        &mut self,
+        selection: &ToggleState,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let enabled = selection == &ToggleState::Selected;
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            AllLanguageSettings::set_ai_assistance(enabled, fs, cx);
+
+            cx.notify();
+        }
+    }
+
     fn handle_jump_to_basics(
         &mut self,
         _: &JumpToBasics,
@@ -1083,9 +1099,7 @@ impl OnboardingUI {
         let focused_item = self.page_focus[page_index].0;
         let is_page_focused = self.focus_area == FocusArea::PageContent;
 
-        let ai_enabled = ai_enabled(cx);
-
-        let workspace = self.workspace.clone();
+        let ai_enabled = all_language_settings(None, cx).is_ai_assistance_enabled();
 
         v_flex()
             .h_full()
@@ -1103,17 +1117,7 @@ impl OnboardingUI {
                 } else {
                     ToggleState::Unselected
                 },
-                move |state, _, cx| {
-                    let enabled = state == &ToggleState::Selected;
-                    if let Some(workspace) = workspace.upgrade() {
-                        let fs = workspace.read(cx).app_state().fs.clone();
-                        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-                            file.features
-                                .get_or_insert(Default::default())
-                                .ai_assistance = Some(enabled);
-                        });
-                    }
-                },
+                cx.listener(Self::set_ai_assistance),
             )))
             .child(
                 CalloutRow::new("We don't use your code to train AI models")
