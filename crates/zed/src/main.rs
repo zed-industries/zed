@@ -29,7 +29,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{Settings, SettingsStore, watch_config_file};
+use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
     env,
     io::{self, IsTerminal},
@@ -43,7 +43,7 @@ use theme::{
 };
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
-use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
+use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::{
     AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
     notifications::NotificationId,
