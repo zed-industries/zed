@@ -55,7 +55,7 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
+    pub fn should_match(&self, target: &Keystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
