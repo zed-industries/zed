@@ -1488,7 +1488,6 @@ impl Thread {
         &mut self,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
-        // cx: &mut App,
         cx: &mut Context<Self>,
     ) {
         match intent {
