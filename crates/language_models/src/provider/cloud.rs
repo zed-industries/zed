@@ -730,6 +730,13 @@ impl LanguageModel for CloudLanguageModel {
         self.model.max_token_count as u64
     }
 
+    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
+        self.model
+            .max_token_count_in_max_mode
+            .filter(|_| self.model.supports_max_mode)
+            .map(|max_token_count| max_token_count as u64)
+    }
+
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         match &self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => {
