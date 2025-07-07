@@ -1,29 +1,27 @@
+use crate::serde_helpers::non_empty_string_vec;
 use anyhow::{Context as _, Result};
-use collections::FxHashMap;
+use collections::{FxHashMap, HashMap};
 use gpui::SharedString;
 use log as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use util::{debug_panic, schemars::add_new_subschema};
+use std::{borrow::Cow, net::Ipv4Addr};
+use util::schemars::add_new_subschema;
+use util::serde::default_true;
+use zed_actions::RevealTarget;
 
-use crate::{TaskTemplate, adapter_schema::AdapterSchemas};
+use crate::{HideStrategy, RevealStrategy, Shell, TaskTemplate};
 
-/// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+/// Optional TCP connection information for connecting to an already running debug adapter
 pub struct TcpArgumentsTemplate {
-    /// The port that the debug adapter is listening on
-    ///
-    /// Default: We will try to find an open port
+    /// The port that the debug adapter is listening on (default: auto-find open port)
     pub port: Option<u16>,
-    /// The host that the debug adapter is listening too
-    ///
-    /// Default: 127.0.0.1
+    /// The host that the debug adapter is listening to (default: 127.0.0.1)
+    #[garde(ipv4)]
     pub host: Option<Ipv4Addr>,
-    /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error
-    ///
-    /// Default: 2000ms
+    /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)
     pub timeout: Option<u64>,
 }
 
@@ -184,12 +182,75 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
+fn build_task_template_default_label() -> String {
+    "debug-build".to_owned()
+}
+
+/// Copy of TaskTemplate for which label is optional, for use in build tasks.
+///
+/// The serde(remote) helper checks at compile time that this is in sync with the original TaskTemplate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(remote = "TaskTemplate")]
+struct BuildTaskTemplate {
+    /// Human readable name of the task to display in the UI.
+    #[serde(default = "build_task_template_default_label")]
+    pub label: String,
+    /// Executable command to spawn.
+    pub command: String,
+    /// Arguments to the command.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Env overrides for the command, will be appended to the terminal's environment from the settings.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    /// Current working directory to spawn the command into, defaults to current project root.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
+    #[serde(default)]
+    pub use_new_terminal: bool,
+    /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
+    #[serde(default)]
+    pub allow_concurrent_runs: bool,
+    /// What to do with the terminal pane and tab, after the command was started:
+    /// * `always` — always show the task's pane, and focus the corresponding tab in it (default)
+    /// * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    /// * `never` — do not alter focus, but still add/reuse the task's tab in its pane
+    #[serde(default)]
+    pub reveal: RevealStrategy,
+    /// Where to place the task's terminal item after starting the task.
+    /// * `dock` — in the terminal dock, "regular" terminal items' place (default).
+    /// * `center` — in the central pane group, "main" editor area.
+    #[serde(default)]
+    pub reveal_target: RevealTarget,
+    /// What to do with the terminal pane and tab, after the command had finished:
+    /// * `never` — do nothing when the command finishes (default)
+    /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
+    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
+    #[serde(default)]
+    pub hide: HideStrategy,
+    /// Represents the tags which this template attaches to.
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(length(min = 1))]
+    pub tags: Vec<String>,
+    /// Which shell to use when spawning the task.
+    #[serde(default)]
+    pub shell: Shell,
+    /// Whether to show the task line in the task output.
+    #[serde(default = "default_true")]
+    pub show_summary: bool,
+    /// Whether to show the command line in the task output.
+    #[serde(default = "default_true")]
+    pub show_command: bool,
+}
+
 #[derive(Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
     Template {
-        #[serde(flatten)]
+        #[serde(flatten, with = "BuildTaskTemplate")]
         task_template: TaskTemplate,
         #[serde(skip)]
         locator_name: Option<SharedString>,
@@ -281,51 +342,23 @@ pub struct DebugScenario {
 }
 
 /// A group of Debug Tasks defined in a JSON file.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
-    pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json::Value {
+    pub fn generate_json_schema(
+        adapter_schemas: Vec<(SharedString, Cow<'static, serde_json::Value>)>,
+    ) -> serde_json::Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
 
-        let mut build_task_value = BuildTaskDefinition::json_schema(&mut generator).to_value();
-
-        if let Some(template_object) = build_task_value
-            .get_mut("anyOf")
-            .and_then(|array| array.as_array_mut())
-            .and_then(|array| array.get_mut(1))
-        {
-            if let Some(properties) = template_object
-                .get_mut("properties")
-                .and_then(|value| value.as_object_mut())
-            {
-                if properties.remove("label").is_none() {
-                    debug_panic!(
-                        "Generated TaskTemplate json schema did not have expected 'label' field. \
-                        Schema of 2nd alternative is: {template_object:?}"
-                    );
-                }
-            }
-
-            if let Some(arr) = template_object
-                .get_mut("required")
-                .and_then(|array| array.as_array_mut())
-            {
-                arr.retain(|v| v.as_str() != Some("label"));
-            }
-        } else {
-            debug_panic!(
-                "Generated TaskTemplate json schema did not match expectations. \
-                Schema is: {build_task_value:?}"
-            );
-        }
-
-        let adapter_conditions = schemas
-            .0
+        let adapter_names = adapter_schemas
             .iter()
-            .map(|adapter_schema| {
-                let adapter_name = adapter_schema.adapter.to_string();
+            .map(|(adapter_name, _)| adapter_name.clone())
+            .collect::<Vec<_>>();
+        let adapter_conditions = adapter_schemas
+            .iter()
+            .map(|(adapter_name, schema)| {
                 add_new_subschema(
                     &mut generator,
                     &format!("{adapter_name}DebugSettings"),
@@ -335,16 +368,23 @@ impl DebugTaskFile {
                                 "adapter": { "const": adapter_name }
                             }
                         },
-                        "then": adapter_schema.schema
+                        "then": schema
                     }),
                 )
             })
             .collect::<Vec<_>>();
 
+        let build_task_schema = BuildTaskDefinition::json_schema(&mut generator).to_value();
         let build_task_definition_ref = add_new_subschema(
             &mut generator,
             BuildTaskDefinition::schema_name().as_ref(),
-            build_task_value,
+            build_task_schema,
+        );
+        let tcp_connection_schema = TcpArgumentsTemplate::json_schema(&mut generator).to_value();
+        let tcp_connection_definition_ref = add_new_subschema(
+            &mut generator,
+            TcpArgumentsTemplate::schema_name().as_ref(),
+            tcp_connection_schema,
         );
 
         let meta_schema = generator
@@ -362,16 +402,10 @@ impl DebugTaskFile {
             "items": {
                 "type": "object",
                 "required": ["adapter", "label"],
-                // TODO: Uncommenting this will cause json-language-server to provide warnings for
-                // unrecognized properties. It should be enabled if/when there's an adapter JSON
-                // schema that's comprehensive. In order to not get warnings for the other schemas,
-                // `additionalProperties` or `unevaluatedProperties` (to handle "allOf" etc style
-                // schema combinations) could be set to `true` for that schema.
-                //
-                // "unevaluatedProperties": false,
+                "unevaluatedProperties": false,
                 "properties": {
                     "adapter": {
-                        "type": "string",
+                        "enum": adapter_names,
                         "description": "The name of the debug adapter"
                     },
                     "label": {
@@ -379,25 +413,7 @@ impl DebugTaskFile {
                         "description": "The name of the debug configuration"
                     },
                     "build": build_task_definition_ref,
-                    "tcp_connection": {
-                        "type": "object",
-                        "description": "Optional TCP connection information for connecting to an already running debug adapter",
-                        "properties": {
-                            "port": {
-                                "type": "integer",
-                                "description": "The port that the debug adapter is listening on (default: auto-find open port)"
-                            },
-                            "host": {
-                                "type": "string",
-                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
-                            },
-                            "timeout": {
-                                "type": "integer",
-                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
-                            }
-                        }
-                    }
+                    "tcp_connection": tcp_connection_definition_ref,
                 },
                 "allOf": adapter_conditions
             },

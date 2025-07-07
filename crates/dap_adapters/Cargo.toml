@@ -12,6 +12,12 @@ test-support = [
     "task/test-support",
     "util/test-support",
 ]
+update-schemas = [
+    "dep:node_runtime",
+    "dep:reqwest_client",
+    "dep:settings",
+    "dep:tempfile",
+]
 
 [lints]
 workspace = true
@@ -19,6 +25,11 @@ workspace = true
 [lib]
 path = "src/dap_adapters.rs"
 doctest = false
+
+[[bin]]
+name = "update-schemas"
+path = "src/update_schemas.rs"
+required-features = ["update-schemas"]
 
 [dependencies]
 anyhow.workspace = true
@@ -39,6 +50,11 @@ shlex.workspace = true
 task.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
+
+node_runtime = { workspace = true, optional = true }
+reqwest_client = { workspace = true, optional = true }
+settings = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -79,8 +80,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.debug_adapter_name.as_ref().into()
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        self.schema.clone()
+    fn dap_schema(&self) -> Cow<'static, serde_json::Value> {
+        Cow::Owned(self.schema.clone())
     }
 
     async fn get_binary(

@@ -4,12 +4,10 @@ use collections::FxHashMap;
 use gpui::{App, Global, SharedString};
 use language::LanguageName;
 use parking_lot::RwLock;
-use task::{
-    AdapterSchema, AdapterSchemas, DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate,
-};
+use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate};
 
 use crate::adapters::{DebugAdapter, DebugAdapterName};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
 /// Given a user build configuration, locator creates a fill-in debug target ([DebugScenario]) on behalf of the user.
 #[async_trait]
@@ -63,19 +61,13 @@ impl DapRegistry {
             .and_then(|adapter| adapter.adapter_language_name())
     }
 
-    pub async fn adapters_schema(&self) -> task::AdapterSchemas {
-        let mut schemas = AdapterSchemas(vec![]);
-
-        let adapters = self.0.read().adapters.clone();
-
-        for (name, adapter) in adapters.into_iter() {
-            schemas.0.push(AdapterSchema {
-                adapter: name.into(),
-                schema: adapter.dap_schema(),
-            });
-        }
-
-        schemas
+    pub async fn adapter_schemas(&self) -> Vec<(SharedString, Cow<'static, serde_json::Value>)> {
+        self.0
+            .read()
+            .adapters
+            .iter()
+            .map(|(name, adapter)| (name.0.clone(), adapter.dap_schema()))
+            .collect()
     }
 
     pub fn locators(&self) -> FxHashMap<SharedString, Arc<dyn DapLocator>> {

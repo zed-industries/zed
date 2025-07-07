@@ -1,6 +1,5 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 
-mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
 mod shell_builder;
@@ -17,7 +16,6 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
     Request, TcpArgumentsTemplate, ZedDebugConfig,
@@ -336,19 +334,19 @@ pub enum Shell {
     },
 }
 
-type VsCodeEnvVariable = String;
-type ZedEnvVariable = String;
+pub type VsCodeEnvVariable = String;
+pub type ZedEnvVariable = String;
 
-struct EnvVariableReplacer {
+pub struct EnvVariableReplacer {
     variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
 }
 
 impl EnvVariableReplacer {
-    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
+    pub fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
         Self { variables }
     }
 
-    fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
+    pub fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
         match input {
             serde_json::Value::String(s) => serde_json::Value::String(self.replace(&s)),
             serde_json::Value::Array(arr) => {
@@ -363,7 +361,7 @@ impl EnvVariableReplacer {
         }
     }
     // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
-    fn replace(&self, input: &str) -> String {
+    pub fn replace(&self, input: &str) -> String {
         shellexpand::env_with_context_no_errors(&input, |var: &str| {
             // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
             let colon_position = var.find(':').unwrap_or(var.len());

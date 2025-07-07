@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
     ContextProvider, LanguageRegistry, LanguageToolchainStore, LocalFile as _, LspAdapter,
@@ -23,13 +23,14 @@ use smol::{
 };
 use std::{
     any::Any,
+    borrow::Cow,
     env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
 };
-use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::PackageJsonData;
@@ -153,7 +154,7 @@ impl JsonLspAdapter {
 
     fn get_workspace_config(
         language_names: Vec<String>,
-        adapter_schemas: AdapterSchemas,
+        adapter_schemas: Vec<(SharedString, Cow<'static, serde_json::Value>)>,
         cx: &mut App,
     ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
@@ -167,7 +168,7 @@ impl JsonLspAdapter {
         );
 
         let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
+        let debug_schema = task::DebugTaskFile::generate_json_schema(adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
@@ -258,7 +259,7 @@ impl JsonLspAdapter {
 
         let adapter_schemas = cx
             .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
-            .adapters_schema()
+            .adapter_schemas()
             .await;
 
         let config = cx.update(|cx| {
