@@ -25,7 +25,11 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "zed"
+    "edit_prediction_provider": "zed",
+    // A globally enable or disable AI features.
+    //
+    // This setting supersedes all other settings related to AI features.
+    "ai_assistance": true
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",

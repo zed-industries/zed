@@ -10,20 +10,22 @@ use client::{Client, TelemetrySettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{
-    Action, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, Task,
-    UpdateGlobal, WeakEntity, actions, prelude::*, svg, transparent_black,
+    Action, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, Subscription,
+    Task, UpdateGlobal, WeakEntity, actions, prelude::*, svg, transparent_black,
 };
 use menu;
 use persistence::ONBOARDING_DB;
 
+use language::language_settings::{AllLanguageSettings, ai_enabled, all_language_settings};
 use project::Project;
 use serde_json;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use settings_ui::SettingsUiFeatureFlag;
+use std::collections::HashSet;
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, ThemeSettings};
 use ui::{
-    CheckboxWithLabel, ContentGroup, KeybindingHint, ListItem, Ring, ToggleState, Vector,
+    CheckboxWithLabel, ContentGroup, FocusOutline, KeybindingHint, ListItem, ToggleState, Vector,
     VectorName, prelude::*,
 };
 use util::ResultExt;
@@ -87,7 +89,7 @@ fn feature_gate_onboarding_ui_actions(cx: &mut App) {
     .detach();
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OnboardingPage {
     Basics,
     Editing,
@@ -139,7 +141,7 @@ pub struct OnboardingUI {
     current_page: OnboardingPage,
     nav_focus: NavigationFocusItem,
     page_focus: [PageFocusItem; 4],
-    completed_pages: [bool; 4],
+    completed_pages: HashSet<OnboardingPage>,
     focus_area: FocusArea,
 
     // Workspace reference for Item trait
@@ -147,6 +149,7 @@ pub struct OnboardingUI {
     workspace_id: Option<WorkspaceId>,
     client: Arc<Client>,
     welcome_page: Option<Entity<WelcomePage>>,
+    _settings_subscription: Option<Subscription>,
 }
 
 impl OnboardingUI {}
@@ -179,6 +182,8 @@ impl Render for OnboardingUI {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle_focus))
+            .on_action(cx.listener(Self::handle_enable_ai_assistance))
+            .on_action(cx.listener(Self::handle_disable_ai_assistance))
             .flex()
             .items_center()
             .justify_center()
@@ -218,31 +223,57 @@ impl Render for OnboardingUI {
 
 impl OnboardingUI {
     pub fn new(workspace: &Workspace, client: Arc<Client>, cx: &mut Context<Self>) -> Self {
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| {
+            cx.notify();
+        });
+
         Self {
             focus_handle: cx.focus_handle(),
             current_page: OnboardingPage::Basics,
             nav_focus: NavigationFocusItem::Basics,
             page_focus: [PageFocusItem(0); 4],
-            completed_pages: [false; 4],
+            completed_pages: HashSet::new(),
             focus_area: FocusArea::Navigation,
             workspace: workspace.weak_handle(),
             workspace_id: workspace.database_id(),
             client,
             welcome_page: None,
+            _settings_subscription: Some(settings_subscription),
         }
     }
 
     fn completed_pages_to_string(&self) -> String {
-        self.completed_pages
-            .iter()
-            .map(|&completed| if completed { '1' } else { '0' })
-            .collect()
+        let mut result = String::new();
+        for i in 0..4 {
+            let page = match i {
+                0 => OnboardingPage::Basics,
+                1 => OnboardingPage::Editing,
+                2 => OnboardingPage::AiSetup,
+                3 => OnboardingPage::Welcome,
+                _ => unreachable!(),
+            };
+            result.push(if self.completed_pages.contains(&page) {
+                '1'
+            } else {
+                '0'
+            });
+        }
+        result
     }
 
-    fn completed_pages_from_string(s: &str) -> [bool; 4] {
-        let mut result = [false; 4];
+    fn completed_pages_from_string(s: &str) -> HashSet<OnboardingPage> {
+        let mut result = HashSet::new();
         for (i, ch) in s.chars().take(4).enumerate() {
-            result[i] = ch == '1';
+            if ch == '1' {
+                let page = match i {
+                    0 => OnboardingPage::Basics,
+                    1 => OnboardingPage::Editing,
+                    2 => OnboardingPage::AiSetup,
+                    3 => OnboardingPage::Welcome,
+                    _ => continue,
+                };
+                result.insert(page);
+            }
         }
         result
     }
@@ -275,7 +306,7 @@ impl OnboardingUI {
     fn reset(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) {
         self.current_page = OnboardingPage::Basics;
         self.focus_area = FocusArea::Navigation;
-        self.completed_pages = [false; 4];
+        self.completed_pages = HashSet::new();
         cx.notify();
     }
 
@@ -460,13 +491,7 @@ impl OnboardingUI {
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let index = match page {
-            OnboardingPage::Basics => 0,
-            OnboardingPage::Editing => 1,
-            OnboardingPage::AiSetup => 2,
-            OnboardingPage::Welcome => 3,
-        };
-        self.completed_pages[index] = true;
+        self.completed_pages.insert(page);
         cx.notify();
     }
 
@@ -508,6 +533,40 @@ impl OnboardingUI {
 
     fn handle_next_page(&mut self, _: &NextPage, window: &mut Window, cx: &mut Context<Self>) {
         self.next_page(window, cx);
+    }
+
+    fn handle_enable_ai_assistance(
+        &mut self,
+        _: &zed_actions::EnableAiAssistance,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+                file.features
+                    .get_or_insert(Default::default())
+                    .ai_assistance = Some(true);
+            });
+            cx.notify();
+        }
+    }
+
+    fn handle_disable_ai_assistance(
+        &mut self,
+        _: &zed_actions::DisableAiAssistance,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+                file.features
+                    .get_or_insert(Default::default())
+                    .ai_assistance = Some(false);
+            });
+            cx.notify();
+        }
     }
 
     fn handle_previous_page(
@@ -626,7 +685,7 @@ impl OnboardingUI {
 
         let area_focused = self.focus_area == FocusArea::Navigation;
 
-        Ring::new(corner_radius, item_focused)
+        FocusOutline::new(corner_radius, item_focused, px(2.))
             .active(area_focused && item_focused)
             .child(
                 h_flex()
@@ -1024,6 +1083,10 @@ impl OnboardingUI {
         let focused_item = self.page_focus[page_index].0;
         let is_page_focused = self.focus_area == FocusArea::PageContent;
 
+        let ai_enabled = ai_enabled(cx);
+
+        let workspace = self.workspace.clone();
+
         v_flex()
             .h_full()
             .w_full()
@@ -1035,8 +1098,22 @@ impl OnboardingUI {
                 CheckboxWithLabel::new(
                 "disable_ai",
                 Label::new("Enable AI Features"),
-                ToggleState::Selected,
-                |_, _, cx| todo!("implement ai toggle"),
+                if ai_enabled {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+                move |state, _, cx| {
+                    let enabled = state == &ToggleState::Selected;
+                    if let Some(workspace) = workspace.upgrade() {
+                        let fs = workspace.read(cx).app_state().fs.clone();
+                        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+                            file.features
+                                .get_or_insert(Default::default())
+                                .ai_assistance = Some(enabled);
+                        });
+                    }
+                },
             )))
             .child(
                 CalloutRow::new("We don't use your code to train AI models")
@@ -1148,7 +1225,7 @@ impl SerializableItem for OnboardingUI {
                 let completed = OnboardingUI::completed_pages_from_string(&completed_str);
                 (page, completed)
             } else {
-                (OnboardingPage::Basics, [false; 4])
+                (OnboardingPage::Basics, HashSet::new())
             };
 
             cx.update(|window, cx| {

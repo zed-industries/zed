@@ -16,6 +16,7 @@ use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
+use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
@@ -52,6 +53,7 @@ use settings::{
     Settings, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
     initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
+use std::any::TypeId;
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
 use std::{borrow::Cow, path::Path, sync::Arc};
@@ -72,7 +74,8 @@ use workspace::{
 use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    DisableAiAssistance, EnableAiAssistance, OpenAccountSettings, OpenBrowser, OpenDocs,
+    OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
 
 actions!(
@@ -215,6 +218,51 @@ pub fn init(cx: &mut App) {
             );
         });
     });
+    cx.on_action(|_: &EnableAiAssistance, cx| {
+        with_active_or_new_workspace(cx, |workspace, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<language::language_settings::AllLanguageSettings>(
+                fs,
+                cx,
+                move |file, _| {
+                    file.features
+                        .get_or_insert(Default::default())
+                        .ai_assistance = Some(true);
+                },
+            );
+        });
+    });
+    cx.on_action(|_: &DisableAiAssistance, cx| {
+        with_active_or_new_workspace(cx, |workspace, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<language::language_settings::AllLanguageSettings>(
+                fs,
+                cx,
+                move |file, _| {
+                    file.features
+                        .get_or_insert(Default::default())
+                        .ai_assistance = Some(false);
+                },
+            );
+        });
+    });
+
+    // Filter AI assistance actions based on current state
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let ai_enabled =
+            language::language_settings::all_language_settings(None, cx).is_ai_assistance_enabled();
+
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            if ai_enabled {
+                filter.hide_action_types(&[TypeId::of::<EnableAiAssistance>()]);
+                filter.show_action_types([TypeId::of::<DisableAiAssistance>()].iter());
+            } else {
+                filter.show_action_types([TypeId::of::<EnableAiAssistance>()].iter());
+                filter.hide_action_types(&[TypeId::of::<DisableAiAssistance>()]);
+            }
+        });
+    })
+    .detach();
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {

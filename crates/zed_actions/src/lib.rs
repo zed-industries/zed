@@ -50,6 +50,10 @@ actions!(
         OpenLicenses,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Enables AI assistance features.
+        EnableAiAssistance,
+        /// Disables AI assistance features.
+        DisableAiAssistance,
     ]
 );
 

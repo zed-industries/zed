@@ -54,11 +54,18 @@ pub fn all_language_settings<'a>(
     AllLanguageSettings::get(location, cx)
 }
 
+/// Returns whether AI assistance is globally enabled or disabled.
+pub fn ai_enabled(cx: &App) -> bool {
+    all_language_settings(None, cx).ai_assistance
+}
+
 /// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
+    /// Whether AI assistance is enabled.
+    pub ai_assistance: bool,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
@@ -646,6 +653,8 @@ pub struct CopilotSettingsContent {
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
+    /// Whether AI assistance is enabled.
+    pub ai_assistance: Option<bool>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -1122,6 +1131,11 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+
+    /// Returns whether AI assistance is enabled.
+    pub fn is_ai_assistance_enabled(&self) -> bool {
+        self.ai_assistance
+    }
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
@@ -1247,6 +1261,12 @@ impl settings::Settings for AllLanguageSettings {
             .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
+        let ai_assistance = default_value
+            .features
+            .as_ref()
+            .and_then(|f| f.ai_assistance)
+            .unwrap_or(true);
+
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
 
         for (language, patterns) in &default_value.file_types {
@@ -1359,6 +1379,7 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 enabled_in_text_threads,
             },
+            ai_assistance,
             defaults,
             languages,
             file_types,

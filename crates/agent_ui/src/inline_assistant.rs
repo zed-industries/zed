@@ -33,6 +33,7 @@ use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
 };
+use language::language_settings;
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::{
     ConfigurationError, ConfiguredModel, LanguageModelRegistry, report_assistant_event,
@@ -1768,7 +1769,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AgentSettings::get_global(cx).enabled {
+        if !AgentSettings::get_global(cx).enabled || !language_settings::ai_enabled(cx) {
             return Task::ready(Ok(Vec::new()));
         }
 
