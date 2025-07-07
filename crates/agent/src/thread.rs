@@ -39,7 +39,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
-    fmt::Write as _,
     io::Write,
     ops::Range,
     sync::Arc,
@@ -1047,20 +1046,49 @@ impl Thread {
 
     /// Finds or creates an appropriate assistant message to attach a notification.
     pub fn upsert_notification_message(
-        &mut self,
-        segments: Vec<MessageSegment>,
-        cx: &mut Context<Self>,
-    ) -> MessageId {
-        // todo: location
-        let hidden = true;
-        self.insert_message(
-            Role::Assistant,
-            segments,
-            LoadedContext::default(),
-            Vec::new(),
-            hidden,
-            cx,
-        )
+        &self,
+        // segments: Vec<MessageSegment>,
+    ) -> Option<MessageId> {
+        // Option 1: File changed while agent was idle
+        // User:  ...
+        // Agent: ...                <--- attach notification here
+        // // Dialog turn ends
+        // <file changes>
+        // User:  ...               // we are here
+
+        // Option 2: Files changed while agent is active
+        // User:  ...
+        // Agent: ...               <----- attach notification here
+        // <file changed>
+        // Agent: tool use 1
+        // User:  tool result 1    // we are here
+
+        // Option 3: File changes before we even start the conversion
+        // <user adds a file to the context>
+        // <user edits the file>
+        // User: ...              // we are here
+        //
+        // In this case, we don't need to do anything
+
+        self.messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map(|(_, message)| message.id)
+
+        // let id = self.next_message_id.post_inc();
+        // let is_hidden = true;
+        // self.messages.push(Message {
+        //     id,
+        //     role: Role::Assistant,
+        //     segments,
+        //     loaded_context: LoadedContext::default(),
+        //     creases: Vec::new(),
+        //     is_hidden,
+        //     ui_only: false,
+        // });
+        // self.touch_updated_at();
+        // id
     }
 
     pub fn insert_message(
@@ -1525,7 +1553,6 @@ impl Thread {
     }
 
     fn attach_tracked_files_state(&mut self, model: Arc<dyn LanguageModel>, cx: &mut App) {
-        let messages = self.messages;
         let action_log = self.action_log.read(cx);
 
         if action_log.stale_buffers(cx).next().is_none() {
@@ -1548,19 +1575,19 @@ impl Thread {
         let tool_result = tool.run(
             input,
             request,
-            self.project,
-            self.action_log,
-            model,
+            self.project.clone(),
+            self.action_log.clone(),
+            model.clone(),
             window,
             cx,
         );
 
         let tool_use_id =
-            LanguageModelToolUseId::from(format!("project_updates_{}", messages.len()));
+            LanguageModelToolUseId::from(format!("project_updates_{}", self.messages.len()));
 
         let tool_use = LanguageModelToolUse {
             id: tool_use_id.clone(),
-            name: tool_name,
+            name: tool_name.clone(),
             raw_input: "{}".to_string(),
             input: serde_json::json!({}),
             is_input_complete: true,
@@ -1588,7 +1615,9 @@ impl Thread {
 
         let tool_output = cx.background_executor().block(tool_result.output);
 
-        let tool_message_id = self.upsert_notification_message(vec![], cx);
+        let Some(tool_message_id) = self.upsert_notification_message() else {
+            return;
+        };
 
         let tool_use_metadata = ToolUseMetadata {
             model: model.clone(),
@@ -3652,40 +3681,37 @@ fn main() {{
         let (_workspace, _thread_store, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        // Open buffer and add it to context
+        // Add a buffer to the context. This will be a tracked buffer
         let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
             .await
             .unwrap();
 
-        let context =
-            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
+        let context = context_store
+            .read_with(cx, |store, _| store.context().next().cloned())
+            .unwrap();
         let loaded_context = cx
             .update(|cx| load_context(vec![context], &project, &None, cx))
             .await;
 
-        // Insert user message with the buffer as context
+        // Insert user message and assistant reponse
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx);
+            thread.insert_assistant_message(
+                vec![MessageSegment::Text("This code prints 42.".into())],
+                cx,
+            );
         });
 
-        // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
-        });
-
-        // Make sure we don't have a stale file warning yet
-        let has_stale_warning = initial_request.messages.iter().any(|msg| {
-            msg.string_contents()
-                .contains("These files changed since last read:")
-        });
+        // We shouldn't have a stale buffer notification yet
+        let notification =
+            thread.read_with(cx, |thread, _| find_tool_use(thread, "project_update"));
         assert!(
-            !has_stale_warning,
-            "Should not have stale buffer warning before buffer is modified"
+            notification.is_none(),
+            "Should not have stale buffer notification before buffer is modified"
         );
 
         // Modify the buffer
         buffer.update(cx, |buffer, cx| {
-            // Find a position at the end of line 1
             buffer.edit(
                 [(1..1, "\n    println!(\"Added a new line\");\n")],
                 None,
@@ -3693,7 +3719,7 @@ fn main() {{
             );
         });
 
-        // Insert another user message without context
+        // Insert another user message
         thread.update(cx, |thread, cx| {
             thread.insert_user_message(
                 "What does the code do now?",
@@ -3704,59 +3730,47 @@ fn main() {{
             )
         });
 
-        // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        // Check for the stale buffer warning
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // Find the fake project_updates tool use and result
-        let mut found_tool_use = false;
-        let mut found_tool_result = false;
+        thread.update(cx, |thread, cx| {
+            let task = thread.serialize(cx);
+            let result = cx.background_executor().block(task).unwrap();
+            dbg!(&result);
+        });
+        let Some(notification_result) =
+            thread.read_with(cx, |thread, _cx| find_tool_use(thread, "project_updates"))
+        else {
+            panic!("Should have a `project_updates` tool use");
+        };
 
-        for (i, message) in new_request.messages.iter().enumerate() {
-            if message.role == Role::Assistant {
-                for content in &message.content {
-                    if let MessageContent::ToolUse(tool_use) = content {
-                        if tool_use.name.as_ref() == "project_updates" {
-                            found_tool_use = true;
-                            // The next message should be the tool result
-                            if let Some(next_msg) = new_request.messages.get(i + 1) {
-                                assert_eq!(next_msg.role, Role::User);
-                                for result_content in &next_msg.content {
-                                    if let MessageContent::ToolResult(tool_result) = result_content
-                                    {
-                                        assert_eq!(
-                                            tool_result.tool_name.as_ref(),
-                                            "project_updates"
-                                        );
-                                        assert!(!tool_result.is_error);
+        let Some(notification_content) = notification_result.content.to_str() else {
+            panic!("`project_updates` should return text");
+        };
 
-                                        if let LanguageModelToolResultContent::Text(text) =
-                                            &tool_result.content
-                                        {
-                                            let expected_content = "[The following is an auto-generated notification; do not reply]
+        let expected_content = "[The following is an auto-generated notification; do not reply]
 
-These files have changed since the last read:
-- code.rs
-";
-                                            assert_eq!(
-                                                text.as_ref(),
-                                                expected_content,
-                                                "Tool result should contain the stale buffer notification"
-                                            );
-                                            found_tool_result = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        These files have changed since the last read:
+        - code.rs
+        ";
+        assert_eq!(notification_content, expected_content);
+    }
 
-        assert!(found_tool_use, "Should find project_updates tool use");
-        assert!(found_tool_result, "Should find project_updates tool result");
+    fn find_tool_use(thread: &Thread, tool_name: &str) -> Option<LanguageModelToolResult> {
+        dbg!(&thread.messages);
+        thread
+            .messages()
+            .filter_map(|message| {
+                thread
+                    .tool_results_for_message(message.id)
+                    .into_iter()
+                    .find(|result| result.tool_name == tool_name.into())
+            })
+            .next()
+            .cloned()
     }
 
     #[gpui::test]
