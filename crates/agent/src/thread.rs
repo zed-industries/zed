@@ -23,10 +23,11 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
-    Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -1504,6 +1505,10 @@ impl Thread {
             prompt_id: prompt_id.clone(),
         };
 
+        let completion_mode = request
+            .mode
+            .unwrap_or(zed_llm_client::CompletionMode::Normal);
+
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
@@ -1853,7 +1858,11 @@ impl Thread {
                                                 .unwrap_or(0)
                                                 // We know the context window was exceeded in practice, so if our estimate was
                                                 // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
-                                                .max(model.max_token_count().saturating_add(1))
+                                                .max(
+                                                    model
+                                                        .max_token_count_for_mode(completion_mode)
+                                                        .saturating_add(1),
+                                                )
                                         });
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
@@ -2401,6 +2410,7 @@ impl Thread {
             hallucinated_tool_name,
             Err(anyhow!("Missing tool call: {error_message}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
 
         cx.emit(ThreadEvent::MissingToolUse {
@@ -2427,6 +2437,7 @@ impl Thread {
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -2502,6 +2513,7 @@ impl Thread {
                             tool_name,
                             output,
                             thread.configured_model.as_ref(),
+                            thread.completion_mode,
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -2978,7 +2990,9 @@ impl Thread {
             return TotalTokenUsage::default();
         };
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         let index = self
             .messages
@@ -3005,7 +3019,9 @@ impl Thread {
     pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
         let model = self.configured_model.as_ref()?;
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         if let Some(exceeded_error) = &self.exceeded_window_error {
             if model.model.id() == exceeded_error.model_id {
@@ -3071,6 +3087,7 @@ impl Thread {
             tool_name,
             err,
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
