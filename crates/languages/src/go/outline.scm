@@ -25,7 +25,7 @@
     receiver: (parameter_list
         "(" @context
         (parameter_declaration
-            name: (_) @name
+            name: (_) @context
             type: (_) @context)
         ")" @context)
     name: (field_identifier) @name
