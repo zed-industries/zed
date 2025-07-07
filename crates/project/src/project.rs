@@ -302,6 +302,7 @@ pub enum Event {
         path: ProjectPath,
         language_server_id: LanguageServerId,
     },
+    DiagnosticsBatchUpdated,
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
     DisconnectedFromSshRemote,
@@ -2858,6 +2859,7 @@ impl Project {
                 path: path.clone(),
                 language_server_id: *language_server_id,
             }),
+            LspStoreEvent::DiagnosticsBatchUpdated => cx.emit(Event::DiagnosticsBatchUpdated),
             LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
                 Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
             ),

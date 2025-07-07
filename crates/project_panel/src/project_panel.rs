@@ -395,7 +395,7 @@ impl ProjectPanel {
                     cx.emit(PanelEvent::Activate);
                 }
                 project::Event::DiskBasedDiagnosticsFinished { .. }
-                | project::Event::DiagnosticsUpdated { .. } => {
+                | project::Event::DiagnosticsBatchUpdated => {
                     if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
                     {
                         this.update_diagnostics(cx);

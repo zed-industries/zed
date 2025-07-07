@@ -614,7 +614,7 @@ impl Pane {
     ) {
         match event {
             project::Event::DiskBasedDiagnosticsFinished { .. }
-            | project::Event::DiagnosticsUpdated { .. } => {
+            | project::Event::DiagnosticsBatchUpdated => {
                 if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
                     self.update_diagnostics(cx);
                     cx.notify();

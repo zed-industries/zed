@@ -8,6 +8,7 @@ use collections::HashMap;
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
     channel::oneshot::{self, Canceled},
+    future::{Either, pending},
     io::BufWriter,
     select,
 };
@@ -58,6 +59,39 @@ pub enum IoKind {
     StdOut,
     StdIn,
     StdErr,
+}
+
+/// The progress notification is sent from the server to the client to ask
+/// the client to indicate progress.
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressParams {
+    /// The progress token provided by the client.
+    pub token: ProgressToken,
+
+    /// The progress data.
+    pub value: ProgressParamsValue,
+}
+
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum ProgressParamsValue {
+    WorkDone(WorkDoneProgress),
+    WorkspaceDiagnostics(WorkspaceDiagnosticReportResult),
+}
+
+pub mod notification {
+    pub use lsp_types::notification::*;
+
+    /// The progress notification is sent from the server to the client to ask
+    /// the client to indicate progress.
+    #[derive(Debug)]
+    pub enum Progress {}
+
+    impl Notification for Progress {
+        type Params = super::ProgressParams;
+        const METHOD: &'static str = "$/progress";
+    }
 }
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
@@ -872,6 +906,7 @@ impl LanguageServer {
                 &response_handlers,
                 &outbound_tx,
                 &executor,
+                true,
                 (),
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
@@ -1107,6 +1142,7 @@ impl LanguageServer {
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
+
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1122,6 +1158,27 @@ impl LanguageServer {
             &self.response_handlers,
             &self.outbound_tx,
             &self.executor,
+            true,
+            params,
+        )
+    }
+
+    /// Sends a RPC request to the language server, without possibility of timeout.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
+    pub fn request_no_timeout<T: request::Request>(
+        &self,
+        params: T::Params,
+    ) -> impl LspRequestFuture<T::Result> + use<T>
+    where
+        T::Result: 'static + Send,
+    {
+        Self::request_internal::<T>(
+            &self.next_id,
+            &self.response_handlers,
+            &self.outbound_tx,
+            &self.executor,
+            false,
             params,
         )
     }
@@ -1131,6 +1188,7 @@ impl LanguageServer {
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
+        may_timeout: bool,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
@@ -1180,7 +1238,12 @@ impl LanguageServer {
             .context("failed to write to language server's stdin");
 
         let outbound_tx = outbound_tx.downgrade();
-        let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
+        let mut timeout = if may_timeout {
+            Either::Left(executor.timer(LSP_REQUEST_TIMEOUT).fuse())
+        } else {
+            Either::Right(pending())
+        };
+
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {

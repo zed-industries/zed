@@ -68,6 +68,7 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
+use uuid::Uuid;
 
 use rpc::{
     AnyProtoClient,
@@ -508,6 +509,8 @@ impl LocalLspStore {
                                 cx,
                             )
                             .log_err();
+
+                            cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
                         })
                         .ok();
                     }
@@ -3598,6 +3601,7 @@ pub enum LspStoreEvent {
         language_server_id: LanguageServerId,
         path: ProjectPath,
     },
+    DiagnosticsBatchUpdated,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -6591,6 +6595,8 @@ impl LspStore {
                         }
                     }
                 }
+
+                cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
             })
         })
     }
@@ -7585,7 +7591,9 @@ impl LspStore {
             diagnostics,
             |_, _, _| false,
             cx,
-        )
+        )?;
+        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
+        Ok(())
     }
 
     pub fn merge_diagnostic_entries(
@@ -8658,6 +8666,7 @@ impl LspStore {
                     language_server_id: LanguageServerId(message.language_server_id as usize),
                     path: project_path,
                 });
+                cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
             }
             Ok(())
         })?
@@ -9130,62 +9139,69 @@ impl LspStore {
             }
         };
 
-        let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
-        let language_server_status =
-            if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-                status
-            } else {
-                return;
-            };
+        match progress.value {
+            lsp::ProgressParamsValue::WorkDone(progress) => {
+                let language_server_status = if let Some(status) =
+                    self.language_server_statuses.get_mut(&language_server_id)
+                {
+                    status
+                } else {
+                    return;
+                };
 
-        if !language_server_status.progress_tokens.contains(&token) {
-            return;
-        }
-
-        let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
-            .as_ref()
-            .map_or(false, |disk_based_token| {
-                token.starts_with(disk_based_token)
-            });
-
-        match progress {
-            lsp::WorkDoneProgress::Begin(report) => {
-                if is_disk_based_diagnostics_progress {
-                    self.disk_based_diagnostics_started(language_server_id, cx);
+                if !language_server_status.progress_tokens.contains(&token) {
+                    return;
                 }
-                self.on_lsp_work_start(
-                    language_server_id,
-                    token.clone(),
-                    LanguageServerProgress {
-                        title: Some(report.title),
-                        is_disk_based_diagnostics_progress,
-                        is_cancellable: report.cancellable.unwrap_or(false),
-                        message: report.message.clone(),
-                        percentage: report.percentage.map(|p| p as usize),
-                        last_update_at: cx.background_executor().now(),
-                    },
-                    cx,
-                );
+
+                let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
+                    .as_ref()
+                    .map_or(false, |disk_based_token| {
+                        token.starts_with(disk_based_token)
+                    });
+
+                match progress {
+                    lsp::WorkDoneProgress::Begin(report) => {
+                        if is_disk_based_diagnostics_progress {
+                            self.disk_based_diagnostics_started(language_server_id, cx);
+                        }
+                        self.on_lsp_work_start(
+                            language_server_id,
+                            token.clone(),
+                            LanguageServerProgress {
+                                title: Some(report.title),
+                                is_disk_based_diagnostics_progress,
+                                is_cancellable: report.cancellable.unwrap_or(false),
+                                message: report.message.clone(),
+                                percentage: report.percentage.map(|p| p as usize),
+                                last_update_at: cx.background_executor().now(),
+                            },
+                            cx,
+                        );
+                    }
+                    lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
+                        language_server_id,
+                        token,
+                        LanguageServerProgress {
+                            title: None,
+                            is_disk_based_diagnostics_progress,
+                            is_cancellable: report.cancellable.unwrap_or(false),
+                            message: report.message,
+                            percentage: report.percentage.map(|p| p as usize),
+                            last_update_at: cx.background_executor().now(),
+                        },
+                        cx,
+                    ),
+                    lsp::WorkDoneProgress::End(_) => {
+                        language_server_status.progress_tokens.remove(&token);
+                        self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                        if is_disk_based_diagnostics_progress {
+                            self.disk_based_diagnostics_finished(language_server_id, cx);
+                        }
+                    }
+                }
             }
-            lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
-                language_server_id,
-                token,
-                LanguageServerProgress {
-                    title: None,
-                    is_disk_based_diagnostics_progress,
-                    is_cancellable: report.cancellable.unwrap_or(false),
-                    message: report.message,
-                    percentage: report.percentage.map(|p| p as usize),
-                    last_update_at: cx.background_executor().now(),
-                },
-                cx,
-            ),
-            lsp::WorkDoneProgress::End(_) => {
-                language_server_status.progress_tokens.remove(&token);
-                self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                if is_disk_based_diagnostics_progress {
-                    self.disk_based_diagnostics_finished(language_server_id, cx);
-                }
+            lsp::ProgressParamsValue::WorkspaceDiagnostics(report) => {
+                self.apply_workspace_diagnostic_report(language_server_id, report, cx)
             }
         }
     }
@@ -10427,7 +10443,11 @@ impl LspStore {
             disk_based_sources,
             |_, _, _| false,
             cx,
-        )
+        )?;
+
+        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
+
+        Ok(())
     }
 
     pub fn merge_diagnostics(
@@ -11297,6 +11317,79 @@ impl LspStore {
             }
         }
     }
+
+    fn apply_workspace_diagnostic_report(
+        &mut self,
+        server_id: LanguageServerId,
+        report: lsp::WorkspaceDiagnosticReportResult,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace_diagnostics =
+            GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(report, server_id);
+        for workspace_diagnostics in workspace_diagnostics {
+            let LspPullDiagnostics::Response {
+                server_id,
+                uri,
+                diagnostics,
+            } = workspace_diagnostics.diagnostics
+            else {
+                continue;
+            };
+
+            let adapter = self.language_server_adapter_for_id(server_id);
+            let disk_based_sources = adapter
+                .as_ref()
+                .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                .unwrap_or(&[]);
+
+            match diagnostics {
+                PulledDiagnostics::Unchanged { result_id } => {
+                    self.merge_diagnostics(
+                        server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: uri.clone(),
+                            diagnostics: Vec::new(),
+                            version: None,
+                        },
+                        Some(result_id),
+                        DiagnosticSourceKind::Pulled,
+                        disk_based_sources,
+                        |_, _, _| true,
+                        cx,
+                    )
+                    .log_err();
+                }
+                PulledDiagnostics::Changed {
+                    diagnostics,
+                    result_id,
+                } => {
+                    self.merge_diagnostics(
+                        server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: uri.clone(),
+                            diagnostics,
+                            version: workspace_diagnostics.version,
+                        },
+                        result_id,
+                        DiagnosticSourceKind::Pulled,
+                        disk_based_sources,
+                        |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
+                            DiagnosticSourceKind::Pulled => {
+                                let buffer_url = File::from_dyn(buffer.file())
+                                    .map(|f| f.abs_path(cx))
+                                    .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
+                                buffer_url.is_none_or(|buffer_url| buffer_url != uri)
+                            }
+                            DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
+                        },
+                        cx,
+                    )
+                    .log_err();
+                }
+            }
+        }
+        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
+    }
 }
 
 fn subscribe_to_binary_statuses(
@@ -11407,14 +11500,21 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
+                let token = Uuid::new_v4().to_string();
+
                 let response_result = server
-                    .request::<lsp::WorkspaceDiagnosticRequest>(lsp::WorkspaceDiagnosticParams {
-                        previous_result_ids,
-                        identifier: identifier.clone(),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                    })
+                    .request_no_timeout::<lsp::WorkspaceDiagnosticRequest>(
+                        lsp::WorkspaceDiagnosticParams {
+                            previous_result_ids,
+                            identifier: identifier.clone(),
+                            work_done_progress_params: Default::default(),
+                            partial_result_params: lsp::PartialResultParams {
+                                partial_result_token: Some(lsp::ProgressToken::String(token)),
+                            },
+                        },
+                    )
                     .await;
+
                 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh
                 // >  If a server closes a workspace diagnostic pull request the client should re-trigger the request.
                 match response_result {
@@ -11434,72 +11534,11 @@ fn lsp_workspace_diagnostics_refresh(
                         attempts = 0;
                         if lsp_store
                             .update(cx, |lsp_store, cx| {
-                                let workspace_diagnostics =
-                                    GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(pulled_diagnostics, server.server_id());
-                                for workspace_diagnostics in workspace_diagnostics {
-                                    let LspPullDiagnostics::Response {
-                                        server_id,
-                                        uri,
-                                        diagnostics,
-                                    } = workspace_diagnostics.diagnostics
-                                    else {
-                                        continue;
-                                    };
-
-                                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
-                                    let disk_based_sources = adapter
-                                        .as_ref()
-                                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                                        .unwrap_or(&[]);
-
-                                    match diagnostics {
-                                        PulledDiagnostics::Unchanged { result_id } => {
-                                            lsp_store
-                                                .merge_diagnostics(
-                                                    server_id,
-                                                    lsp::PublishDiagnosticsParams {
-                                                        uri: uri.clone(),
-                                                        diagnostics: Vec::new(),
-                                                        version: None,
-                                                    },
-                                                    Some(result_id),
-                                                    DiagnosticSourceKind::Pulled,
-                                                    disk_based_sources,
-                                                    |_, _, _| true,
-                                                    cx,
-                                                )
-                                                .log_err();
-                                        }
-                                        PulledDiagnostics::Changed {
-                                            diagnostics,
-                                            result_id,
-                                        } => {
-                                            lsp_store
-                                                .merge_diagnostics(
-                                                    server_id,
-                                                    lsp::PublishDiagnosticsParams {
-                                                        uri: uri.clone(),
-                                                        diagnostics,
-                                                        version: workspace_diagnostics.version,
-                                                    },
-                                                    result_id,
-                                                    DiagnosticSourceKind::Pulled,
-                                                    disk_based_sources,
-                                                    |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
-                                                        DiagnosticSourceKind::Pulled => {
-                                                            let buffer_url = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx))
-                                                                .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
-                                                            buffer_url.is_none_or(|buffer_url| buffer_url != uri)
-                                                        },
-                                                        DiagnosticSourceKind::Other
-                                                        | DiagnosticSourceKind::Pushed => true,
-                                                    },
-                                                    cx,
-                                                )
-                                                .log_err();
-                                        }
-                                    }
-                                }
+                                lsp_store.apply_workspace_diagnostic_report(
+                                    server.server_id(),
+                                    pulled_diagnostics,
+                                    cx,
+                                )
                             })
                             .is_err()
                         {

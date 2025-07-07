@@ -39,6 +39,7 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
+lsp.workspace = true
 zed_actions.workspace = true
 workspace-hack.workspace = true
 
