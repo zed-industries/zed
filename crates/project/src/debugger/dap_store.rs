@@ -14,15 +14,13 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
+    Capabilities, DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
     client::SessionId,
     inline_value::VariableLookupKind,
     messages::Message,
-    requests::{Completions, Evaluate},
 };
 use fs::Fs;
 use futures::{
@@ -40,6 +38,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::{
     borrow::Borrow,
@@ -96,6 +95,18 @@ pub struct DapStore {
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PersistedExceptionBreakpoint {
+    enabled: bool,
+}
+
+/// Represents best-effort serialization of adapter state during last session (e.g. watches)
+#[derive(Clone, Serialize, Deserialize)]
+struct PersistedAdapterOptions {
+    /// Which exception breakpoints were enabled during the last session with this adapter?
+    exception_breakpoints: HashMap<String, PersistedExceptionBreakpoint>,
+}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
@@ -518,65 +529,6 @@ impl DapStore {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
         ))
-    }
-
-    pub fn evaluate(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        expression: String,
-        context: EvaluateArgumentsContext,
-        source: Option<Source>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<EvaluateResponse>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Evaluate>(EvaluateArguments {
-                    expression: expression.clone(),
-                    frame_id: Some(stack_frame_id),
-                    context: Some(context),
-                    format: None,
-                    line: None,
-                    column: None,
-                    source,
-                })
-                .await
-        })
-    }
-
-    pub fn completions(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        text: String,
-        completion_column: u64,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CompletionItem>>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        cx.background_executor().spawn(async move {
-            Ok(client
-                .request::<Completions>(CompletionsArguments {
-                    frame_id: Some(stack_frame_id),
-                    line: None,
-                    text,
-                    column: completion_column,
-                })
-                .await?
-                .targets)
-        })
     }
 
     pub fn resolve_inline_value_locations(
