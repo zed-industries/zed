@@ -606,7 +606,7 @@ impl AcpThread {
 
         self.push_entry(
             AgentThreadEntry::ToolCall(ToolCall {
-                id: id.clone(),
+                id,
                 label: cx.new(|cx| {
                     Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
                 }),
@@ -700,7 +700,6 @@ impl AcpThread {
 
     /// Returns true if the last turn is awaiting tool authorization
     pub fn waiting_for_tool_confirmation(&self) -> bool {
-        // todo!("should we use a hashmap?")
         for entry in self.entries.iter().rev() {
             match &entry {
                 AgentThreadEntry::ToolCall(call) => match call.status {
@@ -1170,7 +1169,7 @@ mod tests {
 
             assert_eq!(root_command, "echo");
 
-            id.clone()
+            *id
         });
 
         thread.update(cx, |thread, cx| {
@@ -1239,7 +1238,7 @@ mod tests {
 
             assert_eq!(root_command, "echo");
 
-            id.clone()
+            *id
         });
 
         thread

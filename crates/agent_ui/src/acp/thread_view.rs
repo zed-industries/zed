@@ -702,9 +702,7 @@ impl AcpThreadView {
                 .any(|content| matches!(content, ToolCallContent::Diff { .. })),
         };
 
-        // todo! consider cleaning up these conditions. maybe break it into a few variants?
-        let has_content = tool_call.content.is_some();
-        let is_collapsible = has_content && !needs_confirmation;
+        let is_collapsible = tool_call.content.is_some() && !needs_confirmation;
         let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
 
         let content = if is_open {

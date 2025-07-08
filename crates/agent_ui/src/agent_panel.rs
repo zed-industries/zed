@@ -668,10 +668,8 @@ impl AgentPanel {
                             .clone()
                             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
                     }
-                    ActiveView::AcpThread { .. } => {
-                        // todo!
-                    }
-                    ActiveView::TextThread { .. }
+                    ActiveView::AcpThread { .. }
+                    | ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
                 },
@@ -1403,7 +1401,7 @@ impl AgentPanel {
             ActiveView::AcpThread { .. } => {
                 // todo! push history entry
             }
-            _ => {}
+            ActiveView::History | ActiveView::Configuration => {}
         }
 
         if current_is_special && !new_is_special {
