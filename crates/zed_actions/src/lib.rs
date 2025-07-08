@@ -271,6 +271,10 @@ pub mod agent {
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
             Chat,
+            /// Displays the previous message in the history.
+            PreviousHistoryMessage,
+            /// Displays the next message in the history.
+            NextHistoryMessage
         ]
     );
 }

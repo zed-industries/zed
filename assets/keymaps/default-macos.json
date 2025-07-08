@@ -358,6 +358,15 @@
     }
   },
   {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "agent::Chat",
+      "up": "agent::PreviousHistoryMessage",
+      "down": "agent::NextHistoryMessage"
+    }
+  },
+  {
     "context": "ThreadHistory",
     "bindings": {
       "ctrl--": "pane::GoBack"

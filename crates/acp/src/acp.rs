@@ -60,6 +60,10 @@ pub struct MentionPath<'a>(&'a Path);
 impl<'a> MentionPath<'a> {
     const PREFIX: &'static str = "@file:";
 
+    pub fn new(path: &'a Path) -> Self {
+        MentionPath(path)
+    }
+
     pub fn try_parse(url: &'a str) -> Option<Self> {
         let path = url.strip_prefix(Self::PREFIX)?;
         Some(MentionPath(Path::new(path)))

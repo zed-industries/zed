@@ -9,6 +9,7 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
     EditorStyle, MinimapVisibility, MultiBuffer,
 };
+use file_icons::FileIcons;
 use futures::channel::oneshot;
 use gpui::{
     Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId, Focusable,
@@ -27,7 +28,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::agent::Chat;
+use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
 
 use ::acp::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk, Diff,
@@ -36,6 +37,7 @@ use ::acp::{
 };
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
+use crate::acp::message_history::MessageHistory;
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -51,6 +53,7 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
+    message_history: MessageHistory<acp::UserMessage>,
 }
 
 enum ThreadState {
@@ -144,6 +147,7 @@ impl AcpThreadView {
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            message_history: MessageHistory::new(),
         }
     }
 
@@ -277,6 +281,8 @@ impl AcpThreadView {
 
         let mut ix = 0;
         let mut chunks: Vec<acp::UserMessageChunk> = Vec::new();
+
+        let project = self.project.clone();
         self.message_editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
             editor.display_map.update(cx, |map, cx| {
@@ -287,9 +293,13 @@ impl AcpThreadView {
                     {
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
-                            chunks.push(text[ix..crease_range.start].into());
+                            chunks.push(acp::UserMessageChunk::Text {
+                                chunk: text[ix..crease_range.start].to_string(),
+                            });
                         }
-                        chunks.push(project_path.path.to_path_buf().into());
+                        if let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) {
+                            chunks.push(acp::UserMessageChunk::Path { path: abs_path });
+                        }
                         ix = crease_range.end;
                     }
                 }
@@ -308,10 +318,8 @@ impl AcpThreadView {
         }
 
         let Some(thread) = self.thread() else { return };
-
-        let task = thread.update(cx, |thread, cx| {
-            thread.send(acp::UserMessage { chunks }, cx)
-        });
+        let message = acp::UserMessage { chunks };
+        let task = thread.update(cx, |thread, cx| thread.send(message.clone(), cx));
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -331,6 +339,117 @@ impl AcpThreadView {
             editor.clear(window, cx);
             editor.remove_creases(mention_set.lock().drain(), cx)
         });
+
+        self.message_history.push(message);
+    }
+
+    fn previous_history_message(
+        &mut self,
+        _: &PreviousHistoryMessage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::set_draft_message(
+            self.message_editor.clone(),
+            self.mention_set.clone(),
+            self.project.clone(),
+            self.message_history.prev(),
+            window,
+            cx,
+        );
+    }
+
+    fn next_history_message(
+        &mut self,
+        _: &NextHistoryMessage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::set_draft_message(
+            self.message_editor.clone(),
+            self.mention_set.clone(),
+            self.project.clone(),
+            self.message_history.next(),
+            window,
+            cx,
+        );
+    }
+
+    fn set_draft_message(
+        message_editor: Entity<Editor>,
+        mention_set: Arc<Mutex<MentionSet>>,
+        project: Entity<Project>,
+        message: Option<&acp::UserMessage>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.notify();
+
+        let Some(message) = message else {
+            message_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+                editor.remove_creases(mention_set.lock().drain(), cx)
+            });
+            return;
+        };
+
+        let mut text = String::new();
+        let mut mentions = Vec::new();
+
+        for chunk in &message.chunks {
+            match chunk {
+                acp::UserMessageChunk::Text { chunk } => {
+                    text.push_str(&chunk);
+                }
+                acp::UserMessageChunk::Path { path } => {
+                    let start = text.len();
+                    let content = MentionPath::new(path).to_string();
+                    text.push_str(&content);
+                    let end = text.len();
+                    if let Some(project_path) =
+                        project.read(cx).project_path_for_absolute_path(path, cx)
+                    {
+                        let filename: SharedString = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                            .into();
+                        mentions.push((start..end, project_path, filename));
+                    }
+                }
+            }
+        }
+
+        let snapshot = message_editor.update(cx, |editor, cx| {
+            editor.set_text(text, window, cx);
+            editor.buffer().read(cx).snapshot(cx)
+        });
+
+        for (range, project_path, filename) in mentions {
+            let crease_icon_path = if project_path.path.is_dir() {
+                FileIcons::get_folder_icon(false, cx)
+                    .unwrap_or_else(|| IconName::Folder.path().into())
+            } else {
+                FileIcons::get_icon(Path::new(project_path.path.as_ref()), cx)
+                    .unwrap_or_else(|| IconName::File.path().into())
+            };
+
+            let anchor = snapshot.anchor_before(range.start);
+            let crease_id = crate::context_picker::insert_crease_for_mention(
+                anchor.excerpt_id,
+                anchor.text_anchor,
+                range.end - range.start,
+                filename,
+                crease_icon_path,
+                message_editor.clone(),
+                window,
+                cx,
+            );
+            if let Some(crease_id) = crease_id {
+                mention_set.lock().insert(crease_id, project_path);
+            }
+        }
     }
 
     fn handle_thread_event(
@@ -1594,8 +1713,10 @@ impl Render for AcpThreadView {
 
         v_flex()
             .size_full()
-            .key_context("MessageEditor")
+            .key_context("AcpThread")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::previous_history_message))
+            .on_action(cx.listener(Self::next_history_message))
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()
