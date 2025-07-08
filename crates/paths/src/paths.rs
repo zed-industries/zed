@@ -356,8 +356,8 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
 ///
 /// This is where agent servers are downloaded to
 pub fn agent_servers_dir() -> &'static PathBuf {
-    static DEBUG_ADAPTERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
 }
 
 /// Returns the path to the Copilot directory.
