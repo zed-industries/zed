@@ -7,6 +7,7 @@ use editor::{
 use gpui::{Context, Window, actions};
 use language::Bias;
 use settings::Settings;
+use text::SelectionGoal;
 
 actions!(
     vim,
@@ -245,11 +246,15 @@ fn scroll_editor(
                 };
 
                 let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
+                let goal = match amount {
+                    ScrollAmount::Column(_) | ScrollAmount::PageWidth(_) => SelectionGoal::None,
+                    _ => selection.goal,
+                };
 
                 if selection.is_empty() {
-                    selection.collapse_to(new_head, selection.goal)
+                    selection.collapse_to(new_head, goal)
                 } else {
-                    selection.set_head(new_head, selection.goal)
+                    selection.set_head(new_head, goal)
                 };
             })
         },

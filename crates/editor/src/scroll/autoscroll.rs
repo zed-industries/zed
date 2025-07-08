@@ -297,11 +297,12 @@ impl Editor {
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
-                    let start_column = head.column().saturating_sub(3);
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                    let start_column = head.column();
+                    let end_column = cmp::min(display_map.line_len(head.row()), head.column());
                     target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize),
+                            .x_for_index(start_column as usize)
+                            + self.gutter_dimensions.margin,
                     );
                     target_right = target_right.max(
                         layouts[head.row().minus(start_row) as usize]
