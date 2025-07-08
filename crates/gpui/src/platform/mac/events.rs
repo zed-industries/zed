@@ -453,6 +453,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 function,
             },
             key,
+            key_en: None,
             key_char,
         }
     }
