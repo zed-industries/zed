@@ -924,7 +924,7 @@ impl AcpThreadView {
                             .on_url_click({
                                 let workspace = self.workspace.clone();
                                 move |text, window, cx| {
-                                    Self::open_markdown_link(text, &workspace, window, cx);
+                                    Self::open_link(text, &workspace, window, cx);
                                 }
                             })
                     }),
@@ -1093,12 +1093,30 @@ impl AcpThreadView {
                 )
                 .into_any(),
             ToolCallConfirmation::Fetch { description, urls } => confirmation_container
-                // todo! render urls as links
-                .child(v_flex().px_2().pb_1p5().children(urls.clone()).children(
-                    description.clone().map(|description| {
-                        self.render_markdown(description, default_markdown_style(false, window, cx))
-                    }),
-                ))
+                .child(
+                    v_flex()
+                        .px_2()
+                        .pb_1p5()
+                        .gap_1()
+                        .children(urls.iter().map(|url| {
+                            h_flex().child(
+                                Button::new(url.clone(), url)
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::XSmall)
+                                    .on_click({
+                                        let url = url.clone();
+                                        move |_, _, cx| cx.open_url(&url)
+                                    }),
+                            )
+                        }))
+                        .children(description.clone().map(|description| {
+                            self.render_markdown(
+                                description,
+                                default_markdown_style(false, window, cx),
+                            )
+                        })),
+                )
                 .children(content.map(|content| self.render_tool_call_content(content, window, cx)))
                 .child(
                     button_container
@@ -1420,11 +1438,11 @@ impl AcpThreadView {
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
         MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            Self::open_markdown_link(text, &workspace, window, cx);
+            Self::open_link(text, &workspace, window, cx);
         })
     }
 
-    fn open_markdown_link(
+    fn open_link(
         url: SharedString,
         workspace: &WeakEntity<Workspace>,
         window: &mut Window,

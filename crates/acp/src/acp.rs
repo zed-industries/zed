@@ -229,7 +229,7 @@ pub enum ToolCallConfirmation {
         description: Option<Entity<Markdown>>,
     },
     Fetch {
-        urls: Vec<String>,
+        urls: Vec<SharedString>,
         description: Option<Entity<Markdown>>,
     },
     Other {
@@ -279,7 +279,7 @@ impl ToolCallConfirmation {
                 description: description.map(|description| to_md(description, cx)),
             },
             acp::ToolCallConfirmation::Fetch { urls, description } => Self::Fetch {
-                urls,
+                urls: urls.iter().map(|url| url.into()).collect(),
                 description: description.map(|description| to_md(description, cx)),
             },
             acp::ToolCallConfirmation::Other { description } => Self::Other {
