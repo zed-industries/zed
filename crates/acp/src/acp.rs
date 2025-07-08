@@ -496,7 +496,6 @@ impl AcpThread {
         let io_task = cx.background_spawn({
             async move {
                 io_fut.await.log_err();
-                // todo!() exit status?
             }
         });
 
@@ -798,7 +797,13 @@ impl AcpThread {
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
 
-        async move { rx.await? }.boxed()
+        async move {
+            match rx.await {
+                Ok(Err(e)) => Err(e),
+                _ => Ok(()),
+            }
+        }
+        .boxed()
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -1063,6 +1068,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "gemini"), ignore)]
     async fn test_gemini_basic(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1090,6 +1096,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "gemini"), ignore)]
     async fn test_gemini_path_mentions(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1146,6 +1153,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "gemini"), ignore)]
     async fn test_gemini_tool_call(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1185,6 +1193,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "gemini"), ignore)]
     async fn test_gemini_tool_call_with_confirmation(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1253,6 +1262,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "gemini"), ignore)]
     async fn test_gemini_cancel(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1354,20 +1364,23 @@ mod tests {
                 &self,
                 _project: &Entity<Project>,
                 _cx: &mut AsyncApp,
-            ) -> Option<agent_servers::AgentServerCommand> {
+            ) -> Result<agent_servers::AgentServerCommand> {
                 let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../../../gemini-cli/packages/cli")
                     .to_string_lossy()
                     .to_string();
 
-                Some(AgentServerCommand {
+                Ok(AgentServerCommand {
                     path: "node".into(),
-                    args: vec![cli_path],
+                    args: vec![cli_path, "--acp".into()],
                     env: None,
                 })
             }
 
-            async fn version_supported(&self, _command: agent_servers::AgentServerCommand) -> bool {
+            async fn version_supported(
+                &self,
+                _command: &agent_servers::AgentServerCommand,
+            ) -> bool {
                 true
             }
         }
@@ -1480,7 +1493,7 @@ mod tests {
         fn send_to_zed<T: acp::ClientRequest + 'static>(
             &self,
             message: T,
-        ) -> BoxedLocal<Result<T::Response, acp::Error>> {
+        ) -> BoxedLocal<Result<T::Response>> {
             self.connection.request(message).boxed_local()
         }
     }

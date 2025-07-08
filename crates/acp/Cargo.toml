@@ -14,6 +14,7 @@ doctest = false
 
 [features]
 test-support = ["gpui/test-support", "project/test-support"]
+gemini = []
 
 [dependencies]
 agent_servers.workspace = true
