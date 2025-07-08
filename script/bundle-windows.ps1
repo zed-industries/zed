@@ -137,8 +137,7 @@ function BuildInstaller {
             $regValueName = "ZedEditor"
             $appUserId = "ZedIndustries.Zed"
             $appShellNameShort = "Z&ed Editor"
-            # TODO: Update this value
-            $appAppxFullName = "ZedIndustries.Zed_1.0.0.0_neutral__jr6ek54py7bac"
+            $appAppxFullName = "ZedIndustries.Zed_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "preview" {
             $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
@@ -152,8 +151,7 @@ function BuildInstaller {
             $regValueName = "ZedEditorPreview"
             $appUserId = "ZedIndustries.Zed.Preview"
             $appShellNameShort = "Z&ed Editor Preview"
-            # TODO: Update this value
-            $appAppxFullName = "ZedIndustries.Zed.Preview_1.0.0.0_neutral__jr6ek54py7bac"
+            $appAppxFullName = "ZedIndustries.Zed.Preview_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "nightly" {
             $appId = "{{1BDB21D3-14E7-433C-843C-9C97382B2FE0}"
@@ -167,8 +165,7 @@ function BuildInstaller {
             $regValueName = "ZedEditorNightly"
             $appUserId = "ZedIndustries.Zed.Nightly"
             $appShellNameShort = "Z&ed Editor Nightly"
-            # TODO: Update this value
-            $appAppxFullName = "ZedIndustries.Zed.Nightly_1.0.0.0_neutral__jr6ek54py7bac"
+            $appAppxFullName = "ZedIndustries.Zed.Nightly_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "dev" {
             $appId = "{{8357632E-24A4-4F32-BA97-E575B4D1FE5D}"
@@ -182,8 +179,7 @@ function BuildInstaller {
             $regValueName = "ZedEditorDev"
             $appUserId = "ZedIndustries.Zed.Dev"
             $appShellNameShort = "Z&ed Editor Dev"
-            # TODO: Update this value
-            $appAppxFullName = "ZedIndustries.Zed.Dev_1.0.0.0_neutral__jr6ek54py7bac"
+            $appAppxFullName = "ZedIndustries.Zed.Dev_1.0.0.0_neutral__japxn1gcva8rg"
         }
         default {
             Write-Error "can't bundle installer for $channel."
