@@ -14,8 +14,8 @@ function UploadToBlobStoreWithACL {
     $ContentType = "application/octet-stream"
     $StorageClass = "STANDARD"
 
-    # Create string to sign
-    $StringToSign = "PUT`n`n${ContentType}`n${Date}`n${ACL}`n${StorageType}`n/${BucketName}/${BlobStoreKey}"
+    # Create string to sign (AWS S3 compatible format)
+    $StringToSign = "PUT`n`n${ContentType}`n${Date}`nx-amz-acl:${ACL}`nx-amz-storage-class:${StorageClass}`n/${BucketName}/${BlobStoreKey}"
 
     # Generate HMAC-SHA1 signature
     $HMACSHA1 = New-Object System.Security.Cryptography.HMACSHA1
