@@ -2273,11 +2273,9 @@ fn create_invisible_cursor(
     Ok(cursor)
 }
 
-/// Map a keycode (u32) to an ASCII character on US QWERTY layout.
-/// Optionally pass `shift = true` to get the shifted version (e.g. 'A' instead of 'a').
+/// Map a keycode (u32) to an ASCII character on US QWERTY layout
 pub(crate) fn keycode_to_key_x11(keycode: u32) -> Option<char> {
     let c = match keycode {
-        // Top row: QWERTYUIOP[]
         24 => 'q',
         25 => 'w',
         26 => 'e',
@@ -2290,8 +2288,6 @@ pub(crate) fn keycode_to_key_x11(keycode: u32) -> Option<char> {
         33 => 'p',
         34 => '[',
         35 => ']',
-
-        // Home row: ASDFGHJKL;'
         38 => 'a',
         39 => 's',
         40 => 'd',
@@ -2303,8 +2299,6 @@ pub(crate) fn keycode_to_key_x11(keycode: u32) -> Option<char> {
         46 => 'l',
         47 => ';',
         48 => '\'',
-
-        // Bottom row: ZXCVBNM,./
         52 => 'z',
         53 => 'x',
         54 => 'c',
