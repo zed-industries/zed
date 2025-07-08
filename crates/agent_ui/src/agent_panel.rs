@@ -40,6 +40,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
+use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -1814,7 +1815,9 @@ impl AgentPanel {
                     menu = menu
                         .action("New Thread", NewThread::default().boxed_clone())
                         .action("New Text Thread", NewTextThread.boxed_clone())
-                        .action("New Gemini Thread", NewGeminiThread.boxed_clone())
+                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            this.action("New Gemini Thread", NewGeminiThread.boxed_clone())
+                        })
                         .when_some(active_thread, |this, active_thread| {
                             let thread = active_thread.read(cx);
                             if !thread.is_empty() {
