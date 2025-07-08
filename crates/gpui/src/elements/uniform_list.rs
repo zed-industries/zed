@@ -142,6 +142,15 @@ impl UniformListScrollHandle {
             .map(|(ix, _)| ix)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
     }
+
+    /// Checks if the list can be scrolled vertically.
+    pub fn is_scrollable(&self) -> bool {
+        if let Some(size) = self.0.borrow().last_item_size {
+            size.contents.height > size.item.height
+        } else {
+            false
+        }
+    }
 }
 
 impl Styled for UniformList {

@@ -3940,10 +3940,7 @@ impl ProjectPanel {
 
         let show_sticky_shadow = details.sticky.as_ref().map_or(false, |item| {
             if item.is_last {
-                let content_width = self.scroll_handle.content_size().width;
-                let viewport_width = self.scroll_handle.viewport().size.width;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = content_width > viewport_width;
+                let is_scrollable = self.scroll_handle.is_scrollable();
                 let is_scrolled = self.scroll_handle.offset().y < px(0.);
                 is_scrollable && is_scrolled
             } else {
