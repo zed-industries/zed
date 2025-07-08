@@ -3,29 +3,18 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration,
-    Window, fill, point, size,
+    Window, point, size,
 };
 use smallvec::SmallVec;
-
-use crate::{
-    IndentGuideColors, RenderedIndentGuide, components::indent_guides::compute_indent_guides,
-};
 
 pub trait StickyCandidate {
     fn depth(&self) -> usize;
 }
 
-#[derive(Clone)]
 pub struct StickyItems<T> {
     compute_fn: Rc<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[T; 8]>>,
     render_fn: Rc<dyn Fn(T, &mut Window, &mut App) -> SmallVec<[AnyElement; 8]>>,
-    indent_guides: Option<StickyIndentGuides>,
-}
-
-#[derive(Clone)]
-struct StickyIndentGuides {
-    colors: IndentGuideColors,
-    indent_size: Pixels,
+    decorations: Vec<Box<dyn StickyItemsDecoration>>,
 }
 
 pub fn sticky_items<V, T>(
@@ -55,7 +44,7 @@ where
     StickyItems {
         compute_fn,
         render_fn,
-        indent_guides: None,
+        decorations: Vec::new(),
     }
 }
 
@@ -63,19 +52,16 @@ impl<T> StickyItems<T>
 where
     T: StickyCandidate + Clone + 'static,
 {
-    pub fn with_indent_guides(mut self, colors: IndentGuideColors, indent_size: Pixels) -> Self {
-        self.indent_guides = Some(StickyIndentGuides {
-            colors,
-            indent_size,
-        });
+    /// Adds a decoration element to the sticky items.
+    pub fn with_decoration(mut self, decoration: impl StickyItemsDecoration + 'static) -> Self {
+        self.decorations.push(Box::new(decoration));
         self
     }
 }
 
 struct StickyItemsElement {
     elements: SmallVec<[AnyElement; 8]>,
-    indent_guides: SmallVec<[RenderedIndentGuide; 12]>,
-    indent_guide_colors: Option<IndentGuideColors>,
+    decorations: SmallVec<[AnyElement; 1]>,
 }
 
 impl IntoElement for StickyItemsElement {
@@ -134,15 +120,8 @@ impl Element for StickyItemsElement {
         for item in self.elements.iter_mut().rev() {
             item.paint(window, cx);
         }
-        if let Some(colors) = &self.indent_guide_colors {
-            for guide in &self.indent_guides {
-                let fill_color = if guide.is_active {
-                    colors.active
-                } else {
-                    colors.default
-                };
-                window.paint_quad(fill(guide.bounds, fill_color));
-            }
+        for item in self.decorations.iter_mut().rev() {
+            item.paint(window, cx);
         }
     }
 }
@@ -163,7 +142,7 @@ where
     ) -> AnyElement {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
         let mut elements = SmallVec::new();
-        let mut indent_guides = SmallVec::new();
+        let mut decorations = SmallVec::new();
 
         let mut anchor_entry = None;
         let mut last_item_is_drifting = false;
@@ -196,35 +175,30 @@ where
             elements = (self.render_fn)(anchor_entry, window, cx);
             let items_count = elements.len();
 
-            if let Some(indent_guide_config) = &self.indent_guides {
-                let sticky_depths: SmallVec<[usize; 8]> = elements
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, _)| {
-                        anchor_depth
-                            .saturating_sub(items_count.saturating_sub(1).saturating_sub(ix))
-                    })
-                    .collect();
+            let sticky_depths: SmallVec<[usize; 8]> = elements
+                .iter()
+                .enumerate()
+                .map(|(ix, _)| {
+                    anchor_depth.saturating_sub(items_count.saturating_sub(1).saturating_sub(ix))
+                })
+                .collect();
 
-                let indent_guide_layouts = compute_indent_guides(&sticky_depths, 0, false);
-
-                for layout in indent_guide_layouts {
-                    let bounds = gpui::Bounds::new(
-                        bounds.origin
-                            + point(
-                                layout.offset.x * indent_guide_config.indent_size - scroll_offset.x,
-                                layout.offset.y * item_height - scroll_offset.y,
-                            ),
-                        size(gpui::px(1.), layout.length * item_height),
-                    );
-
-                    indent_guides.push(RenderedIndentGuide {
-                        bounds,
-                        layout,
-                        is_active: false,
-                        hitbox: None,
-                    });
-                }
+            for decoration in &self.decorations {
+                let mut decoration = decoration.as_ref().compute(
+                    sticky_depths,
+                    bounds,
+                    scroll_offset,
+                    item_height,
+                    window,
+                    cx,
+                );
+                let available_space = size(
+                    AvailableSpace::Definite(bounds.size.width),
+                    AvailableSpace::Definite(bounds.size.height),
+                );
+                decoration.layout_as_root(available_space, window, cx);
+                decoration.prepaint_at(bounds.origin, window, cx);
+                decorations.push(decoration);
             }
 
             for (ix, element) in elements.iter_mut().enumerate() {
@@ -256,9 +230,24 @@ where
 
         StickyItemsElement {
             elements,
-            indent_guides,
-            indent_guide_colors: self.indent_guides.as_ref().map(|ig| ig.colors.clone()),
+            decorations,
         }
         .into_any_element()
     }
+}
+
+/// A decoration for a [`StickyItems`]. This can be used for various things,
+/// such as rendering indent guides, or other visual effects.
+pub trait StickyItemsDecoration {
+    /// Compute the decoration element, given the visible range of list items,
+    /// the bounds of the list, and the height of each item.
+    fn compute(
+        &self,
+        visible_range: Range<usize>,
+        bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
+        item_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement;
 }

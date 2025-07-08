@@ -506,35 +506,6 @@ pub trait UniformListDecoration {
     ) -> AnyElement;
 }
 
-/// A trait for implementing top slots in a [`UniformList`].
-/// Top slots are elements that appear at the top of the list and can adjust
-/// the visible range of list items.
-pub trait UniformListTopSlot {
-    /// Returns elements to render at the top slot for the given visible range.
-    fn compute(
-        &mut self,
-        visible_range: Range<usize>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> SmallVec<[AnyElement; 8]>;
-
-    /// Layout and prepaint the top slot elements.
-    fn prepaint(
-        &self,
-        elements: &mut SmallVec<[AnyElement; 8]>,
-        bounds: Bounds<Pixels>,
-        item_height: Pixels,
-        scroll_offset: Point<Pixels>,
-        padding: crate::Edges<Pixels>,
-        can_scroll_horizontally: bool,
-        window: &mut Window,
-        cx: &mut App,
-    );
-
-    /// Paint the top slot elements.
-    fn paint(&self, elements: &mut SmallVec<[AnyElement; 8]>, window: &mut Window, cx: &mut App);
-}
-
 impl UniformList {
     /// Selects a specific list item for measurement.
     pub fn with_width_from_item(mut self, item_index: Option<usize>) -> Self {
