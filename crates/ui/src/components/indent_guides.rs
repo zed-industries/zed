@@ -31,7 +31,8 @@ impl IndentGuideColors {
 pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
-    compute_indents_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>,
+    compute_indents_fn:
+        Option<Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>>,
     render_fn: Option<
         Box<
             dyn Fn(
@@ -44,25 +45,11 @@ pub struct IndentGuides {
     on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>>,
 }
 
-pub fn indent_guides<V: Render>(
-    entity: Entity<V>,
-    indent_size: Pixels,
-    colors: IndentGuideColors,
-    compute_indents_fn: impl Fn(
-        &mut V,
-        Range<usize>,
-        &mut Window,
-        &mut Context<V>,
-    ) -> SmallVec<[usize; 64]>
-    + 'static,
-) -> IndentGuides {
-    let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut App| {
-        entity.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
-    });
+pub fn indent_guides(indent_size: Pixels, colors: IndentGuideColors) -> IndentGuides {
     IndentGuides {
         colors,
         indent_size,
-        compute_indents_fn,
+        compute_indents_fn: None,
         render_fn: None,
         on_click: None,
     }
@@ -75,6 +62,25 @@ impl IndentGuides {
         on_click: impl Fn(&IndentGuideLayout, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Rc::new(on_click));
+        self
+    }
+
+    /// Sets the function that computes indents for uniform list decoration.
+    pub fn with_compute_indents_fn<V: Render>(
+        mut self,
+        entity: Entity<V>,
+        compute_indents_fn: impl Fn(
+            &mut V,
+            Range<usize>,
+            &mut Window,
+            &mut Context<V>,
+        ) -> SmallVec<[usize; 64]>
+        + 'static,
+    ) -> Self {
+        let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut App| {
+            entity.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
+        });
+        self.compute_indents_fn = Some(compute_indents_fn);
         self
     }
 
@@ -205,7 +211,10 @@ mod uniform_list {
             if includes_trailing_indent {
                 visible_range.end += 1;
             }
-            let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), window, cx);
+            let Some(ref compute_indents_fn) = self.compute_indents_fn else {
+                panic!("compute_indents_fn is required for UniformListDecoration");
+            };
+            let visible_entries = &compute_indents_fn(visible_range.clone(), window, cx);
             let indent_guides = compute_indent_guides(
                 &visible_entries,
                 visible_range.start,

@@ -5212,52 +5212,53 @@ impl Render for ProjectPanel {
                     })
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
-                            ui::indent_guides(
-                                cx.entity().clone(),
-                                px(indent_size),
-                                IndentGuideColors::panel(cx),
-                                |this, range, window, cx| {
-                                    let mut items =
-                                        SmallVec::with_capacity(range.end - range.start);
-                                    this.iter_visible_entries(
-                                        range,
-                                        window,
-                                        cx,
-                                        |entry, _, entries, _, _| {
-                                            let (depth, _) = Self::calculate_depth_and_difference(
-                                                entry, entries,
-                                            );
-                                            items.push(depth);
-                                        },
-                                    );
-                                    items
-                                },
-                            )
-                            .on_click(cx.listener(
-                                |this, active_indent_guide: &IndentGuideLayout, window, cx| {
-                                    if window.modifiers().secondary() {
-                                        let ix = active_indent_guide.offset.y;
-                                        let Some((target_entry, worktree)) = maybe!({
-                                            let (worktree_id, entry) = this.entry_at_index(ix)?;
-                                            let worktree = this
-                                                .project
-                                                .read(cx)
-                                                .worktree_for_id(worktree_id, cx)?;
-                                            let target_entry = worktree
-                                                .read(cx)
-                                                .entry_for_path(&entry.path.parent()?)?;
-                                            Some((target_entry, worktree))
-                                        }) else {
-                                            return;
-                                        };
+                            ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
+                                .with_compute_indents_fn(
+                                    cx.entity().clone(),
+                                    |this, range, window, cx| {
+                                        let mut items =
+                                            SmallVec::with_capacity(range.end - range.start);
+                                        this.iter_visible_entries(
+                                            range,
+                                            window,
+                                            cx,
+                                            |entry, _, entries, _, _| {
+                                                let (depth, _) =
+                                                    Self::calculate_depth_and_difference(
+                                                        entry, entries,
+                                                    );
+                                                items.push(depth);
+                                            },
+                                        );
+                                        items
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    |this, active_indent_guide: &IndentGuideLayout, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            let ix = active_indent_guide.offset.y;
+                                            let Some((target_entry, worktree)) = maybe!({
+                                                let (worktree_id, entry) =
+                                                    this.entry_at_index(ix)?;
+                                                let worktree = this
+                                                    .project
+                                                    .read(cx)
+                                                    .worktree_for_id(worktree_id, cx)?;
+                                                let target_entry = worktree
+                                                    .read(cx)
+                                                    .entry_for_path(&entry.path.parent()?)?;
+                                                Some((target_entry, worktree))
+                                            }) else {
+                                                return;
+                                            };
 
-                                        this.collapse_entry(target_entry.clone(), worktree, cx);
-                                    }
-                                },
-                            ))
-                            .with_render_fn(cx.entity().clone(), move |this, params, _, cx| {
-                                this.render_indent_guides(params, cx)
-                            }),
+                                            this.collapse_entry(target_entry.clone(), worktree, cx);
+                                        }
+                                    },
+                                ))
+                                .with_render_fn(cx.entity().clone(), move |this, params, _, cx| {
+                                    this.render_indent_guides(params, cx)
+                                }),
                         )
                     })
                     .when(show_sticky_scroll, |list| {
@@ -5285,22 +5286,13 @@ impl Render for ProjectPanel {
                         );
                         list.with_decoration(if show_indent_guides {
                             sticky_items.with_decoration(
-                                ui::indent_guides(
-                                    cx.entity().clone(),
-                                    px(indent_size),
-                                    IndentGuideColors::panel(cx),
-                                    |this, range, window, cx| {
-                                        let mut items =
-                                            SmallVec::with_capacity(range.end - range.start);
-                                        items
-                                    },
-                                )
-                                .with_render_fn(
-                                    cx.entity().clone(),
-                                    move |this, params, _, cx| {
-                                        this.render_indent_guides(params, cx)
-                                    },
-                                ),
+                                ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
+                                    .with_render_fn(
+                                        cx.entity().clone(),
+                                        move |this, params, _, cx| {
+                                            this.render_indent_guides(params, cx)
+                                        },
+                                    ),
                             )
                         } else {
                             sticky_items
