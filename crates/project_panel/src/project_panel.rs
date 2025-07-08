@@ -23,7 +23,8 @@ use gpui::{
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, point, px, size, transparent_white, uniform_list,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -185,6 +186,7 @@ struct EntryDetails {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct StickyDetails {
     sticky_index: usize,
+    is_last: bool,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -3928,8 +3930,24 @@ impl ProjectPanel {
             }
         };
 
+        let last_sticky_item = details.sticky.as_ref().map_or(false, |item| item.is_last);
+        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.15);
+        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
+        let sticky_shadow = div()
+            .absolute()
+            .left_0()
+            .bottom_neg_1p5()
+            .h_1p5()
+            .w_full()
+            .bg(linear_gradient(
+                0.,
+                linear_color_stop(shadow_color_top, 1.),
+                linear_color_stop(shadow_color_bottom, 0.),
+            ));
+
         div()
             .id(entry_id.to_proto() as usize)
+            .relative()
             .group(GROUP_NAME)
             .cursor_pointer()
             .rounded_none()
@@ -3938,6 +3956,7 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
+            .when(is_sticky && last_sticky_item, |this| this.child(sticky_shadow))
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
@@ -4931,6 +4950,7 @@ impl ProjectPanel {
                     .unwrap_or_default();
                 let sticky_details = Some(StickyDetails {
                     sticky_index: index,
+                    is_last: index == sticky_parents.len() - 1,
                 });
                 let details = self.details_for_entry(
                     entry,
