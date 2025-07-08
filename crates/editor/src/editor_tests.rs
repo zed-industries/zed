@@ -2548,6 +2548,52 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
 }
 
+ #[gpui::test] 
+ fn test_delete_previous_whitespace(cx: &mut TestAppContext) { 
+     init_test(cx, |_| {}); 
+  
+     let editor = cx.add_window(|window, cx| { 
+         let buffer = MultiBuffer::build_simple("one   two  \n three \t four", cx); 
+         build_editor(buffer.clone(), window, cx) 
+     }); 
+  
+     _ = editor.update(cx, |editor, window, cx| { 
+         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| { 
+             s.select_display_ranges([ 
+                 DisplayPoint::new(DisplayRow(1), 1)..DisplayPoint::new(DisplayRow(1), 1),
+                 DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 9), 
+             ]) 
+         }); 
+         editor.delete_previous_whitespace( 
+             &DeletePreviousWhitespace { 
+                 ignore_newlines: false, 
+             },
+             window, 
+             cx, 
+         ); 
+         assert_eq!(editor.buffer.read(cx).read(cx).text(), "one   two  \nthreefour"); 
+     }); 
+
+     _ = editor.update(cx, |editor, window, cx| { 
+         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| { 
+             s.select_display_ranges([
+                 DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 6),
+                 DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0), 
+             ]) 
+         }); 
+         editor.delete_previous_whitespace( 
+             &DeletePreviousWhitespace { 
+                 ignore_newlines: true, 
+             }, 
+             window, 
+             cx, 
+         );
+         assert_eq!(editor.buffer.read(cx).read(cx).text(), "onetwothreefour"); 
+     });
+
+ } 
+
+
 #[gpui::test]
 fn test_newline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
