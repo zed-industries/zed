@@ -859,7 +859,7 @@ impl Element for TerminalElement {
                 let font_features = terminal_settings
                     .font_features
                     .as_ref()
-                    .unwrap_or(&settings.buffer_font.features)
+                    .unwrap_or(&FontFeatures::disable_ligatures())
                     .clone();
 
                 let font_weight = terminal_settings.font_weight.unwrap_or_default();
