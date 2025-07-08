@@ -5152,7 +5152,7 @@ impl Render for ProjectPanel {
                         })
                     })
                     .when(show_sticky_scroll, |list| {
-                        list.with_top_slot(ui::sticky_items(
+                        list.with_decoration(ui::sticky_items(
                             cx.entity().clone(),
                             |this, range, window, cx| {
                                 let mut items = SmallVec::with_capacity(range.end - range.start);
