@@ -175,7 +175,7 @@ where
             elements = (self.render_fn)(anchor_entry, window, cx);
             let items_count = elements.len();
 
-            let sticky_depths: SmallVec<[usize; 8]> = elements
+            let indents: SmallVec<[usize; 8]> = elements
                 .iter()
                 .enumerate()
                 .map(|(ix, _)| {
@@ -185,7 +185,7 @@ where
 
             for decoration in &self.decorations {
                 let mut decoration = decoration.as_ref().compute(
-                    sticky_depths,
+                    &indents,
                     bounds,
                     scroll_offset,
                     item_height,
@@ -243,7 +243,7 @@ pub trait StickyItemsDecoration {
     /// the bounds of the list, and the height of each item.
     fn compute(
         &self,
-        visible_range: Range<usize>,
+        indents: &SmallVec<[usize; 8]>,
         bounds: Bounds<Pixels>,
         scroll_offset: Point<Pixels>,
         item_height: Pixels,

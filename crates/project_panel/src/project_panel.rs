@@ -5288,8 +5288,27 @@ impl Render for ProjectPanel {
                             },
                         );
                         list.with_decoration(if show_indent_guides {
-                            sticky_items
-                                .with_indent_guides(IndentGuideColors::panel(cx), px(indent_size))
+                            sticky_item.with_decoration(ui::indent_guides(
+                                cx.entity().clone(),
+                                px(indent_size),
+                                IndentGuideColors::panel(cx),
+                                |this, range, window, cx| {
+                                    let mut items =
+                                        SmallVec::with_capacity(range.end - range.start);
+                                    this.iter_visible_entries(
+                                        range,
+                                        window,
+                                        cx,
+                                        |entry, _, entries, _, _| {
+                                            let (depth, _) = Self::calculate_depth_and_difference(
+                                                entry, entries,
+                                            );
+                                            items.push(depth);
+                                        },
+                                    );
+                                    items
+                                },
+                            ))
                         } else {
                             sticky_items
                         })

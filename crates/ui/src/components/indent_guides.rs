@@ -98,6 +98,53 @@ impl IndentGuides {
         self.render_fn = Some(Box::new(render_fn));
         self
     }
+
+    fn render_from_layout(
+        &self,
+        indent_guides: SmallVec<[IndentGuideLayout; 12]>,
+        bounds: Bounds<Pixels>,
+        item_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
+            let params = RenderIndentGuideParams {
+                indent_guides,
+                indent_size: self.indent_size,
+                item_height,
+            };
+            custom_render(params, window, cx)
+        } else {
+            indent_guides
+                .into_iter()
+                .map(|layout| RenderedIndentGuide {
+                    bounds: Bounds::new(
+                        point(
+                            layout.offset.x * self.indent_size,
+                            layout.offset.y * item_height,
+                        ),
+                        size(px(1.), layout.length * item_height),
+                    ),
+                    layout,
+                    is_active: false,
+                    hitbox: None,
+                })
+                .collect()
+        };
+        for guide in &mut indent_guides {
+            guide.bounds.origin += bounds.origin;
+            if let Some(hitbox) = guide.hitbox.as_mut() {
+                hitbox.origin += bounds.origin;
+            }
+        }
+
+        let indent_guides = IndentGuidesElement {
+            indent_guides: Rc::new(indent_guides),
+            colors: self.colors.clone(),
+            on_hovered_indent_guide_click: self.on_click.clone(),
+        };
+        indent_guides.into_any_element()
+    }
 }
 
 /// Parameters for rendering indent guides.
@@ -164,43 +211,7 @@ mod uniform_list {
                 visible_range.start,
                 includes_trailing_indent,
             );
-            let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
-                let params = RenderIndentGuideParams {
-                    indent_guides,
-                    indent_size: self.indent_size,
-                    item_height,
-                };
-                custom_render(params, window, cx)
-            } else {
-                indent_guides
-                    .into_iter()
-                    .map(|layout| RenderedIndentGuide {
-                        bounds: Bounds::new(
-                            point(
-                                layout.offset.x * self.indent_size,
-                                layout.offset.y * item_height,
-                            ),
-                            size(px(1.), layout.length * item_height),
-                        ),
-                        layout,
-                        is_active: false,
-                        hitbox: None,
-                    })
-                    .collect()
-            };
-            for guide in &mut indent_guides {
-                guide.bounds.origin += bounds.origin;
-                if let Some(hitbox) = guide.hitbox.as_mut() {
-                    hitbox.origin += bounds.origin;
-                }
-            }
-
-            let indent_guides = IndentGuidesElement {
-                indent_guides: Rc::new(indent_guides),
-                colors: self.colors.clone(),
-                on_hovered_indent_guide_click: self.on_click.clone(),
-            };
-            indent_guides.into_any_element()
+            self.render_from_layout(indent_guides, bounds, item_height, window, cx)
         }
     }
 }
@@ -214,52 +225,15 @@ mod sticky_items {
     impl StickyItemsDecoration for IndentGuides {
         fn compute(
             &self,
-            visible_range: Range<usize>,
+            indents: &SmallVec<[usize; 8]>,
             bounds: Bounds<Pixels>,
             _scroll_offset: Point<Pixels>,
             item_height: Pixels,
             window: &mut Window,
             cx: &mut App,
         ) -> AnyElement {
-            let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), window, cx);
-            let indent_guides = compute_indent_guides(&visible_entries, visible_range.start, false);
-            let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
-                let params = RenderIndentGuideParams {
-                    indent_guides,
-                    indent_size: self.indent_size,
-                    item_height,
-                };
-                custom_render(params, window, cx)
-            } else {
-                indent_guides
-                    .into_iter()
-                    .map(|layout| RenderedIndentGuide {
-                        bounds: Bounds::new(
-                            point(
-                                layout.offset.x * self.indent_size,
-                                layout.offset.y * item_height,
-                            ),
-                            size(px(1.), layout.length * item_height),
-                        ),
-                        layout,
-                        is_active: false,
-                        hitbox: None,
-                    })
-                    .collect()
-            };
-            for guide in &mut indent_guides {
-                guide.bounds.origin += bounds.origin;
-                if let Some(hitbox) = guide.hitbox.as_mut() {
-                    hitbox.origin += bounds.origin;
-                }
-            }
-
-            let indent_guides = IndentGuidesElement {
-                indent_guides: Rc::new(indent_guides),
-                colors: self.colors.clone(),
-                on_hovered_indent_guide_click: self.on_click.clone(),
-            };
-            indent_guides.into_any_element()
+            let indent_guides = compute_indent_guides(&indents, 0, false);
+            self.render_from_layout(indent_guides, bounds, item_height, window, cx)
         }
     }
 }
@@ -437,7 +411,7 @@ impl IntoElement for IndentGuidesElement {
     }
 }
 
-pub fn compute_indent_guides(
+fn compute_indent_guides(
     indents: &[usize],
     offset: usize,
     includes_trailing_indent: bool,
