@@ -253,7 +253,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Windows installer
     if: github.repository_owner == 'zed-industries'
-    runs-on: [self-hosted, Windows, X64, Windows-alt]
+    runs-on: [self-hosted, Windows, X64]
     needs: windows-tests
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
