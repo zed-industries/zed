@@ -35,7 +35,7 @@ function UploadToBlobStoreWithACL {
     $Uri = "https://${BucketName}.nyc3.digitaloceanspaces.com/${BlobStoreKey}"
     
     # Read file content
-    $FileContent = Get-Content $FileToUpload -Raw -Encoding Byte
+    $FileContent = Get-Content $FileToUpload -Raw -AsByteStream
     
     try {
         Invoke-WebRequest -Uri $Uri -Method PUT -Headers $Headers -Body $FileContent -ContentType $ContentType -Verbose
