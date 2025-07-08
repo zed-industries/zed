@@ -23,7 +23,10 @@ use util::ResultExt as _;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 #[cfg(feature = "x11")]
-use crate::keycode_to_key;
+use crate::keycode_to_key_x11;
+
+#[cfg(feature = "wayland")]
+use crate::keycode_to_key_wayland;
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
@@ -794,6 +797,16 @@ impl crate::Keystroke {
         // Ignore control characters (and DEL) for the purposes of key_char
         let key_char = (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.clone().is_empty())
             .then_some(key_utf8.clone());
+
+        fn keycode_to_key(key: u32) -> Option<String> {
+            #[cfg(feature = "x11")]
+            return keycode_to_key_x11(key);
+
+            #[cfg(feature = "wayland")]
+            return keycode_to_key_wayland(key);
+
+            return None;
+        }
 
         let key_en = keycode_to_key(keycode.raw());
         Self {

@@ -1364,9 +1364,11 @@ fn parse_normal_key(
         );
         get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
+    let key_en = keycode_to_key(scan_code as u32);
     Some(Keystroke {
         modifiers,
         key,
+        key_en,
         key_char,
     })
 }

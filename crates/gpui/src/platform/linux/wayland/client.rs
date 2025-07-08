@@ -2155,3 +2155,51 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
         }
     }
 }
+
+/// Map a keycode (u32) to an ASCII character on US QWERTY layout for Wayland.
+/// Uses Linux input event codes (KEY_*) as defined in linux/input-event-codes.h
+pub(crate) fn keycode_to_key_wayland(keycode: u32) -> Option<String> {
+    let c = match keycode {
+        // Top row: QWERTYUIOP[]
+        16 => 'q', // KEY_Q
+        17 => 'w', // KEY_W
+        18 => 'e', // KEY_E
+        19 => 'r', // KEY_R
+        20 => 't', // KEY_T
+        21 => 'y', // KEY_Y
+        22 => 'u', // KEY_U
+        23 => 'i', // KEY_I
+        24 => 'o', // KEY_O
+        25 => 'p', // KEY_P
+        26 => '[', // KEY_LEFTBRACE
+        27 => ']', // KEY_RIGHTBRACE
+
+        // Home row: ASDFGHJKL;'
+        30 => 'a',  // KEY_A
+        31 => 's',  // KEY_S
+        32 => 'd',  // KEY_D
+        33 => 'f',  // KEY_F
+        34 => 'g',  // KEY_G
+        35 => 'h',  // KEY_H
+        36 => 'j',  // KEY_J
+        37 => 'k',  // KEY_K
+        38 => 'l',  // KEY_L
+        39 => ';',  // KEY_SEMICOLON
+        40 => '\'', // KEY_APOSTROPHE
+
+        // Bottom row: ZXCVBNM,./
+        44 => 'z', // KEY_Z
+        45 => 'x', // KEY_X
+        46 => 'c', // KEY_C
+        47 => 'v', // KEY_V
+        48 => 'b', // KEY_B
+        49 => 'n', // KEY_N
+        50 => 'm', // KEY_M
+        51 => ',', // KEY_COMMA
+        52 => '.', // KEY_DOT
+        53 => '/', // KEY_SLASH
+
+        _ => return None,
+    };
+    Some(String::from(c))
+}
