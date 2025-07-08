@@ -17,7 +17,6 @@ use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
-use dap::events::Memory;
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
 use dap::{
@@ -45,7 +44,7 @@ use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
-use std::ops::{Range, RangeInclusive};
+use std::ops::RangeInclusive;
 use std::u64;
 use std::{
     any::Any,

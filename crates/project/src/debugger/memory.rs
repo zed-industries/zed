@@ -56,7 +56,7 @@ impl PageChunk {
 
 impl MappedPageContents {
     fn len(&self) -> u64 {
-        self.chunks.iter().map(|chunk| chunk.len()).sum()
+        self.0.iter().map(|chunk| chunk.len()).sum()
     }
 }
 /// We hope for the whole page to be mapped in a single chunk, but we do leave the possibility open
@@ -67,11 +67,13 @@ impl MappedPageContents {
 /// As stated previously, the concept of a page in this module has to do more
 /// with optimizing fetching of the memory and not with the underlying bits and pieces
 /// of the memory of a debuggee.
-struct MappedPageContents {
+
+#[derive(Default)]
+struct MappedPageContents(
     /// Most of the time there should be only one chunk (either mapped or unmapped),
     /// but we do leave the possibility open of having multiple regions of memory in a single page.
-    chunks: SmallVec<[PageChunk; 1]>,
-}
+    SmallVec<[PageChunk; 1]>,
+);
 
 type MemoryAddress = u64;
 #[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
@@ -106,8 +108,10 @@ impl Memory {
         }
     }
 
-    pub(super) fn insert_page(&mut self, address: PageAddress, page: PageContents) {}
-    pub(super) fn pages(&self, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
+    pub(super) fn insert_page(&mut self, address: PageAddress, page: PageContents) {
+        self.pages.insert(address, page);
+    }
+    pub(super) fn pages(&self, range: Range<usize>) -> impl Iterator<Item = u8> {
         None.into_iter()
     }
 }
@@ -127,7 +131,7 @@ impl Memory {
 ///
 /// This is where this builder comes in. It lets us track the state of figuring out contents of a single page.
 pub(super) struct MemoryPageBuilder {
-    chunks: SmallVec<[PageChunk; 1]>,
+    chunks: MappedPageContents,
     base_address: PageAddress,
     left_to_read: u64,
 }
@@ -149,20 +153,19 @@ impl MemoryPageBuilder {
     }
 
     pub(super) fn build(self) -> (PageAddress, PageContents) {
+        debug_assert_eq!(self.left_to_read, 0);
         debug_assert_eq!(
-            self.chunks.iter().map(|chunk| chunk.len()).sum::<u64>(),
+            self.chunks.len(),
             PAGE_SIZE,
             "Expected `build` to be called on a fully-fetched page"
         );
-        let contents = if let Some(first) = self.chunks.first()
+        let contents = if let Some(first) = self.chunks.0.first()
             && self.chunks.len() == 1
             && matches!(first, PageChunk::Unmapped(PAGE_SIZE))
         {
             PageContents::Unmapped
         } else {
-            PageContents::Mapped(Arc::new(MappedPageContents {
-                chunks: self.chunks,
-            }))
+            PageContents::Mapped(Arc::new(MappedPageContents(self.chunks.0)))
         };
         (self.base_address, contents)
     }
@@ -183,13 +186,13 @@ impl MemoryPageBuilder {
             return;
         }
         self.left_to_read -= bytes;
-        self.chunks.push(PageChunk::Unmapped(bytes));
+        self.chunks.0.push(PageChunk::Unmapped(bytes));
     }
     pub(super) fn known(&mut self, data: Arc<[u8]>) {
         if data.is_empty() {
             return;
         }
         self.left_to_read -= data.len() as u64;
-        self.chunks.push(PageChunk::Mapped(data));
+        self.chunks.0.push(PageChunk::Mapped(data));
     }
 }
