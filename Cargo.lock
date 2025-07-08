@@ -7,7 +7,7 @@ name = "acp"
 version = "0.1.0"
 dependencies = [
  "agent_servers",
- "agentic-coding-protocol",
+ "agentic-coding-protocol 0.0.1",
  "anyhow",
  "async-pipe",
  "async-trait",
@@ -188,7 +188,7 @@ dependencies = [
  "agent",
  "agent_servers",
  "agent_settings",
- "agentic-coding-protocol",
+ "agentic-coding-protocol 0.0.4",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",
@@ -275,6 +275,22 @@ dependencies = [
 [[package]]
 name = "agentic-coding-protocol"
 version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures 0.3.31",
+ "log",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "agentic-coding-protocol"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a7bb685247a8c76b3b9e3e3da0ffba91b91c3b90c143a8a866d16e9e6da7056"
 dependencies = [
  "anyhow",
  "chrono",
