@@ -411,11 +411,10 @@ jobs:
         with:
           clean: false
 
-      - name: Setup Cargo and Rustup
+      - name: Configure CI
         run: |
-          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
-          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
-          .\script\install-rustup.ps1
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
         run: |
@@ -429,11 +428,6 @@ jobs:
 
       - name: Limit target directory size
         run: ./script/clear-target-dir-if-larger-than.ps1 250
-
-      # - name: Check dev drive space
-      #   working-directory: ${{ env.ZED_WORKSPACE }}
-      #   # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
-      #   run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
