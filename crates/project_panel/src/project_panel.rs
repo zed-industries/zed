@@ -4176,6 +4176,16 @@ impl ProjectPanel {
                         }
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
+                        if is_sticky {
+                            if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
+                                let strategy = sticky_index
+                                    .map(ScrollStrategy::ToPosition)
+                                    .unwrap_or(ScrollStrategy::Top);
+                                this.scroll_handle.scroll_to_item(index, strategy);
+                                cx.notify();
+                                return;
+                            }
+                        }
                         if event.modifiers().alt {
                             this.toggle_expand_all(entry_id, window, cx);
                         } else {
@@ -4187,16 +4197,6 @@ impl ProjectPanel {
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                    }
-
-                    if is_sticky {
-                        if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                            let strategy = sticky_index
-                                .map(ScrollStrategy::ToPosition)
-                                .unwrap_or(ScrollStrategy::Top);
-                            this.scroll_handle.scroll_to_item(index, strategy);
-                            cx.notify();
-                        }
                     }
                 }),
             )
