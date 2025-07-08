@@ -80,7 +80,7 @@ jobs:
 
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Recurse -Path "./../.cargo" -Force
+        run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
 
   bundle-mac:
     timeout-minutes: 60
