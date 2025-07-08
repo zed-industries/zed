@@ -5151,30 +5151,6 @@ impl Render for ProjectPanel {
                             items
                         })
                     })
-                    .when(show_sticky_scroll, |list| {
-                        list.with_decoration(ui::sticky_items(
-                            cx.entity().clone(),
-                            |this, range, window, cx| {
-                                let mut items = SmallVec::with_capacity(range.end - range.start);
-                                this.iter_visible_entries(
-                                    range,
-                                    window,
-                                    cx,
-                                    |entry, index, entries, _, _| {
-                                        let (depth, _) =
-                                            Self::calculate_depth_and_difference(entry, entries);
-                                        let candidate =
-                                            StickyProjectPanelCandidate { index, depth };
-                                        items.push(candidate);
-                                    },
-                                );
-                                items
-                            },
-                            |this, marker_entry, window, cx| {
-                                this.render_sticky_entries(marker_entry, window, cx)
-                            },
-                        ))
-                    })
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(
@@ -5273,6 +5249,30 @@ impl Render for ProjectPanel {
                                 },
                             ),
                         )
+                    })
+                    .when(show_sticky_scroll, |list| {
+                        list.with_decoration(ui::sticky_items(
+                            cx.entity().clone(),
+                            |this, range, window, cx| {
+                                let mut items = SmallVec::with_capacity(range.end - range.start);
+                                this.iter_visible_entries(
+                                    range,
+                                    window,
+                                    cx,
+                                    |entry, index, entries, _, _| {
+                                        let (depth, _) =
+                                            Self::calculate_depth_and_difference(entry, entries);
+                                        let candidate =
+                                            StickyProjectPanelCandidate { index, depth };
+                                        items.push(candidate);
+                                    },
+                                );
+                                items
+                            },
+                            |this, marker_entry, window, cx| {
+                                this.render_sticky_entries(marker_entry, window, cx)
+                            },
+                        ))
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)

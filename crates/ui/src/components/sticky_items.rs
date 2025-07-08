@@ -171,7 +171,7 @@ where
 
                 let sticky_origin = bounds.origin
                     + point(
-                        scroll_offset.x,
+                        -scroll_offset.x,
                         -scroll_offset.y + item_height * ix + item_y_offset.unwrap_or(Pixels::ZERO),
                     );
 
