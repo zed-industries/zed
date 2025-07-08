@@ -439,7 +439,7 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    Unsupported,
+    Unsupported { current_version: SharedString },
     Exited(i32),
     Other(SharedString),
 }
@@ -447,7 +447,13 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unsupported => write!(f, "The installed version does not support ACP"),
+            LoadError::Unsupported { current_version } => {
+                write!(
+                    f,
+                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP)",
+                    current_version
+                )
+            }
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
@@ -496,8 +502,12 @@ impl AcpThread {
                     Err(e) => Err(anyhow!(e)),
                     Ok(result) if result.success() => Ok(()),
                     Ok(result) => {
-                        if !server.version_supported(&command).await {
-                            Err(anyhow!(LoadError::Unsupported))
+                        if let Some(version) = server.version(&command).await.log_err()
+                            && !version.supported
+                        {
+                            Err(anyhow!(LoadError::Unsupported {
+                                current_version: version.current_version
+                            }))
                         } else {
                             Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
                         }
@@ -1371,10 +1381,7 @@ mod tests {
                 })
             }
 
-            async fn version_supported(
-                &self,
-                _command: &agent_servers::AgentServerCommand,
-            ) -> bool {
+            async fn version(&self, _command: &agent_servers::AgentServerCommand) -> bool {
                 true
             }
         }

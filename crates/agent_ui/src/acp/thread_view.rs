@@ -1312,7 +1312,15 @@ impl AcpThreadView {
         v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_gemini_logo())
+            .child(
+                div().relative().child(self.render_gemini_logo()).child(
+                    div().absolute().right_1().bottom_1().child(
+                        Icon::new(IconName::Close)
+                            .color(Color::Error)
+                            .size(IconSize::Small),
+                    ),
+                ),
+            )
             .child(
                 h_flex()
                     .mt_4()
@@ -1324,28 +1332,41 @@ impl AcpThreadView {
     }
 
     fn render_error_state(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
-        let mut el = v_flex()
+        let mut container = v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_gemini_logo())
             .child(
                 h_flex()
-                    .mt_4()
-                    .mb_1()
+                    .relative()
                     .justify_center()
-                    .child(Headline::new("Failed to launch").size(HeadlineSize::Medium)),
+                    .child(self.render_gemini_logo())
+                    .child(
+                        div().absolute().right_1().bottom_1().child(
+                            Icon::new(IconName::Close)
+                                .color(Color::Error)
+                                .size(IconSize::Small),
+                        ),
+                    ),
             )
             .child(
-                h_flex()
+                v_flex()
                     .mt_4()
                     .mb_1()
+                    .gap_1()
+                    .items_center()
                     .justify_center()
-                    .child(Label::new(e.to_string())),
+                    .child(Headline::new("Failed to launch").size(HeadlineSize::Medium))
+                    .child(
+                        Label::new(e.to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             );
-        if matches!(e, LoadError::Unsupported) {
-            el = el.child(h_flex().mt_4().mb_1().justify_center().child(
-                Button::new("upgrade", "Upgrade Gemini").on_click(cx.listener(
-                    |this, _, window, cx| {
+
+        if matches!(e, LoadError::Unsupported { .. }) {
+            container =
+                container.child(Button::new("upgrade", "Upgrade Gemini to Latest").on_click(
+                    cx.listener(|this, _, window, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
                                 let project = workspace.project().read(cx);
@@ -1377,12 +1398,11 @@ impl AcpThreadView {
                                     .detach();
                             })
                             .ok();
-                    },
-                )),
-            ));
+                    }),
+                ));
         }
 
-        el.into_any()
+        container.into_any()
     }
 
     fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {

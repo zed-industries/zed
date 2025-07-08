@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
 project.workspace = true

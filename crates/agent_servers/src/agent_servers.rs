@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AsyncApp, Entity};
+use gpui::{App, AsyncApp, Entity, SharedString};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,11 @@ pub struct AgentServerCommand {
 
 pub struct Gemini;
 
+pub struct AgentServerVersion {
+    pub current_version: SharedString,
+    pub supported: bool,
+}
+
 pub trait AgentServer: Send {
     fn command(
         &self,
@@ -45,7 +50,10 @@ pub trait AgentServer: Send {
         cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<AgentServerCommand>>;
 
-    fn version_supported(&self, command: &AgentServerCommand) -> impl Future<Output = bool> + Send;
+    fn version(
+        &self,
+        command: &AgentServerCommand,
+    ) -> impl Future<Output = Result<AgentServerVersion>> + Send;
 }
 
 const GEMINI_ACP_ARG: &str = "--acp";
@@ -105,17 +113,28 @@ impl AgentServer for Gemini {
         })
     }
 
-    async fn version_supported(&self, command: &AgentServerCommand) -> bool {
-        util::command::new_smol_command(&command.path)
+    async fn version(&self, command: &AgentServerCommand) -> Result<AgentServerVersion> {
+        let version_fut = util::command::new_smol_command(&command.path)
+            .args(command.args.iter())
+            .arg("--version")
+            .kill_on_drop(true)
+            .output();
+
+        let help_fut = util::command::new_smol_command(&command.path)
             .args(command.args.iter())
             .arg("--help")
             .kill_on_drop(true)
-            .output()
-            .await
-            .log_err()
-            .map_or(false, |help_output| {
-                String::from_utf8_lossy(&help_output.stdout).contains(GEMINI_ACP_ARG)
-            })
+            .output();
+
+        let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
+
+        let current_version = String::from_utf8(version_output?.stdout)?.into();
+        let supported = String::from_utf8(help_output?.stdout)?.contains(GEMINI_ACP_ARG);
+
+        Ok(AgentServerVersion {
+            current_version,
+            supported,
+        })
     }
 }
 
