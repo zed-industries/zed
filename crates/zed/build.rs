@@ -55,7 +55,8 @@ fn main() {
         let icon = match release_channel {
             "stable" => "resources/windows/app-icon.ico",
             "preview" => "resources/windows/app-icon-preview.ico",
-            "nightly" | _ => "resources/windows/app-icon-nightly.ico",
+            "nightly" => "resources/windows/app-icon-nightly.ico",
+            _ => "resources/windows/app-icon-dev.ico",
         };
         let icon = std::path::Path::new(icon);
 
