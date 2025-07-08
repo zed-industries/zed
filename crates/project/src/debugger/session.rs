@@ -1,6 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::ReadMemory;
-use crate::debugger::memory::{self, MemoryPageBuilder};
+use crate::debugger::memory::{self, MemoryPageBuilder, PageAddress};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -1739,7 +1739,7 @@ impl Session {
         //     range,
         // }
     }
-    fn read_single_page_memory(&mut self, page_start: u64, cx: &mut Context<Self>) {
+    fn read_single_page_memory(&mut self, page_start: PageAddress, cx: &mut Context<Self>) {
         _ = maybe!({
             let builder = self.memory.build_page(page_start)?;
 
@@ -1753,13 +1753,17 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         let Some(next_request) = builder.next_request() else {
+            // We're done fetching. Let's grab the page and insert it into our memory store.
+            let (address, contents) = builder.build();
+            self.memory.insert_page(address, contents);
+
             return;
         };
         self.fetch(
             ReadMemory {
                 memory_reference: next_request.address.to_string(),
                 offset: None,
-                count: next_request.address,
+                count: next_request.size,
             },
             move |this, memory, cx| {
                 if let Ok(memory) = memory {

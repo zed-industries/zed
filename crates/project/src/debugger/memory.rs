@@ -25,7 +25,7 @@ const PAGE_SIZE: u64 = 4096;
 /// Represents the contents of a single page. We special-case unmapped pages to be allocation-free,
 /// since they're going to make up the majority of the memory in a program space (even though the user might not even get to see them - ever).
 #[derive(Clone)]
-enum PageContents {
+pub(super) enum PageContents {
     /// Whole page is unreadable.
     Unmapped,
     Mapped(Arc<MappedPageContents>),
@@ -73,10 +73,13 @@ struct MappedPageContents {
     chunks: SmallVec<[PageChunk; 1]>,
 }
 
-type BaseMemoryAddress = u64;
-pub(super) struct PageAddress {}
+type MemoryAddress = u64;
+#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
+#[repr(transparent)]
+pub(super) struct PageAddress(u64);
+
 pub(super) struct Memory {
-    pages: BTreeMap<BaseMemoryAddress, PageContents>,
+    pages: BTreeMap<PageAddress, PageContents>,
 }
 
 impl Memory {
@@ -87,16 +90,23 @@ impl Memory {
     }
 
     pub(super) fn memory_range_to_pages(
-        range: RangeInclusive<BaseMemoryAddress>,
-    ) -> impl Iterator<Item = BaseMemoryAddress> {
+        range: RangeInclusive<MemoryAddress>,
+    ) -> impl Iterator<Item = PageAddress> {
         let start_page = range.start() / PAGE_SIZE;
         let end_page = (range.end() + PAGE_SIZE - 1) / PAGE_SIZE;
-        (start_page..end_page).map(|page| page * PAGE_SIZE)
+        (start_page..end_page).map(|page| PageAddress(page * PAGE_SIZE))
     }
 
-    pub(super) fn build_page(&self, page_address: BaseMemoryAddress) -> Option<MemoryPageBuilder> {
-        None
+    pub(super) fn build_page(&self, page_address: PageAddress) -> Option<MemoryPageBuilder> {
+        if self.pages.get(&page_address).is_some() {
+            // We already know the state of this page.
+            None
+        } else {
+            Some(MemoryPageBuilder::new(page_address))
+        }
     }
+
+    pub(super) fn insert_page(&mut self, address: PageAddress, page: PageContents) {}
     pub(super) fn pages(&self, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
         None.into_iter()
     }
@@ -118,19 +128,19 @@ impl Memory {
 /// This is where this builder comes in. It lets us track the state of figuring out contents of a single page.
 pub(super) struct MemoryPageBuilder {
     chunks: SmallVec<[PageChunk; 1]>,
-    base_address: BaseMemoryAddress,
+    base_address: PageAddress,
     left_to_read: u64,
 }
 
 /// Represents a chunk of memory of which we don't know if it's mapped or unmapped; thus we need
 /// to issue a request to figure out it's state.
 pub(super) struct UnknownMemory {
-    pub(super) address: BaseMemoryAddress,
+    pub(super) address: MemoryAddress,
     pub(super) size: u64,
 }
 
 impl MemoryPageBuilder {
-    fn new(base_address: BaseMemoryAddress) -> Self {
+    fn new(base_address: PageAddress) -> Self {
         Self {
             chunks: Default::default(),
             base_address,
@@ -138,13 +148,13 @@ impl MemoryPageBuilder {
         }
     }
 
-    pub(super) fn build(self) -> PageContents {
+    pub(super) fn build(self) -> (PageAddress, PageContents) {
         debug_assert_eq!(
             self.chunks.iter().map(|chunk| chunk.len()).sum::<u64>(),
             PAGE_SIZE,
             "Expected `build` to be called on a fully-fetched page"
         );
-        if let Some(first) = self.chunks.first()
+        let contents = if let Some(first) = self.chunks.first()
             && self.chunks.len() == 1
             && matches!(first, PageChunk::Unmapped(PAGE_SIZE))
         {
@@ -153,7 +163,8 @@ impl MemoryPageBuilder {
             PageContents::Mapped(Arc::new(MappedPageContents {
                 chunks: self.chunks,
             }))
-        }
+        };
+        (self.base_address, contents)
     }
     /// Drives the fetching of memory, in an iterator-esque style.
     pub(super) fn next_request(&self) -> Option<UnknownMemory> {
@@ -162,7 +173,7 @@ impl MemoryPageBuilder {
         } else {
             let offset_in_current_page = PAGE_SIZE - self.left_to_read;
             Some(UnknownMemory {
-                address: self.base_address + offset_in_current_page,
+                address: self.base_address.0 + offset_in_current_page,
                 size: self.left_to_read,
             })
         }
