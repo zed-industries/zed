@@ -491,18 +491,10 @@ impl AcpThreadView {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .text_xs()
-                        .child(
-                            MarkdownElement::new(
-                                message.content.clone(),
-                                user_message_markdown_style(window, cx),
-                            )
-                            .on_url_click({
-                                let workspace = self.workspace.clone();
-                                move |url, window, cx| {
-                                    Self::open_markdown_link(url, &workspace, window, cx);
-                                }
-                            }),
-                        ),
+                        .child(self.render_markdown(
+                            message.content.clone(),
+                            user_message_markdown_style(window, cx),
+                        )),
                 )
                 .into_any(),
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
@@ -510,26 +502,20 @@ impl AcpThreadView {
                 let message_body = v_flex()
                     .w_full()
                     .gap_2p5()
-                    .children(
-                        chunks
-                            .iter()
-                            .enumerate()
-                            .map(|(chunk_ix, chunk)| match chunk {
-                                AssistantMessageChunk::Text { chunk } => {
-                                    // todo!() open link
-                                    MarkdownElement::new(chunk.clone(), style.clone())
-                                        .into_any_element()
-                                }
-                                AssistantMessageChunk::Thought { chunk } => self
-                                    .render_thinking_block(
-                                        index,
-                                        chunk_ix,
-                                        chunk.clone(),
-                                        window,
-                                        cx,
-                                    ),
-                            }),
-                    )
+                    .children(chunks.iter().enumerate().map(|(chunk_ix, chunk)| {
+                        match chunk {
+                            AssistantMessageChunk::Text { chunk } => self
+                                .render_markdown(chunk.clone(), style.clone())
+                                .into_any_element(),
+                            AssistantMessageChunk::Thought { chunk } => self.render_thinking_block(
+                                index,
+                                chunk_ix,
+                                chunk.clone(),
+                                window,
+                                cx,
+                            ),
+                        }
+                    }))
                     .into_any();
 
                 v_flex()
@@ -638,14 +624,7 @@ impl AcpThreadView {
                         .border_color(self.tool_card_border_color(cx))
                         .text_ui_sm(cx)
                         .child(
-                            // todo! url click
-                            MarkdownElement::new(chunk, default_markdown_style(false, window, cx)),
-                            // .on_url_click({
-                            //     let workspace = self.workspace.clone();
-                            //     move |text, window, cx| {
-                            //         open_markdown_link(text, workspace.clone(), window, cx);
-                            //     }
-                            // }),
+                            self.render_markdown(chunk, default_markdown_style(false, window, cx)),
                         ),
                 )
             })
@@ -773,7 +752,7 @@ impl AcpThreadView {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(MarkdownElement::new(
+                            .child(self.render_markdown(
                                 tool_call.label.clone(),
                                 default_markdown_style(needs_confirmation, window, cx),
                             )),
@@ -836,10 +815,9 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::Markdown { markdown } => {
-                MarkdownElement::new(markdown.clone(), default_markdown_style(false, window, cx))
-                    .into_any_element()
-            }
+            ToolCallContent::Markdown { markdown } => self
+                .render_markdown(markdown.clone(), default_markdown_style(false, window, cx))
+                .into_any_element(),
             ToolCallContent::Diff {
                 diff: Diff {
                     path, multibuffer, ..
@@ -873,7 +851,7 @@ impl AcpThreadView {
                     div()
                         .px_2()
                         .children(description.clone().map(|description| {
-                            MarkdownElement::new(
+                            self.render_markdown(
                                 description,
                                 default_markdown_style(false, window, cx),
                             )
@@ -942,7 +920,13 @@ impl AcpThreadView {
             } => confirmation_container
                 .child(v_flex().px_2().pb_1p5().child(command.clone()).children(
                     description.clone().map(|description| {
-                        MarkdownElement::new(description, default_markdown_style(false, window, cx))
+                        self.render_markdown(description, default_markdown_style(false, window, cx))
+                            .on_url_click({
+                                let workspace = self.workspace.clone();
+                                move |text, window, cx| {
+                                    Self::open_markdown_link(text, &workspace, window, cx);
+                                }
+                            })
                     }),
                 ))
                 .children(content.map(|content| self.render_tool_call_content(content, window, cx)))
@@ -1019,7 +1003,7 @@ impl AcpThreadView {
                         .pb_1p5()
                         .child(format!("{server_name} - {tool_display_name}"))
                         .children(description.clone().map(|description| {
-                            MarkdownElement::new(
+                            self.render_markdown(
                                 description,
                                 default_markdown_style(false, window, cx),
                             )
@@ -1109,9 +1093,10 @@ impl AcpThreadView {
                 )
                 .into_any(),
             ToolCallConfirmation::Fetch { description, urls } => confirmation_container
+                // todo! render urls as links
                 .child(v_flex().px_2().pb_1p5().children(urls.clone()).children(
                     description.clone().map(|description| {
-                        MarkdownElement::new(description, default_markdown_style(false, window, cx))
+                        self.render_markdown(description, default_markdown_style(false, window, cx))
                     }),
                 ))
                 .children(content.map(|content| self.render_tool_call_content(content, window, cx)))
@@ -1174,7 +1159,7 @@ impl AcpThreadView {
                 )
                 .into_any(),
             ToolCallConfirmation::Other { description } => confirmation_container
-                .child(v_flex().px_2().pb_1p5().child(MarkdownElement::new(
+                .child(v_flex().px_2().pb_1p5().child(self.render_markdown(
                     description.clone(),
                     default_markdown_style(false, window, cx),
                 )))
@@ -1435,6 +1420,13 @@ impl AcpThreadView {
         .into_any()
     }
 
+    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
+        let workspace = self.workspace.clone();
+        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
+            Self::open_markdown_link(text, &workspace, window, cx);
+        })
+    }
+
     fn open_markdown_link(
         url: SharedString,
         workspace: &WeakEntity<Workspace>,
@@ -1638,10 +1630,9 @@ impl Render for AcpThreadView {
                         .border_t_1()
                         .border_color(cx.theme().colors().border)
                         .bg(cx.theme().status().error_background)
-                        .child(MarkdownElement::new(
-                            error,
-                            default_markdown_style(false, window, cx),
-                        )),
+                        .child(
+                            self.render_markdown(error, default_markdown_style(false, window, cx)),
+                        ),
                 )
             })
             .child(

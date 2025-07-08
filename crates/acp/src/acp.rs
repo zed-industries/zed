@@ -994,7 +994,7 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_servers::AgentServerCommand;
+    use agent_servers::{AgentServerCommand, AgentServerVersion};
     use async_pipe::{PipeReader, PipeWriter};
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
@@ -1381,8 +1381,14 @@ mod tests {
                 })
             }
 
-            async fn version(&self, _command: &agent_servers::AgentServerCommand) -> bool {
-                true
+            async fn version(
+                &self,
+                _command: &agent_servers::AgentServerCommand,
+            ) -> Result<AgentServerVersion> {
+                Ok(AgentServerVersion {
+                    current_version: "0.1.0".into(),
+                    supported: true,
+                })
             }
         }
 
