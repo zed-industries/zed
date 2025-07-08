@@ -797,14 +797,11 @@ impl OutlinePanel {
                         let old_expansion_depth = outline_panel_settings.expand_outlines_with_depth;
                         outline_panel_settings = *new_settings;
 
-                        // If the default expansion depth changed, update collapsed entries
                         if old_expansion_depth != new_settings.expand_outlines_with_depth {
                             outline_panel.collapsed_entries.clear();
 
-                            // Apply new expansion depth to existing outlines
                             let new_depth = new_settings.expand_outlines_with_depth;
 
-                            // Collapse outlines based on depth
                             for (buffer_id, excerpts) in &outline_panel.excerpts {
                                 for (excerpt_id, excerpt) in excerpts {
                                     if let ExcerptOutlines::Outlines(outlines) = &excerpt.outlines {
@@ -815,9 +812,6 @@ impl OutlinePanel {
                                                 outline: outline.clone(),
                                             };
 
-                                            // Collapse if has children AND either:
-                                            // - depth is 0 (collapse all)
-                                            // - outline depth >= specified depth
                                             if outline_panel
                                                 .outline_children_cache
                                                 .get(buffer_id)
@@ -2571,7 +2565,6 @@ impl OutlinePanel {
                         .selected_entry()
                         .is_some_and(|selected| selected == &clicked_entry);
 
-                    // Only toggle expansion if already selected and the item is expandable
                     if is_already_selected && outline_panel.can_toggle(&clicked_entry, cx) {
                         outline_panel.toggle_expanded(&clicked_entry, window, cx);
                     }
@@ -3054,7 +3047,6 @@ impl OutlinePanel {
     ) {
         self.clear_previous(window, cx);
 
-        // Apply default outline expansion depth for the new active editor
         let default_expansion_depth =
             OutlinePanelSettings::get_global(cx).expand_outlines_with_depth;
         // We'll apply the expansion depth after outlines are loaded
@@ -3410,10 +3402,8 @@ impl OutlinePanel {
                                             &excerpt.outlines
                                         {
                                             if default_depth == 0 {
-                                                // For depth 0, collapse all outlines with children
                                                 outlines_to_check.extend(outlines.clone());
                                             } else {
-                                                // For other depths, collapse outlines at or below that depth
                                                 outlines_to_check.extend(
                                                     outlines
                                                         .iter()
