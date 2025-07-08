@@ -268,15 +268,6 @@ jobs:
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
     steps:
-      - name: Environment Setup
-        run: |
-          $RunnerDir = Split-Path -Parent $env:RUNNER_WORKSPACE
-          Write-Output `
-            "RUSTUP_HOME=$RunnerDir\.rustup" `
-            "CARGO_HOME=$RunnerDir\.cargo" `
-            "PATH=$RunnerDir\.cargo\bin;$env:PATH" `
-          >> $env:GITHUB_ENV
-
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:

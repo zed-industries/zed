@@ -758,7 +758,7 @@ jobs:
     timeout-minutes: 120
     name: Create a Windows installer
     runs-on: [self-hosted, Windows, X64]
-    if: false && ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
@@ -773,15 +773,6 @@ jobs:
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
     steps:
-      - name: Environment Setup
-        run: |
-          $RunnerDir = Split-Path -Parent $env:RUNNER_WORKSPACE
-          Write-Output `
-            "RUSTUP_HOME=$RunnerDir\.rustup" `
-            "CARGO_HOME=$RunnerDir\.cargo" `
-            "PATH=$RunnerDir\.cargo\bin;$env:PATH" `
-          >> $env:GITHUB_ENV
-
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
