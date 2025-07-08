@@ -575,7 +575,7 @@ impl MessageEditor {
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
-        if !model?.model.supports_max_mode() {
+        if !model?.model.supports_burn_mode() {
             return None;
         }
 
@@ -1160,7 +1160,7 @@ impl MessageEditor {
                                 })
                                 .child(
                                     h_flex()
-                                        .id("file-name")
+                                        .id(("file-name", index))
                                         .pr_8()
                                         .gap_1p5()
                                         .max_w_full()
@@ -1171,9 +1171,16 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(file_name)
                                                 .children(file_path),
-                                        ), // TODO: Implement line diff
-                                           // .child(Label::new("+").color(Color::Created))
-                                           // .child(Label::new("-").color(Color::Deleted)),
+                                        )
+                                        .on_click({
+                                            let buffer = buffer.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.handle_file_click(buffer.clone(), window, cx);
+                                            })
+                                        }), // TODO: Implement line diff
+                                            // .child(Label::new("+").color(Color::Created))
+                                            // .child(Label::new("-").color(Color::Deleted)),
+                                            //
                                 )
                                 .child(
                                     h_flex()
@@ -1250,9 +1257,7 @@ impl MessageEditor {
         self.thread
             .read(cx)
             .configured_model()
-            .map_or(false, |model| {
-                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
-            })
+            .map_or(false, |model| model.provider.id() == ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {

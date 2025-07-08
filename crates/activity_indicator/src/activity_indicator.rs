@@ -31,7 +31,13 @@ use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
-actions!(activity_indicator, [ShowErrorMessage]);
+actions!(
+    activity_indicator,
+    [
+        /// Displays error messages from language servers in the status bar.
+        ShowErrorMessage
+    ]
+);
 
 pub enum Event {
     ShowStatus {
@@ -80,10 +86,13 @@ impl ActivityIndicator {
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
-                while let Some((name, status)) = status_events.next().await {
+                while let Some((name, binary_status)) = status_events.next().await {
                     this.update(cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus { name, status });
+                        this.statuses.push(ServerStatus {
+                            name,
+                            status: LanguageServerStatusUpdate::Binary(binary_status),
+                        });
                         cx.notify();
                     })?;
                 }
@@ -112,8 +121,76 @@ impl ActivityIndicator {
 
             cx.subscribe(
                 &project.read(cx).lsp_store(),
-                |_, _, event, cx| match event {
-                    LspStoreEvent::LanguageServerUpdate { .. } => cx.notify(),
+                |activity_indicator, _, event, cx| match event {
+                    LspStoreEvent::LanguageServerUpdate { name, message, .. } => {
+                        if let proto::update_language_server::Variant::StatusUpdate(status_update) =
+                            message
+                        {
+                            let Some(name) = name.clone() else {
+                                return;
+                            };
+                            let status = match &status_update.status {
+                                Some(proto::status_update::Status::Binary(binary_status)) => {
+                                    if let Some(binary_status) =
+                                        proto::ServerBinaryStatus::from_i32(*binary_status)
+                                    {
+                                        let binary_status = match binary_status {
+                                            proto::ServerBinaryStatus::None => BinaryStatus::None,
+                                            proto::ServerBinaryStatus::CheckingForUpdate => {
+                                                BinaryStatus::CheckingForUpdate
+                                            }
+                                            proto::ServerBinaryStatus::Downloading => {
+                                                BinaryStatus::Downloading
+                                            }
+                                            proto::ServerBinaryStatus::Starting => {
+                                                BinaryStatus::Starting
+                                            }
+                                            proto::ServerBinaryStatus::Stopping => {
+                                                BinaryStatus::Stopping
+                                            }
+                                            proto::ServerBinaryStatus::Stopped => {
+                                                BinaryStatus::Stopped
+                                            }
+                                            proto::ServerBinaryStatus::Failed => {
+                                                let Some(error) = status_update.message.clone()
+                                                else {
+                                                    return;
+                                                };
+                                                BinaryStatus::Failed { error }
+                                            }
+                                        };
+                                        LanguageServerStatusUpdate::Binary(binary_status)
+                                    } else {
+                                        return;
+                                    }
+                                }
+                                Some(proto::status_update::Status::Health(health_status)) => {
+                                    if let Some(health) =
+                                        proto::ServerHealth::from_i32(*health_status)
+                                    {
+                                        let health = match health {
+                                            proto::ServerHealth::Ok => ServerHealth::Ok,
+                                            proto::ServerHealth::Warning => ServerHealth::Warning,
+                                            proto::ServerHealth::Error => ServerHealth::Error,
+                                        };
+                                        LanguageServerStatusUpdate::Health(
+                                            health,
+                                            status_update.message.clone().map(SharedString::from),
+                                        )
+                                    } else {
+                                        return;
+                                    }
+                                }
+                                None => return,
+                            };
+
+                            activity_indicator.statuses.retain(|s| s.name != name);
+                            activity_indicator
+                                .statuses
+                                .push(ServerStatus { name, status });
+                        }
+                        cx.notify()
+                    }
                     _ => {}
                 },
             )
@@ -228,9 +305,23 @@ impl ActivityIndicator {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| updater.dismiss_error(cx));
+        let error_dismissed = if let Some(updater) = &self.auto_updater {
+            updater.update(cx, |updater, cx| updater.dismiss_error(cx))
+        } else {
+            false
+        };
+        if error_dismissed {
+            return;
         }
+
+        self.project.update(cx, |project, cx| {
+            if project.last_formatting_failure(cx).is_some() {
+                project.reset_last_formatting_failure(cx);
+                true
+            } else {
+                false
+            }
+        });
     }
 
     fn pending_language_server_work<'a>(
@@ -399,6 +490,12 @@ impl ActivityIndicator {
         let mut servers_to_clear_statuses = HashSet::<LanguageServerName>::default();
         for status in &self.statuses {
             match &status.status {
+                LanguageServerStatusUpdate::Binary(
+                    BinaryStatus::Starting | BinaryStatus::Stopping,
+                ) => {}
+                LanguageServerStatusUpdate::Binary(BinaryStatus::Stopped) => {
+                    servers_to_clear_statuses.insert(status.name.clone());
+                }
                 LanguageServerStatusUpdate::Binary(BinaryStatus::CheckingForUpdate) => {
                     checking_for_update.push(status.name.clone());
                 }

@@ -77,13 +77,18 @@ use zed_llm_client::CompletionIntent;
 actions!(
     git_panel,
     [
+        /// Closes the git panel.
         Close,
+        /// Toggles focus on the git panel.
         ToggleFocus,
+        /// Opens the git panel menu.
         OpenMenu,
+        /// Focuses on the commit message editor.
         FocusEditor,
+        /// Focuses on the changes list.
         FocusChanges,
+        /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
-        GenerateCommitMessage
     ]
 );
 
@@ -123,40 +128,29 @@ fn git_panel_context_menu(
     ContextMenu::build(window, cx, move |context_menu, _, _| {
         context_menu
             .context(focus_handle)
-            .map(|menu| {
-                if state.has_unstaged_changes {
-                    menu.action("Stage All", StageAll.boxed_clone())
-                } else {
-                    menu.disabled_action("Stage All", StageAll.boxed_clone())
-                }
-            })
-            .map(|menu| {
-                if state.has_staged_changes {
-                    menu.action("Unstage All", UnstageAll.boxed_clone())
-                } else {
-                    menu.disabled_action("Unstage All", UnstageAll.boxed_clone())
-                }
-            })
+            .action_disabled_when(
+                !state.has_unstaged_changes,
+                "Stage All",
+                StageAll.boxed_clone(),
+            )
+            .action_disabled_when(
+                !state.has_staged_changes,
+                "Unstage All",
+                UnstageAll.boxed_clone(),
+            )
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
-            .map(|menu| {
-                if state.has_tracked_changes {
-                    menu.action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-                } else {
-                    menu.disabled_action(
-                        "Discard Tracked Changes",
-                        RestoreTrackedFiles.boxed_clone(),
-                    )
-                }
-            })
-            .map(|menu| {
-                if state.has_new_changes {
-                    menu.action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-                } else {
-                    menu.disabled_action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-                }
-            })
+            .action_disabled_when(
+                !state.has_tracked_changes,
+                "Discard Tracked Changes",
+                RestoreTrackedFiles.boxed_clone(),
+            )
+            .action_disabled_when(
+                !state.has_new_changes,
+                "Trash Untracked Files",
+                TrashUntrackedFiles.boxed_clone(),
+            )
     })
 }
 
@@ -389,6 +383,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_collaboration_hub(Box::new(project));
     commit_editor.set_use_autoclose(false);
     commit_editor.set_show_gutter(false, cx);
+    commit_editor.set_use_modal_editing(true);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());

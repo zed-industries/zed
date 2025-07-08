@@ -51,6 +51,8 @@ pub struct ThemeColors {
     ///
     /// This could include a selected checkbox, a toggleable button that is toggled on, etc.
     pub element_selected: Hsla,
+    /// Background Color. Used for the background of selections in a UI element.
+    pub element_selection_background: Hsla,
     /// Background Color. Used for the disabled state of an element that should have a different background than the surface it's on.
     ///
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
@@ -533,7 +535,7 @@ pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
         .collect()
 }
 
-#[derive(Refineable, Clone, PartialEq)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 pub struct ThemeStyles {
     /// The background appearance of the window.
     pub window_background_appearance: WindowBackgroundAppearance,

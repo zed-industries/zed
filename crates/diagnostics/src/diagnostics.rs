@@ -12,7 +12,6 @@ use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
-    scroll::Autoscroll,
 };
 use futures::future::join_all;
 use gpui::{
@@ -49,7 +48,14 @@ use workspace::{
 
 actions!(
     diagnostics,
-    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+    [
+        /// Opens the project diagnostics view.
+        Deploy,
+        /// Toggles the display of warning-level diagnostics.
+        ToggleWarnings,
+        /// Toggles automatic refresh of diagnostics.
+        ToggleDiagnosticsRefresh
+    ]
 );
 
 #[derive(Default)]
@@ -626,7 +632,7 @@ impl ProjectDiagnosticsEditor {
                     if let Some(anchor_range) = anchor_ranges.first() {
                         let range_to_select = anchor_range.start..anchor_range.start;
                         this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_anchor_ranges([range_to_select]);
                             })
                         });

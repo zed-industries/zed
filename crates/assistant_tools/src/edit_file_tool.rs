@@ -4,17 +4,18 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
     ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey, scroll::Autoscroll};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, WeakEntity, pulsating_between, px,
+    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -515,7 +516,9 @@ pub struct EditFileToolCard {
 
 impl EditFileToolCard {
     pub fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
+        let expand_edit_card = agent_settings::AgentSettings::get_global(cx).expand_edit_card;
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
+
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::Full {
@@ -556,7 +559,7 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
-            full_height_expanded: true,
+            full_height_expanded: expand_edit_card,
             total_lines: None,
         }
     }
@@ -755,6 +758,13 @@ impl ToolCard for EditFileToolCard {
             _ => None,
         };
 
+        let running_or_pending = match status {
+            ToolUseStatus::Running | ToolUseStatus::Pending => Some(()),
+            _ => None,
+        };
+
+        let should_show_loading = running_or_pending.is_some() && !self.full_height_expanded;
+
         let path_label_button = h_flex()
             .id(("edit-tool-path-label-button", self.editor.entity_id()))
             .w_full()
@@ -823,7 +833,7 @@ impl ToolCard for EditFileToolCard {
                                                         let first_hunk_start =
                                                             first_hunk.multi_buffer_range().start;
                                                         editor.change_selections(
-                                                            Some(Autoscroll::fit()),
+                                                            Default::default(),
                                                             window,
                                                             cx,
                                                             |selections| {
@@ -863,6 +873,18 @@ impl ToolCard for EditFileToolCard {
                 header.bg(codeblock_header_bg)
             })
             .child(path_label_button)
+            .when(should_show_loading, |header| {
+                header.pr_1p5().child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+            })
             .when_some(error_message, |header, error_message| {
                 header.child(
                     h_flex()
@@ -1065,7 +1087,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }

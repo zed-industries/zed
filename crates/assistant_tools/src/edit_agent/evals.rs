@@ -29,6 +29,7 @@ use std::{
     path::Path,
     str::FromStr,
     sync::mpsc,
+    time::Duration,
 };
 use util::path;
 
@@ -1470,7 +1471,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 
@@ -1658,12 +1659,14 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
         match request().await {
             Ok(result) => return Ok(result),
             Err(err) => match err.downcast::<LanguageModelCompletionError>() {
-                Ok(err) => match err {
-                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
+                Ok(err) => match &err {
+                    LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
+                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
+                        let retry_after = retry_after.unwrap_or(Duration::from_secs(5));
                         // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
                         let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
                         eprintln!(
-                            "Attempt #{attempt}: Rate limit exceeded. Retry after {retry_after:?} + jitter of {jitter:?}"
+                            "Attempt #{attempt}: {err}. Retry after {retry_after:?} + jitter of {jitter:?}"
                         );
                         Timer::after(retry_after + jitter).await;
                         continue;

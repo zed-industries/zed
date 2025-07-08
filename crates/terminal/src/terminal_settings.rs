@@ -2,14 +2,14 @@ use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use collections::HashMap;
-use gpui::{
-    AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString, px,
-};
-use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
+use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
+
+use settings::SettingsSources;
 use std::path::PathBuf;
 use task::Shell;
+use theme::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -29,7 +29,7 @@ pub struct TerminalSettings {
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>,
-    pub font_family: Option<SharedString>,
+    pub font_family: Option<FontFamilyName>,
     pub font_fallbacks: Option<FontFallbacks>,
     pub font_features: Option<FontFeatures>,
     pub font_weight: Option<FontWeight>,
@@ -40,6 +40,7 @@ pub struct TerminalSettings {
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
+    pub keep_selection_on_copy: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
@@ -48,6 +49,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
+    pub minimum_contrast: f32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -147,13 +149,14 @@ pub struct TerminalSettingsContent {
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font family.
-    pub font_family: Option<String>,
+    pub font_family: Option<FontFamilyName>,
 
     /// Sets the terminal's font fallbacks.
     ///
     /// If this option is not included,
     /// the terminal will default to matching the buffer's font fallbacks.
-    pub font_fallbacks: Option<Vec<String>>,
+    #[schemars(extend("uniqueItems" = true))]
+    pub font_fallbacks: Option<Vec<FontFamilyName>>,
 
     /// Sets the terminal's line height.
     ///
@@ -192,6 +195,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
+    /// Whether to keep the text selection after copying it to the clipboard.
+    ///
+    /// Default: false
+    pub keep_selection_on_copy: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
     /// Default: true
@@ -223,6 +230,21 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// The minimum APCA perceptual contrast between foreground and background colors.
+    ///
+    /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    /// especially for dark mode. Values range from 0 to 106.
+    ///
+    /// Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    /// https://readtech.org/ARC/tests/bronze-simple-mode/
+    /// - 0: No contrast adjustment
+    /// - 45: Minimum for large fluent text (36px+)
+    /// - 60: Minimum for other content text
+    /// - 75: Minimum for body text
+    /// - 90: Preferred for body text
+    ///
+    /// Default: 0 (no adjustment)
+    pub minimum_contrast: Option<f32>,
 }
 
 impl settings::Settings for TerminalSettings {
@@ -231,36 +253,27 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
-    }
+        let settings: Self = sources.json_merge()?;
 
-    fn json_schema(
-        generator: &mut SchemaGenerator,
-        params: &SettingsJsonSchemaParams,
-        _: &App,
-    ) -> RootSchema {
-        let mut root_schema = generator.root_schema_for::<Self::FileContent>();
-        root_schema.definitions.extend([
-            ("FontFamilies".into(), params.font_family_schema()),
-            ("FontFallbacks".into(), params.font_fallback_schema()),
-        ]);
+        // Validate minimum_contrast for APCA
+        if settings.minimum_contrast < 0.0 || settings.minimum_contrast > 106.0 {
+            anyhow::bail!(
+                "terminal.minimum_contrast must be between 0 and 106, but got {}. \
+                APCA values: 0 = no adjustment, 75 = recommended for body text, 106 = maximum contrast.",
+                settings.minimum_contrast
+            );
+        }
 
-        add_references_to_properties(
-            &mut root_schema,
-            &[
-                ("font_family", "#/definitions/FontFamilies"),
-                ("font_fallbacks", "#/definitions/FontFallbacks"),
-            ],
-        );
-
-        root_schema
+        Ok(settings)
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         let name = |s| format!("terminal.integrated.{s}");
 
         vscode.f32_setting(&name("fontSize"), &mut current.font_size);
-        vscode.string_setting(&name("fontFamily"), &mut current.font_family);
+        if let Some(font_family) = vscode.read_string(&name("fontFamily")) {
+            current.font_family = Some(FontFamilyName(font_family.into()));
+        }
         vscode.bool_setting(&name("copyOnSelection"), &mut current.copy_on_select);
         vscode.bool_setting("macOptionIsMeta", &mut current.option_as_meta);
         vscode.usize_setting("scrollback", &mut current.max_scroll_history_lines);

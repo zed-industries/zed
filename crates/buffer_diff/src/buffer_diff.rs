@@ -1867,7 +1867,7 @@ mod tests {
             let hunk = diff.hunks(&buffer, cx).next().unwrap();
 
             let new_index_text = diff
-                .stage_or_unstage_hunks(true, &[hunk.clone()], &buffer, true, cx)
+                .stage_or_unstage_hunks(true, std::slice::from_ref(&hunk), &buffer, true, cx)
                 .unwrap()
                 .to_string();
             assert_eq!(new_index_text, buffer_text);

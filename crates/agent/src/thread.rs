@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
 use git::repository::DiffType;
@@ -23,9 +23,9 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
     TokenUsage,
 };
@@ -39,11 +39,19 @@ use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{io::Write, ops::Range, sync::Arc, time::Instant};
+use std::{
+    io::Write,
+    ops::Range,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
+use util::{ResultExt as _, debug_panic, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+
+const MAX_RETRY_ATTEMPTS: u8 = 3;
+const BASE_RETRY_DELAY_SECS: u64 = 5;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
@@ -118,6 +126,7 @@ pub struct Message {
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
     pub is_hidden: bool,
+    pub ui_only: bool,
 }
 
 impl Message {
@@ -196,6 +205,13 @@ impl MessageSegment {
             Self::Text(text) => text.is_empty(),
             Self::Thinking { text, .. } => text.is_empty(),
             Self::RedactedThinking(_) => false,
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            MessageSegment::Text(text) => Some(text),
+            _ => None,
         }
     }
 }
@@ -357,6 +373,7 @@ pub struct Thread {
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
+    retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
     last_received_chunk_at: Option<Instant>,
@@ -366,6 +383,13 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+}
+
+#[derive(Clone, Debug)]
+struct RetryState {
+    attempt: u8,
+    max_attempts: u8,
+    intent: CompletionIntent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -449,6 +473,7 @@ impl Thread {
             exceeded_window_error: None,
             tool_use_limit_reached: false,
             feedback: None,
+            retry_state: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
             last_received_chunk_at: None,
@@ -515,6 +540,7 @@ impl Thread {
             detailed_summary_tx,
             detailed_summary_rx,
             completion_mode,
+            retry_state: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -550,6 +576,7 @@ impl Thread {
                         })
                         .collect(),
                     is_hidden: message.is_hidden,
+                    ui_only: false, // UI-only messages are not persisted
                 })
                 .collect(),
             next_message_id,
@@ -934,13 +961,14 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            resolve_tool_name_conflicts(self.profile.enabled_tools(cx).as_slice())
+            self.profile
+                .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|(name, tool)| {
                     // Skip tools that cannot be supported
                     let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
                     Some(LanguageModelRequestTool {
-                        name,
+                        name: name.into(),
                         description: tool.description(),
                         input_schema,
                     })
@@ -1034,6 +1062,7 @@ impl Thread {
             loaded_context,
             creases,
             is_hidden,
+            ui_only: false,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1123,6 +1152,7 @@ impl Thread {
                 updated_at: this.updated_at(),
                 messages: this
                     .messages()
+                    .filter(|message| !message.ui_only)
                     .map(|message| SerializedMessage {
                         id: message.id,
                         role: message.role,
@@ -1219,9 +1249,11 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
+        self.flush_notifications(model.clone(), intent, cx);
+
         let request = self.to_completion_request(model.clone(), intent, cx);
 
-        self.stream_completion(request, model, window, cx);
+        self.stream_completion(request, model, intent, window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1296,6 +1328,11 @@ impl Thread {
 
         let mut message_ix_to_cache = None;
         for message in &self.messages {
+            // ui_only messages are for the UI only, not for the model
+            if message.ui_only {
+                continue;
+            }
+
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -1309,6 +1346,7 @@ impl Thread {
             for segment in &message.segments {
                 match segment {
                     MessageSegment::Text(text) => {
+                        let text = text.trim_end();
                         if !text.is_empty() {
                             request_message
                                 .content
@@ -1385,7 +1423,7 @@ impl Thread {
         }
 
         request.tools = available_tools;
-        request.mode = if model.supports_max_mode() {
+        request.mode = if model.supports_burn_mode() {
             Some(self.completion_mode.into())
         } else {
             Some(CompletionMode::Normal.into())
@@ -1446,10 +1484,116 @@ impl Thread {
         request
     }
 
+    /// Insert auto-generated notifications (if any) to the thread
+    fn flush_notifications(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        cx: &mut Context<Self>,
+    ) {
+        match intent {
+            CompletionIntent::UserPrompt | CompletionIntent::ToolResults => {
+                if let Some(pending_tool_use) = self.attach_tracked_files_state(model, cx) {
+                    cx.emit(ThreadEvent::ToolFinished {
+                        tool_use_id: pending_tool_use.id.clone(),
+                        pending_tool_use: Some(pending_tool_use),
+                    });
+                }
+            }
+            CompletionIntent::ThreadSummarization
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => {}
+        };
+    }
+
+    fn attach_tracked_files_state(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut App,
+    ) -> Option<PendingToolUse> {
+        let action_log = self.action_log.read(cx);
+
+        action_log.unnotified_stale_buffers(cx).next()?;
+
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
+        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
+            debug_panic!("`project_notifications` tool not found");
+            return None;
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return None;
+        }
+
+        let input = serde_json::json!({});
+        let request = Arc::new(LanguageModelRequest::default()); // unused
+        let window = None;
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model.clone(),
+            window,
+            cx,
+        );
+
+        let tool_use_id =
+            LanguageModelToolUseId::from(format!("project_notifications_{}", self.messages.len()));
+
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: "{}".to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+        };
+
+        let tool_output = cx.background_executor().block(tool_result.output);
+
+        // Attach a project_notification tool call to the latest existing
+        // Assistant message. We cannot create a new Assistant message
+        // because thinking models require a `thinking` block that we
+        // cannot mock. We cannot send a notification as a normal
+        // (non-tool-use) User message because this distracts Agent
+        // too much.
+        let tool_message_id = self
+            .messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map(|(_, message)| message.id)?;
+
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: self.last_prompt_id.clone(),
+        };
+
+        self.tool_use
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            tool_output,
+            self.configured_model.as_ref(),
+            self.completion_mode,
+        );
+
+        pending_tool_use
+    }
+
     pub fn stream_completion(
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -1467,6 +1611,10 @@ impl Thread {
             thread_id: self.id.clone(),
             prompt_id: prompt_id.clone(),
         };
+
+        let completion_mode = request
+            .mode
+            .unwrap_or(zed_llm_client::CompletionMode::Normal);
 
         self.last_received_chunk_at = Some(Instant::now());
 
@@ -1495,82 +1643,7 @@ impl Thread {
                     }
 
                     thread.update(cx, |thread, cx| {
-                        let event = match event {
-                            Ok(event) => event,
-                            Err(error) => {
-                                match error {
-                                    LanguageModelCompletionError::RateLimitExceeded { retry_after } => {
-                                        anyhow::bail!(LanguageModelKnownError::RateLimitExceeded { retry_after });
-                                    }
-                                    LanguageModelCompletionError::Overloaded => {
-                                        anyhow::bail!(LanguageModelKnownError::Overloaded);
-                                    }
-                                    LanguageModelCompletionError::ApiInternalServerError =>{
-                                        anyhow::bail!(LanguageModelKnownError::ApiInternalServerError);
-                                    }
-                                    LanguageModelCompletionError::PromptTooLarge { tokens } => {
-                                        let tokens = tokens.unwrap_or_else(|| {
-                                            // We didn't get an exact token count from the API, so fall back on our estimate.
-                                            thread.total_token_usage()
-                                                .map(|usage| usage.total)
-                                                .unwrap_or(0)
-                                                // We know the context window was exceeded in practice, so if our estimate was
-                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
-                                                .max(model.max_token_count().saturating_add(1))
-                                        });
-
-                                        anyhow::bail!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens })
-                                    }
-                                    LanguageModelCompletionError::ApiReadResponseError(io_error) => {
-                                        anyhow::bail!(LanguageModelKnownError::ReadResponseError(io_error));
-                                    }
-                                    LanguageModelCompletionError::UnknownResponseFormat(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::UnknownResponseFormat(error));
-                                    }
-                                    LanguageModelCompletionError::HttpResponseError { status, ref body } => {
-                                        if let Some(known_error) = LanguageModelKnownError::from_http_response(status, body) {
-                                            anyhow::bail!(known_error);
-                                        } else {
-                                            return Err(error.into());
-                                        }
-                                    }
-                                    LanguageModelCompletionError::DeserializeResponse(error) => {
-                                        anyhow::bail!(LanguageModelKnownError::DeserializeResponse(error));
-                                    }
-                                    LanguageModelCompletionError::BadInputJson {
-                                        id,
-                                        tool_name,
-                                        raw_input: invalid_input_json,
-                                        json_parse_error,
-                                    } => {
-                                        thread.receive_invalid_tool_json(
-                                            id,
-                                            tool_name,
-                                            invalid_input_json,
-                                            json_parse_error,
-                                            window,
-                                            cx,
-                                        );
-                                        return Ok(());
-                                    }
-                                    // These are all errors we can't automatically attempt to recover from (e.g. by retrying)
-                                    err @ LanguageModelCompletionError::BadRequestFormat |
-                                    err @ LanguageModelCompletionError::AuthenticationError |
-                                    err @ LanguageModelCompletionError::PermissionError |
-                                    err @ LanguageModelCompletionError::ApiEndpointNotFound |
-                                    err @ LanguageModelCompletionError::SerializeRequest(_) |
-                                    err @ LanguageModelCompletionError::BuildRequestBody(_) |
-                                    err @ LanguageModelCompletionError::HttpSend(_) => {
-                                        anyhow::bail!(err);
-                                    }
-                                    LanguageModelCompletionError::Other(error) => {
-                                        return Err(error);
-                                    }
-                                }
-                            }
-                        };
-
-                        match event {
+                        match event? {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 request_assistant_message_id =
                                     Some(thread.insert_assistant_message(
@@ -1647,9 +1720,7 @@ impl Thread {
                                     };
                                 }
                             }
-                            LanguageModelCompletionEvent::RedactedThinking {
-                                data
-                            } => {
+                            LanguageModelCompletionEvent::RedactedThinking { data } => {
                                 thread.received_chunk();
 
                                 if let Some(last_message) = thread.messages.last_mut() {
@@ -1698,6 +1769,21 @@ impl Thread {
                                     });
                                 }
                             }
+                            LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id,
+                                tool_name,
+                                raw_input: invalid_input_json,
+                                json_parse_error,
+                            } => {
+                                thread.receive_invalid_tool_json(
+                                    id,
+                                    tool_name,
+                                    invalid_input_json,
+                                    json_parse_error,
+                                    window,
+                                    cx,
+                                );
+                            }
                             LanguageModelCompletionEvent::StatusUpdate(status_update) => {
                                 if let Some(completion) = thread
                                     .pending_completions
@@ -1705,23 +1791,34 @@ impl Thread {
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
                                     match status_update {
-                                        CompletionRequestStatus::Queued {
-                                            position,
-                                        } => {
-                                            completion.queue_state = QueueState::Queued { position };
+                                        CompletionRequestStatus::Queued { position } => {
+                                            completion.queue_state =
+                                                QueueState::Queued { position };
                                         }
                                         CompletionRequestStatus::Started => {
-                                            completion.queue_state =  QueueState::Started;
+                                            completion.queue_state = QueueState::Started;
                                         }
                                         CompletionRequestStatus::Failed {
-                                            code, message, request_id
+                                            code,
+                                            message,
+                                            request_id: _,
+                                            retry_after,
                                         } => {
-                                            anyhow::bail!("completion request failed. request_id: {request_id}, code: {code}, message: {message}");
+                                            return Err(
+                                                LanguageModelCompletionError::from_cloud_failure(
+                                                    model.upstream_provider_name(),
+                                                    code,
+                                                    message,
+                                                    retry_after.map(Duration::from_secs_f64),
+                                                ),
+                                            );
                                         }
-                                        CompletionRequestStatus::UsageUpdated {
-                                            amount, limit
-                                        } => {
-                                            thread.update_model_request_usage(amount as u32, limit, cx);
+                                        CompletionRequestStatus::UsageUpdated { amount, limit } => {
+                                            thread.update_model_request_usage(
+                                                amount as u32,
+                                                limit,
+                                                cx,
+                                            );
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1763,59 +1860,72 @@ impl Thread {
             };
 
             let result = stream_completion.await;
+            let mut retry_scheduled = false;
 
             thread
                 .update(cx, |thread, cx| {
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
-                        Ok(stop_reason) => match stop_reason {
-                            StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(window, cx, model.clone());
-                                cx.emit(ThreadEvent::UsePendingTools { tool_uses });
-                            }
-                            StopReason::EndTurn | StopReason::MaxTokens  => {
-                                thread.project.update(cx, |project, cx| {
-                                    project.set_agent_location(None, cx);
-                                });
-                            }
-                            StopReason::Refusal => {
-                                thread.project.update(cx, |project, cx| {
-                                    project.set_agent_location(None, cx);
-                                });
+                        Ok(stop_reason) => {
+                            match stop_reason {
+                                StopReason::ToolUse => {
+                                    let tool_uses =
+                                        thread.use_pending_tools(window, model.clone(), cx);
+                                    cx.emit(ThreadEvent::UsePendingTools { tool_uses });
+                                }
+                                StopReason::EndTurn | StopReason::MaxTokens => {
+                                    thread.project.update(cx, |project, cx| {
+                                        project.set_agent_location(None, cx);
+                                    });
+                                }
+                                StopReason::Refusal => {
+                                    thread.project.update(cx, |project, cx| {
+                                        project.set_agent_location(None, cx);
+                                    });
 
-                                // Remove the turn that was refused.
-                                //
-                                // https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals#reset-context-after-refusal
-                                {
-                                    let mut messages_to_remove = Vec::new();
+                                    // Remove the turn that was refused.
+                                    //
+                                    // https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/handle-streaming-refusals#reset-context-after-refusal
+                                    {
+                                        let mut messages_to_remove = Vec::new();
 
-                                    for (ix, message) in thread.messages.iter().enumerate().rev() {
-                                        messages_to_remove.push(message.id);
+                                        for (ix, message) in
+                                            thread.messages.iter().enumerate().rev()
+                                        {
+                                            messages_to_remove.push(message.id);
 
-                                        if message.role == Role::User {
-                                            if ix == 0 {
-                                                break;
-                                            }
-
-                                            if let Some(prev_message) = thread.messages.get(ix - 1) {
-                                                if prev_message.role == Role::Assistant {
+                                            if message.role == Role::User {
+                                                if ix == 0 {
                                                     break;
+                                                }
+
+                                                if let Some(prev_message) =
+                                                    thread.messages.get(ix - 1)
+                                                {
+                                                    if prev_message.role == Role::Assistant {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
+
+                                        for message_id in messages_to_remove {
+                                            thread.delete_message(message_id, cx);
+                                        }
                                     }
 
-                                    for message_id in messages_to_remove {
-                                        thread.delete_message(message_id, cx);
-                                    }
+                                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                        header: "Language model refusal".into(),
+                                        message:
+                                            "Model refused to generate content for safety reasons."
+                                                .into(),
+                                    }));
                                 }
-
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Language model refusal".into(),
-                                    message: "Model refused to generate content for safety reasons.".into(),
-                                }));
                             }
-                        },
+
+                            // We successfully completed, so cancel any remaining retries.
+                            thread.retry_state = None;
+                        }
                         Err(error) => {
                             thread.project.update(cx, |project, cx| {
                                 project.set_agent_location(None, cx);
@@ -1841,45 +1951,100 @@ impl Thread {
                                 cx.emit(ThreadEvent::ShowError(
                                     ThreadError::ModelRequestLimitReached { plan: error.plan },
                                 ));
-                            } else if let Some(known_error) =
-                                error.downcast_ref::<LanguageModelKnownError>()
+                            } else if let Some(completion_error) =
+                                error.downcast_ref::<LanguageModelCompletionError>()
                             {
-                                match known_error {
-                                    LanguageModelKnownError::ContextWindowLimitExceeded { tokens } => {
+                                use LanguageModelCompletionError::*;
+                                match &completion_error {
+                                    PromptTooLarge { tokens, .. } => {
+                                        let tokens = tokens.unwrap_or_else(|| {
+                                            // We didn't get an exact token count from the API, so fall back on our estimate.
+                                            thread
+                                                .total_token_usage()
+                                                .map(|usage| usage.total)
+                                                .unwrap_or(0)
+                                                // We know the context window was exceeded in practice, so if our estimate was
+                                                // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
+                                                .max(
+                                                    model
+                                                        .max_token_count_for_mode(completion_mode)
+                                                        .saturating_add(1),
+                                                )
+                                        });
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
-                                            token_count: *tokens,
+                                            token_count: tokens,
                                         });
                                         cx.notify();
                                     }
-                                    LanguageModelKnownError::RateLimitExceeded { .. } => {
-                                        // In the future we will report the error to the user, wait retry_after, and then retry.
-                                        emit_generic_error(error, cx);
+                                    RateLimitExceeded {
+                                        retry_after: Some(retry_after),
+                                        ..
                                     }
-                                    LanguageModelKnownError::Overloaded => {
-                                        // In the future we will wait and then retry, up to N times.
-                                        emit_generic_error(error, cx);
+                                    | ServerOverloaded {
+                                        retry_after: Some(retry_after),
+                                        ..
+                                    } => {
+                                        thread.handle_rate_limit_error(
+                                            &completion_error,
+                                            *retry_after,
+                                            model.clone(),
+                                            intent,
+                                            window,
+                                            cx,
+                                        );
+                                        retry_scheduled = true;
                                     }
-                                    LanguageModelKnownError::ApiInternalServerError => {
-                                        // In the future we will retry the request, but only once.
-                                        emit_generic_error(error, cx);
+                                    RateLimitExceeded { .. } | ServerOverloaded { .. } => {
+                                        retry_scheduled = thread.handle_retryable_error(
+                                            &completion_error,
+                                            model.clone(),
+                                            intent,
+                                            window,
+                                            cx,
+                                        );
+                                        if !retry_scheduled {
+                                            emit_generic_error(error, cx);
+                                        }
                                     }
-                                    LanguageModelKnownError::ReadResponseError(_) |
-                                    LanguageModelKnownError::DeserializeResponse(_) |
-                                    LanguageModelKnownError::UnknownResponseFormat(_) => {
-                                        // In the future we will attempt to re-roll response, but only once
-                                        emit_generic_error(error, cx);
+                                    ApiInternalServerError { .. }
+                                    | ApiReadResponseError { .. }
+                                    | HttpSend { .. } => {
+                                        retry_scheduled = thread.handle_retryable_error(
+                                            &completion_error,
+                                            model.clone(),
+                                            intent,
+                                            window,
+                                            cx,
+                                        );
+                                        if !retry_scheduled {
+                                            emit_generic_error(error, cx);
+                                        }
                                     }
+                                    NoApiKey { .. }
+                                    | HttpResponseError { .. }
+                                    | BadRequestFormat { .. }
+                                    | AuthenticationError { .. }
+                                    | PermissionError { .. }
+                                    | ApiEndpointNotFound { .. }
+                                    | SerializeRequest { .. }
+                                    | BuildRequestBody { .. }
+                                    | DeserializeResponse { .. }
+                                    | Other { .. } => emit_generic_error(error, cx),
                                 }
                             } else {
                                 emit_generic_error(error, cx);
                             }
 
-                            thread.cancel_last_completion(window, cx);
+                            if !retry_scheduled {
+                                thread.cancel_last_completion(window, cx);
+                            }
                         }
                     }
 
-                    cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                    if !retry_scheduled {
+                        cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                    }
 
                     if let Some((request_callback, (request, response_events))) = thread
                         .request_callback
@@ -1993,6 +2158,151 @@ impl Thread {
 
             Some(())
         });
+    }
+
+    fn handle_rate_limit_error(
+        &mut self,
+        error: &LanguageModelCompletionError,
+        retry_after: Duration,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        // For rate limit errors, we only retry once with the specified duration
+        let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
+        log::warn!(
+            "Retrying completion request in {} seconds: {error:?}",
+            retry_after.as_secs(),
+        );
+
+        // Add a UI-only message instead of a regular message
+        let id = self.next_message_id.post_inc();
+        self.messages.push(Message {
+            id,
+            role: Role::System,
+            segments: vec![MessageSegment::Text(retry_message)],
+            loaded_context: LoadedContext::default(),
+            creases: Vec::new(),
+            is_hidden: false,
+            ui_only: true,
+        });
+        cx.emit(ThreadEvent::MessageAdded(id));
+        // Schedule the retry
+        let thread_handle = cx.entity().downgrade();
+
+        cx.spawn(async move |_thread, cx| {
+            cx.background_executor().timer(retry_after).await;
+
+            thread_handle
+                .update(cx, |thread, cx| {
+                    // Retry the completion
+                    thread.send_to_model(model, intent, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn handle_retryable_error(
+        &mut self,
+        error: &LanguageModelCompletionError,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.handle_retryable_error_with_delay(error, None, model, intent, window, cx)
+    }
+
+    fn handle_retryable_error_with_delay(
+        &mut self,
+        error: &LanguageModelCompletionError,
+        custom_delay: Option<Duration>,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let retry_state = self.retry_state.get_or_insert(RetryState {
+            attempt: 0,
+            max_attempts: MAX_RETRY_ATTEMPTS,
+            intent,
+        });
+
+        retry_state.attempt += 1;
+        let attempt = retry_state.attempt;
+        let max_attempts = retry_state.max_attempts;
+        let intent = retry_state.intent;
+
+        if attempt <= max_attempts {
+            // Use custom delay if provided (e.g., from rate limit), otherwise exponential backoff
+            let delay = if let Some(custom_delay) = custom_delay {
+                custom_delay
+            } else {
+                let delay_secs = BASE_RETRY_DELAY_SECS * 2u64.pow((attempt - 1) as u32);
+                Duration::from_secs(delay_secs)
+            };
+
+            // Add a transient message to inform the user
+            let delay_secs = delay.as_secs();
+            let retry_message = format!(
+                "{error}. Retrying (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds..."
+            );
+            log::warn!(
+                "Retrying completion request (attempt {attempt} of {max_attempts}) \
+                in {delay_secs} seconds: {error:?}",
+            );
+
+            // Add a UI-only message instead of a regular message
+            let id = self.next_message_id.post_inc();
+            self.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(retry_message)],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: false,
+                ui_only: true,
+            });
+            cx.emit(ThreadEvent::MessageAdded(id));
+
+            // Schedule the retry
+            let thread_handle = cx.entity().downgrade();
+
+            cx.spawn(async move |_thread, cx| {
+                cx.background_executor().timer(delay).await;
+
+                thread_handle
+                    .update(cx, |thread, cx| {
+                        // Retry the completion
+                        thread.send_to_model(model, intent, window, cx);
+                    })
+                    .log_err();
+            })
+            .detach();
+
+            true
+        } else {
+            // Max retries exceeded
+            self.retry_state = None;
+
+            let notification_text = if max_attempts == 1 {
+                "Failed after retrying.".into()
+            } else {
+                format!("Failed after retrying {} times.", max_attempts).into()
+            };
+
+            // Stop generating since we're giving up on retrying.
+            self.pending_completions.clear();
+
+            cx.emit(ThreadEvent::RetriesFailed {
+                message: notification_text,
+            });
+
+            false
+        }
     }
 
     pub fn start_generating_detailed_summary_if_needed(
@@ -2120,8 +2430,8 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
         model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
         let request =
@@ -2135,41 +2445,51 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                if tool.needs_confirmation(&tool_use.input, cx)
-                    && !AgentSettings::get_global(cx).always_allow_tool_actions
-                {
-                    self.tool_use.confirm_tool_use(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                    );
-                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
-                } else {
-                    self.run_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        request.clone(),
-                        tool,
-                        model.clone(),
-                        window,
-                        cx,
-                    );
-                }
-            } else {
-                self.handle_hallucinated_tool_use(
-                    tool_use.id.clone(),
-                    tool_use.name.clone(),
-                    window,
-                    cx,
-                );
-            }
+            self.use_pending_tool(tool_use.clone(), request.clone(), model.clone(), window, cx);
         }
 
         pending_tool_uses
+    }
+
+    fn use_pending_tool(
+        &mut self,
+        tool_use: PendingToolUse,
+        request: Arc<LanguageModelRequest>,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) else {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
+        }
+
+        if tool.needs_confirmation(&tool_use.input, cx)
+            && !AgentSettings::get_global(cx).always_allow_tool_actions
+        {
+            self.tool_use.confirm_tool_use(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+            );
+            cx.emit(ThreadEvent::ToolConfirmationNeeded);
+        } else {
+            self.run_tool(
+                tool_use.id,
+                tool_use.ui_text,
+                tool_use.input,
+                request,
+                tool,
+                model,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn handle_hallucinated_tool_use(
@@ -2183,7 +2503,7 @@ impl Thread {
 
         let tool_list = available_tools
             .iter()
-            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .map(|(name, tool)| format!("- {}: {}", name, tool.description()))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -2197,6 +2517,7 @@ impl Thread {
             hallucinated_tool_name,
             Err(anyhow!("Missing tool call: {error_message}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
 
         cx.emit(ThreadEvent::MissingToolUse {
@@ -2223,6 +2544,7 @@ impl Thread {
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -2298,6 +2620,7 @@ impl Thread {
                             tool_name,
                             output,
                             thread.configured_model.as_ref(),
+                            thread.completion_mode,
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -2337,7 +2660,9 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let mut canceled = self.pending_completions.pop().is_some();
+        let mut canceled = self.pending_completions.pop().is_some() || self.retry_state.is_some();
+
+        self.retry_state = None;
 
         for pending_tool_use in self.tool_use.cancel_pending() {
             canceled = true;
@@ -2401,7 +2726,7 @@ impl Thread {
             .profile
             .enabled_tools(cx)
             .iter()
-            .map(|tool| tool.name())
+            .map(|(name, _)| name.clone().into())
             .collect();
 
         self.message_feedback.insert(message_id, feedback);
@@ -2772,7 +3097,9 @@ impl Thread {
             return TotalTokenUsage::default();
         };
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         let index = self
             .messages
@@ -2799,7 +3126,9 @@ impl Thread {
     pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
         let model = self.configured_model.as_ref()?;
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         if let Some(exceeded_error) = &self.exceeded_window_error {
             if model.model.id() == exceeded_error.model_id {
@@ -2865,6 +3194,7 @@ impl Thread {
             tool_name,
             err,
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
@@ -2926,6 +3256,9 @@ pub enum ThreadEvent {
     CancelEditing,
     CompletionCanceled,
     ProfileChanged,
+    RetriesFailed {
+        message: SharedString,
+    },
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -2936,101 +3269,36 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-/// Resolves tool name conflicts by ensuring all tool names are unique.
-///
-/// When multiple tools have the same name, this function applies the following rules:
-/// 1. Native tools always keep their original name
-/// 2. Context server tools get prefixed with their server ID and an underscore
-/// 3. All tool names are truncated to MAX_TOOL_NAME_LENGTH (64 characters)
-/// 4. If conflicts still exist after prefixing, the conflicting tools are filtered out
-///
-/// Note: This function assumes that built-in tools occur before MCP tools in the tools list.
-fn resolve_tool_name_conflicts(tools: &[Arc<dyn Tool>]) -> Vec<(String, Arc<dyn Tool>)> {
-    fn resolve_tool_name(tool: &Arc<dyn Tool>) -> String {
-        let mut tool_name = tool.name();
-        tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-        tool_name
-    }
-
-    const MAX_TOOL_NAME_LENGTH: usize = 64;
-
-    let mut duplicated_tool_names = HashSet::default();
-    let mut seen_tool_names = HashSet::default();
-    for tool in tools {
-        let tool_name = resolve_tool_name(tool);
-        if seen_tool_names.contains(&tool_name) {
-            debug_assert!(
-                tool.source() != assistant_tool::ToolSource::Native,
-                "There are two built-in tools with the same name: {}",
-                tool_name
-            );
-            duplicated_tool_names.insert(tool_name);
-        } else {
-            seen_tool_names.insert(tool_name);
-        }
-    }
-
-    if duplicated_tool_names.is_empty() {
-        return tools
-            .into_iter()
-            .map(|tool| (resolve_tool_name(tool), tool.clone()))
-            .collect();
-    }
-
-    tools
-        .into_iter()
-        .filter_map(|tool| {
-            let mut tool_name = resolve_tool_name(tool);
-            if !duplicated_tool_names.contains(&tool_name) {
-                return Some((tool_name, tool.clone()));
-            }
-            match tool.source() {
-                assistant_tool::ToolSource::Native => {
-                    // Built-in tools always keep their original name
-                    Some((tool_name, tool.clone()))
-                }
-                assistant_tool::ToolSource::ContextServer { id } => {
-                    // Context server tools are prefixed with the context server ID, and truncated if necessary
-                    tool_name.insert(0, '_');
-                    if tool_name.len() + id.len() > MAX_TOOL_NAME_LENGTH {
-                        let len = MAX_TOOL_NAME_LENGTH - tool_name.len();
-                        let mut id = id.to_string();
-                        id.truncate(len);
-                        tool_name.insert_str(0, &id);
-                    } else {
-                        tool_name.insert_str(0, &id);
-                    }
-
-                    tool_name.truncate(MAX_TOOL_NAME_LENGTH);
-
-                    if seen_tool_names.contains(&tool_name) {
-                        log::error!("Cannot resolve tool name conflict for tool {}", tool.name());
-                        None
-                    } else {
-                        Some((tool_name, tool.clone()))
-                    }
-                }
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         context::load_context, context_store::ContextStore, thread_store, thread_store::ThreadStore,
     };
+
+    // Test-specific constants
+    const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use assistant_tools;
+    use futures::StreamExt;
+    use futures::future::BoxFuture;
+    use futures::stream::BoxStream;
     use gpui::TestAppContext;
-    use icons::IconName;
+    use http_client;
+    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
+        LanguageModelProviderName, LanguageModelToolChoice,
+    };
+    use parking_lot::Mutex;
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::sync::Arc;
+    use std::time::Duration;
     use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
@@ -3344,6 +3612,134 @@ fn main() {{
             request.messages[2].string_contents(),
             "Are there any good books?"
         );
+    }
+
+    #[gpui::test]
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Add a buffer to the context. This will be a tracked buffer
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context = context_store
+            .read_with(cx, |store, _| store.context().next().cloned())
+            .unwrap();
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message and assistant response
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx);
+            thread.insert_assistant_message(
+                vec![MessageSegment::Text("This code prints 42.".into())],
+                cx,
+            );
+        });
+
+        // We shouldn't have a stale buffer notification yet
+        let notifications = thread.read_with(cx, |thread, _| {
+            find_tool_uses(thread, "project_notifications")
+        });
+        assert!(
+            notifications.is_empty(),
+            "Should not have stale buffer notification before buffer is modified"
+        );
+
+        // Modify the buffer
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(1..1, "\n    println!(\"Added a new line\");\n")],
+                None,
+                cx,
+            );
+        });
+
+        // Insert another user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        // Check for the stale buffer warning
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        let [notification] = notifications.as_slice() else {
+            panic!("Should have a `project_notifications` tool use");
+        };
+
+        let Some(notification_content) = notification.content.to_str() else {
+            panic!("`project_notifications` should return text");
+        };
+
+        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
+
+        These files have changed since the last read:
+        - code.rs
+        "};
+        assert_eq!(notification_content, expected_content);
+
+        // Insert another user message and flush notifications again
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Can you tell me more?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // There should be no new notifications (we already flushed one)
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        assert_eq!(
+            notifications.len(),
+            1,
+            "Should still have only one notification after second flush - no duplicates"
+        );
+    }
+
+    fn find_tool_uses(thread: &Thread, tool_name: &str) -> Vec<LanguageModelToolResult> {
+        thread
+            .messages()
+            .flat_map(|message| {
+                thread
+                    .tool_results_for_message(message.id)
+                    .into_iter()
+                    .filter(|result| result.tool_name == tool_name.into())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     #[gpui::test]
@@ -3663,146 +4059,1197 @@ fn main() {{
         });
     }
 
+    // Helper to create a model that returns errors
+    enum TestError {
+        Overloaded,
+        InternalServerError,
+    }
+
+    struct ErrorInjector {
+        inner: Arc<FakeLanguageModel>,
+        error_type: TestError,
+    }
+
+    impl ErrorInjector {
+        fn new(error_type: TestError) -> Self {
+            Self {
+                inner: Arc::new(FakeLanguageModel::default()),
+                error_type,
+            }
+        }
+    }
+
+    impl LanguageModel for ErrorInjector {
+        fn id(&self) -> LanguageModelId {
+            self.inner.id()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.inner.name()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.inner.provider_id()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.inner.provider_name()
+        }
+
+        fn supports_tools(&self) -> bool {
+            self.inner.supports_tools()
+        }
+
+        fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+            self.inner.supports_tool_choice(choice)
+        }
+
+        fn supports_images(&self) -> bool {
+            self.inner.supports_images()
+        }
+
+        fn telemetry_id(&self) -> String {
+            self.inner.telemetry_id()
+        }
+
+        fn max_token_count(&self) -> u64 {
+            self.inner.max_token_count()
+        }
+
+        fn count_tokens(
+            &self,
+            request: LanguageModelRequest,
+            cx: &App,
+        ) -> BoxFuture<'static, Result<u64>> {
+            self.inner.count_tokens(request, cx)
+        }
+
+        fn stream_completion(
+            &self,
+            _request: LanguageModelRequest,
+            _cx: &AsyncApp,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                BoxStream<
+                    'static,
+                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >,
+                LanguageModelCompletionError,
+            >,
+        > {
+            let error = match self.error_type {
+                TestError::Overloaded => LanguageModelCompletionError::ServerOverloaded {
+                    provider: self.provider_name(),
+                    retry_after: None,
+                },
+                TestError::InternalServerError => {
+                    LanguageModelCompletionError::ApiInternalServerError {
+                        provider: self.provider_name(),
+                        message: "I'm a teapot orbiting the sun".to_string(),
+                    }
+                }
+            };
+            async move {
+                let stream = futures::stream::once(async move { Err(error) });
+                Ok(stream.boxed())
+            }
+            .boxed()
+        }
+
+        fn as_fake(&self) -> &FakeLanguageModel {
+            &self.inner
+        }
+    }
+
     #[gpui::test]
-    fn test_resolve_tool_name_conflicts() {
-        use assistant_tool::{Tool, ToolSource};
+    async fn test_retry_on_overloaded_error(cx: &mut TestAppContext) {
+        init_test_settings(cx);
 
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3"],
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.retry_state.is_some(), "Should have retry state");
+            let retry_state = thread.retry_state.as_ref().unwrap();
+            assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
+            assert_eq!(
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Should have default max attempts"
+            );
+        });
+
+        // Check that a retry message was added
+        thread.read_with(cx, |thread, _| {
+            let mut messages = thread.messages();
+            assert!(
+                messages.any(|msg| {
+                    msg.role == Role::System
+                        && msg.ui_only
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("overloaded")
+                                    && text
+                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have added a system retry message"
+            );
+        });
+
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
+        assert_eq!(retry_count, 1, "Should have one retry message");
+    }
+
+    #[gpui::test]
+    async fn test_retry_on_internal_server_error(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns internal server error
+        let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Check retry state on thread
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.retry_state.is_some(), "Should have retry state");
+            let retry_state = thread.retry_state.as_ref().unwrap();
+            assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
+            assert_eq!(
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Should have correct max attempts"
+            );
+        });
+
+        // Check that a retry message was added with provider name
+        thread.read_with(cx, |thread, _| {
+            let mut messages = thread.messages();
+            assert!(
+                messages.any(|msg| {
+                    msg.role == Role::System
+                        && msg.ui_only
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("internal")
+                                    && text.contains("Fake")
+                                    && text
+                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have added a system retry message with provider name"
+            );
+        });
+
+        // Count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
+        assert_eq!(retry_count, 1, "Should have one retry message");
+    }
+
+    #[gpui::test]
+    async fn test_exponential_backoff_on_retries(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track retry events and completion count
+        // Track completion events
+        let completion_count = Arc::new(Mutex::new(0));
+        let completion_count_clone = completion_count.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::NewRequest = event {
+                    *completion_count_clone.lock() += 1;
+                }
+            })
+        });
+
+        // First attempt
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Should have scheduled first retry - count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 1, "Should have scheduled first retry");
+
+        // Check retry state
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.retry_state.is_some(), "Should have retry state");
+            let retry_state = thread.retry_state.as_ref().unwrap();
+            assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
+        });
+
+        // Advance clock for first retry
+        cx.executor()
+            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.run_until_parked();
+
+        // Should have scheduled second retry - count retry messages
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 2, "Should have scheduled second retry");
+
+        // Check retry state updated
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.retry_state.is_some(), "Should have retry state");
+            let retry_state = thread.retry_state.as_ref().unwrap();
+            assert_eq!(retry_state.attempt, 2, "Should be second retry attempt");
+            assert_eq!(
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Should have correct max attempts"
+            );
+        });
+
+        // Advance clock for second retry (exponential backoff)
+        cx.executor()
+            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 2));
+        cx.run_until_parked();
+
+        // Should have scheduled third retry
+        // Count all retry messages now
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
+            "Should have scheduled third retry"
         );
 
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "mcp-1_tool3", "mcp-2_tool3"],
+        // Check retry state updated
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.retry_state.is_some(), "Should have retry state");
+            let retry_state = thread.retry_state.as_ref().unwrap();
+            assert_eq!(
+                retry_state.attempt, MAX_RETRY_ATTEMPTS,
+                "Should be at max retry attempt"
+            );
+            assert_eq!(
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Should have correct max attempts"
+            );
+        });
+
+        // Advance clock for third retry (exponential backoff)
+        cx.executor()
+            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS * 4));
+        cx.run_until_parked();
+
+        // No more retries should be scheduled after clock was advanced.
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
+            "Should not exceed max retries"
         );
 
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool1", ToolSource::Native),
-                TestTool::new("tool2", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::Native),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-1".into() }),
-                TestTool::new("tool3", ToolSource::ContextServer { id: "mcp-2".into() }),
-            ],
-            vec!["tool1", "tool2", "tool3", "mcp-1_tool3", "mcp-2_tool3"],
+        // Final completion count should be initial + max retries
+        assert_eq!(
+            *completion_count.lock(),
+            (MAX_RETRY_ATTEMPTS + 1) as usize,
+            "Should have made initial + max retry attempts"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_max_retries_exceeded(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track events
+        let retries_failed = Arc::new(Mutex::new(false));
+        let retries_failed_clone = retries_failed.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::RetriesFailed { .. } = event {
+                    *retries_failed_clone.lock() = true;
+                }
+            })
+        });
+
+        // Start initial completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Advance through all retries
+        for i in 0..MAX_RETRY_ATTEMPTS {
+            let delay = if i == 0 {
+                BASE_RETRY_DELAY_SECS
+            } else {
+                BASE_RETRY_DELAY_SECS * 2u64.pow(i as u32 - 1)
+            };
+            cx.executor().advance_clock(Duration::from_secs(delay));
+            cx.run_until_parked();
+        }
+
+        // After the 3rd retry is scheduled, we need to wait for it to execute and fail
+        // The 3rd retry has a delay of BASE_RETRY_DELAY_SECS * 4 (20 seconds)
+        let final_delay = BASE_RETRY_DELAY_SECS * 2u64.pow((MAX_RETRY_ATTEMPTS - 1) as u32);
+        cx.executor()
+            .advance_clock(Duration::from_secs(final_delay));
+        cx.run_until_parked();
+
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("Retrying") && text.contains("seconds")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+
+        // After max retries, should emit RetriesFailed event
+        assert_eq!(
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
+            "Should have attempted max retries"
+        );
+        assert!(
+            *retries_failed.lock(),
+            "Should emit RetriesFailed event after max retries exceeded"
         );
 
-        // Test that tool with very long name is always truncated
-        assert_resolve_tool_name_conflicts(
-            vec![TestTool::new(
-                "tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-blah-blah",
-                ToolSource::Native,
-            )],
-            vec!["tool-with-more-then-64-characters-blah-blah-blah-blah-blah-blah-"],
+        // Retry state should be cleared
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared after max retries"
+            );
+
+            // Verify we have the expected number of retry messages
+            let retry_messages = thread
+                .messages
+                .iter()
+                .filter(|msg| msg.ui_only && msg.role == Role::System)
+                .count();
+            assert_eq!(
+                retry_messages, MAX_RETRY_ATTEMPTS as usize,
+                "Should have one retry message per attempt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_retry_message_removed_on_retry(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // We'll use a wrapper to switch behavior after first failure
+        struct RetryTestModel {
+            inner: Arc<FakeLanguageModel>,
+            failed_once: Arc<Mutex<bool>>,
+        }
+
+        impl LanguageModel for RetryTestModel {
+            fn id(&self) -> LanguageModelId {
+                self.inner.id()
+            }
+
+            fn name(&self) -> LanguageModelName {
+                self.inner.name()
+            }
+
+            fn provider_id(&self) -> LanguageModelProviderId {
+                self.inner.provider_id()
+            }
+
+            fn provider_name(&self) -> LanguageModelProviderName {
+                self.inner.provider_name()
+            }
+
+            fn supports_tools(&self) -> bool {
+                self.inner.supports_tools()
+            }
+
+            fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+                self.inner.supports_tool_choice(choice)
+            }
+
+            fn supports_images(&self) -> bool {
+                self.inner.supports_images()
+            }
+
+            fn telemetry_id(&self) -> String {
+                self.inner.telemetry_id()
+            }
+
+            fn max_token_count(&self) -> u64 {
+                self.inner.max_token_count()
+            }
+
+            fn count_tokens(
+                &self,
+                request: LanguageModelRequest,
+                cx: &App,
+            ) -> BoxFuture<'static, Result<u64>> {
+                self.inner.count_tokens(request, cx)
+            }
+
+            fn stream_completion(
+                &self,
+                request: LanguageModelRequest,
+                cx: &AsyncApp,
+            ) -> BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                    >,
+                    LanguageModelCompletionError,
+                >,
+            > {
+                if !*self.failed_once.lock() {
+                    *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
+                    // Return error on first attempt
+                    let stream = futures::stream::once(async move {
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
+                    });
+                    async move { Ok(stream.boxed()) }.boxed()
+                } else {
+                    // Succeed on retry
+                    self.inner.stream_completion(request, cx)
+                }
+            }
+
+            fn as_fake(&self) -> &FakeLanguageModel {
+                &self.inner
+            }
+        }
+
+        let model = Arc::new(RetryTestModel {
+            inner: Arc::new(FakeLanguageModel::default()),
+            failed_once: Arc::new(Mutex::new(false)),
+        });
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Track message deletions
+        // Track when retry completes successfully
+        let retry_completed = Arc::new(Mutex::new(false));
+        let retry_completed_clone = retry_completed.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::StreamedCompletion = event {
+                    *retry_completed_clone.lock() = true;
+                }
+            })
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+        cx.run_until_parked();
+
+        // Get the retry message ID
+        let retry_message_id = thread.read_with(cx, |thread, _| {
+            thread
+                .messages()
+                .find(|msg| msg.role == Role::System && msg.ui_only)
+                .map(|msg| msg.id)
+                .expect("Should have a retry message")
+        });
+
+        // Wait for retry
+        cx.executor()
+            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.run_until_parked();
+
+        // Stream some successful content
+        let fake_model = model.as_fake();
+        // After the retry, there should be a new pending completion
+        let pending = fake_model.pending_completions();
+        assert!(
+            !pending.is_empty(),
+            "Should have a pending completion after retry"
+        );
+        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.end_completion_stream(&pending[0]);
+        cx.run_until_parked();
+
+        // Check that the retry completed successfully
+        assert!(
+            *retry_completed.lock(),
+            "Retry should have completed successfully"
         );
 
-        // Test deduplication of tools with very long names, in this case the mcp server name should be truncated
-        assert_resolve_tool_name_conflicts(
-            vec![
-                TestTool::new("tool-with-very-very-very-long-name", ToolSource::Native),
-                TestTool::new(
-                    "tool-with-very-very-very-long-name",
-                    ToolSource::ContextServer {
-                        id: "mcp-with-very-very-very-long-name".into(),
-                    },
-                ),
-            ],
-            vec![
-                "tool-with-very-very-very-long-name",
-                "mcp-with-very-very-very-long-_tool-with-very-very-very-long-name",
-            ],
-        );
+        // Retry message should still exist but be marked as ui_only
+        thread.read_with(cx, |thread, _| {
+            let retry_msg = thread
+                .message(retry_message_id)
+                .expect("Retry message should still exist");
+            assert!(retry_msg.ui_only, "Retry message should be ui_only");
+            assert_eq!(
+                retry_msg.role,
+                Role::System,
+                "Retry message should have System role"
+            );
+        });
+    }
 
-        fn assert_resolve_tool_name_conflicts(
-            tools: Vec<TestTool>,
-            expected: Vec<impl Into<String>>,
-        ) {
-            let tools: Vec<Arc<dyn Tool>> = tools
-                .into_iter()
-                .map(|t| Arc::new(t) as Arc<dyn Tool>)
-                .collect();
-            let tools = resolve_tool_name_conflicts(&tools);
-            assert_eq!(tools.len(), expected.len());
-            for (i, expected_name) in expected.into_iter().enumerate() {
-                let expected_name = expected_name.into();
-                let actual_name = &tools[i].0;
-                assert_eq!(
-                    actual_name, &expected_name,
-                    "Expected '{}' got '{}' at index {}",
-                    expected_name, actual_name, i
+    #[gpui::test]
+    async fn test_successful_completion_clears_retry_state(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create a model that fails once then succeeds
+        struct FailOnceModel {
+            inner: Arc<FakeLanguageModel>,
+            failed_once: Arc<Mutex<bool>>,
+        }
+
+        impl LanguageModel for FailOnceModel {
+            fn id(&self) -> LanguageModelId {
+                self.inner.id()
+            }
+
+            fn name(&self) -> LanguageModelName {
+                self.inner.name()
+            }
+
+            fn provider_id(&self) -> LanguageModelProviderId {
+                self.inner.provider_id()
+            }
+
+            fn provider_name(&self) -> LanguageModelProviderName {
+                self.inner.provider_name()
+            }
+
+            fn supports_tools(&self) -> bool {
+                self.inner.supports_tools()
+            }
+
+            fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+                self.inner.supports_tool_choice(choice)
+            }
+
+            fn supports_images(&self) -> bool {
+                self.inner.supports_images()
+            }
+
+            fn telemetry_id(&self) -> String {
+                self.inner.telemetry_id()
+            }
+
+            fn max_token_count(&self) -> u64 {
+                self.inner.max_token_count()
+            }
+
+            fn count_tokens(
+                &self,
+                request: LanguageModelRequest,
+                cx: &App,
+            ) -> BoxFuture<'static, Result<u64>> {
+                self.inner.count_tokens(request, cx)
+            }
+
+            fn stream_completion(
+                &self,
+                request: LanguageModelRequest,
+                cx: &AsyncApp,
+            ) -> BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                    >,
+                    LanguageModelCompletionError,
+                >,
+            > {
+                if !*self.failed_once.lock() {
+                    *self.failed_once.lock() = true;
+                    let provider = self.provider_name();
+                    // Return error on first attempt
+                    let stream = futures::stream::once(async move {
+                        Err(LanguageModelCompletionError::ServerOverloaded {
+                            provider,
+                            retry_after: None,
+                        })
+                    });
+                    async move { Ok(stream.boxed()) }.boxed()
+                } else {
+                    // Succeed on retry
+                    self.inner.stream_completion(request, cx)
+                }
+            }
+        }
+
+        let fail_once_model = Arc::new(FailOnceModel {
+            inner: Arc::new(FakeLanguageModel::default()),
+            failed_once: Arc::new(Mutex::new(false)),
+        });
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Test message",
+                ContextLoadResult::default(),
+                None,
+                vec![],
+                cx,
+            );
+        });
+
+        // Start completion with fail-once model
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(
+                fail_once_model.clone(),
+                CompletionIntent::UserPrompt,
+                None,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Verify retry state exists after first failure
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_some(),
+                "Should have retry state after failure"
+            );
+        });
+
+        // Wait for retry delay
+        cx.executor()
+            .advance_clock(Duration::from_secs(BASE_RETRY_DELAY_SECS));
+        cx.run_until_parked();
+
+        // The retry should now use our FailOnceModel which should succeed
+        // We need to help the FakeLanguageModel complete the stream
+        let inner_fake = fail_once_model.inner.clone();
+
+        // Wait a bit for the retry to start
+        cx.run_until_parked();
+
+        // Check for pending completions and complete them
+        if let Some(pending) = inner_fake.pending_completions().first() {
+            inner_fake.stream_completion_response(pending, "Success!");
+            inner_fake.end_completion_stream(pending);
+        }
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared after successful completion"
+            );
+
+            let has_assistant_message = thread
+                .messages
+                .iter()
+                .any(|msg| msg.role == Role::Assistant && !msg.ui_only);
+            assert!(
+                has_assistant_message,
+                "Should have an assistant message after successful retry"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rate_limit_retry_single_attempt(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create a model that returns rate limit error with retry_after
+        struct RateLimitModel {
+            inner: Arc<FakeLanguageModel>,
+        }
+
+        impl LanguageModel for RateLimitModel {
+            fn id(&self) -> LanguageModelId {
+                self.inner.id()
+            }
+
+            fn name(&self) -> LanguageModelName {
+                self.inner.name()
+            }
+
+            fn provider_id(&self) -> LanguageModelProviderId {
+                self.inner.provider_id()
+            }
+
+            fn provider_name(&self) -> LanguageModelProviderName {
+                self.inner.provider_name()
+            }
+
+            fn supports_tools(&self) -> bool {
+                self.inner.supports_tools()
+            }
+
+            fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+                self.inner.supports_tool_choice(choice)
+            }
+
+            fn supports_images(&self) -> bool {
+                self.inner.supports_images()
+            }
+
+            fn telemetry_id(&self) -> String {
+                self.inner.telemetry_id()
+            }
+
+            fn max_token_count(&self) -> u64 {
+                self.inner.max_token_count()
+            }
+
+            fn count_tokens(
+                &self,
+                request: LanguageModelRequest,
+                cx: &App,
+            ) -> BoxFuture<'static, Result<u64>> {
+                self.inner.count_tokens(request, cx)
+            }
+
+            fn stream_completion(
+                &self,
+                _request: LanguageModelRequest,
+                _cx: &AsyncApp,
+            ) -> BoxFuture<
+                'static,
+                Result<
+                    BoxStream<
+                        'static,
+                        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                    >,
+                    LanguageModelCompletionError,
+                >,
+            > {
+                let provider = self.provider_name();
+                async move {
+                    let stream = futures::stream::once(async move {
+                        Err(LanguageModelCompletionError::RateLimitExceeded {
+                            provider,
+                            retry_after: Some(Duration::from_secs(TEST_RATE_LIMIT_RETRY_SECS)),
+                        })
+                    });
+                    Ok(stream.boxed())
+                }
+                .boxed()
+            }
+
+            fn as_fake(&self) -> &FakeLanguageModel {
+                &self.inner
+            }
+        }
+
+        let model = Arc::new(RateLimitModel {
+            inner: Arc::new(FakeLanguageModel::default()),
+        });
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        let retry_count = thread.update(cx, |thread, _| {
+            thread
+                .messages
+                .iter()
+                .filter(|m| {
+                    m.ui_only
+                        && m.segments.iter().any(|s| {
+                            if let MessageSegment::Text(text) = s {
+                                text.contains("rate limit exceeded")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count()
+        });
+        assert_eq!(retry_count, 1, "Should have scheduled one retry");
+
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Rate limit errors should not set retry_state"
+            );
+        });
+
+        // Verify we have one retry message
+        thread.read_with(cx, |thread, _| {
+            let retry_messages = thread
+                .messages
+                .iter()
+                .filter(|msg| {
+                    msg.ui_only
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("rate limit exceeded")
+                            } else {
+                                false
+                            }
+                        })
+                })
+                .count();
+            assert_eq!(
+                retry_messages, 1,
+                "Should have one rate limit retry message"
+            );
+        });
+
+        // Check that retry message doesn't include attempt count
+        thread.read_with(cx, |thread, _| {
+            let retry_message = thread
+                .messages
+                .iter()
+                .find(|msg| msg.role == Role::System && msg.ui_only)
+                .expect("Should have a retry message");
+
+            // Check that the message doesn't contain attempt count
+            if let Some(MessageSegment::Text(text)) = retry_message.segments.first() {
+                assert!(
+                    !text.contains("attempt"),
+                    "Rate limit retry message should not contain attempt count"
+                );
+                assert!(
+                    text.contains(&format!(
+                        "Retrying in {} seconds",
+                        TEST_RATE_LIMIT_RETRY_SECS
+                    )),
+                    "Rate limit retry message should contain retry delay"
                 );
             }
-        }
+        });
+    }
 
-        struct TestTool {
-            name: String,
-            source: ToolSource,
-        }
+    #[gpui::test]
+    async fn test_ui_only_messages_not_sent_to_model(cx: &mut TestAppContext) {
+        init_test_settings(cx);
 
-        impl TestTool {
-            fn new(name: impl Into<String>, source: ToolSource) -> Self {
-                Self {
-                    name: name.into(),
-                    source,
-                }
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
+
+        // Insert a regular user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Insert a UI-only message (like our retry notifications)
+        thread.update(cx, |thread, cx| {
+            let id = thread.next_message_id.post_inc();
+            thread.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(
+                    "This is a UI-only message that should not be sent to the model".to_string(),
+                )],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: true,
+                ui_only: true,
+            });
+            cx.emit(ThreadEvent::MessageAdded(id));
+        });
+
+        // Insert another regular message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "How are you?",
+                ContextLoadResult::default(),
+                None,
+                vec![],
+                cx,
+            );
+        });
+
+        // Generate the completion request
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // Verify that the request only contains non-UI-only messages
+        // Should have system prompt + 2 user messages, but not the UI-only message
+        let user_messages: Vec<_> = request
+            .messages
+            .iter()
+            .filter(|msg| msg.role == Role::User)
+            .collect();
+        assert_eq!(
+            user_messages.len(),
+            2,
+            "Should have exactly 2 user messages"
+        );
+
+        // Verify the UI-only content is not present anywhere in the request
+        let request_text = request
+            .messages
+            .iter()
+            .flat_map(|msg| &msg.content)
+            .filter_map(|content| match content {
+                MessageContent::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert!(
+            !request_text.contains("UI-only message"),
+            "UI-only message content should not be in the request"
+        );
+
+        // Verify the thread still has all 3 messages (including UI-only)
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.messages().count(),
+                3,
+                "Thread should have 3 messages"
+            );
+            assert_eq!(
+                thread.messages().filter(|m| m.ui_only).count(),
+                1,
+                "Thread should have 1 UI-only message"
+            );
+        });
+
+        // Verify that UI-only messages are not serialized
+        let serialized = thread
+            .update(cx, |thread, cx| thread.serialize(cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            serialized.messages.len(),
+            2,
+            "Serialized thread should only have 2 messages (no UI-only)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify retry was scheduled by checking for retry message
+        let has_retry_message = thread.read_with(cx, |thread, _| {
+            thread.messages.iter().any(|m| {
+                m.ui_only
+                    && m.segments.iter().any(|s| {
+                        if let MessageSegment::Text(text) = s {
+                            text.contains("Retrying") && text.contains("seconds")
+                        } else {
+                            false
+                        }
+                    })
+            })
+        });
+        assert!(has_retry_message, "Should have scheduled a retry");
+
+        // Cancel the completion before the retry happens
+        thread.update(cx, |thread, cx| {
+            thread.cancel_last_completion(None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The retry should not have happened - no pending completions
+        let fake_model = model.as_fake();
+        assert_eq!(
+            fake_model.pending_completions().len(),
+            0,
+            "Should have no pending completions after cancellation"
+        );
+
+        // Verify the retry was cancelled by checking retry state
+        thread.read_with(cx, |thread, _| {
+            if let Some(retry_state) = &thread.retry_state {
+                panic!(
+                    "retry_state should be cleared after cancellation, but found: attempt={}, max_attempts={}, intent={:?}",
+                    retry_state.attempt, retry_state.max_attempts, retry_state.intent
+                );
             }
-        }
-
-        impl Tool for TestTool {
-            fn name(&self) -> String {
-                self.name.clone()
-            }
-
-            fn icon(&self) -> IconName {
-                IconName::Ai
-            }
-
-            fn may_perform_edits(&self) -> bool {
-                false
-            }
-
-            fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
-                true
-            }
-
-            fn source(&self) -> ToolSource {
-                self.source.clone()
-            }
-
-            fn description(&self) -> String {
-                "Test tool".to_string()
-            }
-
-            fn ui_text(&self, _input: &serde_json::Value) -> String {
-                "Test tool".to_string()
-            }
-
-            fn run(
-                self: Arc<Self>,
-                _input: serde_json::Value,
-                _request: Arc<LanguageModelRequest>,
-                _project: Entity<Project>,
-                _action_log: Entity<ActionLog>,
-                _model: Arc<dyn LanguageModel>,
-                _window: Option<AnyWindowHandle>,
-                _cx: &mut App,
-            ) -> assistant_tool::ToolResult {
-                assistant_tool::ToolResult {
-                    output: Task::ready(Err(anyhow::anyhow!("No content"))),
-                    card: None,
-                }
-            }
-        }
+        });
     }
 
     fn test_summarize_error(
@@ -3860,6 +5307,14 @@ fn main() {{
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ToolRegistry::default_global(cx);
+            assistant_tool::init(cx);
+
+            let http_client = Arc::new(http_client::HttpClientWithUrl::new(
+                http_client::FakeHttpClient::with_200_response(),
+                "http://localhost".to_string(),
+                None,
+            ));
+            assistant_tools::init(http_client, cx);
         });
     }
 

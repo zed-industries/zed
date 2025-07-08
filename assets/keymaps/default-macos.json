@@ -5,10 +5,10 @@
     "bindings": {
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
-      "shift-cmd-f5": "debugger::Restart",
+      "shift-cmd-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
-      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
@@ -47,7 +47,8 @@
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
-      "ctrl-cmd-i": "edit_prediction::ToggleMenu"
+      "ctrl-cmd-i": "edit_prediction::ToggleMenu",
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -282,9 +283,9 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithBurnMode",
-      "cmd-alt-b": "agent::ToggleBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode"
     }
   },
   {
@@ -544,9 +545,23 @@
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
       "cmd-\\": "pane::SplitRight",
-      "cmd-k v": "markdown::OpenPreviewToTheSide",
-      "cmd-shift-v": "markdown::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
+    }
+  },
+  {
+    "context": "Editor && extension == md",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "markdown::OpenPreviewToTheSide",
+      "cmd-shift-v": "markdown::OpenPreview"
+    }
+  },
+  {
+    "context": "Editor && extension == svg",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "svg::OpenPreviewToTheSide",
+      "cmd-shift-v": "svg::OpenPreview"
     }
   },
   {
@@ -587,7 +602,7 @@
       "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
-      "alt-cmd-b": "branches::OpenRecent",
+      "cmd-ctrl-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
@@ -605,9 +620,17 @@
       "cmd-8": ["workspace::ActivatePane", 7],
       "cmd-9": ["workspace::ActivatePane", 8],
       "cmd-b": "workspace::ToggleLeftDock",
+      "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
+      // For 0px parameter, uses UI font size value.
+      "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-)": "workspace::ResetOpenDocksSize",
+      "ctrl-alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      "ctrl-alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
@@ -636,7 +659,8 @@
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
-      "f5": "debugger::RerunLastSession"
+      "f5": "debugger::Rerun",
+      "cmd-w": "workspace::CloseActiveDock"
     }
   },
   {
@@ -748,6 +772,13 @@
       "ctrl-n": "editor::ContextMenuNext",
       "pageup": "editor::ContextMenuFirst",
       "pagedown": "editor::ContextMenuLast"
+    }
+  },
+  {
+    "context": "Editor && showing_signature_help && !showing_completions",
+    "bindings": {
+      "up": "editor::SignatureHelpPrevious",
+      "down": "editor::SignatureHelpNext"
     }
   },
   // Custom bindings
@@ -964,7 +995,9 @@
     "context": "BreakpointList",
     "bindings": {
       "space": "debugger::ToggleEnableBreakpoint",
-      "backspace": "debugger::UnsetBreakpoint"
+      "backspace": "debugger::UnsetBreakpoint",
+      "left": "debugger::PreviousBreakpointProperty",
+      "right": "debugger::NextBreakpointProperty"
     }
   },
   {
@@ -1148,6 +1181,20 @@
     "bindings": {
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem"
+    }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "pageup": "markdown::MovePageUp",
+      "pagedown": "markdown::MovePageDown"
+    }
+  },
+  {
+    "context": "KeymapEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-f": "search::FocusSearch"
     }
   }
 ]

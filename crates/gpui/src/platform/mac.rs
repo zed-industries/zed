@@ -5,6 +5,8 @@ mod display;
 mod display_link;
 mod events;
 mod keyboard;
+
+#[cfg(feature = "screen-capture")]
 mod screen_capture;
 
 #[cfg(not(feature = "macos-blade"))]

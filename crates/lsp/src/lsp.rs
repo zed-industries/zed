@@ -15,11 +15,7 @@ use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Tas
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
 use smol::{
@@ -108,6 +104,12 @@ pub struct LanguageServer {
     root_uri: Url,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LanguageServerSelector {
+    Id(LanguageServerId),
+    Name(LanguageServerName),
+}
+
 /// Identifies a running language server.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
@@ -124,7 +126,10 @@ impl LanguageServerId {
 }
 
 /// A name of a language server.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, JsonSchema,
+)]
+#[serde(transparent)]
 pub struct LanguageServerName(pub SharedString);
 
 impl std::fmt::Display for LanguageServerName {
@@ -142,20 +147,6 @@ impl AsRef<str> for LanguageServerName {
 impl AsRef<OsStr> for LanguageServerName {
     fn as_ref(&self) -> &OsStr {
         self.0.as_ref().as_ref()
-    }
-}
-
-impl JsonSchema for LanguageServerName {
-    fn schema_name() -> String {
-        "LanguageServerName".into()
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            ..Default::default()
-        }
-        .into()
     }
 }
 

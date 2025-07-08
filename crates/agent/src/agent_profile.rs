@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
-use assistant_tool::{Tool, ToolSource, ToolWorkingSet};
+use assistant_tool::{Tool, ToolSource, ToolWorkingSet, UniqueToolName};
 use collections::IndexMap;
 use convert_case::{Case, Casing};
 use fs::Fs;
@@ -72,7 +72,7 @@ impl AgentProfile {
         &self.id
     }
 
-    pub fn enabled_tools(&self, cx: &App) -> Vec<Arc<dyn Tool>> {
+    pub fn enabled_tools(&self, cx: &App) -> Vec<(UniqueToolName, Arc<dyn Tool>)> {
         let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
             return Vec::new();
         };
@@ -81,23 +81,26 @@ impl AgentProfile {
             .read(cx)
             .tools(cx)
             .into_iter()
-            .filter(|tool| Self::is_enabled(settings, tool.source(), tool.name()))
+            .filter(|(_, tool)| Self::is_enabled(settings, tool.source(), tool.name()))
             .collect()
+    }
+
+    pub fn is_tool_enabled(&self, source: ToolSource, tool_name: String, cx: &App) -> bool {
+        let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
+            return false;
+        };
+
+        return Self::is_enabled(settings, source, tool_name);
     }
 
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
         match source {
             ToolSource::Native => *settings.tools.get(name.as_str()).unwrap_or(&false),
-            ToolSource::ContextServer { id } => {
-                if settings.enable_all_context_servers {
-                    return true;
-                }
-
-                let Some(preset) = settings.context_servers.get(id.as_ref()) else {
-                    return false;
-                };
-                *preset.tools.get(name.as_str()).unwrap_or(&false)
-            }
+            ToolSource::ContextServer { id } => settings
+                .context_servers
+                .get(id.as_ref())
+                .and_then(|preset| preset.tools.get(name.as_str()).copied())
+                .unwrap_or(settings.enable_all_context_servers),
         }
     }
 }
@@ -134,7 +137,7 @@ mod tests {
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))
             .into_iter()
-            .map(|tool| tool.name())
+            .map(|(_, tool)| tool.name())
             .collect::<Vec<_>>();
         enabled_tools.sort();
 
@@ -171,7 +174,7 @@ mod tests {
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))
             .into_iter()
-            .map(|tool| tool.name())
+            .map(|(_, tool)| tool.name())
             .collect::<Vec<_>>();
         enabled_tools.sort();
 
@@ -204,7 +207,7 @@ mod tests {
         let mut enabled_tools = cx
             .read(|cx| profile.enabled_tools(cx))
             .into_iter()
-            .map(|tool| tool.name())
+            .map(|(_, tool)| tool.name())
             .collect::<Vec<_>>();
         enabled_tools.sort();
 
@@ -264,10 +267,10 @@ mod tests {
     }
 
     fn default_tool_set(cx: &mut TestAppContext) -> Entity<ToolWorkingSet> {
-        cx.new(|_| {
+        cx.new(|cx| {
             let mut tool_set = ToolWorkingSet::default();
-            tool_set.insert(Arc::new(FakeTool::new("enabled_mcp_tool", "mcp")));
-            tool_set.insert(Arc::new(FakeTool::new("disabled_mcp_tool", "mcp")));
+            tool_set.insert(Arc::new(FakeTool::new("enabled_mcp_tool", "mcp")), cx);
+            tool_set.insert(Arc::new(FakeTool::new("disabled_mcp_tool", "mcp")), cx);
             tool_set
         })
     }

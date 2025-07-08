@@ -2140,7 +2140,8 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) |
-                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
+                                    LanguageModelCompletionEvent::ToolUseJsonParseError { .. } |
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
 
@@ -2346,13 +2347,13 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
-        let supports_max_mode = if let Some(model) = model {
-            model.supports_max_mode()
+        let supports_burn_mode = if let Some(model) = model {
+            model.supports_burn_mode()
         } else {
             false
         };
 
-        if supports_max_mode {
+        if supports_burn_mode {
             completion_request.mode = Some(self.completion_mode.into());
         }
         completion_request
@@ -2523,6 +2524,12 @@ impl AssistantContext {
             }
 
             let message = start_message;
+            let at_end = range.end >= message.offset_range.end.saturating_sub(1);
+            let role_after = if range.start == range.end || at_end {
+                Role::User
+            } else {
+                message.role
+            };
             let role = message.role;
             let mut edited_buffer = false;
 
@@ -2557,7 +2564,7 @@ impl AssistantContext {
             };
 
             let suffix_metadata = MessageMetadata {
-                role,
+                role: role_after,
                 status: MessageStatus::Done,
                 timestamp: suffix.id.0,
                 cache: None,

@@ -161,7 +161,7 @@ impl ContextStrip {
         let workspace = self.workspace.upgrade()?;
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        if let Some(active_thread) = panel.active_thread() {
+        if let Some(active_thread) = panel.active_thread(cx) {
             let weak_active_thread = active_thread.downgrade();
 
             let active_thread = active_thread.read(cx);

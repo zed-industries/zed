@@ -3,6 +3,7 @@
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
 It allows Zed to support various debuggers without needing to implement language-specific debugging logic.
+Zed implements the client side of the protocol, and various _debug adapters_ implement the server side.
 
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
@@ -10,36 +11,53 @@ and more, in a consistent manner across different programming languages and runt
 > We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
 > You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
 
-## Supported Debug Adapters
+## Supported Languages
 
-Zed supports a variety of debug adapters for different programming languages out of the box:
+To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
 
-- JavaScript ([vscode-js-debug](https://github.com/microsoft/vscode-js-debug.git)): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript.
+<!-- keep this sorted -->
 
-- Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
+- [C](./languages/c.md#debugging) (built-in)
+- [C++](./languages/cpp.md#debugging) (built-in)
+- [Go](./languages/go.md#debugging) (built-in)
+- [JavaScript](./languages/javascript.md#debugging) (built-in)
+- [PHP](./languages/php.md#debugging) (built-in)
+- [Python](./languages/python.md#debugging) (built-in)
+- [Ruby](./languages/ruby.md#debugging) (provided by extension)
+- [Rust](./languages/rust.md#debugging) (built-in)
+- [Swift](./languages/swift.md#debugging) (provided by extension)
+- [TypeScript](./languages/typescript.md#debugging) (built-in)
 
-- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for Rust, C, C++, and some other compiled languages, offering low-level debugging features and support for Apple platforms. (For Swift, [see below](#swift).)
+> If your language isn't listed, you can contribute by adding a debug adapter for it. Check out our [debugger extensions](./extensions/debugger-extensions.md) documentation for more information.
 
-- GDB ([GDB](https://sourceware.org/gdb/)): The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
-
-- Go ([Delve](https://github.com/go-delve/delve)): Delve, a debugger for the Go programming language, offering both local and remote debugging capabilities with full support for Go's runtime and standard library.
-
-- PHP ([Xdebug](https://xdebug.org/)): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
-
-- Ruby ([rdbg](https://github.com/ruby/debug)): Provides debugging for Ruby.
-
-These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
-
-> Is your desired debugger not listed? You can install a [Debug Adapter extension](https://zed.dev/extensions?filter=debug-adapters) to add support for your favorite debugger.
-> If that's not enough, you can contribute by creating an extension yourself. Check out our [debugger extensions](extensions/debugger-extensions.md) documentation for more information.
+Follow those links for language- and adapter-specific information and examples, or read on for more about Zed's general debugging features that apply to all adapters.
 
 ## Getting Started
 
-For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
+For most languages, the fastest way to get started is to run {#action debugger::Start} ({#kb debugger::Start}). This opens the _new process modal_, which shows you a contextual list of preconfigured debug tasks for the current project. Debug tasks are created from tests, entry points (like a `main` function), and from other sources — consult the documentation for your language for full information about what's supported.
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+You can open the same modal by clicking the "plus" button at the top right of the debug panel.
 
-You can then use the `New Session Modal` to select a configuration and start debugging.
+For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
+
+```json
+[
+  {
+    "adapter": "CodeLLDB",
+    "label": "First configuration"
+    // ...
+  },
+  {
+    "adapter": "Debugpy",
+    "label": "Second configuration"
+    // ...
+  }
+]
+```
+
+Check the documentation for your language for example configurations covering typical use-cases. Once you've added configurations to `.zed/debug.json`, they'll appear in the list in the new process modal.
+
+Zed will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
 
 ### Launching & Attaching
 
@@ -58,7 +76,7 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ```json
 [
   {
-    // The label for the debug configuration and used to identify the debug session inside the debug panel & new session modal
+    // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
     "label": "Example Start debugger config",
     // The debug adapter that Zed should use to debug the program
     "adapter": "Example adapter name",
@@ -113,306 +131,7 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 ### Automatic scenario creation
 
 Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
-Automatic scenario creation is currently supported for Rust, Go, and Python. JavaScript/TypeScript support is being worked on.
-
-### Example Configurations
-
-#### JavaScript
-
-##### Debug Active File
-
-```json
-[
-  {
-    "label": "Debug with node",
-    "adapter": "JavaScript",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "console": "integratedTerminal",
-    "type": "pwa-node"
-  }
-]
-```
-
-##### Attach debugger to a server running in web browser (`npx serve`)
-
-Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
-
-```json
-[
-  {
-    "label": "Inspect ",
-    "adapter": "JavaScript",
-    "type": "pwa-chrome",
-    "request": "launch",
-    "url": "http://localhost:5500", // Fill your URL here.
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}"
-  }
-]
-```
-
-#### Python
-
-##### Debug Active File
-
-```json
-[
-  {
-    "label": "Python Active File",
-    "adapter": "Debugpy",
-    "program": "$ZED_FILE",
-    "request": "launch"
-  }
-]
-```
-
-##### Flask App
-
-For a common Flask Application with a file structure similar to the following:
-
-```
-.venv/
-app/
-  init.py
-  main.py
-  routes.py
-templates/
-  index.html
-static/
-  style.css
-requirements.txt
-```
-
-…the following configuration can be used:
-
-```json
-[
-  {
-    "label": "Python: Flask",
-    "adapter": "Debugpy",
-    "request": "launch",
-    "module": "app",
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "env": {
-      "FLASK_APP": "app",
-      "FLASK_DEBUG": "1"
-    },
-    "args": [
-      "run",
-      "--reload", // Enables Flask reloader that watches for file changes
-      "--debugger" // Enables Flask debugger
-    ],
-    "autoReload": {
-      "enable": true
-    },
-    "jinja": true,
-    "justMyCode": true
-  }
-]
-```
-
-#### Rust/C++/C
-
-##### Using pre-built binary
-
-```json
-[
-  {
-    "label": "Debug native binary",
-    "program": "$ZED_WORKTREE_ROOT/build/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
-  }
-]
-```
-
-##### Build binary then debug
-
-```json
-[
-  {
-    "label": "Build & Debug native binary",
-    "build": {
-      "command": "cargo",
-      "args": ["build"]
-    },
-    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
-  }
-]
-```
-
-#### TypeScript
-
-##### Attach debugger to a server running in web browser (`npx serve`)
-
-Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
-
-```json
-[
-  {
-    "label": "Launch Chrome (TypeScript)",
-    "adapter": "JavaScript",
-    "type": "pwa-chrome",
-    "request": "launch",
-    "url": "http://localhost:5500",
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}",
-    "sourceMaps": true,
-    "build": {
-      "command": "npx",
-      "args": ["tsc"]
-    }
-  }
-]
-```
-
-#### Go
-
-Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications.
-Zed will automatically create debug scenarios for `func main` in your main packages, and also
-for any tests, so you can use the Play button in the gutter to debug these without configuration.
-
-##### Debug Go Packages
-
-To debug a specific package, you can do so by setting the Delve mode to "debug". In this case "program" should be set to the package name.
-
-```json
-[
-  {
-    "label": "Go (Delve)",
-    "adapter": "Delve",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "mode": "debug"
-  }
-]
-```
-
-```json
-[
-  {
-    "label": "Run server",
-    "adapter": "Delve",
-    "request": "launch",
-    "mode": "debug",
-    // For Delve, the program can be a package name
-    "program": "./cmd/server"
-    // "args": [],
-    // "buildFlags": [],
-  }
-]
-```
-
-##### Debug Go Tests
-
-To debug the tests for a package, set the Delve mode to "test".
-The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
-
-```json
-[
-  {
-    "label": "Run integration tests",
-    "adapter": "Delve",
-    "request": "launch",
-    "mode": "test",
-    "program": ".",
-    "buildFlags": ["-tags", "integration"]
-    // To filter down to just the test your cursor is in:
-    // "args": ["-test.run", "$ZED_SYMBOL"]
-  }
-]
-```
-
-##### Build and debug separately
-
-If you need to build your application with a specific command, you can use the "exec" mode of Delve. In this case "program" should point to an executable,
-and the "build" command should build that.
-
-```json
-{
-  "label": "Debug Prebuilt Unit Tests",
-  "adapter": "Delve",
-  "request": "launch",
-  "mode": "exec",
-  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
-  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"],
-  "build": {
-    "command": "go",
-    "args": [
-      "test",
-      "-c",
-      "-tags",
-      "unit",
-      "-gcflags\"all=-N -l\"",
-      "-o",
-      "__debug_unit",
-      "./pkg/..."
-    ]
-  }
-}
-```
-
-##### Attaching to an existing instance of Delve
-
-You might find yourself needing to connect to an existing instance of Delve that's not necessarily running on your machine; in such case, you can use `tcp_arguments` to instrument Zed's connection to Delve.
-
-```
-{
-  "adapter": "Delve",
-  "label": "Connect to a running Delve instance",
-  "program": "/Users/zed/Projects/language_repositories/golang/hello/hello",
-  "cwd": "/Users/zed/Projects/language_repositories/golang/hello",
-  "args": [],
-  "env": {},
-  "request": "launch",
-  "mode": "exec",
-  "stopOnEntry": false,
-  "tcp_connection": { "host": "123.456.789.012", "port": 53412 }
-}
-```
-
-In such case Zed won't spawn a new instance of Delve, as it opts to use an existing one. The consequence of this is that _there will be no terminal_ in Zed; you have to interact with the Delve instance directly, as it handles stdin/stdout of the debuggee.
-
-#### Swift
-
-Out-of-the-box support for debugging Swift programs will be provided by the Swift extension for Zed in the near future. In the meantime, the builtin CodeLLDB adapter can be used with some customization. On macOS, you'll need to locate the `lldb-dap` binary that's part of Apple's LLVM toolchain by running `which lldb-dap`, then point Zed to it in your project's `.zed/settings.json`:
-
-```json
-{
-  "dap": {
-    "CodeLLDB": {
-      "binary": "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb-dap", // example value, may vary between systems
-      "args": []
-    }
-  }
-}
-```
-
-#### Ruby
-
-To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
-
-The configuration should look like this:
-
-```json
-[
-  {
-    "adapter": "Ruby",
-    "label": "Run CLI",
-    "script": "cli.rb"
-    // If you want to customize how the script is run (for example using bundle exec)
-    // use "command" instead.
-    // "command": "bundle exec cli.rb"
-    //
-    // "args": []
-    // "env": {}
-    // "cwd": ""
-  }
-]
-```
+Automatic scenario creation is currently supported for Rust, Go, Python, JavaScript, and TypeScript.
 
 ## Breakpoints
 
@@ -620,5 +339,5 @@ If you're running into problems with the debugger, please [open a GitHub issue](
 
 There are also some features you can use to gather more information about the problem:
 
-- When you have a session running in the debug panel, you can run the `dev: copy debug adapter arguments` action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
-- You can also use the `dev: open debug adapter logs` action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.
+- When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
+- You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.

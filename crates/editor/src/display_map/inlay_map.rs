@@ -1,4 +1,4 @@
-use crate::{HighlightStyles, InlayId};
+use crate::{ChunkRenderer, HighlightStyles, InlayId};
 use collections::BTreeSet;
 use gpui::{Hsla, Rgba};
 use language::{Chunk, Edit, Point, TextSummary};
@@ -8,11 +8,13 @@ use multi_buffer::{
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    sync::Arc,
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
+use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -252,6 +254,13 @@ pub struct InlayChunks<'a> {
     snapshot: &'a InlaySnapshot,
 }
 
+#[derive(Clone)]
+pub struct InlayChunk<'a> {
+    pub chunk: Chunk<'a>,
+    /// Whether the inlay should be customly rendered.
+    pub renderer: Option<ChunkRenderer>,
+}
+
 impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
@@ -271,7 +280,7 @@ impl InlayChunks<'_> {
 }
 
 impl<'a> Iterator for InlayChunks<'a> {
-    type Item = Chunk<'a>;
+    type Item = InlayChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_offset == self.max_output_offset {
@@ -287,18 +296,34 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                let (prefix, suffix) = chunk.text.split_at(
-                    chunk
-                        .text
-                        .len()
-                        .min(self.transforms.end(&()).0.0 - self.output_offset.0),
-                );
+                let desired_bytes = self.transforms.end(&()).0.0 - self.output_offset.0;
+
+                // If we're already at the transform boundary, skip to the next transform
+                if desired_bytes == 0 {
+                    self.inlay_chunks = None;
+                    self.transforms.next(&());
+                    return self.next();
+                }
+
+                // Determine split index handling edge cases
+                let split_index = if desired_bytes >= chunk.text.len() {
+                    chunk.text.len()
+                } else if chunk.text.is_char_boundary(desired_bytes) {
+                    desired_bytes
+                } else {
+                    find_next_utf8_boundary(chunk.text, desired_bytes)
+                };
+
+                let (prefix, suffix) = chunk.text.split_at(split_index);
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    ..chunk.clone()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: prefix,
+                        ..chunk.clone()
+                    },
+                    renderer: None,
                 }
             }
             Transform::Inlay(inlay) => {
@@ -313,6 +338,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                 }
 
+                let mut renderer = None;
                 let mut highlight_style = match inlay.id {
                     InlayId::InlineCompletion(_) => {
                         self.highlight_styles.inline_completion.map(|s| {
@@ -325,14 +351,31 @@ impl<'a> Iterator for InlayChunks<'a> {
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
-                    InlayId::Color(_) => match inlay.color {
-                        Some(color) => {
-                            let style = self.highlight_styles.inlay_hint.get_or_insert_default();
-                            style.color = Some(color);
-                            Some(*style)
+                    InlayId::Color(_) => {
+                        if let Some(color) = inlay.color {
+                            renderer = Some(ChunkRenderer {
+                                id: ChunkRendererId::Inlay(inlay.id),
+                                render: Arc::new(move |cx| {
+                                    div()
+                                        .relative()
+                                        .size_3p5()
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .right_1()
+                                                .size_3()
+                                                .border_1()
+                                                .border_color(cx.theme().colors().border)
+                                                .bg(color),
+                                        )
+                                        .into_any_element()
+                                }),
+                                constrain_width: false,
+                                measured_width: None,
+                            });
                         }
-                        None => self.highlight_styles.inlay_hint,
-                    },
+                        self.highlight_styles.inlay_hint
+                    }
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -361,8 +404,24 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                let (chunk, remainder) =
-                    inlay_chunk.split_at(inlay_chunk.len().min(next_inlay_highlight_endpoint));
+
+                // Determine split index handling edge cases
+                let split_index = if next_inlay_highlight_endpoint >= inlay_chunk.len() {
+                    inlay_chunk.len()
+                } else if next_inlay_highlight_endpoint == 0 {
+                    // Need to take at least one character to make progress
+                    inlay_chunk
+                        .chars()
+                        .next()
+                        .map(|c| c.len_utf8())
+                        .unwrap_or(1)
+                } else if inlay_chunk.is_char_boundary(next_inlay_highlight_endpoint) {
+                    next_inlay_highlight_endpoint
+                } else {
+                    find_next_utf8_boundary(inlay_chunk, next_inlay_highlight_endpoint)
+                };
+
+                let (chunk, remainder) = inlay_chunk.split_at(split_index);
                 *inlay_chunk = remainder;
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
@@ -370,16 +429,19 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 self.output_offset.0 += chunk.len();
 
-                Chunk {
-                    text: chunk,
-                    highlight_style,
-                    is_inlay: true,
-                    ..Default::default()
+                InlayChunk {
+                    chunk: Chunk {
+                        text: chunk,
+                        highlight_style,
+                        is_inlay: true,
+                        ..Chunk::default()
+                    },
+                    renderer,
                 }
             }
         };
 
-        if self.output_offset == self.transforms.end(&()).0 {
+        if self.output_offset >= self.transforms.end(&()).0 {
             self.inlay_chunks = None;
             self.transforms.next(&());
         }
@@ -1066,7 +1128,7 @@ impl InlaySnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(Default::default()..self.len(), false, Highlights::default())
-            .map(|chunk| chunk.text)
+            .map(|chunk| chunk.chunk.text)
             .collect()
     }
 
@@ -1108,6 +1170,31 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
     if let Some(summary) = summary {
         sum_tree.push(Transform::Isomorphic(summary), &());
     }
+}
+
+/// Given a byte index that is NOT a UTF-8 boundary, find the next one.
+/// Assumes: 0 < byte_index < text.len() and !text.is_char_boundary(byte_index)
+#[inline(always)]
+fn find_next_utf8_boundary(text: &str, byte_index: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut idx = byte_index + 1;
+
+    // Scan forward until we find a boundary
+    while idx < text.len() {
+        if is_utf8_char_boundary(bytes[idx]) {
+            return idx;
+        }
+        idx += 1;
+    }
+
+    // Hit the end, return the full length
+    text.len()
+}
+
+// Private helper function taken from Rust's core::num module (which is both Apache2 and MIT licensed)
+const fn is_utf8_char_boundary(byte: u8) -> bool {
+    // This is bit magic equivalent to: b < 128 || b >= 192
+    (byte as i8) >= -0x40
 }
 
 #[cfg(test)]
@@ -1704,7 +1791,7 @@ mod tests {
                             ..Highlights::default()
                         },
                     )
-                    .map(|chunk| chunk.text)
+                    .map(|chunk| chunk.chunk.text)
                     .collect::<String>();
                 assert_eq!(
                     actual_text,
@@ -1848,5 +1935,211 @@ mod tests {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
+    }
+
+    /// Helper to create test highlights for an inlay
+    fn create_inlay_highlights(
+        inlay_id: InlayId,
+        highlight_range: Range<usize>,
+        position: Anchor,
+    ) -> TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+        let mut inlay_highlights = TreeMap::default();
+        let mut type_highlights = TreeMap::default();
+        type_highlights.insert(
+            inlay_id,
+            (
+                HighlightStyle::default(),
+                InlayHighlight {
+                    inlay: inlay_id,
+                    range: highlight_range,
+                    inlay_position: position,
+                },
+            ),
+        );
+        inlay_highlights.insert(TypeId::of::<()>(), type_highlights);
+        inlay_highlights
+    }
+
+    #[gpui::test]
+    fn test_inlay_utf8_boundary_panic_fix(cx: &mut App) {
+        init_test(cx);
+
+        // This test verifies that we handle UTF-8 character boundaries correctly
+        // when splitting inlay text for highlighting. Previously, this would panic
+        // when trying to split at byte 13, which is in the middle of the '…' character.
+        //
+        // See https://github.com/zed-industries/zed/issues/33641
+        let buffer = MultiBuffer::build_simple("fn main() {}\n", cx);
+        let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
+
+        // Create an inlay with text that contains a multi-byte character
+        // The string "SortingDirec…" contains an ellipsis character '…' which is 3 bytes (E2 80 A6)
+        let inlay_text = "SortingDirec…";
+        let position = buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 5));
+
+        let inlay = Inlay {
+            id: InlayId::Hint(0),
+            position,
+            text: text::Rope::from(inlay_text),
+            color: None,
+        };
+
+        let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
+
+        // Create highlights that request a split at byte 13, which is in the middle
+        // of the '…' character (bytes 12..15). We include the full character.
+        let inlay_highlights = create_inlay_highlights(InlayId::Hint(0), 0..13, position);
+
+        let highlights = crate::display_map::Highlights {
+            text_highlights: None,
+            inlay_highlights: Some(&inlay_highlights),
+            styles: crate::display_map::HighlightStyles::default(),
+        };
+
+        // Collect chunks - this previously would panic
+        let chunks: Vec<_> = inlay_snapshot
+            .chunks(
+                InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+                false,
+                highlights,
+            )
+            .collect();
+
+        // Verify the chunks are correct
+        let full_text: String = chunks.iter().map(|c| c.chunk.text).collect();
+        assert_eq!(full_text, "fn maSortingDirec…in() {}\n");
+
+        // Verify the highlighted portion includes the complete ellipsis character
+        let highlighted_chunks: Vec<_> = chunks
+            .iter()
+            .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+            .collect();
+
+        assert_eq!(highlighted_chunks.len(), 1);
+        assert_eq!(highlighted_chunks[0].chunk.text, "SortingDirec…");
+    }
+
+    #[gpui::test]
+    fn test_inlay_utf8_boundaries(cx: &mut App) {
+        init_test(cx);
+
+        struct TestCase {
+            inlay_text: &'static str,
+            highlight_range: Range<usize>,
+            expected_highlighted: &'static str,
+            description: &'static str,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                inlay_text: "Hello👋World",
+                highlight_range: 0..7,
+                expected_highlighted: "Hello👋",
+                description: "Emoji boundary - rounds up to include full emoji",
+            },
+            TestCase {
+                inlay_text: "Test→End",
+                highlight_range: 0..5,
+                expected_highlighted: "Test→",
+                description: "Arrow boundary - rounds up to include full arrow",
+            },
+            TestCase {
+                inlay_text: "café",
+                highlight_range: 0..4,
+                expected_highlighted: "café",
+                description: "Accented char boundary - rounds up to include full é",
+            },
+            TestCase {
+                inlay_text: "🎨🎭🎪",
+                highlight_range: 0..5,
+                expected_highlighted: "🎨🎭",
+                description: "Multiple emojis - partial highlight",
+            },
+            TestCase {
+                inlay_text: "普通话",
+                highlight_range: 0..4,
+                expected_highlighted: "普通",
+                description: "Chinese characters - partial highlight",
+            },
+            TestCase {
+                inlay_text: "Hello",
+                highlight_range: 0..2,
+                expected_highlighted: "He",
+                description: "ASCII only - no adjustment needed",
+            },
+            TestCase {
+                inlay_text: "👋",
+                highlight_range: 0..1,
+                expected_highlighted: "👋",
+                description: "Single emoji - partial byte range includes whole char",
+            },
+            TestCase {
+                inlay_text: "Test",
+                highlight_range: 0..0,
+                expected_highlighted: "",
+                description: "Empty range",
+            },
+            TestCase {
+                inlay_text: "🎨ABC",
+                highlight_range: 2..5,
+                expected_highlighted: "A",
+                description: "Range starting mid-emoji skips the emoji",
+            },
+        ];
+
+        for test_case in test_cases {
+            let buffer = MultiBuffer::build_simple("test", cx);
+            let (mut inlay_map, _) = InlayMap::new(buffer.read(cx).snapshot(cx));
+            let position = buffer.read(cx).snapshot(cx).anchor_before(Point::new(0, 2));
+
+            let inlay = Inlay {
+                id: InlayId::Hint(0),
+                position,
+                text: text::Rope::from(test_case.inlay_text),
+                color: None,
+            };
+
+            let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
+            let inlay_highlights = create_inlay_highlights(
+                InlayId::Hint(0),
+                test_case.highlight_range.clone(),
+                position,
+            );
+
+            let highlights = crate::display_map::Highlights {
+                text_highlights: None,
+                inlay_highlights: Some(&inlay_highlights),
+                styles: crate::display_map::HighlightStyles::default(),
+            };
+
+            let chunks: Vec<_> = inlay_snapshot
+                .chunks(
+                    InlayOffset(0)..InlayOffset(inlay_snapshot.len().0),
+                    false,
+                    highlights,
+                )
+                .collect();
+
+            // Verify we got chunks and they total to the expected text
+            let full_text: String = chunks.iter().map(|c| c.chunk.text).collect();
+            assert_eq!(
+                full_text,
+                format!("te{}st", test_case.inlay_text),
+                "Full text mismatch for case: {}",
+                test_case.description
+            );
+
+            // Verify that the highlighted portion matches expectations
+            let highlighted_text: String = chunks
+                .iter()
+                .filter(|c| c.chunk.highlight_style.is_some() && c.chunk.is_inlay)
+                .map(|c| c.chunk.text)
+                .collect();
+            assert_eq!(
+                highlighted_text, test_case.expected_highlighted,
+                "Highlighted text mismatch for case: {} (text: '{}', range: {:?})",
+                test_case.description, test_case.inlay_text, test_case.highlight_range
+            );
+        }
     }
 }

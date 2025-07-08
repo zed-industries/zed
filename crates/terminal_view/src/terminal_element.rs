@@ -1,10 +1,11 @@
+use crate::color_contrast;
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
-    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
+    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
+    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill,
     point, px, relative, size,
 };
@@ -302,7 +303,6 @@ impl TerminalElement {
             interactivity: Default::default(),
         }
         .track_focus(&focus)
-        .element
     }
 
     //Vec<Range<AlacPoint>> -> Clip out the parts of the ranges
@@ -311,10 +311,10 @@ impl TerminalElement {
         grid: impl Iterator<Item = IndexedCell>,
         start_line_offset: i32,
         text_style: &TextStyle,
-        // terminal_theme: &TerminalStyle,
-        _text_system: &WindowTextSystem,
+        text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        _window: &Window,
+        minimum_contrast: f32,
+        window: &Window,
         cx: &App,
     ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
         let start_time = Instant::now();
@@ -345,20 +345,6 @@ impl TerminalElement {
             let mut previous_cell_had_extras = false;
 
             for cell in line {
-                // Skip wide character spacers - they're just placeholders for the second cell of wide characters
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-
-                // Skip spaces that follow cells with extras (emoji variation sequences)
-                if cell.c == ' ' && previous_cell_had_extras {
-                    previous_cell_had_extras = false;
-                    continue;
-                }
-
-                // Update tracking for next iteration
-                previous_cell_had_extras = cell.extra.is_some();
-
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
                 if cell.flags.contains(Flags::INVERSE) {
@@ -385,13 +371,32 @@ impl TerminalElement {
                         background_regions.push(BackgroundRegion::new(alac_line, col, color));
                     }
                 }
+                // Skip wide character spacers - they're just placeholders for the second cell of wide characters
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+
+                // Skip spaces that follow cells with extras (emoji variation sequences)
+                if cell.c == ' ' && previous_cell_had_extras {
+                    previous_cell_had_extras = false;
+                    continue;
+                }
+                // Update tracking for next iteration
+                previous_cell_had_extras = cell.extra.is_some();
 
                 //Layout current cell text
                 {
                     if !is_blank(&cell) {
                         cell_count += 1;
-                        let cell_style =
-                            TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
+                        let cell_style = TerminalElement::cell_style(
+                            &cell,
+                            fg,
+                            bg,
+                            theme,
+                            text_style,
+                            hyperlink,
+                            minimum_contrast,
+                        );
 
                         let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
 
@@ -495,13 +500,17 @@ impl TerminalElement {
     fn cell_style(
         indexed: &IndexedCell,
         fg: terminal::alacritty_terminal::vte::ansi::Color,
-        // bg: terminal::alacritty_terminal::ansi::Color,
+        bg: terminal::alacritty_terminal::vte::ansi::Color,
         colors: &Theme,
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
+        minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
         let mut fg = convert_color(&fg, colors);
+        let bg = convert_color(&bg, colors);
+
+        fg = color_contrast::ensure_minimum_contrast(fg, bg, minimum_contrast);
 
         // Ghostty uses (175/255) as the multiplier (~0.69), Alacritty uses 0.66, Kitty
         // uses 0.75. We're using 0.7 because it's pretty well in the middle of that.
@@ -834,12 +843,12 @@ impl Element for TerminalElement {
                 let buffer_font_size = settings.buffer_font_size(cx);
 
                 let terminal_settings = TerminalSettings::get_global(cx);
+                let minimum_contrast = terminal_settings.minimum_contrast;
 
-                let font_family = terminal_settings
-                    .font_family
-                    .as_ref()
-                    .unwrap_or(&settings.buffer_font.family)
-                    .clone();
+                let font_family = terminal_settings.font_family.as_ref().map_or_else(
+                    || settings.buffer_font.family.clone(),
+                    |font_family| font_family.0.clone().into(),
+                );
 
                 let font_fallbacks = terminal_settings
                     .font_fallbacks
@@ -1012,6 +1021,7 @@ impl Element for TerminalElement {
                             last_hovered_word.as_ref().map(|last_hovered_word| {
                                 (link_style, &last_hovered_word.word_match)
                             }),
+                            minimum_contrast,
                             window,
                             cx,
                         )
@@ -1034,6 +1044,7 @@ impl Element for TerminalElement {
                             last_hovered_word.as_ref().map(|last_hovered_word| {
                                 (link_style, &last_hovered_word.word_match)
                             }),
+                            minimum_contrast,
                             window,
                             cx,
                         )
@@ -1767,5 +1778,124 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
         terminal::alacritty_terminal::vte::ansi::Color::Indexed(i) => {
             terminal::get_color_at_index(*i as usize, theme)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contrast_adjustment_logic() {
+        // Test the core contrast adjustment logic without needing full app context
+
+        // Test case 1: Light colors (poor contrast)
+        let white_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 1.0,
+            a: 1.0,
+        };
+        let light_gray_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.95,
+            a: 1.0,
+        };
+
+        // Should have poor contrast
+        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
+        assert!(
+            actual_contrast < 30.0,
+            "White on light gray should have poor APCA contrast: {}",
+            actual_contrast
+        );
+
+        // After adjustment with minimum APCA contrast of 45, should be darker
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
+        assert!(
+            adjusted.l < white_fg.l,
+            "Adjusted color should be darker than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
+
+        // Test case 2: Dark colors (poor contrast)
+        let black_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.0,
+            a: 1.0,
+        };
+        let dark_gray_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.05,
+            a: 1.0,
+        };
+
+        // Should have poor contrast
+        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
+        assert!(
+            actual_contrast < 30.0,
+            "Black on dark gray should have poor APCA contrast: {}",
+            actual_contrast
+        );
+
+        // After adjustment with minimum APCA contrast of 45, should be lighter
+        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
+        assert!(
+            adjusted.l > black_fg.l,
+            "Adjusted color should be lighter than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
+
+        // Test case 3: Already good contrast
+        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
+        assert_eq!(
+            good_contrast, black_fg,
+            "Good contrast should not be adjusted"
+        );
+    }
+
+    #[test]
+    fn test_white_on_white_contrast_issue() {
+        // This test reproduces the exact issue from the bug report
+        // where white ANSI text on white background should be adjusted
+
+        // Simulate One Light theme colors
+        let white_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.98, // #fafafaff is approximately 98% lightness
+            a: 1.0,
+        };
+        let white_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.98, // Same as foreground - this is the problem!
+            a: 1.0,
+        };
+
+        // With minimum contrast of 0.0, no adjustment should happen
+        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
+        assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
+
+        // With minimum APCA contrast of 15, it should adjust to a darker color
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
+        assert!(
+            adjusted.l < white_fg.l,
+            "White on white should become darker, got l={}",
+            adjusted.l
+        );
+
+        // Verify the contrast is now acceptable
+        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
+        assert!(
+            new_contrast >= 15.0,
+            "Adjusted APCA contrast {} should be >= 15.0",
+            new_contrast
+        );
     }
 }

@@ -617,6 +617,8 @@
     // 3. Mark files with errors and warnings:
     //    "all"
     "show_diagnostics": "all",
+    // Whether to stick parent directories at top of the project panel.
+    "sticky_scroll": true,
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -746,8 +748,6 @@
     "default_width": 380
   },
   "agent": {
-    // Version of this setting.
-    "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
     /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -810,6 +810,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -829,6 +830,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -855,7 +857,11 @@
     // its response, or needs user input.
 
     // Default: false
-    "play_sound_when_agent_done": false
+    "play_sound_when_agent_done": false,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    "expand_edit_card": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1292,6 +1298,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
+    // Whether to keep the text selection after copying it to the clipboard
+    "keep_selection_on_copy": false,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1348,7 +1356,7 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
@@ -1365,6 +1373,21 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
+    // The minimum APCA perceptual contrast between foreground and background colors.
+    // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    // especially for dark mode. Values range from 0 to 106.
+    //
+    // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    // https://readtech.org/ARC/tests/bronze-simple-mode/
+    // - 0: No contrast adjustment
+    // - 45: Minimum for large fluent text (36px+)
+    // - 60: Minimum for other content text
+    // - 75: Minimum for body text
+    // - 90: Preferred for body text
+    //
+    // Most terminal themes have APCA values of 40-70.
+    // A value of 45 preserves colorful themes while ensuring legibility.
+    "minimum_contrast": 45
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -1656,7 +1679,6 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
-      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
     "google": {
@@ -1666,7 +1688,6 @@
       "api_url": "http://localhost:11434"
     },
     "openai": {
-      "version": "1",
       "api_url": "https://api.openai.com/v1"
     },
     "open_router": {
@@ -1719,6 +1740,11 @@
     //         }
     //     }
     // }
+  },
+  // Common language server settings.
+  "global_lsp_settings": {
+    // Whether to show the LSP servers button in the status bar.
+    "button": true
   },
   // Jupyter settings
   "jupyter": {
@@ -1779,7 +1805,8 @@
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from
-  // environment variables.
+  // environment variables. If certain hosts should not be proxied,
+  // set the `no_proxy` environment variable and provide a comma-separated list.
   //
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
