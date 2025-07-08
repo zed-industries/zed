@@ -3509,6 +3509,10 @@ impl Window {
 
         let mut keystroke: Option<Keystroke> = None;
 
+        dbg!(&event.downcast_ref::<KeyDownEvent>());
+        dbg!(&event.downcast_ref::<crate::KeyUpEvent>());
+        dbg!(&event.downcast_ref::<ModifiersChangedEvent>());
+
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
@@ -3547,6 +3551,7 @@ impl Window {
             return;
         };
 
+        cx.propagate_event = true;
         self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
         if !cx.propagate_event {
             self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);

@@ -1169,6 +1169,7 @@ impl KeystrokeInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!(("on modifiers changed", &event.modifiers));
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
         {
@@ -1189,12 +1190,15 @@ impl KeystrokeInput {
     }
 
     fn handle_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        dbg!(("handle keystroke", &keystroke));
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
         {
             *last = keystroke.clone();
         } else {
-            self.keystrokes.push(keystroke.clone());
+            if Some(keystroke) != self.keystrokes.last() {
+                self.keystrokes.push(keystroke.clone());
+            }
         }
         cx.stop_propagation();
         cx.notify();
@@ -1206,6 +1210,7 @@ impl KeystrokeInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!(("on key up", &event.keystroke));
         if let Some(last) = self.keystrokes.last_mut()
             && !last.key.is_empty()
             && last.modifiers == event.keystroke.modifiers
