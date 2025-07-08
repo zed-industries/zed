@@ -1257,28 +1257,31 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_gemini_logo(&self, error: bool) -> AnyElement {
+    fn render_gemini_logo(&self) -> AnyElement {
+        Icon::new(IconName::AiGemini)
+            .color(Color::Muted)
+            .size(IconSize::XLarge)
+            .into_any_element()
+    }
+
+    fn render_error_gemini_logo(&self) -> AnyElement {
         let logo = Icon::new(IconName::AiGemini)
             .color(Color::Muted)
             .size(IconSize::XLarge)
             .into_any_element();
 
-        if error {
-            h_flex()
-                .relative()
-                .justify_center()
-                .child(div().opacity(0.1).child(logo))
-                .child(
-                    h_flex().absolute().right_1().bottom_0().child(
-                        Icon::new(IconName::XCircle)
-                            .color(Color::Error)
-                            .size(IconSize::Small),
-                    ),
-                )
-                .into_any_element()
-        } else {
-            logo
-        }
+        h_flex()
+            .relative()
+            .justify_center()
+            .child(div().opacity(0.3).child(logo))
+            .child(
+                h_flex().absolute().right_1().bottom_0().child(
+                    Icon::new(IconName::XCircle)
+                        .color(Color::Error)
+                        .size(IconSize::Small),
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_empty_state(&self, loading: bool, cx: &App) -> AnyElement {
@@ -1290,7 +1293,7 @@ impl AcpThreadView {
                 if loading {
                     h_flex()
                         .justify_center()
-                        .child(self.render_gemini_logo(false))
+                        .child(self.render_gemini_logo())
                         .with_animation(
                             "pulsating_icon",
                             Animation::new(Duration::from_secs(2))
@@ -1299,7 +1302,7 @@ impl AcpThreadView {
                             |icon, delta| icon.opacity(delta),
                         ).into_any()
                 } else {
-                    self.render_gemini_logo(false).into_any_element()
+                    self.render_gemini_logo().into_any_element()
                 }
             )
             .child(
@@ -1332,7 +1335,7 @@ impl AcpThreadView {
         v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_gemini_logo(true))
+            .child(self.render_error_gemini_logo())
             .child(
                 h_flex()
                     .mt_4()
@@ -1347,7 +1350,7 @@ impl AcpThreadView {
         let mut container = v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_gemini_logo(true))
+            .child(self.render_error_gemini_logo())
             .child(
                 v_flex()
                     .mt_4()
