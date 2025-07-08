@@ -149,37 +149,42 @@ where
     ) -> AnyElement {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
 
-        let (anchor_entry, last_item_is_drifting, anchor_index) = {
-            let mut anchor_entry = None;
-            let mut last_item_is_drifting = false;
-            let mut anchor_index = None;
+        struct StickyAnchor<T> {
+            entry: T,
+            index: usize,
+        }
 
-            let mut iter = entries.iter().enumerate().peekable();
-            while let Some((ix, current_entry)) = iter.next() {
-                let current_depth = current_entry.depth();
-                let index_in_range = ix;
+        let mut sticky_anchor = None;
+        let mut last_item_is_drifting = false;
 
-                if current_depth < index_in_range {
-                    anchor_entry = Some(current_entry.clone());
-                    break;
-                }
+        let mut iter = entries.iter().enumerate().peekable();
+        while let Some((ix, current_entry)) = iter.next() {
+            let current_depth = current_entry.depth();
+            let index_in_range = ix;
 
-                if let Some(&(_next_ix, next_entry)) = iter.peek() {
-                    let next_depth = next_entry.depth();
-
-                    if next_depth < current_depth && next_depth < index_in_range {
-                        last_item_is_drifting = true;
-                        anchor_index = Some(visible_range.start + ix);
-                        anchor_entry = Some(current_entry.clone());
-                        break;
-                    }
-                }
+            if current_depth < index_in_range {
+                sticky_anchor = Some(StickyAnchor {
+                    entry: current_entry.clone(),
+                    index: visible_range.start + ix,
+                });
+                break;
             }
 
-            (anchor_entry, last_item_is_drifting, anchor_index)
-        };
+            if let Some(&(_next_ix, next_entry)) = iter.peek() {
+                let next_depth = next_entry.depth();
 
-        let Some(anchor_entry) = anchor_entry else {
+                if next_depth < current_depth && next_depth < index_in_range {
+                    last_item_is_drifting = true;
+                    sticky_anchor = Some(StickyAnchor {
+                        entry: current_entry.clone(),
+                        index: visible_range.start + ix,
+                    });
+                    break;
+                }
+            }
+        }
+
+        let Some(sticky_anchor) = sticky_anchor else {
             return StickyItemsElement {
                 drifting_element: None,
                 drifting_decoration: None,
@@ -189,8 +194,8 @@ where
             .into_any_element();
         };
 
-        let anchor_depth = anchor_entry.depth();
-        let mut elements = (self.render_fn)(anchor_entry, window, cx);
+        let anchor_depth = sticky_anchor.entry.depth();
+        let mut elements = (self.render_fn)(sticky_anchor.entry, window, cx);
         let items_count = elements.len();
 
         let indents: SmallVec<[usize; 8]> = {
@@ -224,19 +229,15 @@ where
                     let drifting_indent_vec: SmallVec<[usize; 8]> =
                         [drifting_indent].into_iter().collect();
 
-                    let item_y_offset = anchor_index.map(|anchor_index| {
+                    let item_y_offset = {
                         let scroll_top = -scroll_offset.y;
-                        let anchor_top = item_height * anchor_index;
+                        let anchor_top = item_height * sticky_anchor.index;
                         let sticky_area_height = item_height * items_count;
                         (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
-                    });
+                    };
 
                     let sticky_origin = bounds.origin - scroll_offset
-                        + point(
-                            px(0.),
-                            item_height * rest_indents.len()
-                                + item_y_offset.unwrap_or(Pixels::ZERO),
-                        );
+                        + point(px(0.), item_height * rest_indents.len() + item_y_offset);
 
                     let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
 
@@ -288,9 +289,9 @@ where
 
         for (ix, element) in elements.iter_mut().enumerate() {
             let item_y_offset = if ix == items_count - 1 && last_item_is_drifting {
-                anchor_index.map(|anchor_index| {
+                Some({
                     let scroll_top = -scroll_offset.y;
-                    let anchor_top = item_height * anchor_index;
+                    let anchor_top = item_height * sticky_anchor.index;
                     let sticky_area_height = item_height * items_count;
                     (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
                 })
