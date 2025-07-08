@@ -59,7 +59,7 @@ jobs:
   windows-tests:
     timeout-minutes: 60
     name: Run tests on Windows
-    if: false && github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'zed-industries'
     runs-on: [self-hosted, Windows, X64]
     steps:
       - name: Checkout repo
