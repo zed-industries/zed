@@ -7,7 +7,7 @@ name = "acp"
 version = "0.1.0"
 dependencies = [
  "agent_servers",
- "agentic-coding-protocol 0.0.1",
+ "agentic-coding-protocol 0.0.4",
  "anyhow",
  "async-pipe",
  "async-trait",
@@ -159,6 +159,7 @@ dependencies = [
  "settings",
  "util",
  "which 6.0.3",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -188,7 +189,7 @@ dependencies = [
  "agent",
  "agent_servers",
  "agent_settings",
- "agentic-coding-protocol 0.0.4",
+ "agentic-coding-protocol 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",
@@ -274,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "agentic-coding-protocol"
-version = "0.0.1"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -19644,6 +19645,7 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
+ "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
