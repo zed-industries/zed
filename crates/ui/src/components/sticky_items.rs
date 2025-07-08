@@ -120,7 +120,7 @@ impl Element for StickyItemsElement {
         for item in self.elements.iter_mut().rev() {
             item.paint(window, cx);
         }
-        for item in self.decorations.iter_mut().rev() {
+        for item in self.decorations.iter_mut() {
             item.paint(window, cx);
         }
     }
@@ -178,9 +178,7 @@ where
             let indents: SmallVec<[usize; 8]> = elements
                 .iter()
                 .enumerate()
-                .map(|(ix, _)| {
-                    anchor_depth.saturating_sub(items_count.saturating_sub(1).saturating_sub(ix))
-                })
+                .map(|(ix, _)| anchor_depth.saturating_sub(items_count.saturating_sub(ix)))
                 .collect();
 
             for decoration in &self.decorations {
