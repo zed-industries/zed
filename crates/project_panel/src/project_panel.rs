@@ -56,8 +56,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ScrollableHandle,
+    Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -3938,7 +3938,18 @@ impl ProjectPanel {
             }
         };
 
-        let last_sticky_item = details.sticky.as_ref().map_or(false, |item| item.is_last);
+        let show_sticky_shadow = details.sticky.as_ref().map_or(false, |item| {
+            if item.is_last {
+                let content_width = self.scroll_handle.content_size().width;
+                let viewport_width = self.scroll_handle.viewport().size.width;
+                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                let is_scrollable = content_width > viewport_width;
+                let is_scrolled = self.scroll_handle.offset().y < px(0.);
+                is_scrollable && is_scrolled
+            } else {
+                false
+            }
+        });
         let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.15);
         let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
         let sticky_shadow = div()
@@ -3964,7 +3975,7 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .when(is_sticky && last_sticky_item, |this| this.child(sticky_shadow))
+            .when(show_sticky_shadow, |this| this.child(sticky_shadow))
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
@@ -4886,6 +4897,10 @@ impl ProjectPanel {
             break 'outer;
         }
 
+        if sticky_parents.is_empty() {
+            return SmallVec::new();
+        }
+
         sticky_parents.reverse();
 
         let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
@@ -4900,6 +4915,8 @@ impl ProjectPanel {
             Default::default()
         };
 
+        // already checked if non empty above
+        let last_item_index = sticky_parents.len() - 1;
         sticky_parents
             .iter()
             .enumerate()
@@ -4910,7 +4927,7 @@ impl ProjectPanel {
                     .unwrap_or_default();
                 let sticky_details = Some(StickyDetails {
                     sticky_index: index,
-                    is_last: index == sticky_parents.len() - 1,
+                    is_last: index == last_item_index,
                 });
                 let details = self.details_for_entry(
                     entry,
