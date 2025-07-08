@@ -16,7 +16,7 @@ pub struct Keystroke {
     pub key: String,
 
     /// key_en is keyboard layout independent key char in en_US layout
-    pub key_en: Option<String>,
+    pub key_en: Option<char>,
 
     /// key_char is the character that could have been typed when
     /// this binding was pressed.
@@ -83,7 +83,7 @@ impl Keystroke {
                 platform: self.modifiers.platform,
                 ..Default::default()
             };
-            if &target.key == key_en && target.modifiers == ime_modifiers {
+            if target.key == String::from(*key_en) && target.modifiers == ime_modifiers {
                 return true;
             }
         }

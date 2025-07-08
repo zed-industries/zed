@@ -798,14 +798,15 @@ impl crate::Keystroke {
         let key_char = (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.clone().is_empty())
             .then_some(key_utf8.clone());
 
-        fn keycode_to_key(key: u32) -> Option<String> {
+        #[allow(unreachable_code)]
+        fn keycode_to_key(key: u32) -> Option<char> {
             #[cfg(feature = "x11")]
             return keycode_to_key_x11(key);
 
             #[cfg(feature = "wayland")]
             return keycode_to_key_wayland(key);
 
-            return None;
+            None
         }
 
         let key_en = keycode_to_key(keycode.raw());

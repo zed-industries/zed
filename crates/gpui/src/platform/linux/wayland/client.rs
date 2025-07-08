@@ -2158,7 +2158,7 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
 
 /// Map a keycode (u32) to an ASCII character on US QWERTY layout for Wayland.
 /// Uses Linux input event codes (KEY_*) as defined in linux/input-event-codes.h
-pub(crate) fn keycode_to_key_wayland(keycode: u32) -> Option<String> {
+pub(crate) fn keycode_to_key_wayland(keycode: u32) -> Option<char> {
     let c = match keycode {
         // Top row: QWERTYUIOP[]
         16 => 'q', // KEY_Q
@@ -2201,5 +2201,5 @@ pub(crate) fn keycode_to_key_wayland(keycode: u32) -> Option<String> {
 
         _ => return None,
     };
-    Some(String::from(c))
+    Some(c)
 }

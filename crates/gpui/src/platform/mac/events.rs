@@ -444,6 +444,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             }
         };
 
+        let key_en = keycode_to_key(native_event.keyCode());
+
         Keystroke {
             modifiers: Modifiers {
                 control,
@@ -534,4 +536,47 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+/// Map a macOS key code (u16) to an ASCII character on US QWERTY layout.
+/// These are hardware key codes that are layout-independent
+pub(crate) fn keycode_to_key(keycode: CGKeyCode) -> Option<char> {
+    let c = match keycode {
+        12 => 'q',
+        13 => 'w',
+        14 => 'e',
+        15 => 'r',
+        17 => 't',
+        16 => 'y',
+        32 => 'u',
+        34 => 'i',
+        31 => 'o',
+        35 => 'p',
+        33 => '[',
+        30 => ']',
+        0 => 'a',
+        1 => 's',
+        2 => 'd',
+        3 => 'f',
+        5 => 'g',
+        4 => 'h',
+        38 => 'j',
+        40 => 'k',
+        37 => 'l',
+        41 => ';',
+        39 => '\'',
+        6 => 'z',
+        7 => 'x',
+        8 => 'c',
+        9 => 'v',
+        11 => 'b',
+        45 => 'n',
+        46 => 'm',
+        43 => ',',
+        47 => '.',
+        44 => '/',
+
+        _ => return None,
+    };
+    Some(c)
 }
