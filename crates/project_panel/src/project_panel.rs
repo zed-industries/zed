@@ -3947,7 +3947,7 @@ impl ProjectPanel {
                 false
             }
         });
-        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.8);
+        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
         let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
         let sticky_shadow = div()
             .absolute()

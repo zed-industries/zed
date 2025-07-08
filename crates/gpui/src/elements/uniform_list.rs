@@ -8,7 +8,7 @@ use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
     Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
     ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size, StyleRefinement, Styled,
-    Window, point, px, size,
+    Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -358,7 +358,7 @@ impl Element for UniformList {
                             }
                             ScrollStrategy::ToPosition(sticky_index) => {
                                 let target_y_in_viewport = item_height * sticky_index;
-                                let target_scroll_top = item_top - target_y_in_viewport - px(1.0);
+                                let target_scroll_top = item_top - target_y_in_viewport;
                                 let max_scroll_top =
                                     (content_height - list_height).max(Pixels::ZERO);
                                 let new_scroll_top =
