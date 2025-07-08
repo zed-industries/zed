@@ -50,16 +50,16 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        #[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
-        let icon = std::path::Path::new("resources/windows/app-icon.ico");
-        #[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
-        let icon = std::path::Path::new("resources/windows/app-icon-preview.ico");
-        #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
-        let icon = std::path::Path::new("resources/windows/app-icon-nightly.ico");
+        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("nightly");
 
-        #[cfg(not(any(feature = "nightly", feature = "stable", feature = "preview")))]
-        let icon = std::path::Path::new("resources/windows/app-icon-nightly.ico");
+        let icon = match release_channel {
+            "stable" => "resources/windows/app-icon.ico",
+            "preview" => "resources/windows/app-icon-preview.ico",
+            "nightly" | _ => "resources/windows/app-icon-nightly.ico",
+        };
+        let icon = std::path::Path::new(icon);
 
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
         println!("cargo:rerun-if-changed={}", icon.display());
 
         let mut res = winresource::WindowsResource::new();
