@@ -1476,12 +1476,11 @@ impl AcpThreadView {
             .languages
             .language_for_name("Markdown");
 
-        // todo! use actual thread summary
         let (thread_summary, markdown) = match &self.thread_state {
-            ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => (
-                "Gemini CLI Thread".to_string(),
-                thread.read(cx).to_markdown(cx),
-            ),
+            ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => {
+                let thread = thread.read(cx);
+                (thread.title().to_string(), thread.to_markdown(cx))
+            }
             ThreadState::Loading { .. } | ThreadState::LoadError(..) => return Task::ready(Ok(())),
         };
 
