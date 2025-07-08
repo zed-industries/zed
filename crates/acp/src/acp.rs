@@ -450,7 +450,7 @@ impl Display for LoadError {
             LoadError::Unsupported { current_version } => {
                 write!(
                     f,
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP)",
+                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
                     current_version
                 )
             }
