@@ -133,8 +133,8 @@ pub fn init(cx: &mut App) {
                                 let thread = thread.read(cx).thread().clone();
                                 AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                             }
-                            ActiveView::AcpThread { .. } => todo!(),
-                            ActiveView::TextThread { .. }
+                            ActiveView::AcpThread { .. }
+                            | ActiveView::TextThread { .. }
                             | ActiveView::History
                             | ActiveView::Configuration => {}
                         }
@@ -252,9 +252,7 @@ impl ActiveView {
                             thread.scroll_to_bottom(cx);
                         });
                     }
-                    ActiveView::AcpThread { .. } => {
-                        // todo!
-                    }
+                    ActiveView::AcpThread { .. } => {}
                     ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
@@ -763,11 +761,10 @@ impl AgentPanel {
     fn active_message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => Some(message_editor),
-            ActiveView::AcpThread { .. } => {
-                // todo!
-                None
-            }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         }
     }
 
@@ -1191,8 +1188,10 @@ impl AgentPanel {
                     })
                     .log_err();
             }
-            ActiveView::AcpThread { .. } => todo!(),
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -1246,7 +1245,7 @@ impl AgentPanel {
                 .detach_and_log_err(cx);
             }
             ActiveView::AcpThread { .. } => {
-                todo!()
+                // todo!()
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -1282,10 +1281,6 @@ impl AgentPanel {
     pub(crate) fn active_thread(&self, cx: &App) -> Option<Entity<Thread>> {
         match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
-            ActiveView::AcpThread { .. } => {
-                // todo!
-                None
-            }
             _ => None,
         }
     }
@@ -1390,9 +1385,6 @@ impl AgentPanel {
                         store.remove_recently_opened_thread(id, cx);
                     });
                 }
-            }
-            ActiveView::AcpThread { .. } => {
-                // todo!
             }
             _ => {}
         }
@@ -1792,11 +1784,10 @@ impl AgentPanel {
 
         let active_thread = match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
-            ActiveView::AcpThread { .. } => {
-                // todo!
-                None
-            }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         };
 
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
@@ -1964,7 +1955,6 @@ impl AgentPanel {
                 ..
             } => (thread.read(cx), message_editor.read(cx)),
             ActiveView::AcpThread { .. } => {
-                // todo!
                 return None;
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
@@ -2106,7 +2096,6 @@ impl AgentPanel {
                 }
             }
             ActiveView::AcpThread { .. } => {
-                // todo!
                 return false;
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
@@ -2694,7 +2683,6 @@ impl AgentPanel {
         let active_thread = match &self.active_view {
             ActiveView::Thread { thread, .. } => thread,
             ActiveView::AcpThread { .. } => {
-                // todo!
                 return None;
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
@@ -3119,9 +3107,7 @@ impl Render for AgentPanel {
                         });
                         this.continue_conversation(window, cx);
                     }
-                    ActiveView::AcpThread { .. } => {
-                        todo!()
-                    }
+                    ActiveView::AcpThread { .. } => {}
                     ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
@@ -3166,8 +3152,6 @@ impl Render for AgentPanel {
                 ActiveView::AcpThread { thread_view, .. } => parent
                     .relative()
                     .child(thread_view.clone())
-                    // todo!
-                    // .child(h_flex().child(self.message_editor.clone()))
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::TextThread {

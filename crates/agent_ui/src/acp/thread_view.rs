@@ -729,8 +729,6 @@ impl AcpThreadView {
         let is_collapsible = has_content && !needs_confirmation;
         let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
 
-        let header_buffer_font = if needs_confirmation { true } else { false };
-
         let content = if is_open {
             match &tool_call.status {
                 ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
@@ -802,7 +800,7 @@ impl AcpThreadView {
                             )
                             .child(MarkdownElement::new(
                                 tool_call.label.clone(),
-                                default_markdown_style(header_buffer_font, window, cx),
+                                default_markdown_style(needs_confirmation, window, cx),
                             )),
                     )
                     .child(
@@ -1743,7 +1741,7 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
                 right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                 bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
             },
-            border_color: Some(colors.border_variant.into()),
+            border_color: Some(colors.border_variant),
             background: Some(colors.editor_background.into()),
             text: Some(TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
