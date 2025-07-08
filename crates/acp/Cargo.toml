@@ -18,7 +18,7 @@ gemini = []
 
 [dependencies]
 agent_servers.workspace = true
-agentic-coding-protocol = { path = "../../../agentic-coding-protocol" }
+agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
