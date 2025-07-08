@@ -3,7 +3,6 @@ use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
-use futures::future::Shared;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
@@ -11,7 +10,6 @@ use markdown::Markdown;
 use project::Project;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
-use std::time::Duration;
 use std::{
     fmt::Display,
     mem,
@@ -402,7 +400,6 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    Unavailable(SharedString),
     Unsupported,
     Exited(i32),
     Other(SharedString),
@@ -411,8 +408,7 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unavailable(msg) => write!(f, "Not installed yet: {}", msg),
-            LoadError::Unsupported => write!(f, "This server version does not support ACP"),
+            LoadError::Unsupported => write!(f, "The installed version does not support ACP"),
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
@@ -430,7 +426,7 @@ impl AcpThread {
     ) -> Result<Entity<Self>> {
         let command = match server.command(&project, cx).await {
             Ok(command) => command,
-            Err(e) => return Err(anyhow!(LoadError::Unavailable(format!("{e}").into()))),
+            Err(e) => return Err(anyhow!(LoadError::Other(format!("{e}").into()))),
         };
 
         let mut child = util::command::new_smol_command(&command.path)

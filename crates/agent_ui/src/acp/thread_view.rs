@@ -1375,6 +1375,68 @@ impl AcpThreadView {
             .into_any()
     }
 
+    fn render_error_state(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
+        let mut el = v_flex()
+            .items_center()
+            .justify_center()
+            .child(self.render_gemini_logo())
+            .child(
+                h_flex()
+                    .mt_4()
+                    .mb_1()
+                    .justify_center()
+                    .child(Headline::new("Failed to launch").size(HeadlineSize::Medium)),
+            )
+            .child(
+                h_flex()
+                    .mt_4()
+                    .mb_1()
+                    .justify_center()
+                    .child(Label::new(e.to_string())),
+            );
+        if matches!(e, LoadError::Unsupported) {
+            el = el.child(h_flex().mt_4().mb_1().justify_center().child(
+                Button::new("upgrade", "Upgrade Gemini").on_click(cx.listener(
+                    |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                let project = workspace.project().read(cx);
+                                let cwd = project.first_project_directory(cx);
+                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                                let command =
+                                    "npm install -g @google/gemini-cli@latest".to_string();
+                                let spawn_in_terminal = task::SpawnInTerminal {
+                                    id: task::TaskId("install".to_string()),
+                                    full_label: command.clone(),
+                                    label: command.clone(),
+                                    command: Some(command.clone()),
+                                    args: Vec::new(),
+                                    command_label: command.clone(),
+                                    cwd,
+                                    env: Default::default(),
+                                    use_new_terminal: true,
+                                    allow_concurrent_runs: true,
+                                    reveal: Default::default(),
+                                    reveal_target: Default::default(),
+                                    hide: Default::default(),
+                                    shell,
+                                    show_summary: true,
+                                    show_command: true,
+                                    show_rerun: false,
+                                };
+                                workspace
+                                    .spawn_in_terminal(spawn_in_terminal, window, cx)
+                                    .detach();
+                            })
+                            .ok();
+                    },
+                )),
+            ));
+        }
+
+        el.into_any()
+    }
+
     fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let settings = ThemeSettings::get_global(cx);
         let font_size = TextSize::Small
@@ -1474,11 +1536,12 @@ impl Render for AcpThreadView {
                 ThreadState::Loading { .. } => {
                     v_flex().flex_1().child(self.render_empty_state(true, cx))
                 }
-                ThreadState::LoadError(e) => div()
+                ThreadState::LoadError(e) => v_flex()
                     .p_2()
                     .flex_1()
-                    .justify_end()
-                    .child(Label::new(format!("Failed to load: {e}")).into_any_element()),
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_error_state(e, cx)),
                 ThreadState::Ready { thread, .. } => v_flex().flex_1().map(|this| {
                     if self.list_state.item_count() > 0 {
                         this.child(

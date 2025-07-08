@@ -246,6 +246,7 @@ dependencies = [
  "settings",
  "smol",
  "streaming_diff",
+ "task",
  "telemetry",
  "telemetry_events",
  "terminal",
