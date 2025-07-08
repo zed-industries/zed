@@ -3,7 +3,7 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration,
-    Window, bounds, point, size,
+    Window, point, px, size,
 };
 use smallvec::SmallVec;
 
@@ -203,7 +203,7 @@ where
 
         let mut last_decoration_element = None;
         let mut rest_decoration_elements = SmallVec::new();
-        let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
+
         let available_space = size(
             AvailableSpace::Definite(bounds.size.width),
             AvailableSpace::Definite(bounds.size.height),
@@ -223,6 +223,23 @@ where
                 if let Some(drifting_indent) = drifting_indent {
                     let drifting_indent_vec: SmallVec<[usize; 8]> =
                         [drifting_indent].into_iter().collect();
+
+                    let item_y_offset = anchor_index.map(|anchor_index| {
+                        let scroll_top = -scroll_offset.y;
+                        let anchor_top = item_height * anchor_index;
+                        let sticky_area_height = item_height * items_count;
+                        (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
+                    });
+
+                    let sticky_origin = bounds.origin - scroll_offset
+                        + point(
+                            px(0.),
+                            item_height * rest_indents.len()
+                                + item_y_offset.unwrap_or(Pixels::ZERO),
+                        );
+
+                    let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
+
                     let mut drifting_dec = decoration.as_ref().compute(
                         &drifting_indent_vec,
                         decoration_bounds,
@@ -231,12 +248,14 @@ where
                         window,
                         cx,
                     );
+
                     drifting_dec.layout_as_root(available_space, window, cx);
-                    drifting_dec.prepaint_at(bounds.origin, window, cx);
+                    drifting_dec.prepaint_at(sticky_origin, window, cx);
                     last_decoration_element = Some(drifting_dec);
                 }
 
                 if !rest_indents.is_empty() {
+                    let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
                     let mut rest_dec = decoration.as_ref().compute(
                         &rest_indents,
                         decoration_bounds,
@@ -251,6 +270,7 @@ where
                 }
             }
         } else {
+            let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
             for decoration in &self.decorations {
                 let mut decoration = decoration.as_ref().compute(
                     &indents,
