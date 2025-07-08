@@ -1823,6 +1823,45 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_select_word_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let start = indoc! {"
+                The quick brˇowˇnˇ
+                fox «ˇjumps» ov«er
+                the laˇ»zy dogˇ
+                "
+        };
+
+        cx.set_state(start, Mode::HelixNormal);
+
+        cx.simulate_keystrokes("m i w");
+
+        cx.assert_state(
+            indoc! {"
+            The quick «brownˇ»
+            fox «jumpsˇ» over
+            the «lazyˇ» dogˇ
+            "
+            },
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(start, Mode::HelixNormal);
+
+        cx.simulate_keystrokes("m a w");
+
+        cx.assert_state(
+            indoc! {"
+            The quick« brownˇ»
+            fox «jumps ˇ»over
+            the «lazy ˇ»dogˇ
+            "
+            },
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
     async fn test_visual_word_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
