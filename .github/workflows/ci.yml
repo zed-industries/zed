@@ -767,7 +767,7 @@ jobs:
     timeout-minutes: 120
     name: Create a Windows installer
     runs-on: [self-hosted, Windows, X64, Windows-alt]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    if: false && ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     # needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
