@@ -27,10 +27,10 @@ jobs:
     name: Decide which jobs to run
     if: github.repository_owner == 'zed-industries'
     outputs:
-      run_tests: "false" # ${{ steps.filter.outputs.run_tests }}
-      run_license: "false" # ${{ steps.filter.outputs.run_license }}
-      run_docs: "false" # ${{ steps.filter.outputs.run_docs }}
-      run_nix: "false" # ${{ steps.filter.outputs.run_nix }}
+      run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_license: ${{ steps.filter.outputs.run_license }}
+      run_docs: ${{ steps.filter.outputs.run_docs }}
+      run_nix: ${{ steps.filter.outputs.run_nix }}
     runs-on:
       - ubuntu-latest
     steps:
