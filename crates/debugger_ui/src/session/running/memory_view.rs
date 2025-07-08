@@ -5,7 +5,7 @@ use gpui::{
     AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task,
     TextStyle, UniformList, list, uniform_list,
 };
-use project::debugger::session::Session;
+use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -120,7 +120,7 @@ impl MemoryView {
             px(100.),
             {
                 let weak = cx.weak_entity();
-                move |ix, _, cx| render_single_memory_view_line(ix as u64, weak.clone(), cx)
+                move |ix, _, cx| render_single_memory_view_line(&[], ix as u64, weak.clone(), cx)
             },
         );
 
@@ -203,15 +203,32 @@ impl MemoryView {
     }
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
         let weak = cx.weak_entity();
+        let session = self.session.clone();
+        let view_state = self.view_state.clone();
         uniform_list(
             "debugger-memory-view",
             self.view_state.row_count() as usize,
             move |range, _, cx| {
-                let mut ret = Vec::with_capacity(range.end - range.start);
+                let mut line_buffer = Vec::with_capacity(view_state.line_width as usize);
+                let memory_start =
+                    (view_state.base_row + range.start as u64) * view_state.line_width;
+                let memory_end =
+                    (view_state.base_row + range.end as u64) * view_state.line_width - 1;
+                let mut memory = session.update(cx, |this, cx| {
+                    this.read_memory(memory_start..=memory_end, cx)
+                });
+                let mut rows = Vec::with_capacity(range.end - range.start);
                 for ix in range {
-                    ret.push(render_single_memory_view_line(ix as u64, weak.clone(), cx));
+                    line_buffer.extend((&mut memory).take(view_state.line_width as usize));
+                    rows.push(render_single_memory_view_line(
+                        &line_buffer,
+                        ix as u64,
+                        weak.clone(),
+                        cx,
+                    ));
+                    line_buffer.clear();
                 }
-                ret
+                rows
             },
         )
     }
@@ -248,12 +265,13 @@ impl MemoryView {
 }
 
 fn render_single_memory_view_line(
+    memory: &[MemoryCell],
     ix: u64,
     weak: gpui::WeakEntity<MemoryView>,
     cx: &mut App,
 ) -> AnyElement {
     let ix = ix as u64;
-    let Ok((memory, view_state)) = weak.update(cx, |this, _| {
+    let Ok(view_state) = weak.update(cx, |this, _| {
         let start = this.view_state.base_row;
 
         let row_count = this.view_state.row_count();
@@ -279,10 +297,7 @@ fn render_single_memory_view_line(
             this.view_state.schedule_scroll_up();
         }
         let line_width = this.view_state.line_width;
-        let memory = (0..line_width)
-            .map(|cell_ix| (((start + ix) * line_width + cell_ix) % (u8::MAX as u64 + 1)) as u8)
-            .collect::<Vec<_>>();
-        (memory, this.view_state.clone())
+        this.view_state.clone()
     }) else {
         return div().into_any();
     };
@@ -320,7 +335,7 @@ fn render_single_memory_view_line(
                             })
                         })
                         .child(
-                            Label::new(HEX_BYTES_MEMOIZED[*cell as usize].clone())
+                            Label::new(HEX_BYTES_MEMOIZED[cell.0.unwrap_or(0) as usize].clone())
                                 .buffer_font(cx)
                                 .size(ui::LabelSize::Small),
                         )
@@ -378,7 +393,7 @@ fn render_single_memory_view_line(
                 .border_x_1()
                 .border_color(Color::Muted.color(cx))
                 .children(memory.iter().map(|cell| {
-                    let as_character = char::from(*cell);
+                    let as_character = char::from(cell.0.unwrap_or(0));
                     let as_visible = if as_character.is_ascii_graphic() {
                         as_character
                     } else {
