@@ -1242,7 +1242,10 @@ impl AgentPanel {
                 .detach_and_log_err(cx);
             }
             ActiveView::AcpThread { thread_view } => {
-                AcpThreadView::open_thread_as_markdown(thread_view, workspace, window, cx)
+                thread_view
+                    .update(cx, |thread_view, cx| {
+                        thread_view.open_thread_as_markdown(workspace, window, cx)
+                    })
                     .detach_and_log_err(cx);
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}

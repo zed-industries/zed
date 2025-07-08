@@ -12,7 +12,7 @@ use editor::{
 use futures::channel::oneshot;
 use gpui::{
     Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId, Focusable,
-    Hsla, Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
+    Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
     TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage,
     prelude::*, pulsating_between,
 };
@@ -36,6 +36,8 @@ use ::acp::{
 };
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
+
+const RESPONSE_PADDING_X: Pixels = px(19.);
 
 pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
@@ -1453,7 +1455,7 @@ impl AcpThreadView {
     }
 
     pub fn open_thread_as_markdown(
-        thread: &Entity<Self>,
+        &self,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -1465,7 +1467,7 @@ impl AcpThreadView {
             .language_for_name("Markdown");
 
         // todo! use actual thread summary
-        let (thread_summary, markdown) = match &thread.read(cx).thread_state {
+        let (thread_summary, markdown) = match &self.thread_state {
             ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => (
                 "Gemini CLI Thread".to_string(),
                 thread.read(cx).to_markdown(cx),
@@ -1508,6 +1510,11 @@ impl AcpThreadView {
             anyhow::Ok(())
         })
     }
+
+    fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset::default());
+        cx.notify();
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -1521,6 +1528,42 @@ impl Render for AcpThreadView {
         let text = self.message_editor.read(cx).text(cx);
         let is_editor_empty = text.is_empty();
         let focus_handle = self.message_editor.focus_handle(cx);
+
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Open Thread as Markdown"))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    this.open_thread_as_markdown(workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            }));
+
+        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUpAlt)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Scroll To Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
+
+        let feedback_container = h_flex()
+            .group("feedback_container")
+            .mt_1()
+            .py_2()
+            .px(RESPONSE_PADDING_X)
+            .mr_1()
+            .opacity(0.4)
+            .hover(|style| style.opacity(1.))
+            .gap_1p5()
+            .flex_wrap()
+            .justify_end()
+            .child(h_flex().child(open_as_markdown))
+            .child(scroll_to_top)
+            .into_any_element();
+
+        let show_controls = matches!(&self.thread_state, ThreadState::Ready { thread, .. } if thread.read(cx).status() == ThreadStatus::Idle);
 
         v_flex()
             .size_full()
@@ -1568,6 +1611,7 @@ impl Render for AcpThreadView {
                     }
                 }),
             })
+            .when(show_controls, |el| el.child(feedback_container))
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
                     div()
