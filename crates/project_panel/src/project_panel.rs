@@ -56,9 +56,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    RenderIndentGuideParams, RenderedIndentGuide, ScrollableHandle, Scrollbar, ScrollbarState,
-    StickyCandidate, Tooltip, prelude::*, v_flex,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ScrollableHandle,
+    Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -3948,7 +3947,7 @@ impl ProjectPanel {
                 false
             }
         });
-        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.15);
+        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.8);
         let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
         let sticky_shadow = div()
             .absolute()
