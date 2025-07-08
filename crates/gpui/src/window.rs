@@ -3727,102 +3727,104 @@ impl Window {
         cx: &mut App,
     ) {
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
-        let action = action.boxed_clone();
-        let window = self.handle;
 
-        cx.defer(move |cx| {
-            // Capture phase for global actions.
-            cx.propagate_event = true;
-            if let Some(mut global_listeners) = cx
-                .global_action_listeners
-                .remove(&action.as_any().type_id())
+        cx.defer({
+            let action = action.boxed_clone();
+            move |cx| {
+                // Capture phase for global actions.
+                cx.propagate_event = true;
+                if let Some(mut global_listeners) = cx
+                    .global_action_listeners
+                    .remove(&action.as_any().type_id())
+                {
+                    for listener in &global_listeners {
+                        listener(action.as_any(), DispatchPhase::Capture, cx);
+                        if !cx.propagate_event {
+                            break;
+                        }
+                    }
+
+                    global_listeners.extend(
+                        cx.global_action_listeners
+                            .remove(&action.as_any().type_id())
+                            .unwrap_or_default(),
+                    );
+
+                    cx.global_action_listeners
+                        .insert(action.as_any().type_id(), global_listeners);
+                }
+            }
+        });
+
+        if !cx.propagate_event {
+            return;
+        }
+
+        // Capture phase for window actions.
+        for node_id in &dispatch_path {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
             {
-                for listener in &global_listeners {
-                    listener(action.as_any(), DispatchPhase::Capture, cx);
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
+                    listener(any_action, DispatchPhase::Capture, self, cx);
+
                     if !cx.propagate_event {
-                        break;
+                        return;
                     }
                 }
-
-                global_listeners.extend(
-                    cx.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
-
-                cx.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
             }
+        }
 
-            if !cx.propagate_event {
-                return;
-            }
-
-            window
-                .update(cx, |_, window, cx| {
-                    // Capture phase for window actions.
-                    for node_id in &dispatch_path {
-                        let node = window.rendered_frame.dispatch_tree.node(*node_id);
-                        for DispatchActionListener {
-                            action_type,
-                            listener,
-                        } in node.action_listeners.clone()
-                        {
-                            let any_action = action.as_any();
-                            if action_type == any_action.type_id() {
-                                listener(any_action, DispatchPhase::Capture, window, cx);
-
-                                if !cx.propagate_event {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-
-                    // Bubble phase for window actions.
-                    for node_id in dispatch_path.iter().rev() {
-                        let node = window.rendered_frame.dispatch_tree.node(*node_id);
-                        for DispatchActionListener {
-                            action_type,
-                            listener,
-                        } in node.action_listeners.clone()
-                        {
-                            let any_action = action.as_any();
-                            if action_type == any_action.type_id() {
-                                cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                                listener(any_action, DispatchPhase::Bubble, window, cx);
-
-                                if !cx.propagate_event {
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                })
-                .log_err();
-
-            // Bubble phase for global actions.
-            if let Some(mut global_listeners) = cx
-                .global_action_listeners
-                .remove(&action.as_any().type_id())
+        // Bubble phase for window actions.
+        for node_id in dispatch_path.iter().rev() {
+            let node = self.rendered_frame.dispatch_tree.node(*node_id);
+            for DispatchActionListener {
+                action_type,
+                listener,
+            } in node.action_listeners.clone()
             {
-                for listener in global_listeners.iter().rev() {
+                let any_action = action.as_any();
+                if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    listener(any_action, DispatchPhase::Bubble, self, cx);
 
-                    listener(action.as_any(), DispatchPhase::Bubble, cx);
                     if !cx.propagate_event {
-                        break;
+                        return;
                     }
                 }
+            }
+        }
 
-                global_listeners.extend(
+        cx.defer({
+            let action = action.boxed_clone();
+            move |cx| {
+                // Bubble phase for global actions.
+                if let Some(mut global_listeners) = cx
+                    .global_action_listeners
+                    .remove(&action.as_any().type_id())
+                {
+                    for listener in global_listeners.iter().rev() {
+                        cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+
+                        listener(action.as_any(), DispatchPhase::Bubble, cx);
+                        if !cx.propagate_event {
+                            break;
+                        }
+                    }
+
+                    global_listeners.extend(
+                        cx.global_action_listeners
+                            .remove(&action.as_any().type_id())
+                            .unwrap_or_default(),
+                    );
+
                     cx.global_action_listeners
-                        .remove(&action.as_any().type_id())
-                        .unwrap_or_default(),
-                );
-
-                cx.global_action_listeners
-                    .insert(action.as_any().type_id(), global_listeners);
+                        .insert(action.as_any().type_id(), global_listeners);
+                }
             }
         });
     }
