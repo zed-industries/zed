@@ -268,7 +268,7 @@ jobs:
     timeout-minutes: 60
     name: Create a Windows installer
     if: github.repository_owner == 'zed-industries'
-    runs-on: hosted-windows-2
+    runs-on: [self-hosted, Windows, X64, Windows-alt]
     needs: windows-clippy-and-tests
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
