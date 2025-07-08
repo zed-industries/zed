@@ -342,8 +342,12 @@ fn assign_edit_prediction_provider(
                 .map(|m| m.name.clone())
                 .unwrap_or_else(|| "codellama:7b".to_string());
 
-            let provider =
-                cx.new(|_| OllamaCompletionProvider::new(client.http_client(), api_url, model));
+            // Get API key from environment variable only (credentials would require async handling)
+            let api_key = std::env::var("OLLAMA_API_KEY").ok();
+
+            let provider = cx.new(|_| {
+                OllamaCompletionProvider::new(client.http_client(), api_url, model, api_key)
+            });
             editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
     }
