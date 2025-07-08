@@ -76,11 +76,11 @@ jobs:
         uses: ./.github/actions/run_tests_windows
 
       - name: Limit target directory size
-        run: ./script/clear-target-dir-if-larger-than.ps1 250
+        run: ./script/clear-target-dir-if-larger-than.ps1 1024
 
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Path "./../.cargo" -Force
+        run: Remove-Item -Recurse -Path "./../.cargo" -Force
 
   bundle-mac:
     timeout-minutes: 60
