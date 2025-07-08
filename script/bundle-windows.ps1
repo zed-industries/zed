@@ -230,7 +230,7 @@ function BuildInstaller {
 
     if ($process.ExitCode -eq 0) {
         Write-Host "✅ Inno Setup successfully compiled the installer"
-        # Write-Output "SETUP_PATH=target/$appSetupName.exe" >> $env:GITHUB_ENV
+        Write-Output "SETUP_PATH=target/$appSetupName.exe" >> $env:GITHUB_ENV
         $script:buildSuccess = $true
     }
     else {
