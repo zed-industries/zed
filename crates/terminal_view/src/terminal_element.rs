@@ -6,8 +6,8 @@ use gpui::{
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill,
-    point, px, relative, size,
+    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
+    size,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -311,10 +311,8 @@ impl TerminalElement {
         grid: impl Iterator<Item = IndexedCell>,
         start_line_offset: i32,
         text_style: &TextStyle,
-        text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
         minimum_contrast: f32,
-        window: &Window,
         cx: &App,
     ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
         let start_time = Instant::now();
@@ -1017,12 +1015,10 @@ impl Element for TerminalElement {
                             cells.iter().cloned(),
                             0,
                             &text_style,
-                            window.text_system(),
                             last_hovered_word.as_ref().map(|last_hovered_word| {
                                 (link_style, &last_hovered_word.word_match)
                             }),
                             minimum_contrast,
-                            window,
                             cx,
                         )
                     }
@@ -1040,12 +1036,10 @@ impl Element for TerminalElement {
                                 .cloned(),
                             *line_range.start(),
                             &text_style,
-                            window.text_system(),
                             last_hovered_word.as_ref().map(|last_hovered_word| {
                                 (link_style, &last_hovered_word.word_match)
                             }),
                             minimum_contrast,
-                            window,
                             cx,
                         )
                     }

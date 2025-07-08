@@ -259,16 +259,8 @@ impl Render for TerminalOutput {
                 cell: ic.cell.clone(),
             });
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
-        let (rects, batched_text_runs) = TerminalElement::layout_grid(
-            grid,
-            0,
-            &text_style,
-            text_system,
-            None,
-            minimum_contrast,
-            window,
-            cx,
-        );
+        let (rects, batched_text_runs) =
+            TerminalElement::layout_grid(grid, 0, &text_style, None, minimum_contrast, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
