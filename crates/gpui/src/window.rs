@@ -3547,6 +3547,12 @@ impl Window {
             return;
         };
 
+        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        if !cx.propagate_event {
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            return;
+        }
+
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
             currently_pending = PendingInput::default();
@@ -3596,7 +3602,6 @@ impl Window {
         }
 
         cx.propagate_event = true;
-        self.dispatch_keystroke_interceptors(event, match_result.context_stack.clone(), cx);
         if cx.propagate_event {
             for binding in match_result.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
