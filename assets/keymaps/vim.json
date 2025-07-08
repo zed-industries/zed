@@ -343,7 +343,7 @@
     }
   },
   {
-    "context": "vim_mode == normal || (vim_mode == helix_normal && !menu)",
+    "context": "(vim_mode == normal || vim_mode == helix_normal) && !menu",
     "bindings": {
       "escape": "editor::Cancel",
       "shift-d": "vim::DeleteToEndOfLine",
