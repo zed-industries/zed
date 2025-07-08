@@ -23,10 +23,11 @@ use gpui::{
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
-    Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -45,7 +46,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, post_inc};
+use util::{ResultExt as _, debug_panic, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -1248,6 +1249,8 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
+        self.flush_notifications(model.clone(), intent, cx);
+
         let request = self.to_completion_request(model.clone(), intent, cx);
 
         self.stream_completion(request, model, intent, window, cx);
@@ -1481,6 +1484,111 @@ impl Thread {
         request
     }
 
+    /// Insert auto-generated notifications (if any) to the thread
+    fn flush_notifications(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
+        cx: &mut Context<Self>,
+    ) {
+        match intent {
+            CompletionIntent::UserPrompt | CompletionIntent::ToolResults => {
+                if let Some(pending_tool_use) = self.attach_tracked_files_state(model, cx) {
+                    cx.emit(ThreadEvent::ToolFinished {
+                        tool_use_id: pending_tool_use.id.clone(),
+                        pending_tool_use: Some(pending_tool_use),
+                    });
+                }
+            }
+            CompletionIntent::ThreadSummarization
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => {}
+        };
+    }
+
+    fn attach_tracked_files_state(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut App,
+    ) -> Option<PendingToolUse> {
+        let action_log = self.action_log.read(cx);
+
+        action_log.unnotified_stale_buffers(cx).next()?;
+
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
+        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
+            debug_panic!("`project_notifications` tool not found");
+            return None;
+        };
+
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return None;
+        }
+
+        let input = serde_json::json!({});
+        let request = Arc::new(LanguageModelRequest::default()); // unused
+        let window = None;
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model.clone(),
+            window,
+            cx,
+        );
+
+        let tool_use_id =
+            LanguageModelToolUseId::from(format!("project_notifications_{}", self.messages.len()));
+
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: tool_name.clone(),
+            raw_input: "{}".to_string(),
+            input: serde_json::json!({}),
+            is_input_complete: true,
+        };
+
+        let tool_output = cx.background_executor().block(tool_result.output);
+
+        // Attach a project_notification tool call to the latest existing
+        // Assistant message. We cannot create a new Assistant message
+        // because thinking models require a `thinking` block that we
+        // cannot mock. We cannot send a notification as a normal
+        // (non-tool-use) User message because this distracts Agent
+        // too much.
+        let tool_message_id = self
+            .messages
+            .iter()
+            .enumerate()
+            .rfind(|(_, message)| message.role == Role::Assistant)
+            .map(|(_, message)| message.id)?;
+
+        let tool_use_metadata = ToolUseMetadata {
+            model: model.clone(),
+            thread_id: self.id.clone(),
+            prompt_id: self.last_prompt_id.clone(),
+        };
+
+        self.tool_use
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            tool_output,
+            self.configured_model.as_ref(),
+            self.completion_mode,
+        );
+
+        pending_tool_use
+    }
+
     pub fn stream_completion(
         &mut self,
         request: LanguageModelRequest,
@@ -1503,6 +1611,10 @@ impl Thread {
             thread_id: self.id.clone(),
             prompt_id: prompt_id.clone(),
         };
+
+        let completion_mode = request
+            .mode
+            .unwrap_or(zed_llm_client::CompletionMode::Normal);
 
         self.last_received_chunk_at = Some(Instant::now());
 
@@ -1853,7 +1965,11 @@ impl Thread {
                                                 .unwrap_or(0)
                                                 // We know the context window was exceeded in practice, so if our estimate was
                                                 // lower than max tokens, the estimate was wrong; return that we exceeded by 1.
-                                                .max(model.max_token_count().saturating_add(1))
+                                                .max(
+                                                    model
+                                                        .max_token_count_for_mode(completion_mode)
+                                                        .saturating_add(1),
+                                                )
                                         });
                                         thread.exceeded_window_error = Some(ExceededWindowError {
                                             model_id: model.id(),
@@ -2401,6 +2517,7 @@ impl Thread {
             hallucinated_tool_name,
             Err(anyhow!("Missing tool call: {error_message}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
 
         cx.emit(ThreadEvent::MissingToolUse {
@@ -2427,6 +2544,7 @@ impl Thread {
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -2502,6 +2620,7 @@ impl Thread {
                             tool_name,
                             output,
                             thread.configured_model.as_ref(),
+                            thread.completion_mode,
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -2978,7 +3097,9 @@ impl Thread {
             return TotalTokenUsage::default();
         };
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         let index = self
             .messages
@@ -3005,7 +3126,9 @@ impl Thread {
     pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
         let model = self.configured_model.as_ref()?;
 
-        let max = model.model.max_token_count();
+        let max = model
+            .model
+            .max_token_count_for_mode(self.completion_mode().into());
 
         if let Some(exceeded_error) = &self.exceeded_window_error {
             if model.model.id() == exceeded_error.model_id {
@@ -3071,6 +3194,7 @@ impl Thread {
             tool_name,
             err,
             self.configured_model.as_ref(),
+            self.completion_mode,
         );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
@@ -3156,10 +3280,13 @@ mod tests {
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use assistant_tools;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
+    use http_client;
+    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3485,6 +3612,134 @@ fn main() {{
             request.messages[2].string_contents(),
             "Are there any good books?"
         );
+    }
+
+    #[gpui::test]
+    async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Add a buffer to the context. This will be a tracked buffer
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context = context_store
+            .read_with(cx, |store, _| store.context().next().cloned())
+            .unwrap();
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message and assistant response
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx);
+            thread.insert_assistant_message(
+                vec![MessageSegment::Text("This code prints 42.".into())],
+                cx,
+            );
+        });
+
+        // We shouldn't have a stale buffer notification yet
+        let notifications = thread.read_with(cx, |thread, _| {
+            find_tool_uses(thread, "project_notifications")
+        });
+        assert!(
+            notifications.is_empty(),
+            "Should not have stale buffer notification before buffer is modified"
+        );
+
+        // Modify the buffer
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(1..1, "\n    println!(\"Added a new line\");\n")],
+                None,
+                cx,
+            );
+        });
+
+        // Insert another user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        // Check for the stale buffer warning
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        let [notification] = notifications.as_slice() else {
+            panic!("Should have a `project_notifications` tool use");
+        };
+
+        let Some(notification_content) = notification.content.to_str() else {
+            panic!("`project_notifications` should return text");
+        };
+
+        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
+
+        These files have changed since the last read:
+        - code.rs
+        "};
+        assert_eq!(notification_content, expected_content);
+
+        // Insert another user message and flush notifications again
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Can you tell me more?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
+        });
+
+        // There should be no new notifications (we already flushed one)
+        let notifications = thread.read_with(cx, |thread, _cx| {
+            find_tool_uses(thread, "project_notifications")
+        });
+
+        assert_eq!(
+            notifications.len(),
+            1,
+            "Should still have only one notification after second flush - no duplicates"
+        );
+    }
+
+    fn find_tool_uses(thread: &Thread, tool_name: &str) -> Vec<LanguageModelToolResult> {
+        thread
+            .messages()
+            .flat_map(|message| {
+                thread
+                    .tool_results_for_message(message.id)
+                    .into_iter()
+                    .filter(|result| result.tool_name == tool_name.into())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     #[gpui::test]
@@ -5052,6 +5307,14 @@ fn main() {{
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ToolRegistry::default_global(cx);
+            assistant_tool::init(cx);
+
+            let http_client = Arc::new(http_client::HttpClientWithUrl::new(
+                http_client::FakeHttpClient::with_200_response(),
+                "http://localhost".to_string(),
+                None,
+            ));
+            assistant_tools::init(http_client, cx);
         });
     }
 

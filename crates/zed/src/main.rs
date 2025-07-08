@@ -29,7 +29,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{Settings, SettingsStore, watch_config_file};
+use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
     env,
     io::{self, IsTerminal},
@@ -43,7 +43,7 @@ use theme::{
 };
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
-use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
+use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::{
     AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
     notifications::NotificationId,
@@ -728,11 +728,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |mut cx| {
-            let paths_with_position =
-                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+            let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_ssh_project(
                 connection_options,
-                paths_with_position.into_iter().map(|p| p.path).collect(),
+                paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

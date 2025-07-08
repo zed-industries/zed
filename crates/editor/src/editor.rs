@@ -10204,6 +10204,17 @@ impl Editor {
         self.manipulate_immutable_lines(window, cx, |lines| lines.sort())
     }
 
+    pub fn sort_lines_by_length(
+        &mut self,
+        _: &SortLinesByLength,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_immutable_lines(window, cx, |lines| {
+            lines.sort_by_key(|&line| line.chars().count())
+        })
+    }
+
     pub fn sort_lines_case_insensitive(
         &mut self,
         _: &SortLinesCaseInsensitive,

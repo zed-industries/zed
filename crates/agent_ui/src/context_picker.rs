@@ -426,6 +426,7 @@ impl ContextPicker {
                             this.add_recent_file(project_path.clone(), window, cx);
                         })
                     },
+                    None,
                 )
             }
             RecentEntry::Thread(thread) => {
@@ -443,6 +444,7 @@ impl ContextPicker {
                                 .detach_and_log_err(cx);
                         })
                     },
+                    None,
                 )
             }
         }

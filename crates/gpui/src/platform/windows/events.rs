@@ -466,12 +466,7 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(input) = char::from_u32(wparam.0 as u32)
-        .filter(|c| !c.is_control())
-        .map(String::from)
-    else {
-        return Some(1);
-    };
+    let input = parse_char_message(wparam, &state_ptr)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
@@ -1229,6 +1224,36 @@ fn handle_input_language_changed(
 }
 
 #[inline]
+fn parse_char_message(wparam: WPARAM, state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<String> {
+    let code_point = wparam.loword();
+    let mut lock = state_ptr.state.borrow_mut();
+    // https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G2630
+    match code_point {
+        0xD800..=0xDBFF => {
+            // High surrogate, wait for low surrogate
+            lock.pending_surrogate = Some(code_point);
+            None
+        }
+        0xDC00..=0xDFFF => {
+            if let Some(high_surrogate) = lock.pending_surrogate.take() {
+                // Low surrogate, combine with pending high surrogate
+                String::from_utf16(&[high_surrogate, code_point]).ok()
+            } else {
+                // Invalid low surrogate without a preceding high surrogate
+                log::warn!(
+                    "Received low surrogate without a preceding high surrogate: {code_point:x}"
+                );
+                None
+            }
+        }
+        _ => {
+            lock.pending_surrogate = None;
+            String::from_utf16(&[code_point]).ok()
+        }
+    }
+}
+
+#[inline]
 fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
     let msg = MSG {
         hwnd: handle,
@@ -1269,6 +1294,10 @@ where
                 modifiers,
                 capslock: current_capslock(),
             }))
+        }
+        VK_PACKET => {
+            translate_message(handle, wparam, lparam);
+            None
         }
         VK_CAPITAL => {
             let capslock = current_capslock();

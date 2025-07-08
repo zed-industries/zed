@@ -1,3 +1,4 @@
+mod base_keymap_setting;
 mod editable_setting_control;
 mod key_equivalents;
 mod keymap_file;
@@ -11,6 +12,7 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
+pub use base_keymap_setting::*;
 pub use editable_setting_control::*;
 pub use key_equivalents::*;
 pub use keymap_file::{
@@ -71,6 +73,7 @@ pub fn init(cx: &mut App) {
         .set_default_settings(&default_settings(), cx)
         .unwrap();
     cx.set_global(settings);
+    BaseKeymap::register(cx);
 }
 
 pub fn default_settings() -> Cow<'static, str> {

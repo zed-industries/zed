@@ -810,6 +810,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -829,6 +830,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": true,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -855,7 +857,11 @@
     // its response, or needs user input.
 
     // Default: false
-    "play_sound_when_agent_done": false
+    "play_sound_when_agent_done": false,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    "expand_edit_card": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1350,7 +1356,7 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
@@ -1367,6 +1373,21 @@
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
+    // The minimum APCA perceptual contrast between foreground and background colors.
+    // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    // especially for dark mode. Values range from 0 to 106.
+    //
+    // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    // https://readtech.org/ARC/tests/bronze-simple-mode/
+    // - 0: No contrast adjustment
+    // - 45: Minimum for large fluent text (36px+)
+    // - 60: Minimum for other content text
+    // - 75: Minimum for body text
+    // - 90: Preferred for body text
+    //
+    // Most terminal themes have APCA values of 40-70.
+    // A value of 45 preserves colorful themes while ensuring legibility.
+    "minimum_contrast": 45
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

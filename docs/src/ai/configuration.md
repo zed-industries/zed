@@ -646,3 +646,19 @@ You can choose between `thread` (the default) and `text_thread`:
   }
 }
 ```
+
+### Edit Card
+
+Use the `expand_edit_card` setting to control whether edit cards show the full diff in the Agent Panel.
+It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded.
+
+```json
+{
+  "agent": {
+    "expand_edit_card": "false"
+  }
+}
+```
+
+This setting is currently only available in Preview.
+It should be up in Stable by the next release.
