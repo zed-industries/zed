@@ -1200,19 +1200,6 @@ impl KeystrokeInput {
         cx.notify();
     }
 
-    fn on_key_down(
-        &mut self,
-        event: &gpui::KeyDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        dbg!(("on_key_down", &event.keystroke));
-        if event.is_held {
-            return;
-        }
-        self.handle_keystroke(&event.keystroke, cx);
-    }
-
     fn on_key_up(
         &mut self,
         event: &gpui::KeyUpEvent,
@@ -1236,7 +1223,6 @@ impl KeystrokeInput {
     fn on_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.intercept_subscription.is_none() {
             let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
-                dbg!(("intercept", &event.keystroke));
                 this.handle_keystroke(&event.keystroke, cx);
             });
             self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
@@ -1271,14 +1257,13 @@ impl Focusable for KeystrokeInput {
 }
 
 impl Render for KeystrokeInput {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
 
         return h_flex()
             .id("keybinding_input")
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-            .on_key_down(cx.listener(Self::on_key_down))
             .on_key_up(cx.listener(Self::on_key_up))
             .focus(|mut style| {
                 style.border_color = Some(colors.border_focused);
