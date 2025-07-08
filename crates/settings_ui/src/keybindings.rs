@@ -1144,6 +1144,7 @@ async fn save_keybinding_update(
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
+    intercept_subscription: Option<Subscription>,
 }
 
 impl KeystrokeInput {
@@ -1152,6 +1153,7 @@ impl KeystrokeInput {
         Self {
             keystrokes: Vec::new(),
             focus_handle,
+            intercept_subscription: None,
         }
     }
 
@@ -1180,24 +1182,29 @@ impl KeystrokeInput {
         cx.notify();
     }
 
+    fn handle_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        if let Some(last) = self.keystrokes.last_mut()
+            && last.key.is_empty()
+        {
+            *last = keystroke.clone();
+        } else {
+            self.keystrokes.push(keystroke.clone());
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!(("on_key_down", &event.keystroke));
         if event.is_held {
             return;
         }
-        if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
-        {
-            *last = event.keystroke.clone();
-        } else {
-            self.keystrokes.push(event.keystroke.clone());
-        }
-        cx.stop_propagation();
-        cx.notify();
+        self.handle_keystroke(&event.keystroke, cx);
     }
 
     fn on_key_up(
@@ -1239,7 +1246,19 @@ impl Focusable for KeystrokeInput {
 }
 
 impl Render for KeystrokeInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_handle.is_focused(window) {
+            if self.intercept_subscription.is_none() {
+                let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
+                    dbg!(("intercept", &event.keystroke));
+                    this.handle_keystroke(&event.keystroke, cx);
+                });
+                self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
+            }
+        } else {
+            self.intercept_subscription.take();
+        }
+
         let colors = cx.theme().colors();
 
         return h_flex()
