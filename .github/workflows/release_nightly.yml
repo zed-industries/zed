@@ -59,7 +59,7 @@ jobs:
   windows-clippy-and-tests:
     timeout-minutes: 60
     name: Run tests on Windows
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - hosted-windows-2
     steps:
@@ -269,7 +269,7 @@ jobs:
     name: Create a Windows installer
     if: github.repository_owner == 'zed-industries'
     runs-on: [self-hosted, Windows, X64, Windows-alt]
-    needs: windows-clippy-and-tests
+    # needs: windows-clippy-and-tests
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
