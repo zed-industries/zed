@@ -48,7 +48,7 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
-    secret: std::sync::Arc<std::sync::Mutex<String>>,
+    secret: std::sync::Arc<parking_lot::Mutex<String>>,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -68,7 +68,7 @@ impl AskPassSession {
         use util::fs::make_file_executable;
 
         #[cfg(target_os = "windows")]
-        let secret = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let secret = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
@@ -107,7 +107,7 @@ impl AskPassSession {
                     stream.write_all(password.as_bytes()).await.log_err();
                     #[cfg(target_os = "windows")]
                     {
-                        *askpass_secret.lock().unwrap() = password;
+                        *askpass_secret.lock() = password;
                     }
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
@@ -127,12 +127,7 @@ impl AskPassSession {
         let askpass_script = generate_askpass_script(&zed_path, &askpass_socket);
         fs::write(&askpass_script_path, askpass_script)
             .await
-            .with_context(|| {
-                format!(
-                    "creating askpass script at {}",
-                    askpass_script_path.display()
-                )
-            })?;
+            .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
         make_file_executable(&askpass_script_path).await?;
         #[cfg(target_os = "windows")]
         let askpass_helper = format!(
@@ -140,25 +135,19 @@ impl AskPassSession {
             askpass_script_path.display()
         );
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            Ok(Self {
-                script_path: askpass_script_path,
-                _askpass_task: askpass_task,
-                askpass_kill_master_rx: Some(askpass_kill_master_rx),
-                askpass_opened_rx: Some(askpass_opened_rx),
-            })
-        }
-        #[cfg(target_os = "windows")]
-        {
-            Ok(Self {
-                askpass_helper,
-                _askpass_task: askpass_task,
-                secret,
-                askpass_kill_master_rx: Some(askpass_kill_master_rx),
-                askpass_opened_rx: Some(askpass_opened_rx),
-            })
-        }
+        Ok(Self {
+            #[cfg(not(target_os = "windows"))]
+            script_path: askpass_script_path,
+
+            #[cfg(target_os = "windows")]
+            secret,
+            #[cfg(target_os = "windows")]
+            askpass_helper,
+
+            _askpass_task: askpass_task,
+            askpass_kill_master_rx: Some(askpass_kill_master_rx),
+            askpass_opened_rx: Some(askpass_opened_rx),
+        })
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -200,8 +189,7 @@ impl AskPassSession {
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
     pub fn get_password(&self) -> String {
-        let secret = self.secret.lock().unwrap();
-        secret.clone()
+        self.secret.lock().clone()
     }
 }
 

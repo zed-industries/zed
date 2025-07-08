@@ -539,6 +539,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "net",
+ "parking_lot",
  "smol",
  "tempfile",
  "util",
