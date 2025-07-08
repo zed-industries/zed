@@ -16,12 +16,9 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         else {
             return;
         };
-        // This is deferred to avoid double lease due to window already being updated.
-        cx.defer(move |cx| {
-            active_window
-                .update(cx, |_, window, cx| window.toggle_inspector(cx))
-                .log_err();
-        });
+        active_window
+            .update(cx, |_, window, cx| window.toggle_inspector(cx))
+            .log_err();
     });
 
     // Project used for editor buffers with LSP support

@@ -2027,21 +2027,19 @@ impl Workspace {
     }
 
     pub fn close_global(_: &CloseWindow, cx: &mut App) {
-        cx.defer(|cx| {
-            cx.windows().iter().find(|window| {
-                window
-                    .update(cx, |_, window, _| {
-                        if window.is_window_active() {
-                            //This can only get called when the window's project connection has been lost
-                            //so we don't need to prompt the user for anything and instead just close the window
-                            window.remove_window();
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false)
-            });
+        cx.windows().iter().find(|window| {
+            window
+                .update(cx, |_, window, _| {
+                    if window.is_window_active() {
+                        //This can only get called when the window's project connection has been lost
+                        //so we don't need to prompt the user for anything and instead just close the window
+                        window.remove_window();
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
         });
     }
 
@@ -7695,11 +7693,9 @@ pub fn with_active_or_new_workspace(
 ) {
     match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
         Some(workspace) => {
-            cx.defer(move |cx| {
-                workspace
-                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
-                    .log_err();
-            });
+            workspace
+                .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                .log_err();
         }
         None => {
             let app_state = AppState::global(cx);
