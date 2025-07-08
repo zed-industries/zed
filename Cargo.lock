@@ -603,6 +603,8 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "net",
+ "parking_lot",
  "smol",
  "tempfile",
  "util",
@@ -9018,6 +9020,7 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -10297,6 +10300,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11400,14 +11415,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "perplexity"
-version = "0.1.0"
-dependencies = [
- "serde",
- "zed_extension_api 0.6.0",
-]
 
 [[package]]
 name = "pest"
@@ -12600,6 +12607,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -13263,6 +13271,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
@@ -17103,6 +17112,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18348,6 +18363,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",

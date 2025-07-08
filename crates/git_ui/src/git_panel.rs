@@ -2844,7 +2844,7 @@ impl GitPanel {
 
         PopoverMenu::new(id.into())
             .trigger(
-                IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
+                IconButton::new("overflow-menu-trigger", IconName::Ellipsis)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
             )
@@ -2965,15 +2965,20 @@ impl GitPanel {
         &self,
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         PopoverMenu::new(id.into())
             .trigger(
                 ui::ButtonLike::new_rounded_right("commit-split-button-right")
                     .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
+                    .size(ButtonSize::None)
                     .child(
-                        div()
+                        h_flex()
                             .px_1()
+                            .h_full()
+                            .justify_center()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
                     ),
             )
@@ -3066,6 +3071,7 @@ impl GitPanel {
         Some(
             self.panel_header_container(window, cx)
                 .px_2()
+                .justify_between()
                 .child(
                     panel_button(change_string)
                         .color(Color::Muted)
@@ -3080,23 +3086,25 @@ impl GitPanel {
                             })
                         }),
                 )
-                .child(div().flex_grow()) // spacer
-                .child(self.render_overflow_menu("overflow_menu"))
-                .child(div().w_2()) // another spacer
                 .child(
-                    panel_filled_button(text)
-                        .tooltip(Tooltip::for_action_title_in(
-                            tooltip,
-                            action.as_ref(),
-                            &self.focus_handle,
-                        ))
-                        .disabled(self.entry_count == 0)
-                        .on_click(move |_, _, cx| {
-                            let action = action.boxed_clone();
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(action.as_ref());
-                            })
-                        }),
+                    h_flex()
+                        .gap_1()
+                        .child(self.render_overflow_menu("overflow_menu"))
+                        .child(
+                            panel_filled_button(text)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    tooltip,
+                                    action.as_ref(),
+                                    &self.focus_handle,
+                                ))
+                                .disabled(self.entry_count == 0)
+                                .on_click(move |_, _, cx| {
+                                    let action = action.boxed_clone();
+                                    cx.defer(move |cx| {
+                                        cx.dispatch_action(action.as_ref());
+                                    })
+                                }),
+                        ),
                 ),
         )
     }
@@ -3174,7 +3182,7 @@ impl GitPanel {
                     .w_full()
                     .h(max_height + footer_size)
                     .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(cx.theme().colors().border)
                     .cursor_text()
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx));
@@ -3259,6 +3267,7 @@ impl GitPanel {
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let title = self.commit_button_title();
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
+
         div()
             .id("commit-wrapper")
             .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -3371,6 +3380,7 @@ impl GitPanel {
                         self.render_git_commit_menu(
                             ElementId::Name(format!("split-button-right-{}", title).into()),
                             Some(commit_tooltip_focus_handle.clone()),
+                            cx,
                         )
                         .into_any_element(),
                     ))
@@ -3415,8 +3425,8 @@ impl GitPanel {
 
     fn render_pending_amend(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .py_2()
-            .px(px(8.))
+            .p_2()
+            .border_t_1()
             .border_color(cx.theme().colors().border)
             .child(
                 Label::new(
@@ -3431,22 +3441,21 @@ impl GitPanel {
         let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
-
         let this = cx.entity();
+
         Some(
             h_flex()
-                .items_center()
-                .py_2()
-                .px(px(8.))
-                .border_color(cx.theme().colors().border)
+                .py_1p5()
+                .px_2()
                 .gap_1p5()
+                .justify_between()
+                .border_t_1()
+                .border_color(cx.theme().colors().border.opacity(0.8))
                 .child(
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .items_center()
                         .max_w(relative(0.85))
-                        .h_full()
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
@@ -3480,12 +3489,11 @@ impl GitPanel {
                             }
                         }),
                 )
-                .child(div().flex_1())
                 .when(commit.has_parent, |this| {
                     let has_unstaged = self.has_unstaged_changes();
                     this.child(
                         panel_icon_button("undo", IconName::Undo)
-                            .icon_size(IconSize::Small)
+                            .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
@@ -3507,43 +3515,38 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .h_full()
-            .flex_grow()
-            .justify_center()
-            .items_center()
-            .child(
-                v_flex()
-                    .gap_2()
-                    .child(h_flex().w_full().justify_around().child(
-                        if self.active_repository.is_some() {
-                            "No changes to commit"
-                        } else {
-                            "No Git repositories"
-                        },
-                    ))
-                    .children({
-                        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-                        (worktree_count > 0 && self.active_repository.is_none()).then(|| {
-                            h_flex().w_full().justify_around().child(
-                                panel_filled_button("Initialize Repository")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "git init",
-                                        &git::Init,
-                                        &self.focus_handle,
-                                    ))
-                                    .on_click(move |_, _, cx| {
-                                        cx.defer(move |cx| {
-                                            cx.dispatch_action(&git::Init);
-                                        })
-                                    }),
-                            )
-                        })
+        h_flex().h_full().flex_grow().justify_center().child(
+            v_flex()
+                .gap_2()
+                .child(h_flex().w_full().justify_around().child(
+                    if self.active_repository.is_some() {
+                        "No changes to commit"
+                    } else {
+                        "No Git repositories"
+                    },
+                ))
+                .children({
+                    let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+                    (worktree_count > 0 && self.active_repository.is_none()).then(|| {
+                        h_flex().w_full().justify_around().child(
+                            panel_filled_button("Initialize Repository")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "git init",
+                                    &git::Init,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(move |_, _, cx| {
+                                    cx.defer(move |cx| {
+                                        cx.dispatch_action(&git::Init);
+                                    })
+                                }),
+                        )
                     })
-                    .text_ui_sm(cx)
-                    .mx_auto()
-                    .text_color(Color::Placeholder.color(cx)),
-            )
+                })
+                .text_ui_sm(cx)
+                .mx_auto()
+                .text_color(Color::Placeholder.color(cx)),
+        )
     }
 
     fn render_vertical_scrollbar(
@@ -4621,7 +4624,7 @@ impl RenderOnce for PanelRepoFooter {
             })
             .trigger_with_tooltip(
                 repo_selector_trigger.disabled(single_repo).truncate(true),
-                Tooltip::text("Switch active repository"),
+                Tooltip::text("Switch Active Repository"),
             )
             .anchor(Corner::BottomLeft)
             .into_any_element();

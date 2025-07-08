@@ -861,7 +861,11 @@
     /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     ///
     /// Default: true
-    "expand_edit_card": true
+    "expand_edit_card": true,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    "expand_terminal_card": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1599,6 +1603,9 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled"
+      },
       "prettier": {
         "allowed": true
       }
@@ -1612,6 +1619,9 @@
       }
     },
     "Plain Text": {
+      "completions": {
+        "words": "disabled"
+      },
       "allow_rewrap": "anywhere"
     },
     "Python": {
