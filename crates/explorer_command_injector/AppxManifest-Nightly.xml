@@ -15,7 +15,7 @@
   <!-- TODO: Use Zed's signature here. -->
   <Identity
     Name="ZedIndustries.Zed.Nightly"
-    Publisher="CN=Zed Industries"
+    Publisher="CN=Zed Industries Inc, O=Zed Industries Inc, L=Denver, S=Colorado, C=US"
     Version="1.0.0.0" />
   <Properties>
     <DisplayName>Zed Editor Nightly</DisplayName>
