@@ -3606,20 +3606,17 @@ impl Window {
             return;
         }
 
-        cx.propagate_event = true;
-        if cx.propagate_event {
-            for binding in match_result.bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
-                if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(
-                        event,
-                        Some(binding.action),
-                        match_result.context_stack.clone(),
-                        cx,
-                    );
-                    self.pending_input_changed(cx);
-                    return;
-                }
+        for binding in match_result.bindings {
+            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+            if !cx.propagate_event {
+                self.dispatch_keystroke_observers(
+                    event,
+                    Some(binding.action),
+                    match_result.context_stack.clone(),
+                    cx,
+                );
+                self.pending_input_changed(cx);
+                return;
             }
         }
 
