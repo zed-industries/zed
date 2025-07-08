@@ -849,7 +849,7 @@ impl KeybindingEditorModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(KeystrokeInput::new);
+        let keybind_editor = cx.new(|cx| KeystrokeInput::new(window, cx));
 
         let context_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1145,15 +1145,21 @@ struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
+    _focus_subscriptions: [Subscription; 2],
 }
 
 impl KeystrokeInput {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        let _focus_subscriptions = [
+            cx.on_focus_in(&focus_handle, window, Self::on_focus_in),
+            cx.on_focus_out(&focus_handle, window, Self::on_focus_out),
+        ];
         Self {
             keystrokes: Vec::new(),
             focus_handle,
             intercept_subscription: None,
+            _focus_subscriptions,
         }
     }
 
@@ -1227,6 +1233,25 @@ impl KeystrokeInput {
         cx.notify();
     }
 
+    fn on_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.intercept_subscription.is_none() {
+            let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
+                dbg!(("intercept", &event.keystroke));
+                this.handle_keystroke(&event.keystroke, cx);
+            });
+            self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
+        }
+    }
+
+    fn on_focus_out(
+        &mut self,
+        _event: gpui::FocusOutEvent,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.intercept_subscription.take();
+    }
+
     fn keystrokes(&self) -> &[Keystroke] {
         if self
             .keystrokes
@@ -1247,18 +1272,6 @@ impl Focusable for KeystrokeInput {
 
 impl Render for KeystrokeInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.focus_handle.is_focused(window) {
-            if self.intercept_subscription.is_none() {
-                let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
-                    dbg!(("intercept", &event.keystroke));
-                    this.handle_keystroke(&event.keystroke, cx);
-                });
-                self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
-            }
-        } else {
-            self.intercept_subscription.take();
-        }
-
         let colors = cx.theme().colors();
 
         return h_flex()
