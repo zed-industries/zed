@@ -1,6 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::ReadMemory;
-use crate::debugger::memory::{self, Memory, MemoryPageBuilder, PageAddress};
+use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -1722,7 +1722,7 @@ impl Session {
         &mut self,
         range: RangeInclusive<u64>,
         cx: &mut Context<Self>,
-    ) -> MemoryRange {
+    ) -> MemoryIterator {
         // This function is a bit more involved when it comes to fetching data.
         // Since we attempt to read memory in pages, we need to account for some parts
         // of memory being unreadable. Therefore, we start off by fetching a page per request.
@@ -1731,13 +1731,7 @@ impl Session {
         for page_address in PageAddress::iter_range(page_range) {
             self.read_single_page_memory(page_address, cx);
         }
-        todo!()
-        // self.memory.get();
-        // MemoryRange {
-        //     base_address: *range.start(),
-        //     pages: todo!(),
-        //     range,
-        // }
+        self.memory.memory_range(range)
     }
     fn read_single_page_memory(&mut self, page_start: PageAddress, cx: &mut Context<Self>) {
         _ = maybe!({
@@ -2530,24 +2524,5 @@ impl Session {
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.thread_states.thread_state(thread_id)
-    }
-}
-
-pub struct MemoryRange {
-    base_address: u64,
-    pages: Box<[Arc<[u8; 4096]>]>,
-    range: RangeInclusive<u64>,
-}
-
-impl MemoryRange {
-    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
-        let mut offset = self.base_address;
-        self.pages.iter().filter_map(move |page| {
-            if !self.range.contains(&offset) {
-                return None;
-            }
-            offset += page.len() as u64;
-            Some(&page[..])
-        })
     }
 }

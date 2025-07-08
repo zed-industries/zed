@@ -40,6 +40,7 @@ impl PageContents {
     }
 }
 
+#[derive(Clone)]
 enum PageChunk {
     Mapped(Arc<[u8]>),
     Unmapped(u64),
@@ -136,13 +137,14 @@ impl Memory {
         self.pages.insert(address, page);
     }
 
-    pub(super) fn memory_range(
-        &self,
-        range: RangeInclusive<MemoryAddress>,
-    ) -> impl Iterator<Item = MemoryCell> + Send + Sync + use<> {
-        let pages = Self::memory_range_to_page_range(range);
-        let pages = self.pages.range(pages);
-        None.into_iter()
+    pub(super) fn memory_range(&self, range: RangeInclusive<MemoryAddress>) -> MemoryIterator {
+        let pages = Self::memory_range_to_page_range(range.clone());
+        let pages = self
+            .pages
+            .range(pages)
+            .map(|(address, page)| (address.clone(), page.clone()))
+            .collect::<Vec<_>>();
+        MemoryIterator::new(range, pages.into_iter())
     }
 }
 
@@ -227,12 +229,86 @@ impl MemoryPageBuilder {
     }
 }
 
-enum CurrentMemoryChunk {
-    Unmapped(std::iter::RepeatN<MemoryCell>),
-    Mapped(()),
+fn page_contents_into_iter(data: Arc<MappedPageContents>) -> Box<dyn Iterator<Item = MemoryCell>> {
+    let mut data_range = (0..data.0.len()).into_iter();
+    let iter = std::iter::from_fn(move || {
+        let data = &data;
+        let data_ref = data.clone();
+        data_range.next().map(move |index| {
+            let contents = &data_ref.0[index];
+            match contents {
+                PageChunk::Mapped(items) => {
+                    let chunk_range = (0..items.len());
+                    let items = items.clone();
+                    Box::new(
+                        chunk_range
+                            .into_iter()
+                            .map(move |ix| MemoryCell(Some(items[ix]))),
+                    ) as Box<dyn Iterator<Item = MemoryCell>>
+                }
+                PageChunk::Unmapped(len) => {
+                    Box::new(std::iter::repeat_n(MemoryCell(None), *len as usize))
+                }
+            }
+        })
+    })
+    .flat_map(|f| f);
+
+    Box::new(iter)
 }
 /// Defines an iteration over a range of memory. Some of this memory might be unmapped or straight up missing.
 /// Thus, this iterator alternates between synthesizing values and yielding known memory.
-struct PageIterator {
-    current_known_page: Option<PageContents>,
+pub struct MemoryIterator {
+    start: MemoryAddress,
+    end: MemoryAddress,
+    current_known_page: Option<(PageAddress, Box<dyn Iterator<Item = MemoryCell>>)>,
+    pages: std::vec::IntoIter<(PageAddress, PageContents)>,
+}
+
+impl MemoryIterator {
+    fn new(
+        range: RangeInclusive<MemoryAddress>,
+        pages: std::vec::IntoIter<(PageAddress, PageContents)>,
+    ) -> Self {
+        Self {
+            start: *range.start(),
+            end: *range.end(),
+            current_known_page: None,
+            pages,
+        }
+    }
+    fn fetch_next_page(&mut self) -> bool {
+        if let Some((address, chunk)) = self.pages.next() {
+            let contents = match chunk {
+                PageContents::Unmapped => None,
+                PageContents::Mapped(mapped_page_contents) => {
+                    Some(page_contents_into_iter(mapped_page_contents))
+                }
+            };
+            self.current_known_page = contents.map(|contents| (address, contents));
+            true
+        } else {
+            false
+        }
+    }
+}
+impl Iterator for MemoryIterator {
+    type Item = MemoryCell;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start > self.end {
+            return None;
+        }
+        if let Some((current_page_address, current_memory_chunk)) = self.current_known_page.as_mut()
+        {
+            if let Some(next_cell) = current_memory_chunk.next() {
+                self.start += 1;
+                return Some(next_cell);
+            }
+        }
+        if !self.fetch_next_page() {
+            return None;
+        };
+        self.next()
+    }
 }
