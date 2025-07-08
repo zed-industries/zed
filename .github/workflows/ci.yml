@@ -827,11 +827,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # - name: Check dev drive space
-      #   working-directory: ${{ env.ZED_WORKSPACE }}
-      #   # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
-      #   run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
-
   auto-release-preview:
     name: Auto release preview
     if: |

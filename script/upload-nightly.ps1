@@ -46,11 +46,10 @@ $sha | Out-File -FilePath "target/latest-sha" -NoNewline
 
 switch ($target) {
     "windows" {
-        $zedSetup = "target/ZedEditorUserSetup-x64-$env:RELEASE_VERSION.exe"
-        UploadToBlobStore -BucketName $bucketName -FileToUpload $zedSetup -BlobStoreKey "nightly/ZedEditorInstaller.exe"
-        UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha"
+        UploadToBlobStore -BucketName $bucketName -FileToUpload $env:SETUP_PATH -BlobStoreKey "nightly/zed_editor_installer_x86_64.exe"
+        UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha-windows"
 
-        Remove-Item -Path $zedSetup -ErrorAction SilentlyContinue
+        Remove-Item -Path $env:SETUP_PATH -ErrorAction SilentlyContinue
         Remove-Item -Path "target/latest-sha" -ErrorAction SilentlyContinue
     }
 
