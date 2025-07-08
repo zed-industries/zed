@@ -3,9 +3,13 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration,
-    Window, point, size,
+    Window, fill, point, size,
 };
 use smallvec::SmallVec;
+
+use crate::{
+    IndentGuideColors, RenderedIndentGuide, components::indent_guides::compute_indent_guides,
+};
 
 pub trait StickyCandidate {
     fn depth(&self) -> usize;
@@ -15,6 +19,13 @@ pub trait StickyCandidate {
 pub struct StickyItems<T> {
     compute_fn: Rc<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[T; 8]>>,
     render_fn: Rc<dyn Fn(T, &mut Window, &mut App) -> SmallVec<[AnyElement; 8]>>,
+    indent_guides: Option<StickyIndentGuides>,
+}
+
+#[derive(Clone)]
+struct StickyIndentGuides {
+    colors: IndentGuideColors,
+    indent_size: Pixels,
 }
 
 pub fn sticky_items<V, T>(
@@ -44,11 +55,27 @@ where
     StickyItems {
         compute_fn,
         render_fn,
+        indent_guides: None,
+    }
+}
+
+impl<T> StickyItems<T>
+where
+    T: StickyCandidate + Clone + 'static,
+{
+    pub fn with_indent_guides(mut self, colors: IndentGuideColors, indent_size: Pixels) -> Self {
+        self.indent_guides = Some(StickyIndentGuides {
+            colors,
+            indent_size,
+        });
+        self
     }
 }
 
 struct StickyItemsElement {
     elements: SmallVec<[AnyElement; 8]>,
+    indent_guides: SmallVec<[RenderedIndentGuide; 12]>,
+    indent_guide_colors: Option<IndentGuideColors>,
 }
 
 impl IntoElement for StickyItemsElement {
@@ -107,6 +134,16 @@ impl Element for StickyItemsElement {
         for item in self.elements.iter_mut().rev() {
             item.paint(window, cx);
         }
+        if let Some(colors) = &self.indent_guide_colors {
+            for guide in &self.indent_guides {
+                let fill_color = if guide.is_active {
+                    colors.active
+                } else {
+                    colors.default
+                };
+                window.paint_quad(fill(guide.bounds, fill_color));
+            }
+        }
     }
 }
 
@@ -126,6 +163,7 @@ where
     ) -> AnyElement {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
         let mut elements = SmallVec::new();
+        let mut indent_guides = SmallVec::new();
 
         let mut anchor_entry = None;
         let mut last_item_is_drifting = false;
@@ -154,8 +192,40 @@ where
         }
 
         if let Some(anchor_entry) = anchor_entry {
+            let anchor_depth = anchor_entry.depth();
             elements = (self.render_fn)(anchor_entry, window, cx);
             let items_count = elements.len();
+
+            if let Some(indent_guide_config) = &self.indent_guides {
+                let sticky_depths: SmallVec<[usize; 8]> = elements
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, _)| {
+                        anchor_depth
+                            .saturating_sub(items_count.saturating_sub(1).saturating_sub(ix))
+                    })
+                    .collect();
+
+                let indent_guide_layouts = compute_indent_guides(&sticky_depths, 0, false);
+
+                for layout in indent_guide_layouts {
+                    let bounds = gpui::Bounds::new(
+                        bounds.origin
+                            + point(
+                                layout.offset.x * indent_guide_config.indent_size - scroll_offset.x,
+                                layout.offset.y * item_height - scroll_offset.y,
+                            ),
+                        size(gpui::px(1.), layout.length * item_height),
+                    );
+
+                    indent_guides.push(RenderedIndentGuide {
+                        bounds,
+                        layout,
+                        is_active: false,
+                        hitbox: None,
+                    });
+                }
+            }
 
             for (ix, element) in elements.iter_mut().enumerate() {
                 let mut item_y_offset = None;
@@ -184,6 +254,11 @@ where
             }
         }
 
-        StickyItemsElement { elements }.into_any_element()
+        StickyItemsElement {
+            elements,
+            indent_guides,
+            indent_guide_colors: self.indent_guides.as_ref().map(|ig| ig.colors.clone()),
+        }
+        .into_any_element()
     }
 }

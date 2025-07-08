@@ -385,7 +385,7 @@ mod uniform_list {
     }
 }
 
-fn compute_indent_guides(
+pub fn compute_indent_guides(
     indents: &[usize],
     offset: usize,
     includes_trailing_indent: bool,

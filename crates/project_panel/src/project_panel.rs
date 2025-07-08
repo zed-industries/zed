@@ -5265,7 +5265,7 @@ impl Render for ProjectPanel {
                         )
                     })
                     .when(show_sticky_scroll, |list| {
-                        list.with_decoration(ui::sticky_items(
+                        let sticky_items = ui::sticky_items(
                             cx.entity().clone(),
                             |this, range, window, cx| {
                                 let mut items = SmallVec::with_capacity(range.end - range.start);
@@ -5286,7 +5286,13 @@ impl Render for ProjectPanel {
                             |this, marker_entry, window, cx| {
                                 this.render_sticky_entries(marker_entry, window, cx)
                             },
-                        ))
+                        );
+                        list.with_decoration(if show_indent_guides {
+                            sticky_items
+                                .with_indent_guides(IndentGuideColors::panel(cx), px(indent_size))
+                        } else {
+                            sticky_items
+                        })
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)
