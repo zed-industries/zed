@@ -535,4 +535,30 @@ mod test {
         cx.simulate_shared_keystrokes("ctrl-o").await;
         cx.shared_state().await.assert_matches();
     }
+
+    #[gpui::test]
+    async fn test_horizontal_scroll(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_scroll_height(20).await;
+        cx.set_shared_wrap(12).await;
+        cx.set_neovim_option("nowrap").await;
+
+        let content = "ˇ01234567890123456789";
+        cx.set_shared_state(&content).await;
+
+        cx.simulate_shared_keystrokes("z shift-l").await;
+        cx.shared_state().await.assert_eq("012345ˇ67890123456789");
+
+        // At this point, `z h` should not move the cursor as it should still be
+        // visible within the 12 column width.
+        cx.simulate_shared_keystrokes("z h").await;
+        cx.shared_state().await.assert_eq("012345ˇ67890123456789");
+
+        let content = "ˇ01234567890123456789";
+        cx.set_shared_state(&content).await;
+
+        cx.simulate_shared_keystrokes("z l").await;
+        cx.shared_state().await.assert_eq("0ˇ1234567890123456789");
+    }
 }
