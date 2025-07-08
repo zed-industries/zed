@@ -837,7 +837,7 @@ impl KeybindingEditorModal {
             editor
         });
 
-        let input_editor = editing_keybind.action_schema.clone().map(|schema| {
+        let input_editor = editing_keybind.action_schema.clone().map(|_schema| {
             cx.new(|cx| {
                 let mut editor = Editor::auto_height_unbounded(1, window, cx);
                 if let Some(input) = editing_keybind.action_input.clone() {
