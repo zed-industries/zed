@@ -1688,7 +1688,7 @@ impl ShellExec {
                     id: TaskId("vim".to_string()),
                     full_label: command.clone(),
                     label: command.clone(),
-                    command: command.clone(),
+                    command: Some(command.clone()),
                     args: Vec::new(),
                     command_label: command.clone(),
                     cwd,

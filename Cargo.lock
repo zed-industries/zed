@@ -538,6 +538,8 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "net",
+ "parking_lot",
  "smol",
  "tempfile",
  "util",
@@ -4324,6 +4326,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "log",
@@ -4344,6 +4347,7 @@ dependencies = [
  "tasks_ui",
  "telemetry",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter",
  "tree-sitter-go",
@@ -9023,7 +9027,6 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "lsp",
- "picker",
  "project",
  "release_channel",
  "serde_json",
@@ -10231,6 +10234,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11334,14 +11349,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "perplexity"
-version = "0.1.0"
-dependencies = [
- "serde",
- "zed_extension_api 0.6.0",
-]
 
 [[package]]
 name = "pest"
@@ -12534,6 +12541,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -13197,6 +13205,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
@@ -17036,6 +17045,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18358,7 +18373,6 @@ dependencies = [
  "language",
  "picker",
  "project",
- "schemars",
  "serde",
  "settings",
  "telemetry",
@@ -20144,9 +20158,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c740e29260b8797ad252c202ea09a255b3cbc13f30faaf92fb6b2490336106e0"
+checksum = "6607f74dee2a18a9ce0f091844944a0e59881359ab62e0768fb0618f55d4c1dc"
 dependencies = [
  "anyhow",
  "serde",

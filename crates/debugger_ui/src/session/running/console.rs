@@ -5,7 +5,7 @@ use super::{
 use alacritty_terminal::vte::ansi;
 use anyhow::Result;
 use collections::HashMap;
-use dap::OutputEvent;
+use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -17,6 +17,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
+    lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
 use settings::Settings;
@@ -555,13 +556,25 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         text: &str,
-        _trigger_in_words: bool,
+        trigger_in_words: bool,
         menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+
         let snapshot = buffer.read(cx).snapshot();
         if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
+        }
+
+        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        if trigger_in_words && classifier.is_word(char) {
+            return true;
         }
 
         self.0
@@ -596,21 +609,28 @@ impl ConsoleQueryBarCompletionProvider {
                 variable_list.completion_variables(cx)
             }) {
                 if let Some(evaluate_name) = &variable.evaluate_name {
-                    variables.insert(evaluate_name.clone(), variable.value.clone());
-                    string_matches.push(StringMatchCandidate {
-                        id: 0,
-                        string: evaluate_name.clone(),
-                        char_bag: evaluate_name.chars().collect(),
-                    });
+                    if variables
+                        .insert(evaluate_name.clone(), variable.value.clone())
+                        .is_none()
+                    {
+                        string_matches.push(StringMatchCandidate {
+                            id: 0,
+                            string: evaluate_name.clone(),
+                            char_bag: evaluate_name.chars().collect(),
+                        });
+                    }
                 }
 
-                variables.insert(variable.name.clone(), variable.value.clone());
-
-                string_matches.push(StringMatchCandidate {
-                    id: 0,
-                    string: variable.name.clone(),
-                    char_bag: variable.name.chars().collect(),
-                });
+                if variables
+                    .insert(variable.name.clone(), variable.value.clone())
+                    .is_none()
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: variable.name.clone(),
+                        char_bag: variable.name.chars().collect(),
+                    });
+                }
             }
 
             (variables, string_matches)
@@ -656,11 +676,13 @@ impl ConsoleQueryBarCompletionProvider {
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),
-                            text: format!("{} {}", string_match.string, variable_value),
+                            text: string_match.string.clone(),
                             runs: Vec::new(),
                         },
                         icon_path: None,
-                        documentation: None,
+                        documentation: Some(CompletionDocumentation::MultiLineMarkdown(
+                            variable_value.into(),
+                        )),
                         confirm: None,
                         source: project::CompletionSource::Custom,
                         insert_text_mode: None,
@@ -672,6 +694,32 @@ impl ConsoleQueryBarCompletionProvider {
                 is_incomplete: completions.len() >= LIMIT,
                 completions,
             }])
+        })
+    }
+
+    const fn completion_type_score(completion_type: CompletionItemType) -> usize {
+        match completion_type {
+            CompletionItemType::Field | CompletionItemType::Property => 0,
+            CompletionItemType::Variable | CompletionItemType::Value => 1,
+            CompletionItemType::Method
+            | CompletionItemType::Function
+            | CompletionItemType::Constructor => 2,
+            CompletionItemType::Class
+            | CompletionItemType::Interface
+            | CompletionItemType::Module => 3,
+            _ => 4,
+        }
+    }
+
+    fn completion_item_sort_text(completion_item: &CompletionItem) -> String {
+        completion_item.sort_text.clone().unwrap_or_else(|| {
+            format!(
+                "{:03}_{}",
+                Self::completion_type_score(
+                    completion_item.type_.unwrap_or(CompletionItemType::Text)
+                ),
+                completion_item.label.to_ascii_lowercase()
+            )
         })
     }
 
@@ -699,6 +747,7 @@ impl ConsoleQueryBarCompletionProvider {
             let completions = completions
                 .into_iter()
                 .map(|completion| {
+                    let sort_text = Self::completion_item_sort_text(&completion);
                     let new_text = completion
                         .text
                         .as_ref()
@@ -731,12 +780,11 @@ impl ConsoleQueryBarCompletionProvider {
                             runs: Vec::new(),
                         },
                         icon_path: None,
-                        documentation: None,
+                        documentation: completion.detail.map(|detail| {
+                            CompletionDocumentation::MultiLineMarkdown(detail.into())
+                        }),
                         confirm: None,
-                        source: project::CompletionSource::BufferWord {
-                            word_range: buffer_position..language::Anchor::MAX,
-                            resolved: false,
-                        },
+                        source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,
                     }
                 })

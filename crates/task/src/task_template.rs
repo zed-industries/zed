@@ -255,8 +255,8 @@ impl TaskTemplate {
                         command_label
                     },
                 ),
-                command,
-                args: self.args.clone(),
+                command: Some(command),
+                args: args_with_substitutions,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -635,24 +635,24 @@ mod tests {
                 "Human-readable label should have long substitutions trimmed"
             );
             assert_eq!(
-                spawn_in_terminal.command,
+                spawn_in_terminal.command.clone().unwrap(),
                 format!("echo test_file {long_value}"),
                 "Command should be substituted with variables and those should not be shortened"
             );
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 $ZED_SELECTED_TEXT",
-                    "arg2 $ZED_COLUMN",
-                    "arg3 $ZED_SYMBOL",
+                    "arg1 test_selected_text",
+                    "arg2 5678",
+                    "arg3 010101010101010101010101010101010101010101010101010101010101",
                 ],
-                "Args should not be substituted with variables"
+                "Args should be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
                 format!(
                     "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
-                    spawn_in_terminal.command
+                    spawn_in_terminal.command.clone().unwrap()
                 ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
@@ -711,7 +711,7 @@ mod tests {
         assert_substituted_variables(&resolved_task, Vec::new());
         let resolved = resolved_task.resolved;
         assert_eq!(resolved.label, task.label);
-        assert_eq!(resolved.command, task.command);
+        assert_eq!(resolved.command, Some(task.command));
         assert_eq!(resolved.args, task.args);
     }
 

@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 
+use crate::{Settings, SettingsSources, VsCodeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
@@ -114,7 +114,7 @@ impl Settings for BaseKeymap {
         sources.default.ok_or_else(Self::missing_default)
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut Self::FileContent) {
         *current = Some(BaseKeymap::VSCode);
     }
 }
