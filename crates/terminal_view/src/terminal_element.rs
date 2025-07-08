@@ -1457,10 +1457,237 @@ pub fn is_blank(cell: &IndexedCell) -> bool {
     return true;
 }
 
+fn to_highlighted_range_lines(
+    range: &RangeInclusive<AlacPoint>,
+    layout: &LayoutState,
+    origin: Point<Pixels>,
+) -> Option<(Pixels, Vec<HighlightedRangeLine>)> {
+    // Step 1. Normalize the points to be viewport relative.
+    // When display_offset = 1, here's how the grid is arranged:
+    //-2,0 -2,1...
+    //--- Viewport top
+    //-1,0 -1,1...
+    //--------- Terminal Top
+    // 0,0  0,1...
+    // 1,0  1,1...
+    //--- Viewport Bottom
+    // 2,0  2,1...
+    //--------- Terminal Bottom
+
+    // Normalize to viewport relative, from terminal relative.
+    // lines are i32s, which are negative above the top left corner of the terminal
+    // If the user has scrolled, we use the display_offset to tell us which offset
+    // of the grid data we should be looking at. But for the rendering step, we don't
+    // want negatives. We want things relative to the 'viewport' (the area of the grid
+    // which is currently shown according to the display offset)
+    let unclamped_start = AlacPoint::new(
+        range.start().line + layout.display_offset,
+        range.start().column,
+    );
+    let unclamped_end =
+        AlacPoint::new(range.end().line + layout.display_offset, range.end().column);
+
+    // Step 2. Clamp range to viewport, and return None if it doesn't overlap
+    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.dimensions.num_lines() as i32 {
+        return None;
+    }
+
+    let clamped_start_line = unclamped_start.line.0.max(0) as usize;
+    let clamped_end_line = unclamped_end
+        .line
+        .0
+        .min(layout.dimensions.num_lines() as i32) as usize;
+    //Convert the start of the range to pixels
+    let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
+
+    // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
+    //  (also convert to pixels)
+    let mut highlighted_range_lines = Vec::new();
+    for line in clamped_start_line..=clamped_end_line {
+        let mut line_start = 0;
+        let mut line_end = layout.dimensions.columns();
+
+        if line == clamped_start_line {
+            line_start = unclamped_start.column.0;
+        }
+        if line == clamped_end_line {
+            line_end = unclamped_end.column.0 + 1; // +1 for inclusive
+        }
+
+        highlighted_range_lines.push(HighlightedRangeLine {
+            start_x: origin.x + line_start as f32 * layout.dimensions.cell_width,
+            end_x: origin.x + line_end as f32 * layout.dimensions.cell_width,
+        });
+    }
+
+    Some((start_y, highlighted_range_lines))
+}
+
+/// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
+pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
+    let colors = theme.colors();
+    match fg {
+        // Named and theme defined colors
+        terminal::alacritty_terminal::vte::ansi::Color::Named(n) => match n {
+            NamedColor::Black => colors.terminal_ansi_black,
+            NamedColor::Red => colors.terminal_ansi_red,
+            NamedColor::Green => colors.terminal_ansi_green,
+            NamedColor::Yellow => colors.terminal_ansi_yellow,
+            NamedColor::Blue => colors.terminal_ansi_blue,
+            NamedColor::Magenta => colors.terminal_ansi_magenta,
+            NamedColor::Cyan => colors.terminal_ansi_cyan,
+            NamedColor::White => colors.terminal_ansi_white,
+            NamedColor::BrightBlack => colors.terminal_ansi_bright_black,
+            NamedColor::BrightRed => colors.terminal_ansi_bright_red,
+            NamedColor::BrightGreen => colors.terminal_ansi_bright_green,
+            NamedColor::BrightYellow => colors.terminal_ansi_bright_yellow,
+            NamedColor::BrightBlue => colors.terminal_ansi_bright_blue,
+            NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
+            NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
+            NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
+            NamedColor::Foreground => colors.terminal_foreground,
+            NamedColor::Background => colors.terminal_ansi_background,
+            NamedColor::Cursor => theme.players().local().cursor,
+            NamedColor::DimBlack => colors.terminal_ansi_dim_black,
+            NamedColor::DimRed => colors.terminal_ansi_dim_red,
+            NamedColor::DimGreen => colors.terminal_ansi_dim_green,
+            NamedColor::DimYellow => colors.terminal_ansi_dim_yellow,
+            NamedColor::DimBlue => colors.terminal_ansi_dim_blue,
+            NamedColor::DimMagenta => colors.terminal_ansi_dim_magenta,
+            NamedColor::DimCyan => colors.terminal_ansi_dim_cyan,
+            NamedColor::DimWhite => colors.terminal_ansi_dim_white,
+            NamedColor::BrightForeground => colors.terminal_bright_foreground,
+            NamedColor::DimForeground => colors.terminal_dim_foreground,
+        },
+        // 'True' colors
+        terminal::alacritty_terminal::vte::ansi::Color::Spec(rgb) => {
+            terminal::rgba_color(rgb.r, rgb.g, rgb.b)
+        }
+        // 8 bit, indexed colors
+        terminal::alacritty_terminal::vte::ansi::Color::Indexed(i) => {
+            terminal::get_color_at_index(*i as usize, theme)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{AbsoluteLength, Hsla, font};
+
+    #[test]
+    fn test_contrast_adjustment_logic() {
+        // Test the core contrast adjustment logic without needing full app context
+
+        // Test case 1: Light colors (poor contrast)
+        let white_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 1.0,
+            a: 1.0,
+        };
+        let light_gray_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.95,
+            a: 1.0,
+        };
+
+        // Should have poor contrast
+        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
+        assert!(
+            actual_contrast < 30.0,
+            "White on light gray should have poor APCA contrast: {}",
+            actual_contrast
+        );
+
+        // After adjustment with minimum APCA contrast of 45, should be darker
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
+        assert!(
+            adjusted.l < white_fg.l,
+            "Adjusted color should be darker than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
+
+        // Test case 2: Dark colors (poor contrast)
+        let black_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.0,
+            a: 1.0,
+        };
+        let dark_gray_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.05,
+            a: 1.0,
+        };
+
+        // Should have poor contrast
+        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
+        assert!(
+            actual_contrast < 30.0,
+            "Black on dark gray should have poor APCA contrast: {}",
+            actual_contrast
+        );
+
+        // After adjustment with minimum APCA contrast of 45, should be lighter
+        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
+        assert!(
+            adjusted.l > black_fg.l,
+            "Adjusted color should be lighter than original"
+        );
+        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
+        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
+
+        // Test case 3: Already good contrast
+        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
+        assert_eq!(
+            good_contrast, black_fg,
+            "Good contrast should not be adjusted"
+        );
+    }
+
+    #[test]
+    fn test_white_on_white_contrast_issue() {
+        // This test reproduces the exact issue from the bug report
+        // where white ANSI text on white background should be adjusted
+
+        // Simulate One Light theme colors
+        let white_fg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.98, // #fafafaff is approximately 98% lightness
+            a: 1.0,
+        };
+        let white_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.98, // Same as foreground - this is the problem!
+            a: 1.0,
+        };
+
+        // With minimum contrast of 0.0, no adjustment should happen
+        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
+        assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
+
+        // With minimum APCA contrast of 15, it should adjust to a darker color
+        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
+        assert!(
+            adjusted.l < white_fg.l,
+            "White on white should become darker, got l={}",
+            adjusted.l
+        );
+
+        // Verify the contrast is now acceptable
+        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
+        assert!(
+            new_contrast >= 15.0,
+            "Adjusted APCA contrast {} should be >= 15.0",
+            new_contrast
+        );
+    }
 
     #[test]
     fn test_batched_text_run_can_append() {
@@ -1659,237 +1886,5 @@ mod tests {
 
         let merged2 = merge_background_regions(regions2);
         assert_eq!(merged2.len(), 3);
-    }
-}
-
-fn to_highlighted_range_lines(
-    range: &RangeInclusive<AlacPoint>,
-    layout: &LayoutState,
-    origin: Point<Pixels>,
-) -> Option<(Pixels, Vec<HighlightedRangeLine>)> {
-    // Step 1. Normalize the points to be viewport relative.
-    // When display_offset = 1, here's how the grid is arranged:
-    //-2,0 -2,1...
-    //--- Viewport top
-    //-1,0 -1,1...
-    //--------- Terminal Top
-    // 0,0  0,1...
-    // 1,0  1,1...
-    //--- Viewport Bottom
-    // 2,0  2,1...
-    //--------- Terminal Bottom
-
-    // Normalize to viewport relative, from terminal relative.
-    // lines are i32s, which are negative above the top left corner of the terminal
-    // If the user has scrolled, we use the display_offset to tell us which offset
-    // of the grid data we should be looking at. But for the rendering step, we don't
-    // want negatives. We want things relative to the 'viewport' (the area of the grid
-    // which is currently shown according to the display offset)
-    let unclamped_start = AlacPoint::new(
-        range.start().line + layout.display_offset,
-        range.start().column,
-    );
-    let unclamped_end =
-        AlacPoint::new(range.end().line + layout.display_offset, range.end().column);
-
-    // Step 2. Clamp range to viewport, and return None if it doesn't overlap
-    if unclamped_end.line.0 < 0 || unclamped_start.line.0 > layout.dimensions.num_lines() as i32 {
-        return None;
-    }
-
-    let clamped_start_line = unclamped_start.line.0.max(0) as usize;
-    let clamped_end_line = unclamped_end
-        .line
-        .0
-        .min(layout.dimensions.num_lines() as i32) as usize;
-    //Convert the start of the range to pixels
-    let start_y = origin.y + clamped_start_line as f32 * layout.dimensions.line_height;
-
-    // Step 3. Expand ranges that cross lines into a collection of single-line ranges.
-    //  (also convert to pixels)
-    let mut highlighted_range_lines = Vec::new();
-    for line in clamped_start_line..=clamped_end_line {
-        let mut line_start = 0;
-        let mut line_end = layout.dimensions.columns();
-
-        if line == clamped_start_line {
-            line_start = unclamped_start.column.0;
-        }
-        if line == clamped_end_line {
-            line_end = unclamped_end.column.0 + 1; // +1 for inclusive
-        }
-
-        highlighted_range_lines.push(HighlightedRangeLine {
-            start_x: origin.x + line_start as f32 * layout.dimensions.cell_width,
-            end_x: origin.x + line_end as f32 * layout.dimensions.cell_width,
-        });
-    }
-
-    Some((start_y, highlighted_range_lines))
-}
-
-/// Converts a 2, 8, or 24 bit color ANSI color to the GPUI equivalent.
-pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme: &Theme) -> Hsla {
-    let colors = theme.colors();
-    match fg {
-        // Named and theme defined colors
-        terminal::alacritty_terminal::vte::ansi::Color::Named(n) => match n {
-            NamedColor::Black => colors.terminal_ansi_black,
-            NamedColor::Red => colors.terminal_ansi_red,
-            NamedColor::Green => colors.terminal_ansi_green,
-            NamedColor::Yellow => colors.terminal_ansi_yellow,
-            NamedColor::Blue => colors.terminal_ansi_blue,
-            NamedColor::Magenta => colors.terminal_ansi_magenta,
-            NamedColor::Cyan => colors.terminal_ansi_cyan,
-            NamedColor::White => colors.terminal_ansi_white,
-            NamedColor::BrightBlack => colors.terminal_ansi_bright_black,
-            NamedColor::BrightRed => colors.terminal_ansi_bright_red,
-            NamedColor::BrightGreen => colors.terminal_ansi_bright_green,
-            NamedColor::BrightYellow => colors.terminal_ansi_bright_yellow,
-            NamedColor::BrightBlue => colors.terminal_ansi_bright_blue,
-            NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
-            NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
-            NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
-            NamedColor::Foreground => colors.terminal_foreground,
-            NamedColor::Background => colors.terminal_ansi_background,
-            NamedColor::Cursor => theme.players().local().cursor,
-            NamedColor::DimBlack => colors.terminal_ansi_dim_black,
-            NamedColor::DimRed => colors.terminal_ansi_dim_red,
-            NamedColor::DimGreen => colors.terminal_ansi_dim_green,
-            NamedColor::DimYellow => colors.terminal_ansi_dim_yellow,
-            NamedColor::DimBlue => colors.terminal_ansi_dim_blue,
-            NamedColor::DimMagenta => colors.terminal_ansi_dim_magenta,
-            NamedColor::DimCyan => colors.terminal_ansi_dim_cyan,
-            NamedColor::DimWhite => colors.terminal_ansi_dim_white,
-            NamedColor::BrightForeground => colors.terminal_bright_foreground,
-            NamedColor::DimForeground => colors.terminal_dim_foreground,
-        },
-        // 'True' colors
-        terminal::alacritty_terminal::vte::ansi::Color::Spec(rgb) => {
-            terminal::rgba_color(rgb.r, rgb.g, rgb.b)
-        }
-        // 8 bit, indexed colors
-        terminal::alacritty_terminal::vte::ansi::Color::Indexed(i) => {
-            terminal::get_color_at_index(*i as usize, theme)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_contrast_adjustment_logic() {
-        // Test the core contrast adjustment logic without needing full app context
-
-        // Test case 1: Light colors (poor contrast)
-        let white_fg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 1.0,
-            a: 1.0,
-        };
-        let light_gray_bg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 0.95,
-            a: 1.0,
-        };
-
-        // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(white_fg, light_gray_bg).abs();
-        assert!(
-            actual_contrast < 30.0,
-            "White on light gray should have poor APCA contrast: {}",
-            actual_contrast
-        );
-
-        // After adjustment with minimum APCA contrast of 45, should be darker
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, light_gray_bg, 45.0);
-        assert!(
-            adjusted.l < white_fg.l,
-            "Adjusted color should be darker than original"
-        );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, light_gray_bg).abs();
-        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
-
-        // Test case 2: Dark colors (poor contrast)
-        let black_fg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 0.0,
-            a: 1.0,
-        };
-        let dark_gray_bg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 0.05,
-            a: 1.0,
-        };
-
-        // Should have poor contrast
-        let actual_contrast = color_contrast::apca_contrast(black_fg, dark_gray_bg).abs();
-        assert!(
-            actual_contrast < 30.0,
-            "Black on dark gray should have poor APCA contrast: {}",
-            actual_contrast
-        );
-
-        // After adjustment with minimum APCA contrast of 45, should be lighter
-        let adjusted = color_contrast::ensure_minimum_contrast(black_fg, dark_gray_bg, 45.0);
-        assert!(
-            adjusted.l > black_fg.l,
-            "Adjusted color should be lighter than original"
-        );
-        let adjusted_contrast = color_contrast::apca_contrast(adjusted, dark_gray_bg).abs();
-        assert!(adjusted_contrast >= 45.0, "Should meet minimum contrast");
-
-        // Test case 3: Already good contrast
-        let good_contrast = color_contrast::ensure_minimum_contrast(black_fg, white_fg, 45.0);
-        assert_eq!(
-            good_contrast, black_fg,
-            "Good contrast should not be adjusted"
-        );
-    }
-
-    #[test]
-    fn test_white_on_white_contrast_issue() {
-        // This test reproduces the exact issue from the bug report
-        // where white ANSI text on white background should be adjusted
-
-        // Simulate One Light theme colors
-        let white_fg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 0.98, // #fafafaff is approximately 98% lightness
-            a: 1.0,
-        };
-        let white_bg = gpui::Hsla {
-            h: 0.0,
-            s: 0.0,
-            l: 0.98, // Same as foreground - this is the problem!
-            a: 1.0,
-        };
-
-        // With minimum contrast of 0.0, no adjustment should happen
-        let no_adjust = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 0.0);
-        assert_eq!(no_adjust, white_fg, "No adjustment with min_contrast 0.0");
-
-        // With minimum APCA contrast of 15, it should adjust to a darker color
-        let adjusted = color_contrast::ensure_minimum_contrast(white_fg, white_bg, 15.0);
-        assert!(
-            adjusted.l < white_fg.l,
-            "White on white should become darker, got l={}",
-            adjusted.l
-        );
-
-        // Verify the contrast is now acceptable
-        let new_contrast = color_contrast::apca_contrast(adjusted, white_bg).abs();
-        assert!(
-            new_contrast >= 15.0,
-            "Adjusted APCA contrast {} should be >= 15.0",
-            new_contrast
-        );
     }
 }
