@@ -1,5 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::ReadMemory;
+use crate::debugger::memory;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -681,7 +682,7 @@ pub struct Session {
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
     task_context: TaskContext,
-    memory: BTreeMap<String, MemoryChunk>,
+    memory: memory::Memory,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -850,7 +851,7 @@ impl Session {
                 label,
                 adapter,
                 task_context,
-                memory: Default::default(),
+                memory: memory::Memory::new(),
             };
 
             this
@@ -1723,20 +1724,35 @@ impl Session {
         range: RangeInclusive<u64>,
         cx: &mut Context<Self>,
     ) -> MemoryRange {
-        self.request(
+        // This function is a bit more involved when it comes to fetching data.
+        // Since we attempt to read memory in pages, we need to account for some parts
+        // of memory being unreadable. Therefore, we start off by fetching a page per request.
+        // In case that fails, we try to re-fetch smaller regions until we have the full range.
+        for page_address in memory::Memory::memory_range_to_pages(range.clone()) {
+            self.read_single_page_memory(page_address, cx);
+        }
+        todo!()
+        // self.memory.get();
+        // MemoryRange {
+        //     base_address: *range.start(),
+        //     pages: todo!(),
+        //     range,
+        // }
+    }
+    fn read_single_page_memory(&mut self, page_start: u64, cx: &mut Context<Self>) {
+        let builder = self.memory.build_page(page_start);
+
+        self.fetch(
             ReadMemory {
-                memory_reference: range.start().to_string(),
+                memory_reference: page_start.to_string(),
+                offset: Some(0),
+                count: 0,
             },
-            |this, memory, cx| None,
+            |this, memory, cx| (),
             cx,
         );
-        // self.memory.get();
-        MemoryRange {
-            base_address: *range.start(),
-            pages: todo!(),
-            range,
-        }
     }
+
     pub fn ignore_breakpoints(&self) -> bool {
         self.ignore_breakpoints
     }

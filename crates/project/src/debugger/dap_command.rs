@@ -1781,18 +1781,20 @@ impl DapCommand for LocationsCommand {
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct ReadMemory {
     pub(crate) memory_reference: String,
+    pub(crate) offset: Option<u64>,
+    pub(crate) count: u64,
 }
 
 impl LocalDapCommand for ReadMemory {
     type Response = super::session::MemoryChunk;
-
     type DapRequest = dap::requests::ReadMemory;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ReadMemoryArguments {
             memory_reference: self.memory_reference.clone(),
-            offset: None,
-            count: 4096, // The size of a page in most OSs
+            offset: self.offset,
+            count: self.count,
         }
     }
 
