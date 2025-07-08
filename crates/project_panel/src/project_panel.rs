@@ -5288,27 +5288,72 @@ impl Render for ProjectPanel {
                             },
                         );
                         list.with_decoration(if show_indent_guides {
-                            sticky_item.with_decoration(ui::indent_guides(
-                                cx.entity().clone(),
-                                px(indent_size),
-                                IndentGuideColors::panel(cx),
-                                |this, range, window, cx| {
-                                    let mut items =
-                                        SmallVec::with_capacity(range.end - range.start);
-                                    this.iter_visible_entries(
-                                        range,
-                                        window,
-                                        cx,
-                                        |entry, _, entries, _, _| {
-                                            let (depth, _) = Self::calculate_depth_and_difference(
-                                                entry, entries,
-                                            );
-                                            items.push(depth);
-                                        },
-                                    );
-                                    items
-                                },
-                            ))
+                            sticky_items.with_decoration(
+                                ui::indent_guides(
+                                    cx.entity().clone(),
+                                    px(indent_size),
+                                    IndentGuideColors::panel(cx),
+                                    |this, range, window, cx| {
+                                        let mut items =
+                                            SmallVec::with_capacity(range.end - range.start);
+                                        items
+                                    },
+                                )
+                                .with_render_fn(
+                                    cx.entity().clone(),
+                                    move |this, params, _, cx| {
+                                        const LEFT_OFFSET: Pixels = px(14.);
+                                        const PADDING_Y: Pixels = px(4.);
+                                        const HITBOX_OVERDRAW: Pixels = px(3.);
+
+                                        let active_indent_guide_index = this
+                                            .find_active_indent_guide(&params.indent_guides, cx);
+
+                                        let indent_size = params.indent_size;
+                                        let item_height = params.item_height;
+
+                                        params
+                                            .indent_guides
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(idx, layout)| {
+                                                let offset = if layout.continues_offscreen {
+                                                    px(0.)
+                                                } else {
+                                                    PADDING_Y
+                                                };
+                                                let bounds = Bounds::new(
+                                                    point(
+                                                        layout.offset.x * indent_size + LEFT_OFFSET,
+                                                        layout.offset.y * item_height + offset,
+                                                    ),
+                                                    size(
+                                                        px(1.),
+                                                        layout.length * item_height - offset * 2.,
+                                                    ),
+                                                );
+                                                ui::RenderedIndentGuide {
+                                                    bounds,
+                                                    layout,
+                                                    is_active: Some(idx)
+                                                        == active_indent_guide_index,
+                                                    hitbox: Some(Bounds::new(
+                                                        point(
+                                                            bounds.origin.x - HITBOX_OVERDRAW,
+                                                            bounds.origin.y,
+                                                        ),
+                                                        size(
+                                                            bounds.size.width
+                                                                + HITBOX_OVERDRAW * 2.,
+                                                            bounds.size.height,
+                                                        ),
+                                                    )),
+                                                }
+                                            })
+                                            .collect()
+                                    },
+                                ),
+                            )
                         } else {
                             sticky_items
                         })

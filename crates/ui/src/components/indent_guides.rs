@@ -1,8 +1,6 @@
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
-use gpui::{
-    AnyElement, App, Bounds, Entity, Hsla, Point, UniformListDecoration, fill, point, size,
-};
+use gpui::{AnyElement, App, Bounds, Entity, Hsla, Point, fill, point, size};
 use gpui::{DispatchPhase, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent};
 use smallvec::SmallVec;
 
@@ -184,6 +182,8 @@ pub struct IndentGuideLayout {
 
 /// Implements the necessary functionality for rendering indent guides inside a uniform list.
 mod uniform_list {
+    use gpui::UniformListDecoration;
+
     use super::*;
 
     impl UniformListDecoration for IndentGuides {

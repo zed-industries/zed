@@ -3,7 +3,7 @@ use std::{ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Context, Element, ElementId, Entity, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, Render, Style, UniformListDecoration,
-    Window, point, size,
+    Window, bounds, point, size,
 };
 use smallvec::SmallVec;
 
@@ -184,9 +184,14 @@ where
                 .collect();
 
             for decoration in &self.decorations {
+                let origin = bounds.origin - scroll_offset;
+                let s = bounds.size;
+
+                let new_bounds = Bounds::new(origin, s);
+
                 let mut decoration = decoration.as_ref().compute(
                     &indents,
-                    bounds,
+                    new_bounds,
                     scroll_offset,
                     item_height,
                     window,
