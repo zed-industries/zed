@@ -125,8 +125,8 @@ pub(super) struct MemoryPageBuilder {
 /// Represents a chunk of memory of which we don't know if it's mapped or unmapped; thus we need
 /// to issue a request to figure out it's state.
 pub(super) struct UnknownMemory {
-    address: BaseMemoryAddress,
-    size: u64,
+    pub(super) address: BaseMemoryAddress,
+    pub(super) size: u64,
 }
 
 impl MemoryPageBuilder {
@@ -168,7 +168,17 @@ impl MemoryPageBuilder {
         }
     }
     pub(super) fn unknown(&mut self, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
         self.left_to_read -= bytes;
         self.chunks.push(PageChunk::Unmapped(bytes));
+    }
+    pub(super) fn known(&mut self, data: Arc<[u8]>) {
+        if data.is_empty() {
+            return;
+        }
+        self.left_to_read -= data.len() as u64;
+        self.chunks.push(PageChunk::Mapped(data));
     }
 }

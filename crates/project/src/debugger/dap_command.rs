@@ -15,8 +15,6 @@ use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-use crate::debugger::session::MemoryChunk;
-
 pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
@@ -1785,8 +1783,15 @@ pub(crate) struct ReadMemory {
     pub(crate) count: u64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReadMemoryResponse {
+    pub(super) address: Arc<str>,
+    pub(super) unreadable_bytes: Option<u64>,
+    pub(super) content: Arc<[u8]>,
+}
+
 impl LocalDapCommand for ReadMemory {
-    type Response = super::session::MemoryChunk;
+    type Response = ReadMemoryResponse;
     type DapRequest = dap::requests::ReadMemory;
     const CACHEABLE: bool = true;
 
@@ -1812,6 +1817,10 @@ impl LocalDapCommand for ReadMemory {
             .log_err()
             .context("parsing base64 data from DAP's ReadMemory response")?;
 
-        Ok(MemoryChunk::new(message.address.into(), as_buffer.into()))
+        Ok(ReadMemoryResponse {
+            address: message.address.into(),
+            content: as_buffer.into(),
+            unreadable_bytes: message.unreadable_bytes,
+        })
     }
 }

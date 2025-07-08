@@ -1,6 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::ReadMemory;
-use crate::debugger::memory;
+use crate::debugger::memory::{self, MemoryPageBuilder};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -56,7 +56,7 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -1740,15 +1740,40 @@ impl Session {
         // }
     }
     fn read_single_page_memory(&mut self, page_start: u64, cx: &mut Context<Self>) {
-        let builder = self.memory.build_page(page_start);
+        _ = maybe!({
+            let builder = self.memory.build_page(page_start)?;
 
+            self.memory_read_fetch_page_recursive(builder, cx);
+            Some(())
+        });
+    }
+    fn memory_read_fetch_page_recursive(
+        &mut self,
+        mut builder: MemoryPageBuilder,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(next_request) = builder.next_request() else {
+            return;
+        };
         self.fetch(
             ReadMemory {
-                memory_reference: page_start.to_string(),
-                offset: Some(0),
-                count: 0,
+                memory_reference: next_request.address.to_string(),
+                offset: None,
+                count: next_request.address,
             },
-            |this, memory, cx| (),
+            move |this, memory, cx| {
+                if let Ok(memory) = memory {
+                    builder.known(memory.content);
+                    if let Some(unknown) = memory.unreadable_bytes {
+                        builder.unknown(unknown);
+                    }
+                    // This is the recursive bit: if we're not yet done with
+                    // the whole page, we'll kick off a new request with smaller range.
+                    // Note that since this function is recursive only conceptually;
+                    // since it kicks off a new request with callback, we don't need to worry about stack overflow.
+                    this.memory_read_fetch_page_recursive(builder, cx);
+                }
+            },
             cx,
         );
     }
@@ -2501,18 +2526,6 @@ impl Session {
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.thread_states.thread_state(thread_id)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct MemoryChunk {
-    address: Arc<str>,
-    content: Arc<[u8]>,
-}
-
-impl MemoryChunk {
-    pub(crate) fn new(address: Arc<str>, content: Arc<[u8]>) -> Self {
-        Self { address, content }
     }
 }
 
