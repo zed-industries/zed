@@ -94,7 +94,7 @@ impl AssistantMessage {
             self.chunks
                 .iter()
                 .map(|chunk| chunk.to_markdown(cx))
-                .join("\n")
+                .join("\n\n")
         )
     }
 }

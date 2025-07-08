@@ -1451,6 +1451,63 @@ impl AcpThreadView {
             cx.open_url(&url);
         }
     }
+
+    pub fn open_thread_as_markdown(
+        thread: &Entity<Self>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let markdown_language_task = workspace
+            .read(cx)
+            .app_state()
+            .languages
+            .language_for_name("Markdown");
+
+        // todo! use actual thread summary
+        let (thread_summary, markdown) = match &thread.read(cx).thread_state {
+            ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => (
+                "Gemini CLI Thread".to_string(),
+                thread.read(cx).to_markdown(cx),
+            ),
+            ThreadState::Loading { .. } | ThreadState::LoadError(..) => return Task::ready(Ok(())),
+        };
+
+        window.spawn(cx, async move |cx| {
+            let markdown_language = markdown_language_task.await?;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let project = workspace.project().clone();
+
+                if !project.read(cx).is_local() {
+                    anyhow::bail!("failed to open active thread as markdown in remote project");
+                }
+
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
+                });
+                let buffer = cx.new(|cx| {
+                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
+                });
+
+                workspace.add_item_to_active_pane(
+                    Box::new(cx.new(|cx| {
+                        let mut editor =
+                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                        editor.set_breadcrumb_header(thread_summary);
+                        editor
+                    })),
+                    None,
+                    true,
+                    window,
+                    cx,
+                );
+
+                anyhow::Ok(())
+            })??;
+            anyhow::Ok(())
+        })
+    }
 }
 
 impl Focusable for AcpThreadView {
