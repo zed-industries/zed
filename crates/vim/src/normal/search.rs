@@ -513,7 +513,11 @@ impl Vim {
                 search_bar.update_in(cx, |search_bar, window, cx| {
                     search_bar.select_last_match(window, cx);
                     if replacement.replace_any {
-                        search_bar.replace_all(&Default::default(), window, cx);
+                        if replacement.should_replace_all {
+                            search_bar.replace_all(&Default::default(), window, cx);
+                        } else {
+                            search_bar.replace_next(&Default::default(), window, cx);
+                        }
                     }
                     editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
                     let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
