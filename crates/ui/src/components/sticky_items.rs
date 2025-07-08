@@ -60,8 +60,10 @@ where
 }
 
 struct StickyItemsElement {
-    elements: SmallVec<[AnyElement; 8]>,
-    decorations: SmallVec<[AnyElement; 1]>,
+    drifting_element: Option<AnyElement>,
+    drifting_decoration: Option<AnyElement>,
+    rest_elements: SmallVec<[AnyElement; 8]>,
+    rest_decorations: SmallVec<[AnyElement; 1]>,
 }
 
 impl IntoElement for StickyItemsElement {
@@ -116,11 +118,16 @@ impl Element for StickyItemsElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        // reverse so that last item is bottom most among sticky items
-        for item in self.elements.iter_mut().rev() {
+        if let Some(ref mut drifting_element) = self.drifting_element {
+            drifting_element.paint(window, cx);
+        }
+        if let Some(ref mut drifting_decoration) = self.drifting_decoration {
+            drifting_decoration.paint(window, cx);
+        }
+        for item in self.rest_elements.iter_mut().rev() {
             item.paint(window, cx);
         }
-        for item in self.decorations.iter_mut() {
+        for item in self.rest_decorations.iter_mut() {
             item.paint(window, cx);
         }
     }
@@ -141,99 +148,162 @@ where
         cx: &mut App,
     ) -> AnyElement {
         let entries = (self.compute_fn)(visible_range.clone(), window, cx);
-        let mut elements = SmallVec::new();
-        let mut decorations = SmallVec::new();
 
-        let mut anchor_entry = None;
-        let mut last_item_is_drifting = false;
-        let mut anchor_index = None;
+        let (anchor_entry, last_item_is_drifting, anchor_index) = {
+            let mut anchor_entry = None;
+            let mut last_item_is_drifting = false;
+            let mut anchor_index = None;
 
-        let mut iter = entries.iter().enumerate().peekable();
-        while let Some((ix, current_entry)) = iter.next() {
-            let current_depth = current_entry.depth();
-            let index_in_range = ix;
+            let mut iter = entries.iter().enumerate().peekable();
+            while let Some((ix, current_entry)) = iter.next() {
+                let current_depth = current_entry.depth();
+                let index_in_range = ix;
 
-            if current_depth < index_in_range {
-                anchor_entry = Some(current_entry.clone());
-                break;
-            }
-
-            if let Some(&(_next_ix, next_entry)) = iter.peek() {
-                let next_depth = next_entry.depth();
-
-                if next_depth < current_depth && next_depth < index_in_range {
-                    last_item_is_drifting = true;
-                    anchor_index = Some(visible_range.start + ix);
+                if current_depth < index_in_range {
                     anchor_entry = Some(current_entry.clone());
                     break;
                 }
+
+                if let Some(&(_next_ix, next_entry)) = iter.peek() {
+                    let next_depth = next_entry.depth();
+
+                    if next_depth < current_depth && next_depth < index_in_range {
+                        last_item_is_drifting = true;
+                        anchor_index = Some(visible_range.start + ix);
+                        anchor_entry = Some(current_entry.clone());
+                        break;
+                    }
+                }
             }
-        }
 
-        if let Some(anchor_entry) = anchor_entry {
-            let anchor_depth = anchor_entry.depth();
-            elements = (self.render_fn)(anchor_entry, window, cx);
-            let items_count = elements.len();
+            (anchor_entry, last_item_is_drifting, anchor_index)
+        };
 
-            let indents: SmallVec<[usize; 8]> = elements
+        let Some(anchor_entry) = anchor_entry else {
+            return StickyItemsElement {
+                drifting_element: None,
+                drifting_decoration: None,
+                rest_elements: SmallVec::new(),
+                rest_decorations: SmallVec::new(),
+            }
+            .into_any_element();
+        };
+
+        let anchor_depth = anchor_entry.depth();
+        let mut elements = (self.render_fn)(anchor_entry, window, cx);
+        let items_count = elements.len();
+
+        let indents: SmallVec<[usize; 8]> = {
+            elements
                 .iter()
                 .enumerate()
                 .map(|(ix, _)| anchor_depth.saturating_sub(items_count.saturating_sub(ix)))
-                .collect();
+                .collect()
+        };
+
+        let mut last_decoration_element = None;
+        let mut rest_decoration_elements = SmallVec::new();
+        let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
+        let available_space = size(
+            AvailableSpace::Definite(bounds.size.width),
+            AvailableSpace::Definite(bounds.size.height),
+        );
+
+        if last_item_is_drifting {
+            let (drifting_indent, rest_indents) = if indents.is_empty() {
+                (None, SmallVec::new())
+            } else {
+                let last = indents[indents.len() - 1];
+                let rest: SmallVec<[usize; 8]> =
+                    indents[..indents.len() - 1].iter().copied().collect();
+                (Some(last), rest)
+            };
 
             for decoration in &self.decorations {
-                let origin = bounds.origin - scroll_offset;
-                let s = bounds.size;
+                if let Some(drifting_indent) = drifting_indent {
+                    let drifting_indent_vec: SmallVec<[usize; 8]> =
+                        [drifting_indent].into_iter().collect();
+                    let mut drifting_dec = decoration.as_ref().compute(
+                        &drifting_indent_vec,
+                        decoration_bounds,
+                        scroll_offset,
+                        item_height,
+                        window,
+                        cx,
+                    );
+                    drifting_dec.layout_as_root(available_space, window, cx);
+                    drifting_dec.prepaint_at(bounds.origin, window, cx);
+                    last_decoration_element = Some(drifting_dec);
+                }
 
-                let new_bounds = Bounds::new(origin, s);
-
+                if !rest_indents.is_empty() {
+                    let mut rest_dec = decoration.as_ref().compute(
+                        &rest_indents,
+                        decoration_bounds,
+                        scroll_offset,
+                        item_height,
+                        window,
+                        cx,
+                    );
+                    rest_dec.layout_as_root(available_space, window, cx);
+                    rest_dec.prepaint_at(bounds.origin, window, cx);
+                    rest_decoration_elements.push(rest_dec);
+                }
+            }
+        } else {
+            for decoration in &self.decorations {
                 let mut decoration = decoration.as_ref().compute(
                     &indents,
-                    new_bounds,
+                    decoration_bounds,
                     scroll_offset,
                     item_height,
                     window,
                     cx,
                 );
-                let available_space = size(
-                    AvailableSpace::Definite(bounds.size.width),
-                    AvailableSpace::Definite(bounds.size.height),
-                );
                 decoration.layout_as_root(available_space, window, cx);
                 decoration.prepaint_at(bounds.origin, window, cx);
-                decorations.push(decoration);
-            }
-
-            for (ix, element) in elements.iter_mut().enumerate() {
-                let mut item_y_offset = None;
-                if ix == items_count - 1 && last_item_is_drifting {
-                    if let Some(anchor_index) = anchor_index {
-                        let scroll_top = -scroll_offset.y;
-                        let anchor_top = item_height * anchor_index;
-                        let sticky_area_height = item_height * items_count;
-                        item_y_offset =
-                            Some((anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO));
-                    };
-                }
-
-                let sticky_origin = bounds.origin
-                    + point(
-                        -scroll_offset.x,
-                        -scroll_offset.y + item_height * ix + item_y_offset.unwrap_or(Pixels::ZERO),
-                    );
-
-                let available_space = size(
-                    AvailableSpace::Definite(bounds.size.width),
-                    AvailableSpace::Definite(item_height),
-                );
-                element.layout_as_root(available_space, window, cx);
-                element.prepaint_at(sticky_origin, window, cx);
+                rest_decoration_elements.push(decoration);
             }
         }
 
+        for (ix, element) in elements.iter_mut().enumerate() {
+            let item_y_offset = if ix == items_count - 1 && last_item_is_drifting {
+                anchor_index.map(|anchor_index| {
+                    let scroll_top = -scroll_offset.y;
+                    let anchor_top = item_height * anchor_index;
+                    let sticky_area_height = item_height * items_count;
+                    (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
+                })
+            } else {
+                None
+            };
+
+            let sticky_origin = bounds.origin
+                + point(
+                    -scroll_offset.x,
+                    -scroll_offset.y + item_height * ix + item_y_offset.unwrap_or(Pixels::ZERO),
+                );
+
+            let available_space = size(
+                AvailableSpace::Definite(bounds.size.width),
+                AvailableSpace::Definite(item_height),
+            );
+            element.layout_as_root(available_space, window, cx);
+            element.prepaint_at(sticky_origin, window, cx);
+        }
+
+        let (drifting_element, rest_elements) = if last_item_is_drifting && !elements.is_empty() {
+            let last = elements.pop().unwrap();
+            (Some(last), elements)
+        } else {
+            (None, elements)
+        };
+
         StickyItemsElement {
-            elements,
-            decorations,
+            drifting_element,
+            drifting_decoration: last_decoration_element,
+            rest_elements,
+            rest_decorations: rest_decoration_elements,
         }
         .into_any_element()
     }
