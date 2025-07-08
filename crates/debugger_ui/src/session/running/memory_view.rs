@@ -3,7 +3,7 @@ use std::{sync::LazyLock, time::Duration};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task,
-    TextStyle, UniformList, list, uniform_list,
+    TextStyle, UniformList, UniformListScrollHandle, list, uniform_list,
 };
 use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
@@ -17,7 +17,7 @@ use ui::{
 use util::ResultExt;
 
 pub(crate) struct MemoryView {
-    list_state: ListState,
+    scroll_handle: UniformListScrollHandle,
     scroll_state: ScrollbarState,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
@@ -114,33 +114,13 @@ impl MemoryView {
         cx: &mut Context<Self>,
     ) -> Self {
         let view_state = ViewState::new(0, 16);
-        let state = ListState::new(
-            view_state.row_count() as usize,
-            gpui::ListAlignment::Top,
-            px(100.),
-            {
-                let weak = cx.weak_entity();
-                move |ix, _, cx| render_single_memory_view_line(&[], ix as u64, weak.clone(), cx)
-            },
-        );
+        let scroll_handle = UniformListScrollHandle::default();
 
-        state.set_scroll_handler({
-            let weak = cx.weak_entity();
-            move |range, _, cx| {
-                _ = weak.update(cx, |this, _| {
-                    if range.visible_range.start == 0 {
-                        this.view_state.schedule_scroll_up();
-                    } else if range.visible_range.end as u64 == this.view_state.row_count() + 1 {
-                        this.view_state.schedule_scroll_down();
-                    }
-                });
-            }
-        });
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
-        let scroll_state = ScrollbarState::new(state.clone());
+        let scroll_state = ScrollbarState::new(scroll_handle.clone());
         Self {
             scroll_state,
-            list_state: state,
+            scroll_handle,
             show_scrollbar: false,
             hide_scrollbar_task: None,
             focus_handle: cx.focus_handle(),
@@ -231,6 +211,7 @@ impl MemoryView {
                 rows
             },
         )
+        .track_scroll(self.scroll_handle.clone())
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         EditorElement::new(
@@ -472,7 +453,7 @@ impl Render for MemoryView {
                                             .as_ref()
                                             .is_some_and(|selection| selection.is_dragging())
                                         {
-                                            this.list_state.scroll_by(px(-100.));
+                                            // this.scroll_handle..scroll_by(px(-100.));
                                         }
                                     });
                                     // style
@@ -497,7 +478,7 @@ impl Render for MemoryView {
                                         .as_ref()
                                         .is_some_and(|selection| selection.is_dragging())
                                     {
-                                        this.list_state.scroll_by(px(100.));
+                                        // this.list_state.scroll_by(px(100.));
                                     }
                                 });
                                 // style
