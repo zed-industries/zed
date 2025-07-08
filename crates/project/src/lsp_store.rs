@@ -68,7 +68,6 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
-use uuid::Uuid;
 
 use rpc::{
     AnyProtoClient,
@@ -11465,6 +11464,7 @@ fn lsp_workspace_diagnostics_refresh(
     let workspace_query_language_server = cx.spawn(async move |lsp_store, cx| {
         let mut attempts = 0;
         let max_attempts = 50;
+        let mut requests = 0;
 
         loop {
             let Some(()) = rx.recv().await else {
@@ -11472,6 +11472,7 @@ fn lsp_workspace_diagnostics_refresh(
             };
 
             'request: loop {
+                requests += 1;
                 if attempts > max_attempts {
                     log::error!(
                         "Failed to pull workspace diagnostics {max_attempts} times, aborting"
@@ -11500,7 +11501,7 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = Uuid::new_v4().to_string();
+                let token = format!("workspace-diagnostic-{}-{}", server.server_id(), requests);
 
                 let response_result = server
                     .request_no_timeout::<lsp::WorkspaceDiagnosticRequest>(
