@@ -8,6 +8,11 @@ on:
     tags:
       - "nightly"
 
+  # todo: remove
+  pull_request:
+    branches:
+      - "**"
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -17,7 +22,7 @@ jobs:
   style:
     timeout-minutes: 60
     name: Check formatting and Clippy lints
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - macOS
@@ -37,7 +42,7 @@ jobs:
   tests:
     timeout-minutes: 60
     name: Run tests
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - macOS
@@ -95,7 +100,7 @@ jobs:
   bundle-mac:
     timeout-minutes: 60
     name: Create a macOS bundle
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - bundle
@@ -136,7 +141,7 @@ jobs:
   bundle-linux-x86:
     timeout-minutes: 60
     name: Create a Linux *.tar.gz bundle for x86
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     needs: tests
@@ -175,7 +180,7 @@ jobs:
   bundle-linux-arm:
     timeout-minutes: 60
     name: Create a Linux *.tar.gz bundle for ARM
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     needs: tests
@@ -210,7 +215,7 @@ jobs:
 
   freebsd:
     timeout-minutes: 60
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
     env:
@@ -254,6 +259,7 @@ jobs:
 
   bundle-nix:
     name: Build and cache Nix package
+    if: false
     needs: tests
     secrets: inherit
     uses: ./.github/workflows/nix.yml
@@ -311,7 +317,7 @@ jobs:
 
   update-nightly-tag:
     name: Update nightly tag
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     needs:
       - bundle-mac
