@@ -16,7 +16,7 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
-                    let Some(range) = object.range(map, selection.clone(), around, None) else {
+                    let Some(range) = object.helix_range(map, selection.clone(), around) else {
                         return;
                     };
 
