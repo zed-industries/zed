@@ -8,11 +8,6 @@ on:
     tags:
       - "nightly"
 
-  # todo: remove
-  pull_request:
-    branches:
-      - "**"
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
