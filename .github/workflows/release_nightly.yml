@@ -80,7 +80,7 @@ jobs:
 
       - name: Clean CI config file
         if: always()
-        run: Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
+        run: Remove-Item -Path "./../.cargo" -Force
 
   bundle-mac:
     timeout-minutes: 60
