@@ -189,7 +189,6 @@ members = [
     "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
-    "extensions/perplexity",
     "extensions/proto",
     "extensions/ruff",
     "extensions/slash-commands-example",
