@@ -274,12 +274,14 @@ impl Editor {
         start_row: DisplayRow,
         viewport_width: Pixels,
         scroll_width: Pixels,
-        max_glyph_width: Pixels,
+        em_advance: Pixels,
         layouts: &[LineWithInvisibles],
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
+        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
 
         let mut target_left;
         let mut target_right;
@@ -295,16 +297,17 @@ impl Editor {
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
-                    let start_column = head.column().saturating_sub(3);
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                    let start_column = head.column();
+                    let end_column = cmp::min(display_map.line_len(head.row()), head.column());
                     target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize),
+                            .x_for_index(start_column as usize)
+                            + self.gutter_dimensions.margin,
                     );
                     target_right = target_right.max(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(end_column as usize)
-                            + max_glyph_width,
+                            + em_advance,
                     );
                 }
             }
@@ -319,14 +322,16 @@ impl Editor {
             return false;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x * max_glyph_width;
+        let scroll_left = self.scroll_manager.anchor.offset.x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
+            scroll_position.x = target_left / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx);
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
+            scroll_position.x = (target_right - viewport_width) / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx);
             true
         } else {
             false
