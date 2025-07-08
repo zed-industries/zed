@@ -50,8 +50,4 @@ if (-Not [string]::IsNullOrWhiteSpace($trace)) {
     }
 }
 
-$VerbosePreference = 'Continue'
-$DebugPreference = 'Continue'
-Set-PSDebug -Trace 2
-
 Invoke-TrustedSigning @params
