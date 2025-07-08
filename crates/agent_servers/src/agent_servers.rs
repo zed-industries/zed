@@ -38,14 +38,14 @@ pub struct AgentServerCommand {
 
 pub struct Gemini;
 
-pub trait AgentServer {
+pub trait AgentServer: Send {
     fn command(
         &self,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<AgentServerCommand>>;
 
-    fn version_supported(&self, command: &AgentServerCommand) -> impl Future<Output = bool>;
+    fn version_supported(&self, command: &AgentServerCommand) -> impl Future<Output = bool> + Send;
 }
 
 const GEMINI_ACP_ARG: &str = "--acp";

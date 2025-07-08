@@ -3,6 +3,7 @@ use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
+use futures::future::Shared;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
@@ -10,6 +11,7 @@ use markdown::Markdown;
 use project::Project;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
+use std::time::Duration;
 use std::{
     fmt::Display,
     mem,
@@ -379,7 +381,7 @@ pub struct AcpThread {
     project: Entity<Project>,
     send_task: Option<Task<()>>,
     connection: Arc<acp::AgentConnection>,
-    load_error: Option<LoadError>,
+    child_status: Option<Task<Result<()>>>,
     _handler_task: Task<()>,
     _io_task: Task<()>,
 }
@@ -431,11 +433,6 @@ impl AcpThread {
             Err(e) => return Err(anyhow!(LoadError::Unavailable(format!("{e}").into()))),
         };
 
-        // todo! get this out of the happy path
-        if !server.version_supported(&command).await {
-            return Err(anyhow!(LoadError::Unsupported));
-        }
-
         let mut child = util::command::new_smol_command(&command.path)
             .args(command.args.iter())
             .current_dir(root_dir)
@@ -443,8 +440,7 @@ impl AcpThread {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .spawn()?;
 
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
@@ -456,19 +452,21 @@ impl AcpThread {
                 stdout,
             );
 
-            let io_task = cx.spawn(async move |this, cx| {
-                cx.background_spawn(async move {
-                    io_fut.await.log_err();
-                })
-                .await;
+            let io_task = cx.background_spawn(async move {
+                io_fut.await.log_err();
+            });
 
-                if let Some(result) = child.status().await.log_err()
-                    && !result.success()
-                {
-                    this.update(cx, |this, _| {
-                        this.load_error = Some(LoadError::Exited(result.code().unwrap_or(-127)))
-                    })
-                    .log_err();
+            let child_status = cx.background_spawn(async move {
+                match child.status().await {
+                    Err(e) => Err(anyhow!(e)),
+                    Ok(result) if result.success() => Ok(()),
+                    Ok(result) => {
+                        if !server.version_supported(&command).await {
+                            Err(anyhow!(LoadError::Unsupported))
+                        } else {
+                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
+                        }
+                    }
                 }
             });
 
@@ -479,7 +477,7 @@ impl AcpThread {
                 project,
                 send_task: None,
                 connection: Arc::new(connection),
-                load_error: None,
+                child_status: Some(child_status),
                 _handler_task: cx.foreground_executor().spawn(handler_fut),
                 _io_task: io_task,
             }
@@ -513,7 +511,7 @@ impl AcpThread {
             project,
             send_task: None,
             connection: Arc::new(connection),
-            load_error: None,
+            child_status: None,
             _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         }
@@ -769,22 +767,12 @@ impl AcpThread {
 
     pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
         let connection = self.connection.clone();
-        async move {
-            connection
-                .request(acp::InitializeParams)
-                .await
-                .map_err(to_anyhow)
-        }
+        async move { connection.request(acp::InitializeParams).await }
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
         let connection = self.connection.clone();
-        async move {
-            connection
-                .request(acp::AuthenticateParams)
-                .await
-                .map_err(to_anyhow)
-        }
+        async move { connection.request(acp::AuthenticateParams).await }
     }
 
     pub fn send(
@@ -814,13 +802,7 @@ impl AcpThread {
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
 
-        async move {
-            match rx.await {
-                Ok(Err(e)) => Err(to_anyhow(e)),
-                _ => Ok(()),
-            }
-        }
-        .boxed()
+        async move { rx.await? }.boxed()
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -828,10 +810,7 @@ impl AcpThread {
 
         if self.send_task.take().is_some() {
             cx.spawn(async move |this, cx| {
-                agent
-                    .request(acp::CancelSendMessageParams)
-                    .await
-                    .map_err(to_anyhow)?;
+                agent.request(acp::CancelSendMessageParams).await?;
 
                 this.update(cx, |this, _cx| {
                     for entry in this.entries.iter_mut() {
@@ -866,8 +845,8 @@ impl AcpThread {
         }
     }
 
-    pub fn load_error(&self) -> Option<&LoadError> {
-        self.load_error.as_ref()
+    pub fn child_status(&mut self) -> Option<Task<Result<()>>> {
+        self.child_status.take()
     }
 
     #[cfg(test)]
@@ -894,16 +873,6 @@ impl AcpThread {
         }
         result
     }
-}
-
-#[track_caller]
-fn to_anyhow(e: acp::Error) -> anyhow::Error {
-    log::error!(
-        "failed to send message: {code}: {message}",
-        code = e.code,
-        message = e.message
-    );
-    anyhow::anyhow!(e.message)
 }
 
 struct AcpClientDelegate {

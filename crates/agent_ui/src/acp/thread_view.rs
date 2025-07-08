@@ -9,6 +9,7 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
     EditorStyle, MinimapVisibility, MultiBuffer,
 };
+use futures::channel::oneshot;
 use gpui::{
     Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, Focusable, Hsla,
     Length, ListState, SharedString, StyleRefinement, Subscription, TextStyle, TextStyleRefinement,
@@ -168,7 +169,7 @@ impl AcpThreadView {
                 Ok(thread) => thread,
                 Err(err) => {
                     this.update(cx, |this, cx| {
-                        this.handle_load_error(err, None, cx);
+                        this.handle_load_error(err, cx);
                         cx.notify();
                     })
                     .log_err();
@@ -184,7 +185,25 @@ impl AcpThreadView {
             };
 
             let result = match init_response.await {
-                Err(e) => Err(e),
+                Err(e) => {
+                    let mut cx = cx.clone();
+                    if e.downcast_ref::<oneshot::Canceled>().is_some() {
+                        let child_status = thread
+                            .update(&mut cx, |thread, _| thread.child_status())
+                            .ok()
+                            .flatten();
+                        if let Some(child_status) = child_status {
+                            match child_status.await {
+                                Ok(_) => Err(e),
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            Err(e)
+                        }
+                    } else {
+                        Err(e)
+                    }
+                }
                 Ok(response) => {
                     if !response.is_authenticated {
                         this.update(cx, |this, _| {
@@ -212,7 +231,7 @@ impl AcpThreadView {
                         cx.notify();
                     }
                     Err(err) => {
-                        this.handle_load_error(err, Some(thread), cx);
+                        this.handle_load_error(err, cx);
                     }
                 };
             })
@@ -222,15 +241,8 @@ impl AcpThreadView {
         ThreadState::Loading { _task: load_task }
     }
 
-    fn handle_load_error(
-        &mut self,
-        err: anyhow::Error,
-        thread: Option<Entity<AcpThread>>,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_load_error(&mut self, err: anyhow::Error, cx: &mut Context<Self>) {
         if let Some(load_err) = err.downcast_ref::<LoadError>() {
-            self.thread_state = ThreadState::LoadError(load_err.clone());
-        } else if let Some(load_err) = thread.and_then(|thread| thread.read(cx).load_error()) {
             self.thread_state = ThreadState::LoadError(load_err.clone());
         } else {
             self.thread_state = ThreadState::LoadError(LoadError::Other(err.to_string().into()))
