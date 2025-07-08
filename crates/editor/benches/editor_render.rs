@@ -62,7 +62,7 @@ pub fn benches() {
     criterion.bench_with_input(
         BenchmarkId::new("editor_render", "TestAppContext"),
         &cx,
-        |bencher, cx| editor_render(bencher, cx),
+        editor_render,
     );
 }
 

@@ -1139,16 +1139,13 @@ mod tests {
 
         let mut all_tab_stops = Vec::new();
         let mut byte_offset = 0;
-        let mut char_offset = 0;
-        for ch in buffer.read(cx).snapshot(cx).text().chars() {
-            // byte_offset += ch.len_utf8();
+        for (offset, ch) in buffer.read(cx).snapshot(cx).text().char_indices() {
             byte_offset += ch.len_utf8() as u32;
-            char_offset += 1;
 
             if ch == '\t' {
                 all_tab_stops.push(TabStop {
                     byte_offset,
-                    char_offset,
+                    char_offset: offset as u32 + 1,
                 });
             }
         }
@@ -1177,16 +1174,13 @@ mod tests {
 
         let mut expected_tab_stops = Vec::new();
         let mut byte_offset = 0;
-        let mut char_offset = 0;
-        for ch in buffer.read(cx).snapshot(cx).text().chars() {
-            // byte_offset += ch.len_utf8();
+        for (offset, ch) in buffer.read(cx).snapshot(cx).text().char_indices() {
             byte_offset += ch.len_utf8() as u32;
-            char_offset += 1;
 
             if ch == '\t' {
                 expected_tab_stops.push(TabStop {
                     byte_offset,
-                    char_offset,
+                    char_offset: offset as u32 + 1,
                 });
             }
         }
@@ -1306,15 +1300,13 @@ mod tests {
 
         let mut expected_tab_stops = Vec::new();
         let mut byte_offset = 0;
-        let mut char_offset = 0;
-        for ch in fold_snapshot.chars_at(FoldPoint::new(0, 0)) {
+        for (i, ch) in fold_snapshot.chars_at(FoldPoint::new(0, 0)).enumerate() {
             byte_offset += ch.len_utf8() as u32;
-            char_offset += 1;
 
             if ch == '\t' {
                 expected_tab_stops.push(TabStop {
                     byte_offset,
-                    char_offset,
+                    char_offset: i as u32 + 1,
                 });
             }
         }
@@ -1346,17 +1338,14 @@ mod tests {
         // First, collect all expected tab positions
         let mut all_tab_stops = Vec::new();
         let mut byte_offset = 0;
-        let mut char_offset = 0;
-        for ch in buffer_snapshot.text().chars() {
+        for (i, ch) in buffer_snapshot.text().chars().enumerate() {
             byte_offset += ch.len_utf8() as u32;
-            char_offset += 1;
             if ch == '\t' {
                 all_tab_stops.push(TabStop {
                     byte_offset,
-                    char_offset,
+                    char_offset: i as u32 + 1,
                 });
             }
-            // byte_offset += ch.len_utf8();
         }
 
         // Test with various distances
@@ -1451,8 +1440,7 @@ impl<'a> TabStopCursor<'a> {
 
     /// distance: length to move forward while searching for the next tab stop
     fn seek(&mut self, distance: u32) -> Option<TabStop> {
-        if distance <= 0 {
-            debug_assert!(distance == 0, "Can't seek backwards: {distance}");
+        if distance == 0 {
             return None;
         }
 
