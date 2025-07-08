@@ -419,7 +419,6 @@ pub struct AcpThread {
     send_task: Option<Task<()>>,
     connection: Arc<acp::AgentConnection>,
     child_status: Option<Task<Result<()>>>,
-    _handler_task: Task<()>,
     _io_task: Task<()>,
 }
 
@@ -487,10 +486,13 @@ impl AcpThread {
         let stdout = child.stdout.take().unwrap();
 
         cx.new(|cx| {
-            let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+            let foreground_executor = cx.foreground_executor().clone();
+
+            let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
                 AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
                 stdin,
                 stdout,
+                move |fut| foreground_executor.spawn(fut).detach(),
             );
 
             let io_task = cx.background_spawn(async move {
@@ -522,7 +524,6 @@ impl AcpThread {
                 send_task: None,
                 connection: Arc::new(connection),
                 child_status: Some(child_status),
-                _handler_task: cx.foreground_executor().spawn(handler_fut),
                 _io_task: io_task,
             }
         })
@@ -535,10 +536,15 @@ impl AcpThread {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (connection, handler_fut, io_fut) = acp::AgentConnection::connect_to_agent(
+        let foreground_executor = cx.foreground_executor().clone();
+
+        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
             AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
             stdin,
             stdout,
+            move |fut| {
+                foreground_executor.spawn(fut).detach();
+            },
         );
 
         let io_task = cx.background_spawn({
@@ -554,7 +560,6 @@ impl AcpThread {
             send_task: None,
             connection: Arc::new(connection),
             child_status: None,
-            _handler_task: cx.foreground_executor().spawn(handler_fut),
             _io_task: io_task,
         }
     }
@@ -750,7 +755,6 @@ impl AcpThread {
                 anyhow::bail!("Tool call was rejected and therefore can't be updated")
             }
             ToolCallStatus::Canceled => {
-                // todo! test this case with fake server
                 call.status = ToolCallStatus::Allowed { status: new_status };
             }
         }
@@ -1003,7 +1007,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{future::BoxedLocal, stream::StreamExt as _};
-    use std::{env, path::Path, rc::Rc, time::Duration};
+    use std::{cell::RefCell, env, path::Path, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1074,6 +1078,106 @@ mod tests {
 
             "#}
         );
+    }
+
+    #[gpui::test]
+    async fn test_succeeding_canceled_toolcall(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (thread, fake_server) = fake_acp_thread(project, cx);
+
+        let (end_turn_tx, end_turn_rx) = oneshot::channel::<()>();
+
+        let tool_call_id = Rc::new(RefCell::new(None));
+        let end_turn_rx = Rc::new(RefCell::new(Some(end_turn_rx)));
+        fake_server.update(cx, |fake_server, _| {
+            let tool_call_id = tool_call_id.clone();
+            fake_server.on_user_message(move |_, server, mut cx| {
+                let end_turn_rx = end_turn_rx.clone();
+                let tool_call_id = tool_call_id.clone();
+                async move {
+                    let tool_call_result = server
+                        .update(&mut cx, |server, _| {
+                            server.send_to_zed(acp::PushToolCallParams {
+                                label: "Fetch".to_string(),
+                                icon: acp::Icon::Globe,
+                                content: None,
+                            })
+                        })?
+                        .await
+                        .unwrap();
+                    *tool_call_id.clone().borrow_mut() = Some(tool_call_result.id);
+                    end_turn_rx.take().unwrap().await.ok();
+
+                    Ok(())
+                }
+            })
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.send("Fetch https://example.com", cx)
+        });
+
+        run_until_first_tool_call(&thread, cx).await;
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.entries[1],
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed {
+                        status: acp::ToolCallStatus::Running,
+                        ..
+                    },
+                    ..
+                })
+            ));
+        });
+
+        cx.run_until_parked();
+
+        thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                &thread.entries[1],
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::Canceled,
+                    ..
+                })
+            ));
+        });
+
+        fake_server
+            .update(cx, |fake_server, _| {
+                fake_server.send_to_zed(acp::UpdateToolCallParams {
+                    tool_call_id: tool_call_id.borrow().unwrap(),
+                    status: acp::ToolCallStatus::Finished,
+                    content: None,
+                })
+            })
+            .await
+            .unwrap();
+
+        drop(end_turn_tx);
+        request.await.unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.entries[1],
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed {
+                        status: acp::ToolCallStatus::Finished,
+                        ..
+                    },
+                    ..
+                })
+            ));
+        });
     }
 
     #[gpui::test]
@@ -1416,7 +1520,6 @@ mod tests {
 
     pub struct FakeAcpServer {
         connection: acp::ClientConnection,
-        _handler_task: Task<()>,
         _io_task: Task<()>,
         on_user_message: Option<
             Rc<
@@ -1471,13 +1574,19 @@ mod tests {
                 server: cx.entity(),
                 cx: cx.to_async(),
             };
+            let foreground_executor = cx.foreground_executor().clone();
 
-            let (connection, handler_fut, io_fut) =
-                acp::ClientConnection::connect_to_client(agent.clone(), stdout, stdin);
+            let (connection, io_fut) = acp::ClientConnection::connect_to_client(
+                agent.clone(),
+                stdout,
+                stdin,
+                move |fut| {
+                    foreground_executor.spawn(fut).detach();
+                },
+            );
             FakeAcpServer {
                 connection: connection,
                 on_user_message: None,
-                _handler_task: cx.foreground_executor().spawn(handler_fut),
                 _io_task: cx.background_spawn(async move {
                     io_fut.await.log_err();
                 }),

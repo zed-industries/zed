@@ -1402,9 +1402,7 @@ impl AgentPanel {
                     }
                 })
             }
-            ActiveView::AcpThread { .. } => {
-                // todo! push history entry
-            }
+            ActiveView::AcpThread { .. } => {}
             ActiveView::History | ActiveView::Configuration => {}
         }
 
