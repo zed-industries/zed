@@ -170,6 +170,21 @@ function BuildInstaller {
             # TODO: Update this value
             $appAppxFullName = "ZedIndustries.Zed.Nightly_1.0.0.0_neutral__jr6ek54py7bac"
         }
+        "dev" {
+            $appId = "{{8357632E-24A4-4F32-BA97-E575B4D1FE5D}"
+            $appIconName = "app-icon-nightly"
+            $appName = "Zed Editor Dev"
+            $appDisplayName = "Zed Editor Dev"
+            $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-dev"
+            # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
+            $appMutex = "Zed-Editor-Dev-Instance-Mutex"
+            $appExeName = "Zed"
+            $regValueName = "ZedEditorDev"
+            $appUserId = "ZedIndustries.Zed.Dev"
+            $appShellNameShort = "Z&ed Editor Dev"
+            # TODO: Update this value
+            $appAppxFullName = "ZedIndustries.Zed.Dev_1.0.0.0_neutral__jr6ek54py7bac"
+        }
         default {
             Write-Error "can't bundle installer for $channel."
             exit 1
