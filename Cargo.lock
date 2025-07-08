@@ -20,6 +20,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
+ "itertools 0.14.0",
  "language",
  "log",
  "markdown",

@@ -6,6 +6,7 @@ use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use itertools::Itertools;
 use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
 use markdown::Markdown;
 use project::Project;
@@ -47,6 +48,10 @@ impl UserMessage {
                 .new(|cx| Markdown::new(md_source.into(), Some(language_registry), None, cx)),
         }
     }
+
+    fn to_markdown(&self, cx: &App) -> String {
+        format!("## User\n\n{}\n\n", self.content.read(cx).source())
+    }
 }
 
 #[derive(Debug)]
@@ -83,11 +88,14 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    pub fn to_string(&self, cx: &App) -> String {
-        self.chunks
-            .iter()
-            .map(|chunk| chunk.to_string(cx))
-            .collect()
+    fn to_markdown(&self, cx: &App) -> String {
+        format!(
+            "## Assistant\n\n{}\n\n",
+            self.chunks
+                .iter()
+                .map(|chunk| chunk.to_markdown(cx))
+                .join("\n")
+        )
     }
 }
 
@@ -121,15 +129,11 @@ impl AssistantMessageChunk {
         }
     }
 
-    pub fn to_string(&self, cx: &App) -> String {
+    fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::Text { chunk } => chunk.read(cx).source().to_string(),
             Self::Thought { chunk } => {
-                let mut result = String::new();
-                result.push_str("<thinking>\n");
-                result.push_str(chunk.read(cx).source());
-                result.push_str("\n</thinking>");
-                result
+                format!("<thinking>\n{}\n</thinking>", chunk.read(cx).source())
             }
         }
     }
@@ -142,6 +146,16 @@ pub enum AgentThreadEntry {
     ToolCall(ToolCall),
 }
 
+impl AgentThreadEntry {
+    fn to_markdown(&self, cx: &App) -> String {
+        match self {
+            Self::UserMessage(message) => message.to_markdown(cx),
+            Self::AssistantMessage(message) => message.to_markdown(cx),
+            Self::ToolCall(too_call) => too_call.to_markdown(cx),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ToolCall {
     pub id: acp::ToolCallId,
@@ -149,6 +163,21 @@ pub struct ToolCall {
     pub icon: IconName,
     pub content: Option<ToolCallContent>,
     pub status: ToolCallStatus,
+}
+
+impl ToolCall {
+    fn to_markdown(&self, cx: &App) -> String {
+        let mut markdown = format!(
+            "**Tool Call: {}**\nStatus: {}\n\n",
+            self.label.read(cx).source(),
+            self.status
+        );
+        if let Some(content) = &self.content {
+            markdown.push_str(content.to_markdown(cx).as_str());
+            markdown.push_str("\n\n");
+        }
+        markdown
+    }
 }
 
 #[derive(Debug)]
@@ -162,6 +191,25 @@ pub enum ToolCallStatus {
     },
     Rejected,
     Canceled,
+}
+
+impl Display for ToolCallStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
+                ToolCallStatus::Allowed { status } => match status {
+                    acp::ToolCallStatus::Running => "Running",
+                    acp::ToolCallStatus::Finished => "Finished",
+                    acp::ToolCallStatus::Error => "Error",
+                },
+                ToolCallStatus::Rejected => "Rejected",
+                ToolCallStatus::Canceled => "Canceled",
+            }
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -262,6 +310,13 @@ impl ToolCallContent {
             },
         }
     }
+
+    fn to_markdown(&self, cx: &App) -> String {
+        match self {
+            Self::Markdown { markdown } => markdown.read(cx).source().to_string(),
+            Self::Diff { diff } => diff.to_markdown(cx),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -343,6 +398,17 @@ impl Diff {
             path,
             _task: task,
         }
+    }
+
+    fn to_markdown(&self, cx: &App) -> String {
+        let buffer_text = self
+            .multibuffer
+            .read(cx)
+            .all_buffers()
+            .iter()
+            .map(|buffer| buffer.read(cx).text())
+            .join("\n");
+        format!("Diff: {}\n```\n{}\n```\n", self.path.display(), buffer_text)
     }
 }
 
@@ -807,29 +873,8 @@ impl AcpThread {
         self.child_status.take()
     }
 
-    #[cfg(test)]
-    pub fn to_string(&self, cx: &App) -> String {
-        let mut result = String::new();
-        for entry in &self.entries {
-            match entry {
-                AgentThreadEntry::UserMessage(user_message) => {
-                    result.push_str("# User\n");
-                    result.push_str(user_message.content.read(cx).source());
-                    result.push('\n');
-                }
-                AgentThreadEntry::AssistantMessage(assistant_message) => {
-                    result.push_str("# Assistant\n");
-                    result.push_str(&assistant_message.to_string(cx));
-                    result.push('\n');
-                }
-                AgentThreadEntry::ToolCall(tool_call) => {
-                    result.push_str("# Tool Call\n");
-                    result.push_str(&format!("Tool: {}", tool_call.label.read(cx).source()));
-                    result.push('\n');
-                }
-            }
-        }
-        result
+    pub fn to_markdown(&self, cx: &App) -> String {
+        self.entries.iter().map(|e| e.to_markdown(cx)).collect()
     }
 }
 
@@ -1003,16 +1048,20 @@ mod tests {
             .await
             .unwrap();
 
-        let output = thread.read_with(cx, |thread, cx| thread.to_string(cx));
+        let output = thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
         assert_eq!(
             output,
             indoc! {r#"
-            # User
+            ## User
+
             Hello from Zed!
-            # Assistant
+
+            ## Assistant
+
             <thinking>
             Thinking hard!
             </thinking>
+
             "#}
         );
     }
@@ -1090,9 +1139,9 @@ mod tests {
                 panic!("Expected AssistantMessage")
             };
             assert!(
-                assistant_message.to_string(cx).contains("Hello, world!"),
+                assistant_message.to_markdown(cx).contains("Hello, world!"),
                 "unexpected assistant message: {:?}",
-                assistant_message.to_string(cx)
+                assistant_message.to_markdown(cx)
             );
         });
     }
