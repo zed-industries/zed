@@ -2113,7 +2113,6 @@ impl SshRemoteConnection {
         let Some(triple) = self.ssh_platform.triple() else {
             anyhow::bail!("can't cross compile for: {:?}", self.ssh_platform);
         };
-        smol::fs::create_dir_all("target/remote_server").await?;
 
         if build_remote_server.contains("cross") {
             #[cfg(target_os = "windows")]
