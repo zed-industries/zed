@@ -2887,6 +2887,12 @@ impl PhysicalPixels<i32> {
         PhysicalPixels(self.0 as f32)
     }
 
+    /// Returns the amount of logical pixels that this amount of physical pixels corresponds to,
+    /// with a given scale factor.
+    pub fn to_logical(self, scale_factor: f32) -> Pixels {
+        self.unquantize().to_logical(scale_factor)
+    }
+
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
     ///
     /// This function is useful when working with graphical data that needs to be stored in a buffer,
@@ -2955,6 +2961,12 @@ impl PhysicalPixels<f32> {
     pub fn quantize(self) -> PhysicalPixels<i32> {
         debug_assert!(i32::MIN as f32 <= self.0 && self.0 <= i32::MAX as f32);
         PhysicalPixels(self.0 as i32)
+    }
+
+    /// Returns the amount of logical pixels that this amount of physical pixels corresponds to,
+    /// with a given scale factor.
+    pub fn to_logical(self, scale_factor: f32) -> Pixels {
+        px(self.0 / scale_factor)
     }
 }
 
