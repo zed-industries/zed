@@ -538,6 +538,8 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "net",
+ "parking_lot",
  "smol",
  "tempfile",
  "util",
@@ -10232,6 +10234,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12535,6 +12549,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -17035,6 +17050,12 @@ dependencies = [
  "thiserror 2.0.12",
  "utf-8",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
 
 [[package]]
 name = "typeid"

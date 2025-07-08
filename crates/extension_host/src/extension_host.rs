@@ -54,7 +54,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
-use util::ResultExt;
+use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -1689,6 +1689,7 @@ impl ExtensionStore {
                     .request(proto::SyncExtensions { extensions })
             })?
             .await?;
+        let path_style = client.read_with(cx, |client, _| client.path_style())?;
 
         for missing_extension in response.missing_extensions.into_iter() {
             let tmp_dir = tempfile::tempdir()?;
@@ -1701,7 +1702,10 @@ impl ExtensionStore {
                 )
             })?
             .await?;
-            let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
+            let dest_dir = RemotePathBuf::new(
+                PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id),
+                path_style,
+            );
             log::info!("Uploading extension {}", missing_extension.clone().id);
 
             client
@@ -1718,7 +1722,7 @@ impl ExtensionStore {
             client
                 .update(cx, |client, _cx| {
                     client.proto_client().request(proto::InstallExtension {
-                        tmp_dir: dest_dir.to_string_lossy().to_string(),
+                        tmp_dir: dest_dir.to_proto(),
                         extension: Some(missing_extension),
                     })
                 })?

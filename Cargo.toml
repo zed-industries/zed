@@ -99,6 +99,7 @@ members = [
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/net",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
@@ -311,6 +312,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
@@ -660,6 +662,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
