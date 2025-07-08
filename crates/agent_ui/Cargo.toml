@@ -83,7 +83,6 @@ terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
-thiserror.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
@@ -93,7 +92,6 @@ uuid.workspace = true
 watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-which.workspace = true
 zed_actions.workspace = true
 zed_llm_client.workspace = true
 

@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 use ui::{App, IconName};
-use util::{ResultExt, debug_panic};
+use util::ResultExt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
@@ -724,8 +724,8 @@ impl AcpThread {
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
             respond_tx.send(outcome).log_err();
-        } else {
-            debug_panic!("tried to authorize an already authorized tool call");
+        } else if cfg!(debug_assertions) {
+            panic!("tried to authorize an already authorized tool call");
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -772,7 +772,9 @@ impl AcpThread {
         match entry {
             Some(AgentThreadEntry::ToolCall(call)) if call.id == id => Some((id.0 as usize, call)),
             _ => {
-                debug_panic!("entry is not a tool call");
+                if cfg!(debug_assertions) {
+                    panic!("entry is not a tool call");
+                }
                 None
             }
         }
