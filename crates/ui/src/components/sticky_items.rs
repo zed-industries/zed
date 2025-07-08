@@ -214,111 +214,93 @@ where
             AvailableSpace::Definite(bounds.size.height),
         );
 
-        if last_item_is_drifting {
-            let (drifting_indent, rest_indents) = if indents.is_empty() {
-                (None, SmallVec::new())
-            } else {
-                let last = indents[indents.len() - 1];
-                let rest: SmallVec<[usize; 8]> =
-                    indents[..indents.len() - 1].iter().copied().collect();
-                (Some(last), rest)
-            };
-
-            for decoration in &self.decorations {
-                if let Some(drifting_indent) = drifting_indent {
-                    let drifting_indent_vec: SmallVec<[usize; 8]> =
-                        [drifting_indent].into_iter().collect();
-
-                    let item_y_offset = {
-                        let scroll_top = -scroll_offset.y;
-                        let anchor_top = item_height * sticky_anchor.index;
-                        let sticky_area_height = item_height * items_count;
-                        (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
-                    };
-
-                    let sticky_origin = bounds.origin - scroll_offset
-                        + point(px(0.), item_height * rest_indents.len() + item_y_offset);
-
-                    let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
-
-                    let mut drifting_dec = decoration.as_ref().compute(
-                        &drifting_indent_vec,
-                        decoration_bounds,
-                        scroll_offset,
-                        item_height,
-                        window,
-                        cx,
-                    );
-
-                    drifting_dec.layout_as_root(available_space, window, cx);
-                    drifting_dec.prepaint_at(sticky_origin, window, cx);
-                    last_decoration_element = Some(drifting_dec);
-                }
-
-                if !rest_indents.is_empty() {
-                    let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
-                    let mut rest_dec = decoration.as_ref().compute(
-                        &rest_indents,
-                        decoration_bounds,
-                        scroll_offset,
-                        item_height,
-                        window,
-                        cx,
-                    );
-                    rest_dec.layout_as_root(available_space, window, cx);
-                    rest_dec.prepaint_at(bounds.origin, window, cx);
-                    rest_decoration_elements.push(rest_dec);
-                }
-            }
+        let drifting_y_offset = if last_item_is_drifting {
+            let scroll_top = -scroll_offset.y;
+            let anchor_top = item_height * sticky_anchor.index;
+            let sticky_area_height = item_height * items_count;
+            (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
         } else {
-            let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
-            for decoration in &self.decorations {
-                let mut decoration = decoration.as_ref().compute(
-                    &indents,
+            Pixels::ZERO
+        };
+
+        let (drifting_indent, rest_indents) = if last_item_is_drifting && !indents.is_empty() {
+            let last = indents[indents.len() - 1];
+            let rest: SmallVec<[usize; 8]> = indents[..indents.len() - 1].iter().copied().collect();
+            (Some(last), rest)
+        } else {
+            (None, indents)
+        };
+
+        for decoration in &self.decorations {
+            if let Some(drifting_indent) = drifting_indent {
+                let drifting_indent_vec: SmallVec<[usize; 8]> =
+                    [drifting_indent].into_iter().collect();
+                let sticky_origin = bounds.origin - scroll_offset
+                    + point(px(0.), item_height * rest_indents.len() + drifting_y_offset);
+                let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
+
+                let mut drifting_dec = decoration.as_ref().compute(
+                    &drifting_indent_vec,
                     decoration_bounds,
                     scroll_offset,
                     item_height,
                     window,
                     cx,
                 );
-                decoration.layout_as_root(available_space, window, cx);
-                decoration.prepaint_at(bounds.origin, window, cx);
-                rest_decoration_elements.push(decoration);
+                drifting_dec.layout_as_root(available_space, window, cx);
+                drifting_dec.prepaint_at(sticky_origin, window, cx);
+                last_decoration_element = Some(drifting_dec);
+            }
+
+            if !rest_indents.is_empty() {
+                let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
+                let mut rest_dec = decoration.as_ref().compute(
+                    &rest_indents,
+                    decoration_bounds,
+                    scroll_offset,
+                    item_height,
+                    window,
+                    cx,
+                );
+                rest_dec.layout_as_root(available_space, window, cx);
+                rest_dec.prepaint_at(bounds.origin, window, cx);
+                rest_decoration_elements.push(rest_dec);
             }
         }
 
-        for (ix, element) in elements.iter_mut().enumerate() {
-            let item_y_offset = if ix == items_count - 1 && last_item_is_drifting {
-                Some({
-                    let scroll_top = -scroll_offset.y;
-                    let anchor_top = item_height * sticky_anchor.index;
-                    let sticky_area_height = item_height * items_count;
-                    (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
-                })
+        let (mut drifting_element, mut rest_elements) =
+            if last_item_is_drifting && !elements.is_empty() {
+                let last = elements.pop().unwrap();
+                (Some(last), elements)
             } else {
-                None
+                (None, elements)
             };
 
-            let sticky_origin = bounds.origin
-                + point(
-                    -scroll_offset.x,
-                    -scroll_offset.y + item_height * ix + item_y_offset.unwrap_or(Pixels::ZERO),
-                );
-
-            let available_space = size(
+        for (ix, element) in rest_elements.iter_mut().enumerate() {
+            let sticky_origin = bounds.origin - scroll_offset + point(px(0.), item_height * ix);
+            let element_available_space = size(
                 AvailableSpace::Definite(bounds.size.width),
                 AvailableSpace::Definite(item_height),
             );
-            element.layout_as_root(available_space, window, cx);
+
+            element.layout_as_root(element_available_space, window, cx);
             element.prepaint_at(sticky_origin, window, cx);
         }
 
-        let (drifting_element, rest_elements) = if last_item_is_drifting && !elements.is_empty() {
-            let last = elements.pop().unwrap();
-            (Some(last), elements)
-        } else {
-            (None, elements)
-        };
+        if let Some(ref mut drifting_element) = drifting_element {
+            let sticky_origin = bounds.origin - scroll_offset
+                + point(
+                    px(0.),
+                    item_height * rest_elements.len() + drifting_y_offset,
+                );
+            let element_available_space = size(
+                AvailableSpace::Definite(bounds.size.width),
+                AvailableSpace::Definite(item_height),
+            );
+
+            drifting_element.layout_as_root(element_available_space, window, cx);
+            drifting_element.prepaint_at(sticky_origin, window, cx);
+        }
 
         StickyItemsElement {
             drifting_element,
