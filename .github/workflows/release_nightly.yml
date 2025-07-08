@@ -69,8 +69,8 @@ jobs:
 
       - name: Configure CI
         run: |
-          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
-          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
+          New-Item -ItemType Directory -Path "./../.cargo" -Force
+          Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
 
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
