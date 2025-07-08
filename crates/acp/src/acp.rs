@@ -1,3 +1,4 @@
+pub use acp::ToolCallId;
 use agent_servers::AgentServer;
 use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
@@ -135,7 +136,7 @@ impl AssistantMessageChunk {
 }
 
 #[derive(Debug)]
-pub enum AgentThreadEntryContent {
+pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
@@ -143,7 +144,7 @@ pub enum AgentThreadEntryContent {
 
 #[derive(Debug)]
 pub struct ToolCall {
-    pub id: ToolCallId,
+    pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
     pub icon: IconName,
     pub content: Option<ToolCallContent>,
@@ -345,36 +346,8 @@ impl Diff {
     }
 }
 
-/// A `ThreadEntryId` that is known to be a ToolCall
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ToolCallId(ThreadEntryId);
-
-impl ToolCallId {
-    pub fn as_u64(&self) -> u64 {
-        self.0.0
-    }
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ThreadEntryId(pub u64);
-
-impl ThreadEntryId {
-    pub fn post_inc(&mut self) -> Self {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
-}
-
-#[derive(Debug)]
-pub struct ThreadEntry {
-    pub id: ThreadEntryId,
-    pub content: AgentThreadEntryContent,
-}
-
 pub struct AcpThread {
-    next_entry_id: ThreadEntryId,
-    entries: Vec<ThreadEntry>,
+    entries: Vec<AgentThreadEntry>,
     title: SharedString,
     project: Entity<Project>,
     send_task: Option<Task<()>>,
@@ -467,7 +440,6 @@ impl AcpThread {
             });
 
             Self {
-                next_entry_id: Default::default(),
                 entries: Default::default(),
                 title: "ACP Thread".into(),
                 project,
@@ -500,7 +472,6 @@ impl AcpThread {
         });
 
         Self {
-            next_entry_id: Default::default(),
             entries: Default::default(),
             title: "ACP Thread".into(),
             project,
@@ -516,7 +487,7 @@ impl AcpThread {
         self.title.clone()
     }
 
-    pub fn entries(&self) -> &[ThreadEntry] {
+    pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
     }
 
@@ -532,15 +503,9 @@ impl AcpThread {
         }
     }
 
-    pub fn push_entry(
-        &mut self,
-        entry: AgentThreadEntryContent,
-        cx: &mut Context<Self>,
-    ) -> ThreadEntryId {
-        let id = self.next_entry_id.post_inc();
-        self.entries.push(ThreadEntry { id, content: entry });
+    pub fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+        self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
-        id
     }
 
     pub fn push_assistant_chunk(
@@ -550,8 +515,7 @@ impl AcpThread {
     ) {
         let entries_len = self.entries.len();
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntryContent::AssistantMessage(AssistantMessage { ref mut chunks }) =
-                last_entry.content
+            && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
         {
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
 
@@ -584,7 +548,7 @@ impl AcpThread {
             );
 
             self.push_entry(
-                AgentThreadEntryContent::AssistantMessage(AssistantMessage {
+                AgentThreadEntry::AssistantMessage(AssistantMessage {
                     chunks: vec![chunk],
                 }),
                 cx,
@@ -621,7 +585,7 @@ impl AcpThread {
         icon: acp::Icon,
         content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
-    ) -> ToolCallId {
+    ) -> acp::ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
         };
@@ -636,13 +600,13 @@ impl AcpThread {
         icon: acp::Icon,
         content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
-    ) -> ToolCallId {
+    ) -> acp::ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
+        let id = acp::ToolCallId(self.entries.len() as u64);
 
-        let entry_id = self.push_entry(
-            AgentThreadEntryContent::ToolCall(ToolCall {
-                // todo! clean up id creation
-                id: ToolCallId(ThreadEntryId(self.entries.len() as u64)),
+        self.push_entry(
+            AgentThreadEntry::ToolCall(ToolCall {
+                id: id.clone(),
                 label: cx.new(|cx| {
                     Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
                 }),
@@ -654,21 +618,16 @@ impl AcpThread {
             cx,
         );
 
-        ToolCallId(entry_id)
+        id
     }
 
     pub fn authorize_tool_call(
         &mut self,
-        id: ToolCallId,
+        id: acp::ToolCallId,
         outcome: acp::ToolCallConfirmationOutcome,
         cx: &mut Context<Self>,
     ) {
-        let Some(entry) = self.entry_mut(id.0) else {
-            return;
-        };
-
-        let AgentThreadEntryContent::ToolCall(call) = &mut entry.content else {
-            debug_panic!("expected ToolCall");
+        let Some((ix, call)) = self.tool_call_mut(id) else {
             return;
         };
 
@@ -688,70 +647,69 @@ impl AcpThread {
             debug_panic!("tried to authorize an already authorized tool call");
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(id.as_u64() as usize));
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
     pub fn update_tool_call(
         &mut self,
-        id: ToolCallId,
+        id: acp::ToolCallId,
         new_status: acp::ToolCallStatus,
         new_content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let language_registry = self.project.read(cx).languages().clone();
-        let entry = self.entry_mut(id.0).context("Entry not found")?;
+        let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
-        match &mut entry.content {
-            AgentThreadEntryContent::ToolCall(call) => {
-                call.content = new_content.map(|new_content| {
-                    ToolCallContent::from_acp(new_content, language_registry, cx)
-                });
+        call.content = new_content
+            .map(|new_content| ToolCallContent::from_acp(new_content, language_registry, cx));
 
-                match &mut call.status {
-                    ToolCallStatus::Allowed { status } => {
-                        *status = new_status;
-                    }
-                    ToolCallStatus::WaitingForConfirmation { .. } => {
-                        anyhow::bail!("Tool call hasn't been authorized yet")
-                    }
-                    ToolCallStatus::Rejected => {
-                        anyhow::bail!("Tool call was rejected and therefore can't be updated")
-                    }
-                    ToolCallStatus::Canceled => {
-                        // todo! test this case with fake server
-                        call.status = ToolCallStatus::Allowed { status: new_status };
-                    }
-                }
+        match &mut call.status {
+            ToolCallStatus::Allowed { status } => {
+                *status = new_status;
             }
-            _ => anyhow::bail!("Entry is not a tool call"),
+            ToolCallStatus::WaitingForConfirmation { .. } => {
+                anyhow::bail!("Tool call hasn't been authorized yet")
+            }
+            ToolCallStatus::Rejected => {
+                anyhow::bail!("Tool call was rejected and therefore can't be updated")
+            }
+            ToolCallStatus::Canceled => {
+                // todo! test this case with fake server
+                call.status = ToolCallStatus::Allowed { status: new_status };
+            }
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(id.as_u64() as usize));
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
     }
 
-    fn entry_mut(&mut self, id: ThreadEntryId) -> Option<&mut ThreadEntry> {
+    fn tool_call_mut(&mut self, id: acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
         let entry = self.entries.get_mut(id.0 as usize);
         debug_assert!(
             entry.is_some(),
             "We shouldn't give out ids to entries that don't exist"
         );
-        entry
+        match entry {
+            Some(AgentThreadEntry::ToolCall(call)) if call.id == id => Some((id.0 as usize, call)),
+            _ => {
+                debug_panic!("entry is not a tool call");
+                None
+            }
+        }
     }
 
     /// Returns true if the last turn is awaiting tool authorization
     pub fn waiting_for_tool_confirmation(&self) -> bool {
         // todo!("should we use a hashmap?")
         for entry in self.entries.iter().rev() {
-            match &entry.content {
-                AgentThreadEntryContent::ToolCall(call) => match call.status {
+            match &entry {
+                AgentThreadEntry::ToolCall(call) => match call.status {
                     ToolCallStatus::WaitingForConfirmation { .. } => return true,
                     ToolCallStatus::Allowed { .. }
                     | ToolCallStatus::Rejected
                     | ToolCallStatus::Canceled => continue,
                 },
-                AgentThreadEntryContent::UserMessage(_)
-                | AgentThreadEntryContent::AssistantMessage(_) => {
+                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
                     // Reached the beginning of the turn
                     return false;
                 }
@@ -778,7 +736,7 @@ impl AcpThread {
         let agent = self.connection.clone();
         let message = message.into();
         self.push_entry(
-            AgentThreadEntryContent::UserMessage(UserMessage::from_acp(
+            AgentThreadEntry::UserMessage(UserMessage::from_acp(
                 message.clone(),
                 self.project.read(cx).languages().clone(),
                 cx,
@@ -815,7 +773,7 @@ impl AcpThread {
 
                 this.update(cx, |this, _cx| {
                     for entry in this.entries.iter_mut() {
-                        if let AgentThreadEntryContent::ToolCall(call) = &mut entry.content {
+                        if let AgentThreadEntry::ToolCall(call) = entry {
                             let cancel = matches!(
                                 call.status,
                                 ToolCallStatus::WaitingForConfirmation { .. }
@@ -854,18 +812,18 @@ impl AcpThread {
     pub fn to_string(&self, cx: &App) -> String {
         let mut result = String::new();
         for entry in &self.entries {
-            match &entry.content {
-                AgentThreadEntryContent::UserMessage(user_message) => {
+            match entry {
+                AgentThreadEntry::UserMessage(user_message) => {
                     result.push_str("# User\n");
                     result.push_str(user_message.content.read(cx).source());
                     result.push('\n');
                 }
-                AgentThreadEntryContent::AssistantMessage(assistant_message) => {
+                AgentThreadEntry::AssistantMessage(assistant_message) => {
                     result.push_str("# Assistant\n");
                     result.push_str(&assistant_message.to_string(cx));
                     result.push('\n');
                 }
-                AgentThreadEntryContent::ToolCall(tool_call) => {
+                AgentThreadEntry::ToolCall(tool_call) => {
                     result.push_str("# Tool Call\n");
                     result.push_str(&format!("Tool: {}", tool_call.label.read(cx).source()));
                     result.push('\n');
@@ -926,7 +884,7 @@ impl acp::Client for AcpClientDelegate {
             .context("Failed to update thread")?;
 
         Ok(acp::RequestToolCallConfirmationResponse {
-            id: acp::ToolCallId(id.as_u64()),
+            id,
             outcome: outcome.await?,
         })
     }
@@ -936,7 +894,7 @@ impl acp::Client for AcpClientDelegate {
         request: acp::PushToolCallParams,
     ) -> Result<acp::PushToolCallResponse> {
         let cx = &mut self.cx.clone();
-        let entry_id = cx
+        let id = cx
             .update(|cx| {
                 self.thread.update(cx, |thread, cx| {
                     thread.push_tool_call(request.label, request.icon, request.content, cx)
@@ -944,9 +902,7 @@ impl acp::Client for AcpClientDelegate {
             })?
             .context("Failed to update thread")?;
 
-        Ok(acp::PushToolCallResponse {
-            id: acp::ToolCallId(entry_id.as_u64()),
-        })
+        Ok(acp::PushToolCallResponse { id })
     }
 
     async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<()> {
@@ -954,12 +910,7 @@ impl acp::Client for AcpClientDelegate {
 
         cx.update(|cx| {
             self.thread.update(cx, |thread, cx| {
-                thread.update_tool_call(
-                    ToolCallId(ThreadEntryId(request.tool_call_id.0)),
-                    request.status,
-                    request.content,
-                    cx,
-                )
+                thread.update_tool_call(request.tool_call_id, request.status, request.content, cx)
             })
         })?
         .context("Failed to update thread")??;
@@ -982,7 +933,7 @@ fn acp_icon_to_ui_icon(icon: acp::Icon) -> IconName {
 }
 
 pub struct ToolCallRequest {
-    pub id: ToolCallId,
+    pub id: acp::ToolCallId,
     pub outcome: oneshot::Receiver<acp::ToolCallConfirmationOutcome>,
 }
 
@@ -1085,12 +1036,12 @@ mod tests {
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.entries.len(), 2);
             assert!(matches!(
-                thread.entries[0].content,
-                AgentThreadEntryContent::UserMessage(_)
+                thread.entries[0],
+                AgentThreadEntry::UserMessage(_)
             ));
             assert!(matches!(
-                thread.entries[1].content,
-                AgentThreadEntryContent::AssistantMessage(_)
+                thread.entries[1],
+                AgentThreadEntry::AssistantMessage(_)
             ));
         });
     }
@@ -1132,16 +1083,11 @@ mod tests {
         thread.read_with(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             assert!(matches!(
-                thread.entries[0].content,
-                AgentThreadEntryContent::UserMessage(_)
+                thread.entries[0],
+                AgentThreadEntry::UserMessage(_)
             ));
-            assert!(matches!(
-                thread.entries[1].content,
-                AgentThreadEntryContent::ToolCall(_)
-            ));
-            let AgentThreadEntryContent::AssistantMessage(assistant_message) =
-                &thread.entries[2].content
-            else {
+            assert!(matches!(thread.entries[1], AgentThreadEntry::ToolCall(_)));
+            let AgentThreadEntry::AssistantMessage(assistant_message) = &thread.entries[2] else {
                 panic!("Expected AssistantMessage")
             };
             assert!(
@@ -1178,16 +1124,16 @@ mod tests {
             .unwrap();
         thread.read_with(cx, |thread, _cx| {
             assert!(matches!(
-                &thread.entries()[2].content,
-                AgentThreadEntryContent::ToolCall(ToolCall {
+                &thread.entries()[2],
+                AgentThreadEntry::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed { .. },
                     ..
                 })
             ));
 
             assert!(matches!(
-                thread.entries[3].content,
-                AgentThreadEntryContent::AssistantMessage(_)
+                thread.entries[3],
+                AgentThreadEntry::AssistantMessage(_)
             ));
         });
     }
@@ -1209,7 +1155,7 @@ mod tests {
         run_until_first_tool_call(&thread, cx).await;
 
         let tool_call_id = thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntryContent::ToolCall(ToolCall {
+            let AgentThreadEntry::ToolCall(ToolCall {
                 id,
                 status:
                     ToolCallStatus::WaitingForConfirmation {
@@ -1217,22 +1163,22 @@ mod tests {
                         ..
                     },
                 ..
-            }) = &thread.entries()[2].content
+            }) = &thread.entries()[2]
             else {
                 panic!();
             };
 
             assert_eq!(root_command, "echo");
 
-            *id
+            id.clone()
         });
 
         thread.update(cx, |thread, cx| {
             thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
 
             assert!(matches!(
-                &thread.entries()[2].content,
-                AgentThreadEntryContent::ToolCall(ToolCall {
+                &thread.entries()[2],
+                AgentThreadEntry::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed { .. },
                     ..
                 })
@@ -1242,11 +1188,11 @@ mod tests {
         full_turn.await.unwrap();
 
         thread.read_with(cx, |thread, cx| {
-            let AgentThreadEntryContent::ToolCall(ToolCall {
+            let AgentThreadEntry::ToolCall(ToolCall {
                 content: Some(ToolCallContent::Markdown { markdown }),
                 status: ToolCallStatus::Allowed { .. },
                 ..
-            }) = &thread.entries()[2].content
+            }) = &thread.entries()[2]
             else {
                 panic!();
             };
@@ -1278,7 +1224,7 @@ mod tests {
         let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
 
         thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntryContent::ToolCall(ToolCall {
+            let AgentThreadEntry::ToolCall(ToolCall {
                 id,
                 status:
                     ToolCallStatus::WaitingForConfirmation {
@@ -1286,14 +1232,14 @@ mod tests {
                         ..
                     },
                 ..
-            }) = &thread.entries()[first_tool_call_ix].content
+            }) = &thread.entries()[first_tool_call_ix]
             else {
-                panic!("{:?}", thread.entries()[1].content);
+                panic!("{:?}", thread.entries()[1]);
             };
 
             assert_eq!(root_command, "echo");
 
-            *id
+            id.clone()
         });
 
         thread
@@ -1302,10 +1248,10 @@ mod tests {
             .unwrap();
         full_turn.await.unwrap();
         thread.read_with(cx, |thread, _| {
-            let AgentThreadEntryContent::ToolCall(ToolCall {
+            let AgentThreadEntry::ToolCall(ToolCall {
                 status: ToolCallStatus::Canceled,
                 ..
-            }) = &thread.entries()[first_tool_call_ix].content
+            }) = &thread.entries()[first_tool_call_ix]
             else {
                 panic!();
             };
@@ -1319,8 +1265,8 @@ mod tests {
             .unwrap();
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
-                &thread.entries().last().unwrap().content,
-                AgentThreadEntryContent::AssistantMessage(..),
+                &thread.entries().last().unwrap(),
+                AgentThreadEntry::AssistantMessage(..),
             ))
         });
     }
@@ -1334,7 +1280,7 @@ mod tests {
         let subscription = cx.update(|cx| {
             cx.subscribe(thread, move |thread, _, cx| {
                 for (ix, entry) in thread.read(cx).entries.iter().enumerate() {
-                    if matches!(entry.content, AgentThreadEntryContent::ToolCall(_)) {
+                    if matches!(entry, AgentThreadEntry::ToolCall(_)) {
                         return tx.try_send(ix).unwrap();
                     }
                 }
