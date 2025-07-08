@@ -84,6 +84,11 @@ pub(super) struct Memory {
     pages: BTreeMap<PageAddress, PageContents>,
 }
 
+/// Represents a single memory cell (or None if a given cell is unmapped/unknown).
+#[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
+#[repr(transparent)]
+pub struct MemoryCell(pub Option<u8>);
+
 impl Memory {
     pub(super) fn new() -> Self {
         Self {
@@ -91,7 +96,7 @@ impl Memory {
         }
     }
 
-    pub(super) fn memory_range_to_pages(
+    pub(super) fn memory_range_to_page_range(
         range: RangeInclusive<MemoryAddress>,
     ) -> impl Iterator<Item = PageAddress> {
         let start_page = range.start() / PAGE_SIZE;
@@ -111,7 +116,11 @@ impl Memory {
     pub(super) fn insert_page(&mut self, address: PageAddress, page: PageContents) {
         self.pages.insert(address, page);
     }
-    pub(super) fn pages(&self, range: Range<usize>) -> impl Iterator<Item = u8> {
+
+    pub(super) fn memory_range(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = MemoryCell> + Send + Sync + use<> {
         None.into_iter()
     }
 }

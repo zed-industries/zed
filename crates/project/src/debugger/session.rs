@@ -1727,7 +1727,7 @@ impl Session {
         // Since we attempt to read memory in pages, we need to account for some parts
         // of memory being unreadable. Therefore, we start off by fetching a page per request.
         // In case that fails, we try to re-fetch smaller regions until we have the full range.
-        for page_address in memory::Memory::memory_range_to_pages(range.clone()) {
+        for page_address in memory::Memory::memory_range_to_page_range(range.clone()) {
             self.read_single_page_memory(page_address, cx);
         }
         todo!()
@@ -1772,7 +1772,7 @@ impl Session {
                     }
                     // This is the recursive bit: if we're not yet done with
                     // the whole page, we'll kick off a new request with smaller range.
-                    // Note that since this function is recursive only conceptually;
+                    // Note that this function is recursive only conceptually;
                     // since it kicks off a new request with callback, we don't need to worry about stack overflow.
                     this.memory_read_fetch_page_recursive(builder, cx);
                 }
