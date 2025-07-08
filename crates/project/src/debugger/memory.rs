@@ -80,6 +80,25 @@ type MemoryAddress = u64;
 #[repr(transparent)]
 pub(super) struct PageAddress(u64);
 
+impl PageAddress {
+    pub(super) fn iter_range(
+        range: RangeInclusive<PageAddress>,
+    ) -> impl Iterator<Item = PageAddress> {
+        let mut current = range.start().0;
+        let end = range.end().0;
+
+        std::iter::from_fn(move || {
+            if current > end {
+                None
+            } else {
+                let addr = PageAddress(current);
+                current += PAGE_SIZE;
+                Some(addr)
+            }
+        })
+    }
+}
+
 pub(super) struct Memory {
     pages: BTreeMap<PageAddress, PageContents>,
 }
@@ -98,10 +117,10 @@ impl Memory {
 
     pub(super) fn memory_range_to_page_range(
         range: RangeInclusive<MemoryAddress>,
-    ) -> impl Iterator<Item = PageAddress> {
-        let start_page = range.start() / PAGE_SIZE;
-        let end_page = (range.end() + PAGE_SIZE - 1) / PAGE_SIZE;
-        (start_page..end_page).map(|page| PageAddress(page * PAGE_SIZE))
+    ) -> RangeInclusive<PageAddress> {
+        let start_page = (range.start() / PAGE_SIZE) * PAGE_SIZE;
+        let end_page = (range.end() / PAGE_SIZE) * PAGE_SIZE;
+        PageAddress(start_page)..=PageAddress(end_page)
     }
 
     pub(super) fn build_page(&self, page_address: PageAddress) -> Option<MemoryPageBuilder> {
@@ -119,8 +138,10 @@ impl Memory {
 
     pub(super) fn memory_range(
         &self,
-        range: Range<usize>,
+        range: RangeInclusive<MemoryAddress>,
     ) -> impl Iterator<Item = MemoryCell> + Send + Sync + use<> {
+        let pages = Self::memory_range_to_page_range(range);
+        let pages = self.pages.range(pages);
         None.into_iter()
     }
 }
@@ -204,4 +225,14 @@ impl MemoryPageBuilder {
         self.left_to_read -= data.len() as u64;
         self.chunks.0.push(PageChunk::Mapped(data));
     }
+}
+
+enum CurrentMemoryChunk {
+    Unmapped(std::iter::RepeatN<MemoryCell>),
+    Mapped(()),
+}
+/// Defines an iteration over a range of memory. Some of this memory might be unmapped or straight up missing.
+/// Thus, this iterator alternates between synthesizing values and yielding known memory.
+struct PageIterator {
+    current_known_page: Option<PageContents>,
 }

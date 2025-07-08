@@ -1,6 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::ReadMemory;
-use crate::debugger::memory::{self, MemoryPageBuilder, PageAddress};
+use crate::debugger::memory::{self, Memory, MemoryPageBuilder, PageAddress};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -1727,7 +1727,8 @@ impl Session {
         // Since we attempt to read memory in pages, we need to account for some parts
         // of memory being unreadable. Therefore, we start off by fetching a page per request.
         // In case that fails, we try to re-fetch smaller regions until we have the full range.
-        for page_address in memory::Memory::memory_range_to_page_range(range.clone()) {
+        let page_range = Memory::memory_range_to_page_range(range.clone());
+        for page_address in PageAddress::iter_range(page_range) {
             self.read_single_page_memory(page_address, cx);
         }
         todo!()
