@@ -2169,9 +2169,18 @@ impl SshRemoteConnection {
                 .await;
 
             if which.is_err() {
-                anyhow::bail!(
-                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
-                )
+                #[cfg(not(target_os = "windows"))]
+                {
+                    anyhow::bail!(
+                        "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    )
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    anyhow::bail!(
+                        "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    )
+                }
             }
 
             delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
@@ -2219,7 +2228,7 @@ impl SshRemoteConnection {
             #[cfg(target_os = "windows")]
             {
                 // On Windows, we use 7z to compress the binary
-                let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, we use 7zip to create the tar file, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
+                let seven_zip = which::which("7z.exe").context("7z.exe not found on $PATH, install it (e.g. with `winget install -e --id 7zip.7zip`) or, if you don't want this behaviour, set $env:ZED_BUILD_REMOTE_SERVER=\"nocompress\"")?;
                 let gz_path = format!("target/remote_server/{}/debug/remote_server.gz", triple);
                 if smol::fs::metadata(&gz_path).await.is_ok() {
                     smol::fs::remove_file(&gz_path).await?;
