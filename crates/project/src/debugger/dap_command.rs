@@ -1807,19 +1807,18 @@ impl LocalDapCommand for ReadMemory {
         &self,
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
-        let Some(data) = message.data else {
-            return Err(anyhow::anyhow!(
-                "Expected `data` in ReadMemory DAP response to be non-empty"
-            ));
+        let data = if let Some(data) = message.data {
+            base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(data)
+                .log_err()
+                .context("parsing base64 data from DAP's ReadMemory response")?
+        } else {
+            vec![]
         };
-        let as_buffer = base64::engine::general_purpose::STANDARD_NO_PAD
-            .decode(data)
-            .log_err()
-            .context("parsing base64 data from DAP's ReadMemory response")?;
 
         Ok(ReadMemoryResponse {
             address: message.address.into(),
-            content: as_buffer.into(),
+            content: data.into(),
             unreadable_bytes: message.unreadable_bytes,
         })
     }
