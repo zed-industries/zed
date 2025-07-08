@@ -224,8 +224,12 @@ impl ScrollManager {
                 0,
             )
         } else if scroll_position.y <= 0. {
-            let buffer_point =
-                DisplayPoint::new(DisplayRow(0), scroll_position.x as u32).to_point(map);
+            let buffer_point = map
+                .clip_point(
+                    DisplayPoint::new(DisplayRow(0), scroll_position.x as u32),
+                    Bias::Left,
+                )
+                .to_point(map);
             let anchor = map.buffer_snapshot.anchor_at(buffer_point, Bias::Right);
 
             (
@@ -259,9 +263,13 @@ impl ScrollManager {
                 }
             };
 
-            let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_top as u32), scroll_position.x as u32)
-                    .to_point(map);
+            let scroll_top_row = DisplayRow(scroll_top as u32);
+            let scroll_top_buffer_point = map
+                .clip_point(
+                    DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
+                    Bias::Left,
+                )
+                .to_point(map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);

@@ -230,7 +230,7 @@ fn scroll_editor(
                 // column position, or the right-most column in the current
                 // line, seeing as the cursor might be in a short line, in which
                 // case we don't want to go past its last column.
-                let max_row_column = map.max_column(new_row);
+                let max_row_column = map.line_len(new_row);
                 let max_column = match min_column + visible_column_count as u32 {
                     max_column if max_column >= max_row_column => max_row_column,
                     max_column => max_column,
