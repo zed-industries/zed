@@ -138,6 +138,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             })
         });
         vim.visual_delete(false, window, cx);
+        vim.switch_mode(Mode::HelixNormal, true, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
