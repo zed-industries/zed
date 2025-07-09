@@ -45,6 +45,8 @@ actions!(
     [
         /// Edits the selected key binding.
         EditBinding,
+        /// Creates a new key binding for the selected action.
+        CreateBinding,
         /// Copies the action name to clipboard.
         CopyAction,
         /// Copies the context predicate to clipboard.
@@ -466,11 +468,16 @@ impl KeymapEditor {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit_selected_keybinding(window, cx);
+        self.open_edit_keybinding_modal(false, window, cx);
     }
 
-    fn edit_selected_keybinding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(keybind) = self.selected_binding() else {
+    fn open_edit_keybinding_modal(
+        &mut self,
+        create: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(keybind) = self.selected_binding().cloned() else {
             return;
         };
         self.workspace
@@ -479,7 +486,7 @@ impl KeymapEditor {
                 let workspace_weak = cx.weak_entity();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let modal =
-                        KeybindingEditorModal::new(keybind.clone(), workspace_weak, fs, window, cx);
+                        KeybindingEditorModal::new(create, keybind, workspace_weak, fs, window, cx);
                     window.focus(&modal.focus_handle(cx));
                     modal
                 });
@@ -488,7 +495,11 @@ impl KeymapEditor {
     }
 
     fn edit_binding(&mut self, _: &EditBinding, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit_selected_keybinding(window, cx);
+        self.open_edit_keybinding_modal(false, window, cx);
+    }
+
+    fn create_binding(&mut self, _: &CreateBinding, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_edit_keybinding_modal(true, window, cx);
     }
 
     fn copy_context_to_clipboard(
@@ -600,6 +611,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::focus_search))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::edit_binding))
+            .on_action(cx.listener(Self::create_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .size_full()
@@ -778,6 +790,7 @@ impl RenderOnce for SyntaxHighlightedText {
 }
 
 struct KeybindingEditorModal {
+    creating: bool,
     editing_keybind: ProcessedKeybinding,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<Editor>,
@@ -798,6 +811,7 @@ impl Focusable for KeybindingEditorModal {
 
 impl KeybindingEditorModal {
     pub fn new(
+        create: bool,
         editing_keybind: ProcessedKeybinding,
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
@@ -864,6 +878,7 @@ impl KeybindingEditorModal {
         });
 
         Self {
+            creating: create,
             editing_keybind,
             fs,
             keybind_editor,
@@ -902,8 +917,11 @@ impl KeybindingEditorModal {
             return;
         }
 
+        let create = self.creating;
+
         cx.spawn(async move |this, cx| {
             if let Err(err) = save_keybinding_update(
+                create,
                 existing_keybind,
                 &new_keystrokes,
                 new_context.as_deref(),
@@ -1142,6 +1160,7 @@ async fn load_rust_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
 }
 
 async fn save_keybinding_update(
+    create: bool,
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
     new_context: Option<&str>,
@@ -1168,7 +1187,7 @@ async fn save_keybinding_update(
         .as_ref()
         .map(|input| input.text.as_ref());
 
-    let operation = if existing.ui_key_binding.is_some() {
+    let operation = if !create {
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
                 context: existing_context,
@@ -1190,7 +1209,13 @@ async fn save_keybinding_update(
             },
         }
     } else {
-        anyhow::bail!("Adding new bindings not implemented yet");
+        settings::KeybindUpdateOperation::Add(settings::KeybindUpdateTarget {
+            context: new_context,
+            keystrokes: new_keystrokes,
+            action_name: &existing.action_name,
+            use_key_equivalents: false,
+            input,
+        })
     };
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
@@ -1378,16 +1403,19 @@ fn build_keybind_context_menu(
             return menu;
         };
 
-        let selected_binding_has_context = selected_binding
+        let selected_binding_has_no_context = selected_binding
             .context
             .as_ref()
             .and_then(KeybindContextString::local)
-            .is_some();
+            .is_none();
 
-        menu.action("Edit Binding", Box::new(EditBinding))
+        let selected_binding_is_unbound = selected_binding.ui_key_binding.is_none();
+
+        menu.action_disabled_when(selected_binding_is_unbound, "Edit", Box::new(EditBinding))
+            .action("Create", Box::new(CreateBinding))
             .action("Copy action", Box::new(CopyAction))
             .action_disabled_when(
-                !selected_binding_has_context,
+                selected_binding_has_no_context,
                 "Copy Context",
                 Box::new(CopyContext),
             )
