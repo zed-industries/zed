@@ -7556,7 +7556,6 @@ outline: fn main()"
             outline_panel.set_active(true, window, cx)
         });
 
-        // Open the main.rs file
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
@@ -7573,7 +7572,6 @@ outline: fn main()"
             .await
             .unwrap();
 
-        // Wait for outline to be populated
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
