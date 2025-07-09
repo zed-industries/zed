@@ -269,6 +269,14 @@
     }
   },
   {
+    "context": "AgentPanel && acp_thread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-n": "agent::NewAcpThread",
+      "ctrl-alt-t": "agent::NewThread"
+    }
+  },
+  {
     "context": "MessageEditor > Editor",
     "bindings": {
       "enter": "agent::Chat",
