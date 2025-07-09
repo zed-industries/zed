@@ -258,6 +258,7 @@ pub enum IconName {
     ToolHammer,
     ToolNotification,
     ToolPencil,
+    ToolRead,
     ToolRegex,
     ToolSearch,
     ToolTerminal,
