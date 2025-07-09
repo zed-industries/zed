@@ -12,7 +12,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
-    WeakEntity, actions, div, transparent_black,
+    WeakEntity, actions, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -137,11 +137,29 @@ impl KeymapEventChannel {
     }
 }
 
+#[derive(Default, PartialEq)]
+enum FilterState {
+    #[default]
+    All,
+    Conflicts,
+}
+
+impl FilterState {
+    fn invert(&self) -> Self {
+        match self {
+            FilterState::All => FilterState::Conflicts,
+            FilterState::Conflicts => FilterState::All,
+        }
+    }
+}
+
 struct KeymapEditor {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedKeybinding>,
+    conflicts: Vec<usize>,
+    filter_state: FilterState,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
     matches: Vec<StringMatch>,
@@ -184,6 +202,8 @@ impl KeymapEditor {
         let mut this = Self {
             workspace,
             keybindings: vec![],
+            conflicts: Vec::default(),
+            filter_state: FilterState::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
             focus_handle: focus_handle.clone(),
@@ -230,6 +250,13 @@ impl KeymapEditor {
         )
         .await;
         this.update(cx, |this, cx| {
+            match this.filter_state {
+                FilterState::Conflicts => {
+                    matches.retain(|candidate| this.conflicts.contains(&candidate.candidate_id));
+                }
+                FilterState::All => {}
+            }
+
             if query.is_empty() {
                 // apply default sort
                 // sorts by source precedence, and alphabetically by action name within each source
@@ -344,6 +371,30 @@ impl KeymapEditor {
             let query = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
                     Self::process_bindings(json_language, rust_language, cx);
+
+                let mut conflicts: HashMap<_, Vec<usize>> = HashMap::default();
+
+                key_bindings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, binding)| !binding.keystroke_text.is_empty())
+                    .for_each(|(index, binding)| {
+                        conflicts
+                            .entry(binding.get_action_mapping())
+                            .or_default()
+                            .push(index);
+                    });
+
+                this.conflicts = conflicts
+                    .into_values()
+                    .filter(|indices| indices.len() > 1)
+                    .flatten()
+                    .collect();
+
+                if this.conflicts.is_empty() {
+                    this.filter_state = FilterState::All;
+                }
+
                 this.keybindings = key_bindings;
                 this.string_match_candidates = Arc::new(string_match_candidates);
                 this.matches = this
@@ -549,7 +600,19 @@ struct ProcessedKeybinding {
     source: Option<(KeybindSource, SharedString)>,
 }
 
-#[derive(Clone, Debug, IntoElement)]
+impl ProcessedKeybinding {
+    fn get_action_mapping(&self) -> (SharedString, Option<SharedString>) {
+        (
+            self.keystroke_text.clone(),
+            self.context
+                .as_ref()
+                .and_then(|context| context.local())
+                .cloned(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, IntoElement, PartialEq, Eq, Hash)]
 enum KeybindContextString {
     Global,
     Local(SharedString, Arc<Language>),
@@ -639,7 +702,22 @@ impl Render for KeymapEditor {
                     .border_1()
                     .border_color(theme.colors().border)
                     .rounded_lg()
-                    .child(self.filter_editor.clone()),
+                    .child(self.filter_editor.clone())
+                    .when(!self.conflicts.is_empty(), |this| {
+                        this.child(
+                            IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                .tooltip(Tooltip::text(match self.filter_state {
+                                    FilterState::All => "Show conflicts",
+                                    FilterState::Conflicts => "Hide conflicts",
+                                }))
+                                .selected_icon_color(Color::Error)
+                                .toggle_state(matches!(self.filter_state, FilterState::Conflicts))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.filter_state = this.filter_state.invert();
+                                    this.update_matches(cx);
+                                })),
+                        )
+                    }),
             )
             .child(
                 Table::new()
@@ -710,14 +788,22 @@ impl Render for KeymapEditor {
                     )
                     .map_row(
                         cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
+                            let is_conflict = this
+                                .matches
+                                .get(row_index)
+                                .map(|candidate| candidate.candidate_id)
+                                .is_some_and(|id| this.conflicts.contains(&id));
                             let is_selected = this.selected_index == Some(row_index);
+
                             let row = row
                                 .id(("keymap-table-row", row_index))
                                 .on_click(cx.listener(move |this, _event, _window, _cx| {
                                     this.selected_index = Some(row_index);
                                 }))
                                 .border_2()
-                                .border_color(transparent_black())
+                                .when(is_conflict, |row| {
+                                    row.bg(cx.theme().status().error_background)
+                                })
                                 .when(is_selected, |row| {
                                     row.border_color(cx.theme().colors().panel_focused_border)
                                 });
