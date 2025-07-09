@@ -1,9 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 
 use fs::Fs;
-use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
 use http_client::HttpClient;
@@ -11,18 +9,12 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolChoice, RateLimiter,
 };
 use menu;
-use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use open_ai::{ResponseStreamEvent, stream_completion};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::Arc;
-use strum::IntoEnumIterator;
 
 use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
@@ -32,9 +24,6 @@ use crate::OpenAiSettingsContent;
 use crate::provider::open_ai::{AvailableModel, OpenAiEventMapper, OpenAiSettings, into_open_ai};
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
-
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
@@ -43,6 +32,8 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 }
 
 pub struct State {
+    id: Arc<str>,
+    env_var_name: Arc<str>,
     api_key: Option<String>,
     api_key_from_env: bool,
     _subscription: Subscription,
@@ -51,6 +42,10 @@ pub struct State {
 impl State {
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
+    }
+
+    fn settings<'a>(&'a self, cx: &'a App) -> Option<&'a OpenAiSettings> {
+        settings(self.id.as_ref(), cx)
     }
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -74,10 +69,9 @@ impl State {
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .openai
-            .api_url
-            .clone();
+        let Some(api_url) = self.settings(cx).map(|settings| settings.api_url.clone()) else {
+            return Task::ready(Ok(()));
+        };
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
@@ -96,12 +90,12 @@ impl State {
         }
 
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .openai
-            .api_url
-            .clone();
+        let Some(api_url) = self.settings(cx).map(|settings| settings.api_url.clone()) else {
+            return Task::ready(Ok(()));
+        };
+        let env_var_name = self.env_var_name.clone();
         cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+            let (api_key, from_env) = if let Ok(api_key) = std::env::var(env_var_name.as_ref()) {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
@@ -127,6 +121,8 @@ impl State {
 impl OpenAiCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
+            id: id.clone(),
+            env_var_name: format!("{}_API_KEY", id.replace('-', "_").to_uppercase()).into(),
             api_key: None,
             api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
@@ -142,21 +138,23 @@ impl OpenAiCompatibleLanguageModelProvider {
         }
     }
 
-    fn settings<'a>(&self, cx: &'a App) -> Option<&'a OpenAiSettings> {
-        AllLanguageModelSettings::get_global(cx)
-            .openai_compatible
-            .get(self.id.0.as_ref())
-    }
-
     fn create_language_model(&self, model: AvailableModel) -> Arc<dyn LanguageModel> {
         Arc::new(OpenAiCompatibleLanguageModel {
             id: LanguageModelId::from(model.name.clone()),
+            provider_id: self.id.clone(),
+            provider_name: self.name.clone(),
             model,
             state: self.state.clone(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         })
     }
+}
+
+fn settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiSettings> {
+    AllLanguageModelSettings::get_global(cx)
+        .openai_compatible
+        .get(id)
 }
 
 impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
@@ -182,6 +180,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let model = self
+            .state
+            .read(cx)
             .settings(cx)
             .and_then(|settings| settings.available_models.first())?;
 
@@ -193,7 +193,9 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.settings(cx)
+        self.state
+            .read(cx)
+            .settings(cx)
             .map(|settings| {
                 settings
                     .available_models
@@ -224,6 +226,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
 
 pub struct OpenAiCompatibleLanguageModel {
     id: LanguageModelId,
+    provider_id: LanguageModelProviderId,
+    provider_name: LanguageModelProviderName,
     model: AvailableModel,
     state: gpui::Entity<State>,
     http_client: Arc<dyn HttpClient>,
@@ -245,11 +249,10 @@ impl OpenAiCompatibleLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
+        let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -275,11 +278,11 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
+        self.provider_id.clone()
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
+        self.provider_name.clone()
     }
 
     fn supports_tools(&self) -> bool {
@@ -521,36 +524,17 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
+        let env_var_name = self.state.read(cx).env_var_name.clone();
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
 
-                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
-                .child(
-                    List::new()
-                        .child(InstructionListItem::new(
-                            "Create one by visiting",
-                            Some("OpenAI's console"),
-                            Some("https://platform.openai.com/api-keys"),
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Ensure your OpenAI account has credits",
-                        ))
-                        .child(InstructionListItem::text_only(
-                            "Paste your API key below and hit enter to start using the assistant",
-                        )),
-                )
+                .child(Label::new("To use Zed's assistant with an OpenAI compatible provider, you need to add an API key."))
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small).color(Color::Muted),
-                )
-                .child(
-                    Label::new(
-                        "Note that having a subscription for another service like GitHub Copilot won't work.",
+                        format!("You can also assign the {env_var_name} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -569,7 +553,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {OPENAI_API_KEY_VAR} environment variable.")
+                            format!("API key set in {env_var_name} environment variable.")
                         } else {
                             "API key configured.".to_string()
                         })),
@@ -582,15 +566,18 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .layer(ElevationIndex::ModalSurface)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
         };
 
-        let custom_api_url_set =
-            AllLanguageModelSettings::get_global(cx).openai.api_url != open_ai::OPEN_AI_API_URL;
+        let custom_api_url_set = self
+            .state
+            .read(cx)
+            .settings(cx)
+            .map_or(false, |settings| !settings.api_url.is_empty());
 
         let api_url_section = if custom_api_url_set {
             h_flex()
@@ -605,7 +592,7 @@ impl Render for ConfigurationView {
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Custom API URL configured.")),
+                        .child(Label::new("API URL configured.")),
                 )
                 .child(
                     Button::new("reset-api-url", "Reset API URL")

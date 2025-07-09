@@ -1716,7 +1716,8 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
-    }
+    },
+    "openai_compatible": {}
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
