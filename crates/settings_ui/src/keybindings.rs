@@ -20,8 +20,8 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ContextMenu, Divider, ParentElement as _, Render,
-    SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
+    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
