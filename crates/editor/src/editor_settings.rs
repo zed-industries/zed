@@ -286,7 +286,7 @@ pub struct DragAndDropSelection {
     /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     ///
     /// Default: 300
-    pub delay_ms: u64,
+    pub delay: u64,
 }
 
 /// Which diagnostic indicators to show in the scrollbar.

@@ -46,7 +46,7 @@ fn add_delay_to_drag_and_drop_selection(
     replacement.push_str(indent);
     replacement.push_str(&format!("  \"enabled\": {},\n", enabled_value));
     replacement.push_str(indent);
-    replacement.push_str("  \"delay_ms\": 300\n");
+    replacement.push_str("  \"delay\": 300\n");
     replacement.push_str(indent);
     replacement.push_str("}");
 

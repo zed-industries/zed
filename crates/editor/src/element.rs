@@ -643,7 +643,11 @@ impl EditorElement {
             return;
         }
 
-        if editor.drag_and_drop_selection_enabled && click_count == 1 {
+        if EditorSettings::get_global(cx)
+            .drag_and_drop_selection
+            .enabled
+            && click_count == 1
+        {
             let newest_anchor = editor.selections.newest_anchor();
             let snapshot = editor.snapshot(window, cx);
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
@@ -1021,7 +1025,10 @@ impl EditorElement {
                     ref click_position,
                     ref mouse_down_time,
                 } => {
-                    if mouse_down_time.elapsed() >= editor.drag_and_drop_selection_delay {
+                    let drag_and_drop_delay = Duration::from_millis(
+                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                    );
+                    if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
                             id: post_inc(&mut editor.selections.next_selection_id),
                             start: drop_anchor,
@@ -5713,7 +5720,10 @@ impl EditorElement {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
                 {
-                    if mouse_down_time.elapsed() >= editor.drag_and_drop_selection_delay {
+                    let drag_and_drop_delay = Duration::from_millis(
+                        EditorSettings::get_global(cx).drag_and_drop_selection.delay,
+                    );
+                    if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         window.set_cursor_style(
                             CursorStyle::DragCopy,
                             &layout.position_map.text_hitbox,

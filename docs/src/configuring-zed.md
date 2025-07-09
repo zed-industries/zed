@@ -1218,7 +1218,7 @@ or
 
 ### Drag And Drop Selection
 
-- Description: Whether to allow drag and drop text selection in buffer.
+- Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
 - Setting: `drag_and_drop_selection`
 - Default:
 
@@ -1228,26 +1228,6 @@ or
   "delay": 300
 }
 ```
-
-#### Enabled
-
-- Description: When true, enables drag and drop text selection in buffer.
-- Setting: `enabled`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
-#### Delay (ms)
-
-- Description: The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
-- Setting: `delay_ms`
-- Default: `300`
-
-**Options**
-
-`integer` values representing milliseconds
 
 ## Editor Toolbar
 
