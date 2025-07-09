@@ -1807,7 +1807,7 @@ impl AgentPanel {
                             this.header("Zed Agent")
                         })
                         .action("New Thread", NewThread::default().boxed_clone())
-                        .action("New Text Thread", NewTextThread::default().boxed_clone())
+                        .action("New Text Thread", NewTextThread.boxed_clone())
                         .when_some(active_thread, |this, active_thread| {
                             let thread = active_thread.read(cx);
                             if !thread.is_empty() {
