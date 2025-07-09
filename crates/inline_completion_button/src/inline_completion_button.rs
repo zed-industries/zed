@@ -863,13 +863,17 @@ impl InlineCompletionButton {
             // Clone needed values to avoid borrowing issues
             let available_models = ollama_settings.available_models.clone();
 
-            // API URL configuration
-            let menu = menu.entry("Configure API URL", None, {
-                let fs = fs.clone();
-                move |window, cx| {
-                    Self::open_ollama_settings(fs.clone(), window, cx);
-                }
-            });
+            // API URL configuration - only show if Ollama settings exist in the user's config
+            let menu = if Self::ollama_settings_exist(cx) {
+                menu.entry("Configure API URL", None, {
+                    let fs = fs.clone();
+                    move |window, cx| {
+                        Self::open_ollama_settings(fs.clone(), window, cx);
+                    }
+                })
+            } else {
+                menu
+            };
 
             // Model selection section
             let menu = if !available_models.is_empty() {
@@ -933,7 +937,7 @@ impl InlineCompletionButton {
 
                             // Look for language_models.ollama.api_url setting with precise pattern
                             // This matches the full nested structure to avoid false matches
-                            let api_url_pattern = r#""language_models"\s*:\s*\{[^}]*"ollama"\s*:\s*\{[^}]*"api_url"\s*:\s*"([^"]*)"#;
+                            let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
                             let regex = regex::Regex::new(api_url_pattern).unwrap();
 
                             if let Some(captures) = regex.captures(&text) {
@@ -954,45 +958,6 @@ impl InlineCompletionButton {
                                 return Ok::<(), anyhow::Error>(());
                             }
 
-                            // Fallback: look for just the "api_url" key and select its value
-                            let simple_pattern = r#""api_url"\s*:\s*"([^"]*)"#;
-                            let simple_regex = regex::Regex::new(simple_pattern).unwrap();
-
-                            if let Some(captures) = simple_regex.captures(&text) {
-                                let value_capture = captures.get(1).unwrap();
-
-                                item.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::newest()),
-                                    window,
-                                    cx,
-                                    |selections| {
-                                        selections.select_ranges(vec![
-                                            value_capture.start()..value_capture.end(),
-                                        ]);
-                                    },
-                                );
-                                return Ok::<(), anyhow::Error>(());
-                            }
-
-                            // If we can't find the specific setting, ensure language_models section exists
-                            let settings = cx.global::<SettingsStore>();
-                            let edits = settings.edits_for_update::<AllLanguageModelSettings>(
-                                &text,
-                                |file| {
-                                    if file.ollama.is_none() {
-                                        file.ollama =
-                                            Some(language_models::OllamaSettingsContent {
-                                                api_url: Some("http://localhost:11434".to_string()),
-                                                available_models: None,
-                                            });
-                                    }
-                                },
-                            );
-
-                            if !edits.is_empty() {
-                                item.edit(edits, cx);
-                            }
-
                             Ok::<(), anyhow::Error>(())
                         })?;
 
@@ -1000,6 +965,18 @@ impl InlineCompletionButton {
                 })
                 .detach_and_log_err(cx);
         }
+    }
+
+    fn ollama_settings_exist(_cx: &mut App) -> bool {
+        // Check if there's an ollama section in the settings file
+        let settings_content = std::fs::read_to_string(paths::settings_file()).unwrap_or_default();
+        Self::ollama_settings_exist_in_content(&settings_content)
+    }
+
+    fn ollama_settings_exist_in_content(content: &str) -> bool {
+        let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
+        let regex = regex::Regex::new(api_url_pattern).unwrap();
+        regex.is_match(content)
     }
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
@@ -1360,7 +1337,7 @@ mod tests {
 
             // Test the precise regex pattern
             let api_url_pattern =
-                r#""language_models"\s*:\s*\{[^}]*"ollama"\s*:\s*\{[^}]*"api_url"\s*:\s*"([^"]*)"#;
+                r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
             let regex = regex::Regex::new(api_url_pattern).unwrap();
 
             if let Some(captures) = regex.captures(test_settings_content) {
@@ -1374,16 +1351,124 @@ mod tests {
                 panic!("Regex should match the test content");
             }
 
-            // Test fallback regex
-            let simple_pattern = r#""api_url"\s*:\s*"([^"]*)"#;
-            let simple_regex = regex::Regex::new(simple_pattern).unwrap();
+            // Test with settings that include other providers to ensure we don't match them
+            let test_settings_with_openai = r#"{
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.openai.com/v1",
+      "available_models": []
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "available_models": []
+    }
+  }
+}"#;
 
-            if let Some(captures) = simple_regex.captures(test_settings_content) {
+            // Ensure our regex only matches Ollama's API URL, not OpenAI's
+            if let Some(captures) = regex.captures(test_settings_with_openai) {
+                let value_capture = captures.get(1).unwrap();
+                assert_eq!(value_capture.as_str(), "http://localhost:11434");
+                // Verify it's not matching OpenAI's URL
+                assert_ne!(value_capture.as_str(), "https://api.openai.com/v1");
+            } else {
+                panic!("Regex should match Ollama's API URL even when other providers are present");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_settings_navigation_with_other_providers(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AllLanguageModelSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            // Test scenario: User has OpenAI configured but no Ollama settings
+            // The regex should not match OpenAI's api_url
+            let settings_with_openai_only = r#"{
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.openai.com/v1",
+      "available_models": []
+    }
+  }
+}"#;
+
+            let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
+            let regex = regex::Regex::new(api_url_pattern).unwrap();
+
+            // Should not match OpenAI's API URL
+            assert!(regex.captures(settings_with_openai_only).is_none());
+
+            // Test when both providers exist
+            let settings_with_both = r#"{
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.openai.com/v1",
+      "available_models": []
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "available_models": []
+    }
+  }
+}"#;
+
+            // Should match only Ollama's API URL
+            if let Some(captures) = regex.captures(settings_with_both) {
                 let value_capture = captures.get(1).unwrap();
                 assert_eq!(value_capture.as_str(), "http://localhost:11434");
             } else {
-                panic!("Fallback regex should match the test content");
+                panic!("Should match Ollama's API URL when it exists");
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_configure_api_url_menu_visibility(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AllLanguageModelSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            // Test that ollama_settings_exist returns false when no settings file exists
+            // or when ollama section doesn't exist
+            assert!(!InlineCompletionButton::ollama_settings_exist_in_content(
+                ""
+            ));
+
+            // Test with a settings file that has no ollama section
+            let settings_without_ollama = r#"{
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.openai.com/v1"
+    }
+  }
+}"#;
+
+            // Test that the function correctly identifies when ollama section is missing
+            assert!(!InlineCompletionButton::ollama_settings_exist_in_content(
+                settings_without_ollama
+            ));
+
+            // Test with a settings file that has ollama section
+            let settings_with_ollama = r#"{
+  "language_models": {
+    "openai": {
+      "api_url": "https://api.openai.com/v1"
+    },
+    "ollama": {
+      "api_url": "http://localhost:11434"
+    }
+  }
+}"#;
+
+            assert!(InlineCompletionButton::ollama_settings_exist_in_content(
+                settings_with_ollama
+            ));
         });
     }
 
