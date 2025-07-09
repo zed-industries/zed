@@ -622,6 +622,14 @@ impl DebugPanel {
                 .on_click(move |_, _, cx| cx.open_url("https://zed.dev/docs/debugger"))
                 .tooltip(Tooltip::text("Open Documentation"))
         };
+        let logs_button = || {
+            IconButton::new("debug-open-logs", IconName::ScrollText)
+                .icon_size(IconSize::Small)
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(debugger_tools::OpenDebugAdapterLogs.boxed_clone(), cx)
+                })
+                .tooltip(Tooltip::text("Open Debug Adapter Logs"))
+        };
 
         Some(
             div.border_b_1()
@@ -873,6 +881,7 @@ impl DebugPanel {
                         .justify_around()
                         .when(is_side, |this| {
                             this.child(new_session_button())
+                                .child(logs_button())
                                 .child(documentation_button())
                         }),
                 )
@@ -922,6 +931,7 @@ impl DebugPanel {
                                 ))
                                 .when(!is_side, |this| {
                                     this.child(new_session_button())
+                                        .child(logs_button())
                                         .child(documentation_button())
                                 }),
                         ),

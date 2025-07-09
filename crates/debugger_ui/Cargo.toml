@@ -16,13 +16,13 @@ doctest = false
 test-support = [
     "dap/test-support",
     "dap_adapters/test-support",
+    "debugger_tools/test-support",
     "editor/test-support",
     "gpui/test-support",
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
     "unindent",
-    "debugger_tools"
 ]
 
 [dependencies]
@@ -69,7 +69,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
-debugger_tools = { workspace = true, optional = true }
+debugger_tools.workspace = true
 unindent = { workspace = true, optional = true }
 zed_actions.workspace = true
 
