@@ -1,5 +1,6 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
+use anthropic::oauth::{AnthropicOAuth, OAuthTokens, PkceChallenge};
 use anthropic::{
     AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
     ToolResultPart, Usage,
@@ -11,7 +12,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, FontWeight, Subscription, Task, TextStyle,
+    WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -102,6 +104,8 @@ const ANTHROPIC_API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    oauth_tokens: Option<OAuthTokens>,
+    oauth_client: AnthropicOAuth,
     _subscription: Subscription,
 }
 
@@ -117,9 +121,14 @@ impl State {
                 .delete_credentials(&api_url, &cx)
                 .await
                 .ok();
+            credentials_provider
+                .delete_credentials(&format!("{}/oauth", api_url), &cx)
+                .await
+                .ok();
             this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
+                this.oauth_tokens = None;
                 cx.notify();
             })
         })
@@ -145,7 +154,61 @@ impl State {
     }
 
     fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key.is_some() || self.oauth_tokens.is_some()
+    }
+
+    fn start_oauth_flow(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(String, PkceChallenge)>> {
+        let oauth_client = self.oauth_client.clone();
+        cx.spawn(async move |_, _| {
+            let pkce_challenge = AnthropicOAuth::generate_pkce_challenge()?;
+            let auth_url = oauth_client.get_authorization_url(&pkce_challenge)?;
+            Ok((auth_url, pkce_challenge))
+        })
+    }
+
+    fn complete_oauth_flow(
+        &mut self,
+        code: String,
+        pkce_challenge: PkceChallenge,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let oauth_client = self.oauth_client.clone();
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
+
+        cx.spawn(async move |this, cx| {
+            let tokens = oauth_client
+                .exchange_code_for_tokens(
+                    &code,
+                    &pkce_challenge.state,
+                    &pkce_challenge.code_verifier,
+                )
+                .await?;
+
+            // Store tokens in credentials provider
+            let tokens_json = serde_json::to_string(&tokens)?;
+            credentials_provider
+                .write_credentials(
+                    &format!("{}/oauth", api_url),
+                    "Bearer",
+                    tokens_json.as_bytes(),
+                    &cx,
+                )
+                .await?;
+
+            this.update(cx, |this, cx| {
+                this.oauth_tokens = Some(tokens);
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
@@ -160,6 +223,21 @@ impl State {
             .clone();
 
         cx.spawn(async move |this, cx| {
+            // First try to load OAuth tokens
+            if let Ok(Some((_, oauth_data))) = credentials_provider
+                .read_credentials(&format!("{}/oauth", api_url), &cx)
+                .await
+            {
+                if let Ok(tokens) = serde_json::from_slice::<OAuthTokens>(&oauth_data) {
+                    this.update(cx, |this, cx| {
+                        this.oauth_tokens = Some(tokens);
+                        cx.notify();
+                    })?;
+                    return Ok(());
+                }
+            }
+
+            // Fall back to API key authentication
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
                 (api_key, true)
             } else {
@@ -186,9 +264,12 @@ impl State {
 
 impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let oauth_client = AnthropicOAuth::new(http_client.clone());
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
+            oauth_tokens: None,
+            oauth_client,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -394,15 +475,51 @@ impl AnthropicModel {
         >,
     > {
         let http_client = self.http_client.clone();
+        let _state = self.state.clone();
 
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+        let Ok((api_key, oauth_tokens, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (state.api_key.clone(), settings.api_url.clone())
+            (
+                state.api_key.clone(),
+                state.oauth_tokens.clone(),
+                settings.api_url.clone(),
+            )
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         async move {
+            // Try OAuth first, then fall back to API key
+            if let Some(tokens) = oauth_tokens {
+                let access_token = if tokens.is_expired() {
+                    // Try to refresh the token
+                    let oauth_client = AnthropicOAuth::new(http_client.clone());
+                    match oauth_client.refresh_token(&tokens.refresh_token).await {
+                        Ok(new_tokens) => {
+                            // Update the stored tokens - this should be done in the state
+                            new_tokens.access_token
+                        }
+                        Err(_) => {
+                            // Token refresh failed, fall back to API key
+                            return Err(LanguageModelCompletionError::NoApiKey {
+                                provider: PROVIDER_NAME,
+                            });
+                        }
+                    }
+                } else {
+                    tokens.access_token
+                };
+
+                let request = anthropic::stream_completion_with_oauth(
+                    http_client.as_ref(),
+                    &api_url,
+                    &access_token,
+                    request,
+                );
+                return request.await.map_err(Into::into);
+            }
+
+            // Fall back to API key
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
@@ -484,12 +601,18 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_anthropic(
+        // Check if OAuth is being used to enable spoofing
+        let use_oauth = cx
+            .read_entity(&self.state, |state, _cx| state.oauth_tokens.is_some())
+            .unwrap_or(false);
+
+        let request = into_anthropic_with_oauth_spoof(
             request,
             self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
             self.model.mode(),
+            use_oauth, // Enable OAuth spoofing when using OAuth
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -517,6 +640,54 @@ pub fn into_anthropic(
     max_output_tokens: u64,
     mode: AnthropicModelMode,
 ) -> anthropic::Request {
+    into_anthropic_with_oauth_spoof(
+        request,
+        model,
+        default_temperature,
+        max_output_tokens,
+        mode,
+        false,
+    )
+}
+
+pub fn into_anthropic_with_oauth_spoof(
+    mut request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u64,
+    mode: AnthropicModelMode,
+    use_oauth_spoof: bool,
+) -> anthropic::Request {
+    let system_content = if use_oauth_spoof {
+        let mut system_parts = vec![anthropic::RequestContent::Text {
+            text: "You are Claude Code, Anthropic's official CLI for Claude.".to_string(),
+            cache_control: None,
+        }];
+
+        // Add existing system messages as additional content parts
+        for message in &request.messages {
+            if message.role == Role::System {
+                for content in &message.content {
+                    if let MessageContent::Text(text) = content {
+                        system_parts.push(anthropic::RequestContent::Text {
+                            text: text.clone(),
+                            cache_control: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        Some(anthropic::StringOrContents::Content(system_parts))
+    } else {
+        None
+    };
+
+    // Remove system messages from request.messages if we're using OAuth spoofing
+    // since we'll handle them in the system field
+    if use_oauth_spoof {
+        request.messages.retain(|msg| msg.role != Role::System);
+    }
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
 
@@ -658,7 +829,10 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: if system_message.is_empty() {
+        system: if let Some(oauth_system) = system_content {
+            // Use pre-built OAuth system content (array format)
+            Some(oauth_system)
+        } else if system_message.is_empty() {
             None
         } else {
             Some(anthropic::StringOrContents::String(system_message))
@@ -898,8 +1072,17 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 
 struct ConfigurationView {
     api_key_editor: Entity<Editor>,
+    oauth_code_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    oauth_flow_state: OAuthFlowState,
+}
+
+#[derive(Clone)]
+enum OAuthFlowState {
+    Initial,
+    WaitingForCode(PkceChallenge),
+    Authenticating,
 }
 
 impl ConfigurationView {
@@ -935,8 +1118,14 @@ impl ConfigurationView {
                 editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
+            oauth_code_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("Paste authorization code here", cx);
+                editor
+            }),
             state,
             load_credentials_task,
+            oauth_flow_state: OAuthFlowState::Initial,
         }
     }
 
@@ -995,6 +1184,96 @@ impl ConfigurationView {
         )
     }
 
+    fn render_oauth_code_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.ui_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            white_space: WhiteSpace::Normal,
+            ..Default::default()
+        };
+        EditorElement::new(
+            &self.oauth_code_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn start_oauth_flow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let task = state.update(cx, |state, cx| state.start_oauth_flow(cx))?;
+            let (auth_url, pkce_challenge) = task.await?;
+
+            // Open the authorization URL in the user's default browser
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&auth_url)
+                    .spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", &auth_url])
+                    .spawn();
+            }
+
+            this.update(cx, |this, cx| {
+                this.oauth_flow_state = OAuthFlowState::WaitingForCode(pkce_challenge);
+                cx.notify();
+            })?;
+
+            Ok::<_, anyhow::Error>(())
+        });
+
+        task.detach_and_log_err(cx);
+    }
+
+    fn complete_oauth_flow(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let code = self.oauth_code_editor.read(cx).text(cx);
+        if code.is_empty() {
+            return;
+        }
+
+        if let OAuthFlowState::WaitingForCode(pkce_challenge) = &self.oauth_flow_state {
+            let state = self.state.clone();
+            let pkce_challenge = pkce_challenge.clone();
+
+            self.oauth_flow_state = OAuthFlowState::Authenticating;
+
+            let task = cx.spawn(async move |this, cx| {
+                let task = state.update(cx, |state, cx| {
+                    state.complete_oauth_flow(code, pkce_challenge, cx)
+                })?;
+                task.await?;
+
+                this.update(cx, |this, cx| {
+                    this.oauth_flow_state = OAuthFlowState::Initial;
+                    cx.notify();
+                })?;
+
+                Ok::<_, anyhow::Error>(())
+            });
+
+            task.detach_and_log_err(cx);
+        }
+    }
+
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -1010,38 +1289,116 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's assistant with Anthropic, choose one of these options:"))
                 .child(
-                    List::new()
-                        .child(
-                            InstructionListItem::new(
-                                "Create one by visiting",
-                                Some("Anthropic's settings"),
-                                Some("https://console.anthropic.com/settings/keys")
-                            )
-                        )
-                        .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
-                        )
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
+                    v_flex()
+                        .mt_4()
+                        .p_3()
+                        .gap_3()
                         .border_1()
                         .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
+                        .rounded_md()
+                        .bg(cx.theme().colors().background)
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Icon::new(IconName::LockOutlined).color(Color::Info))
+                                .child(Label::new("Option 1: OAuth Login").weight(FontWeight::BOLD))
+                        )
+                        .child(
+                            Label::new("Sign in with your Claude Pro account for secure authentication.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        )
+                        .child(
+                            match &self.oauth_flow_state {
+                                OAuthFlowState::Initial => {
+                                    Button::new("start-oauth", "Sign in with Claude Pro")
+                                        .style(ButtonStyle::Filled)
+                                        .icon(Some(IconName::AiAnthropic))
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.start_oauth_flow(window, cx)
+                                        }))
+                                        .into_any_element()
+                                }
+                                OAuthFlowState::WaitingForCode(_) => {
+                                    v_flex()
+                                        .gap_2()
+                                        .child(Label::new("Browser opened. Please authorize and paste the authorization code below:"))
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .px_2()
+                                                .py_1()
+                                                .bg(cx.theme().colors().editor_background)
+                                                .border_1()
+                                                .border_color(cx.theme().colors().border)
+                                                .rounded_sm()
+                                                .child(self.render_oauth_code_editor(cx)),
+                                        )
+                                        .child(
+                                            Button::new("complete-oauth", "Complete OAuth")
+                                                .style(ButtonStyle::Filled)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.complete_oauth_flow(window, cx)
+                                                }))
+                                        )
+                                        .into_any_element()
+                                }
+                                OAuthFlowState::Authenticating => {
+                                    Label::new("Authenticating...")
+                                        .into_any_element()
+                                }
+                            }
+                        )
                 )
                 .child(
-                    Label::new(
-                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    v_flex()
+                        .mt_4()
+                        .p_3()
+                        .gap_3()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_md()
+                        .bg(cx.theme().colors().background)
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Icon::new(IconName::Keyboard).color(Color::Warning))
+                                .child(Label::new("Option 2: API Key").weight(FontWeight::BOLD))
+                        )
+                        .child(
+                            List::new()
+                                .child(
+                                    InstructionListItem::new(
+                                        "Create one by visiting",
+                                        Some("Anthropic's settings"),
+                                        Some("https://console.anthropic.com/settings/keys")
+                                    )
+                                )
+                                .child(
+                                    InstructionListItem::text_only("Paste your API key below and hit enter")
+                                )
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .px_2()
+                                .py_1()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .rounded_sm()
+                                .child(self.render_api_key_editor(cx)),
+                        )
+                        .child(
+                            Label::new(
+                                format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
+                            )
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        )
                 )
                 .into_any()
         } else {

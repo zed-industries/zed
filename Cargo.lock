@@ -405,14 +405,18 @@ name = "anthropic"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "futures 0.3.31",
  "http_client",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.27.1",
  "thiserror 2.0.12",
+ "url",
  "workspace-hack",
 ]
 
