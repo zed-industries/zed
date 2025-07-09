@@ -1803,7 +1803,9 @@ impl AgentPanel {
                 let active_thread = active_thread.clone();
                 Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
                     menu = menu
-                        .header("Zed Agent")
+                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            this.header("Zed Agent")
+                        })
                         .action("New Thread", NewThread::default().boxed_clone())
                         .action("New Text Thread", NewTextThread::default().boxed_clone())
                         .when_some(active_thread, |this, active_thread| {
@@ -1819,10 +1821,10 @@ impl AgentPanel {
                                 this
                             }
                         })
-                        .separator()
-                        .header("External Agents")
                         .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                            this.action("New Gemini Thread", NewAcpThread.boxed_clone())
+                            this.separator()
+                                .header("External Agents")
+                                .action("New Gemini Thread", NewAcpThread.boxed_clone())
                         });
                     menu
                 }))
