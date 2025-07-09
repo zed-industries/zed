@@ -90,6 +90,7 @@ actions!(
         Undo,
         /// Redoes the last undone change.
         Redo,
+        /// Undoes all changes to the most recently changed line.
         UndoLastLine,
     ]
 );
@@ -197,7 +198,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &UndoLastLine, window, cx| {
         Vim::take_forced_motion(cx);
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let Some(last_change) = editor.change_list.last_before_grouping() else {
                 return;
@@ -237,7 +238,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 let mut undo_count = 0;
 
                 loop {
-                    buffer.undo(cx);
+                    let undone_tx = buffer.undo(cx);
                     undo_count += 1;
                     let mut content_after_undo = Vec::new();
 
@@ -257,6 +258,9 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                     content_before_undo = content_after_undo;
                     if !line_changed {
+                        break;
+                    }
+                    if undone_tx == vim.undo_last_line_tx {
                         break;
                     }
                 }
@@ -301,14 +305,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 }
                 edits
             });
-            editor.finalize_last_transaction(cx);
-            editor.transact(window, cx, |editor, window, cx| {
+            vim.undo_last_line_tx = editor.transact(window, cx, |editor, window, cx| {
+                editor.change_list.invert_last_group();
                 editor.edit(edits, cx);
                 editor.change_selections(SelectionEffects::default(), window, cx, |s| {
                     s.select_anchor_ranges(anchors.into_iter().map(|a| a..a));
                 })
             });
-            editor.finalize_last_transaction(cx);
         });
     });
 
@@ -2055,6 +2058,11 @@ mod test {
         cx.simulate_shared_keystrokes("shift-u").await;
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
     }
 
     #[gpui::test]

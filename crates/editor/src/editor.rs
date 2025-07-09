@@ -929,6 +929,14 @@ impl ChangeList {
     pub fn last_before_grouping(&self) -> Option<&[Anchor]> {
         self.changes.last().map(|change| change.original.as_slice())
     }
+
+    pub fn invert_last_group(&mut self) {
+        if let Some(last) = self.changes.last_mut() {
+            if let Some(current) = last.current.as_mut() {
+                mem::swap(&mut last.original, current);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]

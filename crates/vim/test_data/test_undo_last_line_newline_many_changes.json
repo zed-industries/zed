@@ -14,3 +14,8 @@
 {"Key":"shift-u"}
 {"Get":{"state":"n a() { }\nfn a() { }\nˇfn a() { }\n","mode":"Normal"}}
 {"Key":"shift-u"}
+{"Get":{"state":"n a() { }\nfn a() { }\nn () ˇ }\n","mode":"Normal"}}
+{"Key":"shift-u"}
+{"Get":{"state":"n a() { }\nfn a() { }\nˇfn a() { }\n","mode":"Normal"}}
+{"Key":"shift-u"}
+{"Get":{"state":"n a() { }\nfn a() { }\nn () ˇ }\n","mode":"Normal"}}
