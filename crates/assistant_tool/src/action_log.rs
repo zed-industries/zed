@@ -49,6 +49,34 @@ impl ActionLog {
 
     pub fn latest_snapshot(&self, buffer: &Entity<Buffer>) -> Option<text::BufferSnapshot> {
         Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
+
+    /// Returns user edits made since the agent last read the buffers
+    pub fn user_edits_since_last_read(&self) -> Vec<(Entity<Buffer>, Patch<u32>)> {
+        self.tracked_buffers
+            .values()
+            .filter_map(|tracked| {
+                if tracked.unnotified_user_edits.is_empty() {
+                    None
+                } else {
+                    Some((
+                        tracked.buffer.clone(),
+                        tracked.unnotified_user_edits.clone(),
+                    ))
+                }
+            })
+            .collect()
+    }
+
+    pub fn user_edits_since_last_read_patch(&self) -> String {
+        self.user_edits_since_last_read()
+            .iter()
+            .map(|(buffer, patch)| Self::format_patch(patch.clone(), buffer.clone()))
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
+    fn format_patch(patch: Patch<u32>, buffer: Entity<Buffer>, cx: &Context<Self>) -> String {
+        buffer.read_with(cx, |buffer, cx| buffer.base_text().
     }
 
     fn track_buffer_internal(
@@ -112,6 +140,7 @@ impl ActionLog {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
                 }
+                let unnotified_user_edits = Patch::default();
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
@@ -121,6 +150,7 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
+                    unnotified_user_edits,
                     _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
@@ -262,10 +292,10 @@ impl ActionLog {
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let rebase = this.read_with(cx, |this, cx| {
+        let rebase = this.update(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
-                .get(buffer)
+                .get_mut(buffer)
                 .context("buffer not tracked")?;
 
             let rebase = cx.background_spawn({
@@ -273,8 +303,15 @@ impl ActionLog {
                 let old_snapshot = tracked_buffer.snapshot.clone();
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
+                let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                if let ChangeAuthor::User = author {
+                    edits
+                        .iter()
+                        .cloned()
+                        .for_each(|edit| tracked_buffer.unnotified_user_edits.push(edit));
+                }
                 async move {
-                    let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                    // let edits = diff_snapshots(&old_snapshot, &new_snapshot);
                     if let ChangeAuthor::User = author {
                         apply_non_conflicting_edits(
                             &unreviewed_edits,
@@ -920,6 +957,7 @@ struct TrackedBuffer {
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
+    unnotified_user_edits: Patch<u32>,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -1224,6 +1262,79 @@ mod tests {
                 }],
             )]
         );
+
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_user_edits_notifications(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Agent edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndeF\nGHI\njkl\nmno"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(3, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "def\nghi\n".into(),
+                }],
+            )]
+        );
+
+        // User edits
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    (Point::new(0, 2)..Point::new(0, 2), "X"),
+                    (Point::new(3, 0)..Point::new(3, 0), "Y"),
+                ],
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abXc\ndeF\nGHI\nYjkl\nmno"
+        );
+
+        // User edits should be stored separately
+        let user_edits = action_log.read_with(cx, |log, _| log.user_edits_since_last_read());
+        dbg!(&user_edits);
+        assert_eq!(user_edits.len(), 1);
 
         action_log.update(cx, |log, cx| {
             log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
