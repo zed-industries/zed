@@ -47,13 +47,14 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
+use zed_actions::agent::Chat;
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
+    ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };

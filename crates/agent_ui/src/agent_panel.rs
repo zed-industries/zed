@@ -7,12 +7,14 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use crate::NewGeminiThread;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
     NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
     ResetTrialUpsell, ToggleBurnMode, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    acp::AcpThreadView,
     active_thread::{self, ActiveThread, ActiveThreadEvent},
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     agent_diff::AgentDiff,
@@ -38,6 +40,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
+use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -109,6 +112,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
+                .register_action(|workspace, _: &NewGeminiThread, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.new_gemini_thread(window, cx));
+                    }
+                })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -125,7 +134,8 @@ pub fn init(cx: &mut App) {
                                 let thread = thread.read(cx).thread().clone();
                                 AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                             }
-                            ActiveView::TextThread { .. }
+                            ActiveView::AcpThread { .. }
+                            | ActiveView::TextThread { .. }
                             | ActiveView::History
                             | ActiveView::Configuration => {}
                         }
@@ -188,6 +198,9 @@ enum ActiveView {
         message_editor: Entity<MessageEditor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
+    AcpThread {
+        thread_view: Entity<AcpThreadView>,
+    },
     TextThread {
         context_editor: Entity<TextThreadEditor>,
         title_editor: Entity<Editor>,
@@ -207,7 +220,9 @@ enum WhichFontSize {
 impl ActiveView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
-            ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
+            ActiveView::Thread { .. } | ActiveView::AcpThread { .. } | ActiveView::History => {
+                WhichFontSize::AgentFont
+            }
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
         }
@@ -238,6 +253,7 @@ impl ActiveView {
                             thread.scroll_to_bottom(cx);
                         });
                     }
+                    ActiveView::AcpThread { .. } => {}
                     ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
@@ -653,7 +669,8 @@ impl AgentPanel {
                             .clone()
                             .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
                     }
-                    ActiveView::TextThread { .. }
+                    ActiveView::AcpThread { .. }
+                    | ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
                 },
@@ -733,6 +750,9 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => {
                 thread.update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
             }
+            ActiveView::AcpThread { thread_view, .. } => {
+                thread_view.update(cx, |thread_element, cx| thread_element.cancel(cx));
+            }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
     }
@@ -740,7 +760,10 @@ impl AgentPanel {
     fn active_message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => Some(message_editor),
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         }
     }
 
@@ -860,6 +883,21 @@ impl AgentPanel {
             cx,
         );
         context_editor.focus_handle(cx).focus(window);
+    }
+
+    fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let thread_view = cx.new_window_entity(|window, cx| {
+                crate::acp::AcpThreadView::new(workspace, project, window, cx)
+            })?;
+            this.update_in(cx, |this, window, cx| {
+                this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
+            })
+        })
+        .detach();
     }
 
     fn deploy_rules_library(
@@ -994,6 +1032,7 @@ impl AgentPanel {
                 cx,
             )
         });
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
@@ -1024,6 +1063,9 @@ impl AgentPanel {
                     match &self.active_view {
                         ActiveView::Thread { message_editor, .. } => {
                             message_editor.focus_handle(cx).focus(window);
+                        }
+                        ActiveView::AcpThread { thread_view } => {
+                            thread_view.focus_handle(cx).focus(window);
                         }
                         ActiveView::TextThread { context_editor, .. } => {
                             context_editor.focus_handle(cx).focus(window);
@@ -1144,7 +1186,10 @@ impl AgentPanel {
                     })
                     .log_err();
             }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -1196,6 +1241,13 @@ impl AgentPanel {
                     cx,
                 )
                 .detach_and_log_err(cx);
+            }
+            ActiveView::AcpThread { thread_view } => {
+                thread_view
+                    .update(cx, |thread_view, cx| {
+                        thread_view.open_thread_as_markdown(workspace, window, cx)
+                    })
+                    .detach_and_log_err(cx);
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
@@ -1351,7 +1403,8 @@ impl AgentPanel {
                     }
                 })
             }
-            _ => {}
+            ActiveView::AcpThread { .. } => {}
+            ActiveView::History | ActiveView::Configuration => {}
         }
 
         if current_is_special && !new_is_special {
@@ -1437,6 +1490,7 @@ impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { message_editor, .. } => message_editor.focus_handle(cx),
+            ActiveView::AcpThread { thread_view, .. } => thread_view.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
@@ -1593,6 +1647,9 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
+            ActiveView::AcpThread { thread_view } => Label::new(thread_view.read(cx).title(cx))
+                .truncate()
+                .into_any_element(),
             ActiveView::TextThread {
                 title_editor,
                 context_editor,
@@ -1727,7 +1784,10 @@ impl AgentPanel {
 
         let active_thread = match &self.active_view {
             ActiveView::Thread { thread, .. } => Some(thread.read(cx).thread().clone()),
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => None,
+            ActiveView::AcpThread { .. }
+            | ActiveView::TextThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => None,
         };
 
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
@@ -1755,6 +1815,9 @@ impl AgentPanel {
                     menu = menu
                         .action("New Thread", NewThread::default().boxed_clone())
                         .action("New Text Thread", NewTextThread.boxed_clone())
+                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            this.action("New Gemini Thread", NewGeminiThread.boxed_clone())
+                        })
                         .when_some(active_thread, |this, active_thread| {
                             let thread = active_thread.read(cx);
                             if !thread.is_empty() {
@@ -1893,6 +1956,9 @@ impl AgentPanel {
                 message_editor,
                 ..
             } => (thread.read(cx), message_editor.read(cx)),
+            ActiveView::AcpThread { .. } => {
+                return None;
+            }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
                 return None;
             }
@@ -2030,6 +2096,9 @@ impl AgentPanel {
                 if !is_using_zed_provider {
                     return false;
                 }
+            }
+            ActiveView::AcpThread { .. } => {
+                return false;
             }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
                 return false;
@@ -2615,6 +2684,9 @@ impl AgentPanel {
     ) -> Option<AnyElement> {
         let active_thread = match &self.active_view {
             ActiveView::Thread { thread, .. } => thread,
+            ActiveView::AcpThread { .. } => {
+                return None;
+            }
             ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
                 return None;
             }
@@ -2961,6 +3033,9 @@ impl AgentPanel {
                     .detach();
                 });
             }
+            ActiveView::AcpThread { .. } => {
+                unimplemented!()
+            }
             ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
                     TextThreadEditor::insert_dragged_files(
@@ -3034,6 +3109,7 @@ impl Render for AgentPanel {
                         });
                         this.continue_conversation(window, cx);
                     }
+                    ActiveView::AcpThread { .. } => {}
                     ActiveView::TextThread { .. }
                     | ActiveView::History
                     | ActiveView::Configuration => {}
@@ -3074,6 +3150,10 @@ impl Render for AgentPanel {
                         )
                     })
                     .child(h_flex().child(message_editor.clone()))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::AcpThread { thread_view, .. } => parent
+                    .relative()
+                    .child(thread_view.clone())
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::TextThread {

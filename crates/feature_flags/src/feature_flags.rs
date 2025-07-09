@@ -92,6 +92,12 @@ impl FeatureFlag for JjUiFeatureFlag {
     const NAME: &'static str = "jj-ui";
 }
 
+pub struct AcpFeatureFlag;
+
+impl FeatureFlag for AcpFeatureFlag {
+    const NAME: &'static str = "acp";
+}
+
 pub struct ZedCloudFeatureFlag {}
 
 impl FeatureFlag for ZedCloudFeatureFlag {
