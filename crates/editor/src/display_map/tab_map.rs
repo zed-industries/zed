@@ -541,6 +541,8 @@ impl TabChunks<'_> {
         self.chunk = Chunk {
             text: &SPACES[0..(to_next_stop as usize)],
             is_tab: true,
+            // todo!(check that this logic is correct)
+            chars: (1u128 << to_next_stop) - 1,
             ..Default::default()
         };
         self.inside_leading_tab = to_next_stop > 0;
@@ -570,13 +572,31 @@ impl<'a> Iterator for TabChunks<'a> {
                 '\t' => {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
+
+                        let (chars, tabs) = if ix == 128 {
+                            let output = (self.chunk.chars, self.chunk.tabs);
+                            self.chunk.chars = 0;
+                            self.chunk.tabs = 0;
+                            output
+                        } else {
+                            let mask = (1 << ix) - 1;
+                            let output = (self.chunk.chars & mask, self.chunk.tabs & mask);
+                            self.chunk.chars = self.chunk.chars >> ix;
+                            self.chunk.tabs = self.chunk.tabs >> ix;
+                            output
+                        };
+
                         self.chunk.text = suffix;
                         return Some(Chunk {
                             text: prefix,
+                            chars,
+                            tabs,
                             ..self.chunk.clone()
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
+                        self.chunk.tabs >>= 1;
+                        self.chunk.chars >>= 1;
                         let tab_size = if self.input_column < self.max_expansion_column {
                             self.tab_size.get()
                         } else {
@@ -594,6 +614,8 @@ impl<'a> Iterator for TabChunks<'a> {
                         return Some(Chunk {
                             text: &SPACES[..len as usize],
                             is_tab: true,
+                            chars: (1 << len) - 1,
+                            tabs: 0,
                             ..self.chunk.clone()
                         });
                     }
@@ -726,7 +748,6 @@ mod tests {
             )
         }
     }
-
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::App) {
         let test_values = [
@@ -804,11 +825,13 @@ mod tests {
         }
     }
 
+    // todo!(We should have a randomized test here as well)
     #[gpui::test]
     fn test_to_fold_point_panic_reproduction(cx: &mut gpui::App) {
         // This test reproduces a specific panic where to_fold_point returns incorrect results
-        let text = "use macro_rules_attribute::apply;\nuse serde_json::Value;\nuse smol::{\n    io::AsyncReadExt,\n    process::{Command, Stdio},\n};\nuse smol_macros::main;\nuse std::io;\n\nfn test_random() {\n    // Generate a random value\n    let random_value = std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .unwrap()\n        .as_secs()\n        % 100;\n\n    // Create some complex nested data structures\n    let mut vector = Vec::new();\n    for i in 0..random_value {\n        vector.push(i);\n    }\n    ";
+        let _text = "use macro_rules_attribute::apply;\nuse serde_json::Value;\nuse smol::{\n    io::AsyncReadExt,\n    process::{Command, Stdio},\n};\nuse smol_macros::main;\nuse std::io;\n\nfn test_random() {\n    // Generate a random value\n    let random_value = std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .unwrap()\n        .as_secs()\n        % 100;\n\n    // Create some complex nested data structures\n    let mut vector = Vec::new();\n    for i in 0..random_value {\n        vector.push(i);\n    }\n    ";
 
+        let text = "γ\tw⭐\n🍐🍗 \t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -816,9 +839,9 @@ mod tests {
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
         // This should panic with the expected vs actual mismatch
-        let tab_point = TabPoint::new(6, 6);
-        let result = tab_snapshot.to_fold_point(tab_point, Bias::Right);
-        let expected = tab_snapshot.expected_to_fold_point(tab_point, Bias::Right);
+        let tab_point = TabPoint::new(0, 9);
+        let result = tab_snapshot.to_fold_point(tab_point, Bias::Left);
+        let expected = tab_snapshot.expected_to_fold_point(tab_point, Bias::Left);
 
         assert_eq!(result, expected);
     }
@@ -1082,7 +1105,7 @@ mod tests {
     #[gpui::test(iterations = 100)]
     fn test_to_tab_point_random(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=16)).unwrap();
-        let len = rng.gen_range(0..=200);
+        let len = rng.gen_range(0..=2000);
 
         // Generate random text using RandomCharIter
         let text = util::RandomCharIter::new(&mut rng)
@@ -1092,14 +1115,19 @@ mod tests {
         // Create buffer and tab map
         let buffer = MultiBuffer::build_simple(&text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot.clone(), tab_size);
-        tab_snapshot.max_expansion_column = rng.gen_range(0..=256);
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
+
+        let mut next_inlay_id = 0;
+        let (inlay_snapshot, inlay_edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let max_fold_point = fold_snapshot.max_point();
+        let (mut tab_snapshot, _) = tab_map.sync(fold_snapshot.clone(), fold_edits, tab_size);
 
         // Test random fold points
-        let max_fold_point = fold_snapshot.max_point();
         for _ in 0..50 {
+            tab_snapshot.max_expansion_column = rng.gen_range(0..=256);
             // Generate random fold point
             let row = rng.gen_range(0..=max_fold_point.row());
             let max_column = if row < max_fold_point.row() {
@@ -1479,7 +1507,11 @@ impl<'a> TabStopCursor<'a> {
 
             if distance_traversed + tab_position - chunk_position > distance {
                 let cursor_position = distance_traversed.abs_diff(distance);
-                self.char_offset += get_char_offset(0..(cursor_position - 1), chunk.chars);
+
+                self.char_offset += get_char_offset(
+                    chunk_position..(chunk_position + cursor_position - 1),
+                    chunk.chars,
+                );
                 self.current_chunk = Some((chunk, cursor_position + chunk_position));
                 self.byte_offset += cursor_position;
 

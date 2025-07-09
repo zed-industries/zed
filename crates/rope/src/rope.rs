@@ -770,12 +770,12 @@ impl<'a> Chunks<'a> {
             slice_start..slice_end
         };
 
-        let bitmask = ((1 << (slice_range.end - slice_range.start + 1)) - 1) << slice_range.start;
-        Some((
-            &chunk.text[slice_range],
-            chunk.chars() & bitmask,
-            chunk.tabs & bitmask,
-        ))
+        let bitmask = (1u128 << slice_range.end as u128).saturating_sub(1);
+
+        let chars = (chunk.chars() & bitmask) >> slice_range.start;
+        let tabs = (chunk.tabs & bitmask) >> slice_range.start;
+
+        Some((&chunk.text[slice_range.clone()], chars, tabs))
     }
 
     pub fn peek(&self) -> Option<&'a str> {
