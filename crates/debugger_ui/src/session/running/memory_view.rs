@@ -122,6 +122,7 @@ impl MemoryView {
             editor.set_placeholder_text("Memory Address or Expression", cx);
             editor
         });
+
         let scroll_state = ScrollbarState::new(scroll_handle.clone());
         Self {
             scroll_state,
@@ -262,7 +263,7 @@ impl MemoryView {
                     let weak = weak.clone();
                     let width = width.clone();
                     this = this.entry(width.label.clone(), None, move |_, cx| {
-                        _ = weak.update(cx, |this, cx| {
+                        _ = weak.update(cx, |this, _| {
                             this.view_state.line_width = width.clone();
                         });
                     });
@@ -271,7 +272,7 @@ impl MemoryView {
                     .iter()
                     .position(|width| width.width == selected_width.width)
                 {
-                    for i in 0..=ix {
+                    for _ in 0..=ix {
                         this.select_next(&Default::default(), window, cx);
                     }
                 }
@@ -423,8 +424,6 @@ fn render_single_memory_view_line(
                                         start_address: drag.start_address,
                                         end_address: base_address + cell_ix as u64,
                                     }));
-
-                                // this.list_state.scroll_by(distance);
                             });
 
                             style
