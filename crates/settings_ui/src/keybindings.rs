@@ -133,12 +133,29 @@ impl KeymapEventChannel {
     }
 }
 
+#[derive(Default, PartialEq)]
+enum FilterState {
+    #[default]
+    All,
+    Conflicts,
+}
+
+impl FilterState {
+    fn invert(&self) -> Self {
+        match self {
+            FilterState::All => FilterState::Conflicts,
+            FilterState::Conflicts => FilterState::All,
+        }
+    }
+}
+
 struct KeymapEditor {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedKeybinding>,
     conflicts: Vec<usize>,
+    filter_state: FilterState,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
     matches: Vec<StringMatch>,
@@ -182,6 +199,7 @@ impl KeymapEditor {
             workspace,
             keybindings: vec![],
             conflicts: Vec::default(),
+            filter_state: FilterState::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
             focus_handle: focus_handle.clone(),
@@ -228,6 +246,13 @@ impl KeymapEditor {
         )
         .await;
         this.update(cx, |this, cx| {
+            match this.filter_state {
+                FilterState::Conflicts => {
+                    matches.retain(|candidate| this.conflicts.contains(&candidate.candidate_id));
+                }
+                FilterState::All => {}
+            }
+
             if query.is_empty() {
                 // apply default sort
                 // sorts by source precedence, and alphabetically by action name within each source
@@ -559,8 +584,6 @@ struct ProcessedKeybinding {
 }
 
 impl ProcessedKeybinding {
-    // todo! we should normalize the context string
-    // editor && agent_panel should be equal to agent_panel && editor
     fn get_action_mapping(&self) -> (SharedString, Option<SharedString>) {
         (
             self.keystroke_text.clone(),
@@ -656,7 +679,18 @@ impl Render for KeymapEditor {
                     .border_1()
                     .border_color(theme.colors().border)
                     .rounded_lg()
-                    .child(self.filter_editor.clone()),
+                    .child(self.filter_editor.clone())
+                    .when(!self.conflicts.is_empty(), |this| {
+                        this.child(
+                            IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                .selected_icon_color(Color::Warning)
+                                .toggle_state(matches!(self.filter_state, FilterState::Conflicts))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.filter_state = this.filter_state.invert();
+                                    this.update_matches(cx);
+                                })),
+                        )
+                    }),
             )
             .child(
                 Table::new()
