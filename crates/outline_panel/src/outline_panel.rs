@@ -7167,7 +7167,7 @@ outline: struct OutlineEntryExcerpt
     }
 
     #[gpui::test]
-    async fn test_outline_expand_collapse_functionality(cx: &mut TestAppContext) {
+    async fn test_outline_keyboard_expand_collapse(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -7284,7 +7284,7 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
-        let count_visible_outlines = |panel: &OutlinePanel| {
+        let _count_visible_outlines = |panel: &OutlinePanel| {
             panel
                 .cached_entries
                 .iter()
@@ -7292,10 +7292,34 @@ outline: struct OutlineEntryExcerpt
                 .count()
         };
 
-        let initial_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-        assert!(initial_count > 0, "Should have outline entries");
+        // Check initial state - all entries should be expanded
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: mod outer  <==== selected
+  outline: pub struct OuterStruct
+    outline: field: String
+  outline: impl OuterStruct
+    outline: pub fn new()
+    outline: pub fn method(&self)
+  outline: mod inner
+    outline: pub fn inner_function()
+    outline: pub struct InnerStruct
+      outline: value: i32
+outline: fn main()"
+                )
+            );
+        });
 
-        // Find the first outline that has children (like "mod outer" or "impl OuterStruct")
+        // Find and select the first outline that has children (mod outer)
         let parent_outline = outline_panel
             .read_with(cx, |panel, _cx| {
                 panel
@@ -7321,6 +7345,7 @@ outline: struct OutlineEntryExcerpt
             })
             .expect("Should find an outline with children");
 
+        // Test keyboard action: collapse selected entry
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.select_entry(parent_outline.clone(), true, window, cx);
             panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
@@ -7329,14 +7354,25 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let collapsed_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-        assert!(
-            collapsed_count < initial_count,
-            "Should have fewer visible outlines after collapsing parent (initial: {}, collapsed: {})",
-            initial_count,
-            collapsed_count
-        );
+        // Check that mod outer is collapsed (children should be hidden)
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: mod outer  <==== selected
+outline: fn main()"
+                )
+            );
+        });
 
+        // Test keyboard action: expand selected entry
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
         });
@@ -7344,23 +7380,42 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let expanded_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-        assert_eq!(
-            expanded_count, initial_count,
-            "Should return to initial count after expanding"
-        );
+        // Check that mod outer is expanded again (children should be visible)
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: mod outer  <==== selected
+  outline: pub struct OuterStruct
+    outline: field: String
+  outline: impl OuterStruct
+    outline: pub fn new()
+    outline: pub fn method(&self)
+  outline: mod inner
+    outline: pub fn inner_function()
+    outline: pub struct InnerStruct
+      outline: value: i32
+outline: fn main()"
+                )
+            );
+        });
 
-        // First, make sure we're starting from all expanded state
+        // Test bulk collapse operation - collapse all entries with children
         outline_panel.update_in(cx, |panel, window, cx| {
+            // First clear collapsed state to ensure we're starting fresh
             panel.collapsed_entries.clear();
             panel.update_cached_entries(None, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-
-        let fully_expanded_count =
-            outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
 
         outline_panel.update_in(cx, |panel, window, cx| {
             let outlines_with_children: Vec<_> = panel
@@ -7384,6 +7439,7 @@ outline: struct OutlineEntryExcerpt
                 })
                 .collect();
 
+            // Collapse all entries with children using keyboard actions
             for outline in outlines_with_children {
                 panel.select_entry(outline, false, window, cx);
                 panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
@@ -7393,25 +7449,25 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let all_collapsed_count =
-            outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
+        // Check that all collapsible entries are collapsed
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: mod outer
+outline: fn main()"
+                )
+            );
+        });
 
-        // When all parents are collapsed, we should only see top-level items without children
-        // In our test file: "mod outer" (has children) and "fn main" (no children)
-        // So when "mod outer" is collapsed, we should see 2 items total
-        assert!(
-            all_collapsed_count < fully_expanded_count,
-            "Should have fewer outlines when all parents are collapsed (all: {}, expanded: {})",
-            all_collapsed_count,
-            fully_expanded_count
-        );
-
-        assert!(
-            all_collapsed_count <= 2,
-            "Should have minimal entries when all parents are collapsed (got {})",
-            all_collapsed_count
-        );
-
+        // Verify that collapsed entries are tracked
         let collapsed_entries_count =
             outline_panel.read_with(cx, |panel, _| panel.collapsed_entries.len());
         assert!(
@@ -7421,7 +7477,7 @@ outline: struct OutlineEntryExcerpt
     }
 
     #[gpui::test]
-    async fn test_expand_collapse_functionality(cx: &mut TestAppContext) {
+    async fn test_outline_click_toggle_behavior(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -7502,6 +7558,7 @@ outline: struct OutlineEntryExcerpt
                     .unwrap(),
             ))
         });
+
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -7510,7 +7567,8 @@ outline: struct OutlineEntryExcerpt
             outline_panel.set_active(true, window, cx)
         });
 
-        workspace
+        // Open the main.rs file
+        let _editor = workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from("/test/src/main.rs"),
@@ -7526,72 +7584,198 @@ outline: struct OutlineEntryExcerpt
             .await
             .unwrap();
 
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
-
-        // Force another update cycle to ensure outlines are fetched
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.update_non_fs_items(window, cx);
-            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-        });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
-
-        let count_visible_outlines = |panel: &OutlinePanel| {
-            panel
-                .cached_entries
-                .iter()
-                .filter(|e| matches!(e.entry, PanelEntry::Outline(_)))
-                .count()
-        };
-
-        let _initial_count = outline_panel.read_with(cx, |panel, _| panel.cached_entries.len());
-
-        // Select and expand first expandable outline entry (like a struct or impl block)
-        outline_panel.update_in(cx, |panel, window, cx| {
-            if let Some(outline_entry) = panel
-                .cached_entries
-                .iter()
-                .find(|e| matches!(e.entry, PanelEntry::Outline(_)))
-            {
-                panel.select_entry(outline_entry.entry.clone(), true, window, cx);
-                panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
-            }
-        });
+        // Wait for outline to be populated
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let _after_expand = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+        // Clear any initial selection
+        outline_panel.update(cx, |outline_panel, _cx| {
+            outline_panel.selected_entry = SelectedEntry::None;
         });
+
+        // Check initial state - all entries should be expanded by default
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Config
+  outline: name: String
+  outline: value: i32
+outline: impl Config
+  outline: fn new(name: String)
+  outline: fn get_value(&self)
+outline: enum Status
+outline: fn process_config(config: Config)
+outline: fn main()"
+                )
+            );
+        });
+
+        // Clear any initial selection and start with no selected entry
+        outline_panel.update(cx, |outline_panel, _cx| {
+            outline_panel.selected_entry = SelectedEntry::None;
+        });
+
+        // Test toggle behavior: first select an entry using navigation
+        // Navigate to the impl Config entry (index 3) using select_next
+        cx.update(|window, cx| {
+            outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.select_first(&SelectFirst, window, cx);
+                for _ in 0..3 {
+                    outline_panel.select_next(&SelectNext, window, cx);
+                }
+            });
+        });
+
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let _after_collapse = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-
-        // Test navigation between outline entries
-        let visible_count = outline_panel.read_with(cx, |panel, _| count_visible_outlines(panel));
-        assert!(visible_count > 0, "Should have visible outline entries");
-
-        // Navigate through outline entries
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.select_first(&SelectFirst, window, cx);
-            // Move to next outline entry
-            for _ in 0..2 {
-                panel.select_next(&SelectNext, window, cx);
-            }
+        // Check that impl Config is selected
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Config
+  outline: name: String
+  outline: value: i32
+outline: impl Config  <==== selected
+  outline: fn new(name: String)
+  outline: fn get_value(&self)
+outline: enum Status
+outline: fn process_config(config: Config)
+outline: fn main()"
+                )
+            );
         });
 
-        let selected = outline_panel.read_with(cx, |panel, _| panel.selected_entry().cloned());
-        assert!(
-            selected.is_some(),
-            "Should have a selected entry after navigation"
-        );
+        // Now navigate to struct Config (index 0) and test click behavior
+        cx.update(|window, cx| {
+            outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.select_first(&SelectFirst, window, cx);
+            });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        // Check that struct Config is now selected, but still expanded
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Config  <==== selected
+  outline: name: String
+  outline: value: i32
+outline: impl Config
+  outline: fn new(name: String)
+  outline: fn get_value(&self)
+outline: enum Status
+outline: fn process_config(config: Config)
+outline: fn main()"
+                )
+            );
+        });
+
+        // Now test clicking on the selected entry - this should toggle it (collapse it)
+        cx.update(|window, cx| {
+            outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        // Check that struct Config is collapsed (fields should be hidden)
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Config  <==== selected
+outline: impl Config
+  outline: fn new(name: String)
+  outline: fn get_value(&self)
+outline: enum Status
+outline: fn process_config(config: Config)
+outline: fn main()"
+                )
+            );
+        });
+
+        // Click on struct Config again to expand it back
+        cx.update(|window, cx| {
+            outline_panel.update(cx, |outline_panel, cx| {
+                outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
+            });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        // Check that struct Config is expanded again (fields should be visible)
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+outline: struct Config  <==== selected
+  outline: name: String
+  outline: value: i32
+outline: impl Config
+  outline: fn new(name: String)
+  outline: fn get_value(&self)
+outline: enum Status
+outline: fn process_config(config: Config)
+outline: fn main()"
+                )
+            );
+        });
     }
 }
