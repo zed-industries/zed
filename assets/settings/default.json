@@ -228,7 +228,12 @@
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
   // Whether to allow drag and drop text selection in buffer.
-  "drag_and_drop_selection": true,
+  "drag_and_drop_selection": {
+    // When true, enables drag and drop text selection in buffer.
+    "enabled": true,
+    // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    "delay": 300
+  },
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
