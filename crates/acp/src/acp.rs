@@ -836,7 +836,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<()>> {
         let agent = self.connection.clone();
-        let message = message.into();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
                 &message,
