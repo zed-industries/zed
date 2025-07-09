@@ -1066,7 +1066,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state(
             indoc! {
-                "ˇaa aa
+                "ˇaa
             aa
             aa"
             },
