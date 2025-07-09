@@ -125,29 +125,29 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 
 ## Action Reference
 
-| Action                                 | Keybinding                         |
-| -------------------------------------- | ---------------------------------- |
-| {#action git::Add}                     | {#kb git::Add}                     |
-| {#action git::StageAll}                | {#kb git::StageAll}                |
-| {#action git::UnstageAll}              | {#kb git::UnstageAll}              |
-| {#action git::ToggleStaged}            | {#kb git::ToggleStaged}            |
-| {#action git::StageAndNext}            | {#kb git::StageAndNext}            |
-| {#action git::UnstageAndNext}          | {#kb git::UnstageAndNext}          |
-| {#action git::Commit}                  | {#kb git::Commit}                  |
-| {#action git::ExpandCommitEditor}      | {#kb git::ExpandCommitEditor}      |
-| {#action git::Push}                    | {#kb git::Push}                    |
-| {#action git::ForcePush}               | {#kb git::ForcePush}               |
-| {#action git::Pull}                    | {#kb git::Pull}                    |
-| {#action git::Fetch}                   | {#kb git::Fetch}                   |
-| {#action git::Diff}                    | {#kb git::Diff}                    |
-| {#action git::Restore}                 | {#kb git::Restore}                 |
-| {#action git::RestoreFile}             | {#kb git::RestoreFile}             |
-| {#action git::Branch}                  | {#kb git::Branch}                  |
-| {#action git::Switch}                  | {#kb git::Switch}                  |
-| {#action git::CheckoutBranch}          | {#kb git::CheckoutBranch}          |
-| {#action git::Blame}                   | {#kb git::Blame}                   |
-| {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
-| {#action editor::ExpandAllDiffHunks}   | {#kb editor::ExpandAllDiffHunks}   |
+| Action                                    | Keybinding                            |
+| ----------------------------------------- | ------------------------------------- |
+| {#action git::Add}                        | {#kb git::Add}                        |
+| {#action git::StageAll}                   | {#kb git::StageAll}                   |
+| {#action git::UnstageAll}                 | {#kb git::UnstageAll}                 |
+| {#action git::ToggleStaged}               | {#kb git::ToggleStaged}               |
+| {#action git::StageAndNext}               | {#kb git::StageAndNext}               |
+| {#action git::UnstageAndNext}             | {#kb git::UnstageAndNext}             |
+| {#action git::Commit}                     | {#kb git::Commit}                     |
+| {#action git::ExpandCommitEditor}         | {#kb git::ExpandCommitEditor}         |
+| {#action git::Push}                       | {#kb git::Push}                       |
+| {#action git::ForcePush}                  | {#kb git::ForcePush}                  |
+| {#action git::Pull}                       | {#kb git::Pull}                       |
+| {#action git::Fetch}                      | {#kb git::Fetch}                      |
+| {#action git::Diff}                       | {#kb git::Diff}                       |
+| {#action git::Restore}                    | {#kb git::Restore}                    |
+| {#action git::RestoreFile}                | {#kb git::RestoreFile}                |
+| {#action git::Branch}                     | {#kb git::Branch}                     |
+| {#action git::Switch}                     | {#kb git::Switch}                     |
+| {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
+| {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
