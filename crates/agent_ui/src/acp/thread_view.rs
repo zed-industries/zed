@@ -1694,23 +1694,6 @@ impl Render for AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
-        let feedback_container = h_flex()
-            .group("feedback_container")
-            .mt_1()
-            .py_2()
-            .px(RESPONSE_PADDING_X)
-            .mr_1()
-            .opacity(0.4)
-            .hover(|style| style.opacity(1.))
-            .gap_1p5()
-            .flex_wrap()
-            .justify_end()
-            .child(h_flex().child(open_as_markdown))
-            .child(scroll_to_top)
-            .into_any_element();
-
-        let show_controls = matches!(&self.thread_state, ThreadState::Ready { thread, .. } if thread.read(cx).status() == ThreadStatus::Idle);
-
         v_flex()
             .size_full()
             .key_context("AcpThread")
@@ -1746,6 +1729,22 @@ impl Render for AcpThreadView {
                                 .flex_grow()
                                 .into_any(),
                         )
+                        .child(
+                            h_flex()
+                                .group("controls")
+                                .mt_1()
+                                .mr_1()
+                                .py_2()
+                                .px(RESPONSE_PADDING_X)
+                                .opacity(0.4)
+                                .hover(|style| style.opacity(1.))
+                                .gap_1()
+                                .flex_wrap()
+                                .justify_end()
+                                .child(open_as_markdown)
+                                .child(scroll_to_top)
+                                .into_any_element(),
+                        )
                         .children(match thread.read(cx).status() {
                             ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => None,
                             ThreadStatus::Generating => div()
@@ -1759,7 +1758,6 @@ impl Render for AcpThreadView {
                     }
                 }),
             })
-            .when(show_controls, |el| el.child(feedback_container))
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
                     div()
