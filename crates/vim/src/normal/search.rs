@@ -71,11 +71,13 @@ pub struct ReplaceCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Replacement {
+pub struct Replacement {
     search: String,
     replacement: String,
-    should_replace_all: bool,
-    is_case_sensitive: bool,
+    case_sensitive: Option<bool>,
+    flag_n: bool,
+    flag_g: bool,
+    flag_c: bool,
 }
 
 actions!(
@@ -468,71 +470,89 @@ impl Vim {
                 result.notify_err(workspace, cx);
             })
         }
-        let vim = cx.entity().clone();
-        pane.update(cx, |pane, cx| {
-            let mut options = SearchOptions::REGEX;
+        let Some(search_bar) = pane.update(cx, |pane, cx| {
+            pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+        }) else {
+            return;
+        };
+        let mut options = SearchOptions::REGEX;
+        let search = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(window, cx) {
+                return None;
+            }
 
-            let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
-                return;
+            let search = if replacement.search.is_empty() {
+                search_bar.query(cx)
+            } else {
+                replacement.search
             };
-            let search = search_bar.update(cx, |search_bar, cx| {
-                if !search_bar.show(window, cx) {
-                    return None;
-                }
 
-                if replacement.is_case_sensitive {
-                    options.set(SearchOptions::CASE_SENSITIVE, true)
-                }
-                let search = if replacement.search.is_empty() {
-                    search_bar.query(cx)
-                } else {
-                    replacement.search
-                };
-                if search_bar.should_use_smartcase_search(cx) {
-                    options.set(
-                        SearchOptions::CASE_SENSITIVE,
-                        search_bar.is_contains_uppercase(&search),
-                    );
-                }
+            if let Some(case) = replacement.case_sensitive {
+                options.set(SearchOptions::CASE_SENSITIVE, case)
+            } else if search_bar.should_use_smartcase_search(cx) {
+                options.set(
+                    SearchOptions::CASE_SENSITIVE,
+                    search_bar.is_contains_uppercase(&search),
+                );
+            } else {
+                options.set(SearchOptions::CASE_SENSITIVE, false)
+            }
 
-                if !replacement.should_replace_all {
-                    options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
+            if !replacement.flag_g {
+                options.set(SearchOptions::ONE_MATCH_PER_LINE, true);
+            }
+
+            search_bar.set_replacement(Some(&replacement.replacement), cx);
+            if replacement.flag_c {
+                search_bar.focus_replace(window, cx);
+            }
+            Some(search_bar.search(&search, Some(options), window, cx))
+        });
+        if replacement.flag_n {
+            self.move_cursor(
+                Motion::StartOfLine {
+                    display_lines: false,
+                },
+                None,
+                window,
+                cx,
+            );
+            return;
+        }
+        let Some(search) = search else { return };
+        let search_bar = search_bar.downgrade();
+        cx.spawn_in(window, async move |vim, cx| {
+            search.await?;
+            search_bar.update_in(cx, |search_bar, window, cx| {
+                if replacement.flag_c {
+                    search_bar.select_first_match(window, cx);
+                    return;
                 }
+                search_bar.select_last_match(window, cx);
+                search_bar.replace_all(&Default::default(), window, cx);
+                editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
+                let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
+                vim.update(cx, |vim, cx| {
+                    vim.move_cursor(
+                        Motion::StartOfLine {
+                            display_lines: false,
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+                .ok();
 
-                search_bar.set_replacement(Some(&replacement.replacement), cx);
-                Some(search_bar.search(&search, Some(options), window, cx))
-            });
-            let Some(search) = search else { return };
-            let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, async move |_, cx| {
-                search.await?;
-                search_bar.update_in(cx, |search_bar, window, cx| {
-                    search_bar.select_last_match(window, cx);
-                    search_bar.replace_all(&Default::default(), window, cx);
-                    editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
-                    let _ = search_bar.search(&search_bar.query(cx), None, window, cx);
-                    vim.update(cx, |vim, cx| {
-                        vim.move_cursor(
-                            Motion::StartOfLine {
-                                display_lines: false,
-                            },
-                            None,
-                            window,
-                            cx,
-                        )
-                    });
-
-                    // Disable the `ONE_MATCH_PER_LINE` search option when finished, as
-                    // this is not properly supported outside of vim mode, and
-                    // not disabling it makes the "Replace All Matches" button
-                    // actually replace only the first match on each line.
-                    options.set(SearchOptions::ONE_MATCH_PER_LINE, false);
-                    search_bar.set_search_options(options, cx);
-                })?;
-                anyhow::Ok(())
+                // Disable the `ONE_MATCH_PER_LINE` search option when finished, as
+                // this is not properly supported outside of vim mode, and
+                // not disabling it makes the "Replace All Matches" button
+                // actually replace only the first match on each line.
+                options.set(SearchOptions::ONE_MATCH_PER_LINE, false);
+                search_bar.set_search_options(options, cx);
             })
-            .detach_and_log_err(cx);
         })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -593,16 +613,19 @@ impl Replacement {
         let mut replacement = Replacement {
             search,
             replacement,
-            should_replace_all: false,
-            is_case_sensitive: true,
+            case_sensitive: None,
+            flag_g: false,
+            flag_n: false,
+            flag_c: false,
         };
 
         for c in flags.chars() {
             match c {
-                'g' => replacement.should_replace_all = true,
-                'c' | 'n' => replacement.should_replace_all = false,
-                'i' => replacement.is_case_sensitive = false,
-                'I' => replacement.is_case_sensitive = true,
+                'g' => replacement.flag_g = true,
+                'n' => replacement.flag_n = true,
+                'c' => replacement.flag_c = true,
+                'i' => replacement.case_sensitive = Some(false),
+                'I' => replacement.case_sensitive = Some(true),
                 _ => {}
             }
         }
@@ -913,7 +936,6 @@ mod test {
         });
     }
 
-    // cargo test -p vim --features neovim test_replace_with_range_at_start
     #[gpui::test]
     async fn test_replace_with_range_at_start(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -977,6 +999,121 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {
             "aa ˇaa aa"
         });
+    }
+
+    #[gpui::test]
+    async fn test_replace_n(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇaa
+            bb
+            aa"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(": s / b b / d d / n").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇaa
+            bb
+            aa"
+        });
+
+        let search_bar = cx.update_workspace(|workspace, _, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .unwrap()
+            })
+        });
+        cx.update_entity(search_bar, |search_bar, _, cx| {
+            assert!(!search_bar.is_dismissed());
+            assert_eq!(search_bar.query(cx), "bb".to_string());
+            assert_eq!(search_bar.replacement(cx), "dd".to_string());
+        })
+    }
+
+    #[gpui::test]
+    async fn test_replace_g(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇaa aa aa aa
+            aa
+            aa"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(": s / a a / b b").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇbb aa aa aa
+            aa
+            aa"
+        });
+        cx.simulate_shared_keystrokes(": s / a a / b b / g").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "ˇbb bb bb bb
+            aa
+            aa"
+        });
+    }
+
+    #[gpui::test]
+    async fn test_replace_c(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {
+                "ˇaa
+            aa
+            aa"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("v j : s / a a / d d / c");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {
+                "ˇaa
+            aa
+            aa"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {
+                "dd
+            ˇaa
+            aa"
+            },
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes("enter");
+        cx.assert_state(
+            indoc! {
+                "dd
+            ddˇ
+            aa"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("enter");
+        cx.assert_state(
+            indoc! {
+                "dd
+            ddˇ
+            aa"
+            },
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]

@@ -228,7 +228,12 @@
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
   // Whether to allow drag and drop text selection in buffer.
-  "drag_and_drop_selection": true,
+  "drag_and_drop_selection": {
+    // When true, enables drag and drop text selection in buffer.
+    "enabled": true,
+    // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    "delay": 300
+  },
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -357,7 +362,9 @@
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
     // Whether to show the sign in button in the titlebar.
-    "show_sign_in": true
+    "show_sign_in": true,
+    // Whether to show the menus in the titlebar.
+    "show_menus": false
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -861,7 +868,11 @@
     /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     ///
     /// Default: true
-    "expand_edit_card": true
+    "expand_edit_card": true,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    "expand_terminal_card": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1599,6 +1610,9 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled"
+      },
       "prettier": {
         "allowed": true
       }
@@ -1612,6 +1626,9 @@
       }
     },
     "Plain Text": {
+      "completions": {
+        "words": "disabled"
+      },
       "allow_rewrap": "anywhere"
     },
     "Python": {
@@ -1840,6 +1857,8 @@
   "read_ssh_config": true,
   // Configures context servers for use by the agent.
   "context_servers": {},
+  // Configures agent servers available in the agent panel.
+  "agent_servers": {},
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,

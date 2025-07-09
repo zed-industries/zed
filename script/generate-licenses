@@ -36,8 +36,9 @@ fi
 
 echo "Generating cargo licenses"
 if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then FAIL_FLAG=--fail; else FAIL_FLAG=""; fi
+if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then WRAPPER=fail_on_stderr; else WRAPPER=""; fi
 set -x
-fail_on_stderr cargo about generate \
+$WRAPPER cargo about generate \
     $FAIL_FLAG \
     -c script/licenses/zed-licenses.toml \
     "$TEMPLATE_FILE" >>"$OUTPUT_FILE"

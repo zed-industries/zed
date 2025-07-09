@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use client::Client;
+use feature_flags::{FeatureFlagAppExt as _, ZedCloudFeatureFlag};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
@@ -62,7 +63,10 @@ impl WebSearchProvider for CloudWebSearchProvider {
         let client = state.client.clone();
         let llm_api_token = state.llm_api_token.clone();
         let body = WebSearchBody { query };
-        cx.background_spawn(async move { perform_web_search(client, llm_api_token, body).await })
+        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
+        cx.background_spawn(async move {
+            perform_web_search(client, llm_api_token, body, use_cloud).await
+        })
     }
 }
 
@@ -70,6 +74,7 @@ async fn perform_web_search(
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
     body: WebSearchBody,
+    use_cloud: bool,
 ) -> Result<WebSearchResponse> {
     const MAX_RETRIES: usize = 3;
 
@@ -86,7 +91,11 @@ async fn perform_web_search(
 
         let request = http_client::Request::builder()
             .method(Method::POST)
-            .uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
+            .uri(
+                http_client
+                    .build_zed_llm_url("/web_search", &[], use_cloud)?
+                    .as_ref(),
+            )
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {token}"))
             .body(serde_json::to_string(&body)?.into())?;
