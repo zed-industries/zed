@@ -8,6 +8,7 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
+use feature_flags::{FeatureFlagAppExt as _, ZedCloudFeatureFlag};
 pub use init::*;
 use inline_completion::DataCollectionState;
 use license_detection::LICENSE_FILES_TO_CHECK;
@@ -72,7 +73,13 @@ const MAX_EVENT_TOKENS: usize = 500;
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-actions!(edit_prediction, [ClearHistory]);
+actions!(
+    edit_prediction,
+    [
+        /// Clears the edit prediction history.
+        ClearHistory
+    ]
+);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -384,6 +391,7 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
 
         let buffer = buffer.clone();
 
@@ -474,6 +482,7 @@ impl Zeta {
                 llm_token,
                 app_version,
                 body,
+                use_cloud,
             })
             .await;
             let (response, usage) = match response {
@@ -739,6 +748,7 @@ and then another
                 llm_token,
                 app_version,
                 body,
+                use_cloud,
                 ..
             } = params;
 
@@ -754,7 +764,7 @@ and then another
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/v2", &[])?
+                                .build_zed_llm_url("/predict_edits/v2", &[], use_cloud)?
                                 .as_ref(),
                         )
                     };
@@ -814,6 +824,7 @@ and then another
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
         cx.spawn(async move |this, cx| {
             let http_client = client.http_client();
             let mut response = llm_token_retry(&llm_token, &client, |token| {
@@ -824,7 +835,7 @@ and then another
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/accept", &[])?
+                                .build_zed_llm_url("/predict_edits/accept", &[], use_cloud)?
                                 .as_ref(),
                         )
                     };
@@ -1120,6 +1131,7 @@ struct PerformPredictEditsParams {
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,
     pub body: PredictEditsBody,
+    pub use_cloud: bool,
 }
 
 #[derive(Error, Debug)]

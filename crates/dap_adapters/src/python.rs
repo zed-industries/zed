@@ -660,6 +660,15 @@ impl DebugAdapter for PythonDebugAdapter {
         self.get_installed_binary(delegate, &config, None, user_args, toolchain, false)
             .await
     }
+
+    fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
+        let label = args
+            .configuration
+            .get("name")?
+            .as_str()
+            .filter(|label| !label.is_empty())?;
+        Some(label.to_owned())
+    }
 }
 
 async fn fetch_latest_adapter_version_from_github(

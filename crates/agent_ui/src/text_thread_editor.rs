@@ -38,8 +38,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelImage, LanguageModelProviderTosView, LanguageModelRegistry,
-    Role,
+    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelProviderTosView,
+    LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -85,16 +85,24 @@ use assistant_context::{
 actions!(
     assistant,
     [
+        /// Sends the current message to the assistant.
         Assist,
+        /// Confirms and executes the entered slash command.
         ConfirmCommand,
+        /// Copies code from the assistant's response to the clipboard.
         CopyCode,
+        /// Cycles between user and assistant message roles.
         CycleMessageRole,
+        /// Inserts the selected text into the active editor.
         InsertIntoEditor,
+        /// Quotes the current selection in the assistant conversation.
         QuoteSelection,
+        /// Splits the conversation at the current cursor position.
         Split,
     ]
 );
 
+/// Inserts files that were dragged and dropped into the assistant conversation.
 #[derive(PartialEq, Clone, Action)]
 #[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {
@@ -3055,7 +3063,7 @@ fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenStat
         .default_model()?
         .model;
     let token_count = context.read(cx).token_count()?;
-    let max_token_count = model.max_token_count();
+    let max_token_count = model.max_token_count_for_mode(context.read(cx).completion_mode().into());
     let token_state = if max_token_count.saturating_sub(token_count) == 0 {
         TokenState::NoTokensLeft {
             max_token_count,

@@ -1403,9 +1403,14 @@ impl App {
         self.actions.deprecated_aliases()
     }
 
-    /// Get a list of all action deprecation messages.
+    /// Get a map from an action name to the deprecation messages.
     pub fn action_deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
         self.actions.deprecation_messages()
+    }
+
+    /// Get a map from an action name to the documentation.
+    pub fn action_documentation(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.documentation()
     }
 
     /// Register a callback to be invoked when the application is about to quit.

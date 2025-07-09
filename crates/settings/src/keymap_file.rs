@@ -63,7 +63,7 @@ pub struct KeymapSection {
     /// current file extension are also supported - see [the
     /// documentation](https://zed.dev/docs/key-bindings#contexts) for more details.
     #[serde(default)]
-    context: String,
+    pub context: String,
     /// This option enables specifying keys based on their position on a QWERTY keyboard, by using
     /// position-equivalent mappings for some non-QWERTY keyboards. This is currently only supported
     /// on macOS. See the documentation for more details.
@@ -426,8 +426,18 @@ impl KeymapFile {
         }
     }
 
+    /// Creates a JSON schema generator, suitable for generating json schemas
+    /// for actions
+    pub fn action_schema_generator() -> schemars::SchemaGenerator {
+        schemars::generate::SchemaSettings::draft2019_09().into_generator()
+    }
+
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
-        let mut generator = schemars::generate::SchemaSettings::draft2019_09().into_generator();
+        // instead of using DefaultDenyUnknownFields, actions typically use
+        // `#[serde(deny_unknown_fields)]` so that these cases are reported as parse failures. This
+        // is because the rest of the keymap will still load in these cases, whereas other settings
+        // files would not.
+        let mut generator = Self::action_schema_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
         let deprecations = cx.deprecated_actions_to_preferred_actions();
@@ -600,7 +610,7 @@ impl KeymapFile {
         // if trying to replace a keybinding that is not user-defined, treat it as an add operation
         match operation {
             KeybindUpdateOperation::Replace {
-                target_source,
+                target_keybind_source: target_source,
                 source,
                 ..
             } if target_source != KeybindSource::User => {
@@ -639,7 +649,12 @@ impl KeymapFile {
                     else {
                         continue;
                     };
-                    if keystrokes != target.keystrokes {
+                    if keystrokes.len() != target.keystrokes.len()
+                        || !keystrokes
+                            .iter()
+                            .zip(target.keystrokes)
+                            .all(|(a, b)| a.should_match(b))
+                    {
                         continue;
                     }
                     if action.0 != target_action_value {
@@ -651,18 +666,75 @@ impl KeymapFile {
             }
 
             if let Some(index) = found_index {
-                let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
-                    &keymap_contents,
-                    &["bindings", &target.keystrokes_unparsed()],
-                    Some(&source_action_value),
-                    Some(&source.keystrokes_unparsed()),
-                    index,
-                    tab_size,
-                )
-                .context("Failed to replace keybinding")?;
-                keymap_contents.replace_range(replace_range, &replace_value);
+                if target.context == source.context {
+                    // if we are only changing the keybinding (common case)
+                    // not the context, etc. Then just update the binding in place
 
-                return Ok(keymap_contents);
+                    let (replace_range, replace_value) =
+                        replace_top_level_array_value_in_json_text(
+                            &keymap_contents,
+                            &["bindings", &target.keystrokes_unparsed()],
+                            Some(&source_action_value),
+                            Some(&source.keystrokes_unparsed()),
+                            index,
+                            tab_size,
+                        )
+                        .context("Failed to replace keybinding")?;
+                    keymap_contents.replace_range(replace_range, &replace_value);
+
+                    return Ok(keymap_contents);
+                } else if keymap.0[index]
+                    .bindings
+                    .as_ref()
+                    .map_or(true, |bindings| bindings.len() == 1)
+                {
+                    // if we are replacing the only binding in the section,
+                    // just update the section in place, updating the context
+                    // and the binding
+
+                    let (replace_range, replace_value) =
+                        replace_top_level_array_value_in_json_text(
+                            &keymap_contents,
+                            &["bindings", &target.keystrokes_unparsed()],
+                            Some(&source_action_value),
+                            Some(&source.keystrokes_unparsed()),
+                            index,
+                            tab_size,
+                        )
+                        .context("Failed to replace keybinding")?;
+                    keymap_contents.replace_range(replace_range, &replace_value);
+
+                    let (replace_range, replace_value) =
+                        replace_top_level_array_value_in_json_text(
+                            &keymap_contents,
+                            &["context"],
+                            source.context.map(Into::into).as_ref(),
+                            None,
+                            index,
+                            tab_size,
+                        )
+                        .context("Failed to replace keybinding")?;
+                    keymap_contents.replace_range(replace_range, &replace_value);
+                    return Ok(keymap_contents);
+                } else {
+                    // if we are replacing one of multiple bindings in a section
+                    // with a context change, remove the existing binding from the
+                    // section, then treat this operation as an add operation of the
+                    // new binding with the updated context.
+
+                    let (replace_range, replace_value) =
+                        replace_top_level_array_value_in_json_text(
+                            &keymap_contents,
+                            &["bindings", &target.keystrokes_unparsed()],
+                            None,
+                            None,
+                            index,
+                            tab_size,
+                        )
+                        .context("Failed to replace keybinding")?;
+                    keymap_contents.replace_range(replace_range, &replace_value);
+                    operation = KeybindUpdateOperation::Add(source);
+                }
             } else {
                 log::warn!(
                     "Failed to find keybinding to update `{:?} -> {}` creating new binding for `{:?} -> {}` instead",
@@ -708,7 +780,7 @@ pub enum KeybindUpdateOperation<'a> {
         source: KeybindUpdateTarget<'a>,
         /// Describes the keybind to remove
         target: KeybindUpdateTarget<'a>,
-        target_source: KeybindSource,
+        target_keybind_source: KeybindSource,
     },
     Add(KeybindUpdateTarget<'a>),
 }
@@ -780,10 +852,10 @@ impl KeybindSource {
 
     pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
         match index {
-            _ if index == Self::USER => KeybindSource::User,
-            _ if index == Self::USER => KeybindSource::Base,
-            _ if index == Self::DEFAULT => KeybindSource::Default,
-            _ if index == Self::VIM => KeybindSource::Vim,
+            Self::USER => KeybindSource::User,
+            Self::BASE => KeybindSource::Base,
+            Self::DEFAULT => KeybindSource::Default,
+            Self::VIM => KeybindSource::Vim,
             _ => unreachable!(),
         }
     }
@@ -997,7 +1069,7 @@ mod tests {
                     use_key_equivalents: false,
                     input: Some(r#"{"foo": "bar"}"#),
                 },
-                target_source: KeybindSource::Base,
+                target_keybind_source: KeybindSource::Base,
             },
             r#"[
                 {
@@ -1023,14 +1095,14 @@ mod tests {
             r#"[
                 {
                     "bindings": {
-                        "ctrl-a": "zed::SomeAction"
+                        "a": "zed::SomeAction"
                     }
                 }
             ]"#
             .unindent(),
             KeybindUpdateOperation::Replace {
                 target: KeybindUpdateTarget {
-                    keystrokes: &parse_keystrokes("ctrl-a"),
+                    keystrokes: &parse_keystrokes("a"),
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
@@ -1043,7 +1115,7 @@ mod tests {
                     use_key_equivalents: false,
                     input: Some(r#"{"foo": "bar"}"#),
                 },
-                target_source: KeybindSource::User,
+                target_keybind_source: KeybindSource::User,
             },
             r#"[
                 {
@@ -1084,7 +1156,7 @@ mod tests {
                     use_key_equivalents: false,
                     input: None,
                 },
-                target_source: KeybindSource::User,
+                target_keybind_source: KeybindSource::User,
             },
             r#"[
                 {
@@ -1127,7 +1199,7 @@ mod tests {
                     use_key_equivalents: false,
                     input: Some(r#"{"foo": "bar"}"#),
                 },
-                target_source: KeybindSource::User,
+                target_keybind_source: KeybindSource::User,
             },
             r#"[
                 {
@@ -1140,6 +1212,89 @@ mod tests {
                             }
                         ]
                         // some other comment
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": "foo::bar",
+                        "b": "baz::qux",
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    context: Some("SomeContext"),
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("c"),
+                    action_name: "foo::baz",
+                    context: Some("SomeOtherContext"),
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "b": "baz::qux",
+                    }
+                },
+                {
+                    "context": "SomeOtherContext",
+                    "bindings": {
+                        "c": "foo::baz"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": "foo::bar",
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    context: Some("SomeContext"),
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("c"),
+                    action_name: "foo::baz",
+                    context: Some("SomeOtherContext"),
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "bindings": {
+                        "c": "foo::baz",
                     }
                 }
             ]"#

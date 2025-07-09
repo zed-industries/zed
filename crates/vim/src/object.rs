@@ -46,6 +46,7 @@ pub enum Object {
     EntireFile,
 }
 
+/// Selects a word text object.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +55,7 @@ struct Word {
     ignore_punctuation: bool,
 }
 
+/// Selects a subword text object.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +63,7 @@ struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
+/// Selects text at the same indentation level.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -258,25 +261,45 @@ fn find_mini_brackets(
 actions!(
     vim,
     [
+        /// Selects a sentence text object.
         Sentence,
+        /// Selects a paragraph text object.
         Paragraph,
+        /// Selects text within single quotes.
         Quotes,
+        /// Selects text within backticks.
         BackQuotes,
+        /// Selects text within the nearest quotes (single or double).
         MiniQuotes,
+        /// Selects text within any type of quotes.
         AnyQuotes,
+        /// Selects text within double quotes.
         DoubleQuotes,
+        /// Selects text within vertical bars (pipes).
         VerticalBars,
+        /// Selects text within parentheses.
         Parentheses,
+        /// Selects text within the nearest brackets.
         MiniBrackets,
+        /// Selects text within any type of brackets.
         AnyBrackets,
+        /// Selects text within square brackets.
         SquareBrackets,
+        /// Selects text within curly brackets.
         CurlyBrackets,
+        /// Selects text within angle brackets.
         AngleBrackets,
+        /// Selects a function argument.
         Argument,
+        /// Selects an HTML/XML tag.
         Tag,
+        /// Selects a method or function.
         Method,
+        /// Selects a class definition.
         Class,
+        /// Selects a comment block.
         Comment,
+        /// Selects the entire file.
         EntireFile
     ]
 );

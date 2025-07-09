@@ -12,9 +12,10 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{ParameterizedJsonSchema, Settings, SettingsSources, replace_subschema};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
+use util::schemars::replace_subschema;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
@@ -978,11 +979,10 @@ pub struct ThemeName(pub Arc<str>);
 inventory::submit! {
     ParameterizedJsonSchema {
         add_and_get_ref: |generator, _params, cx| {
-            let schema = json_schema!({
+            replace_subschema::<ThemeName>(generator, || json_schema!({
                 "type": "string",
                 "enum": ThemeRegistry::global(cx).list_names(),
-            });
-            replace_subschema::<ThemeName>(generator, schema)
+            }))
         }
     }
 }
@@ -996,15 +996,14 @@ pub struct IconThemeName(pub Arc<str>);
 inventory::submit! {
     ParameterizedJsonSchema {
         add_and_get_ref: |generator, _params, cx| {
-            let schema = json_schema!({
+            replace_subschema::<IconThemeName>(generator, || json_schema!({
                 "type": "string",
                 "enum": ThemeRegistry::global(cx)
                     .list_icon_themes()
                     .into_iter()
                     .map(|icon_theme| icon_theme.name)
                     .collect::<Vec<SharedString>>(),
-            });
-            replace_subschema::<IconThemeName>(generator, schema)
+            }))
         }
     }
 }
@@ -1018,11 +1017,12 @@ pub struct FontFamilyName(pub Arc<str>);
 inventory::submit! {
     ParameterizedJsonSchema {
         add_and_get_ref: |generator, params, _cx| {
-            let schema = json_schema!({
-                "type": "string",
-                "enum": params.font_names,
-            });
-            replace_subschema::<FontFamilyName>(generator, schema)
+            replace_subschema::<FontFamilyName>(generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.font_names,
+                })
+            })
         }
     }
 }

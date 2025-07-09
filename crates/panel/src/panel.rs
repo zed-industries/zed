@@ -5,7 +5,15 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{Tab, prelude::*};
 
-actions!(panel, [NextPanelTab, PreviousPanelTab]);
+actions!(
+    panel,
+    [
+        /// Navigates to the next tab in the panel.
+        NextPanelTab,
+        /// Navigates to the previous tab in the panel.
+        PreviousPanelTab
+    ]
+);
 
 pub trait PanelHeader: workspace::Panel {
     fn header_height(&self, cx: &mut App) -> Pixels {
@@ -59,10 +67,10 @@ pub fn panel_filled_button(label: impl Into<SharedString>) -> ui::Button {
 
 pub fn panel_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::IconButton {
     let id = ElementId::Name(id.into());
-    ui::IconButton::new(id, icon)
+
+    IconButton::new(id, icon)
         // TODO: Change this once we use on_surface_bg in button_like
         .layer(ui::ElevationIndex::ModalSurface)
-        .size(ui::ButtonSize::Compact)
 }
 
 pub fn panel_filled_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::IconButton {

@@ -26,7 +26,6 @@ install_cli.workspace = true
 language.workspace = true
 picker.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true

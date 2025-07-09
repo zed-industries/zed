@@ -14,15 +14,13 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
+    Capabilities, DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
     client::SessionId,
     inline_value::VariableLookupKind,
     messages::Message,
-    requests::{Completions, Evaluate},
 };
 use fs::Fs;
 use futures::{
@@ -35,11 +33,12 @@ use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
 
-use remote::SshRemoteClient;
+use remote::{SshRemoteClient, ssh_session::SshArgs};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::{
     borrow::Borrow,
@@ -93,9 +92,22 @@ pub struct DapStore {
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
+    adapter_options: BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PersistedExceptionBreakpoint {
+    pub enabled: bool,
+}
+
+/// Represents best-effort serialization of adapter state during last session (e.g. watches)
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct PersistedAdapterOptions {
+    /// Which exception breakpoints were enabled during the last session with this adapter?
+    pub exception_breakpoints: BTreeMap<String, PersistedExceptionBreakpoint>,
+}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
@@ -173,6 +185,7 @@ impl DapStore {
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
+            adapter_options: Default::default(),
         }
     }
 
@@ -240,11 +253,16 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
-                        anyhow::Ok(SshCommand {
-                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
-                        })
-                    })??;
+                    let (mut ssh_command, envs, path_style) =
+                        ssh_client.read_with(cx, |ssh, _| {
+                            let (SshArgs { arguments, envs }, path_style) =
+                                ssh.ssh_info().context("SSH arguments not found")?;
+                            anyhow::Ok((
+                                SshCommand { arguments },
+                                envs.unwrap_or_default(),
+                                path_style,
+                            ))
+                        })??;
 
                     let mut connection = None;
                     if let Some(c) = binary.connection {
@@ -269,12 +287,13 @@ impl DapStore {
                         binary.cwd.as_deref(),
                         binary.envs,
                         None,
+                        path_style,
                     );
 
                     Ok(DebugAdapterBinary {
                         command: Some(program),
                         arguments: args,
-                        envs: HashMap::default(),
+                        envs,
                         cwd: None,
                         connection,
                         request_args: binary.request_args,
@@ -518,65 +537,6 @@ impl DapStore {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
         ))
-    }
-
-    pub fn evaluate(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        expression: String,
-        context: EvaluateArgumentsContext,
-        source: Option<Source>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<EvaluateResponse>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Evaluate>(EvaluateArguments {
-                    expression: expression.clone(),
-                    frame_id: Some(stack_frame_id),
-                    context: Some(context),
-                    format: None,
-                    line: None,
-                    column: None,
-                    source,
-                })
-                .await
-        })
-    }
-
-    pub fn completions(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        text: String,
-        completion_column: u64,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CompletionItem>>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        cx.background_executor().spawn(async move {
-            Ok(client
-                .request::<Completions>(CompletionsArguments {
-                    frame_id: Some(stack_frame_id),
-                    line: None,
-                    text,
-                    column: completion_column,
-                })
-                .await?
-                .targets)
-        })
     }
 
     pub fn resolve_inline_value_locations(
@@ -852,6 +812,45 @@ impl DapStore {
                     .ok();
             })
         })
+    }
+
+    pub fn sync_adapter_options(
+        &mut self,
+        session: &Entity<Session>,
+        cx: &App,
+    ) -> Arc<PersistedAdapterOptions> {
+        let session = session.read(cx);
+        let adapter = session.adapter();
+        let exceptions = session.exception_breakpoints();
+        let exception_breakpoints = exceptions
+            .map(|(exception, enabled)| {
+                (
+                    exception.filter.clone(),
+                    PersistedExceptionBreakpoint { enabled: *enabled },
+                )
+            })
+            .collect();
+        let options = Arc::new(PersistedAdapterOptions {
+            exception_breakpoints,
+        });
+        self.adapter_options.insert(adapter, options.clone());
+        options
+    }
+
+    pub fn set_adapter_options(
+        &mut self,
+        adapter: DebugAdapterName,
+        options: PersistedAdapterOptions,
+    ) {
+        self.adapter_options.insert(adapter, Arc::new(options));
+    }
+
+    pub fn adapter_options(&self, name: &str) -> Option<Arc<PersistedAdapterOptions>> {
+        self.adapter_options.get(name).cloned()
+    }
+
+    pub fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
+        &self.adapter_options
     }
 }
 
