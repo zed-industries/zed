@@ -730,7 +730,7 @@ impl ConfigurationView {
     }
 
     fn should_render_api_key_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).api_key.is_some()
+        self.state.read(cx).api_key.is_none()
     }
 
     fn save_api_url(&mut self, cx: &mut Context<Self>) {
