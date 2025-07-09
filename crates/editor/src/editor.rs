@@ -1170,7 +1170,6 @@ pub struct Editor {
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
-    drag_and_drop_selection_enabled: bool,
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
@@ -2202,7 +2201,6 @@ impl Editor {
             change_list: ChangeList::new(),
             mode,
             selection_drag_state: SelectionDragState::None,
-            drag_and_drop_selection_enabled: EditorSettings::get_global(cx).drag_and_drop_selection,
             folding_newlines: Task::ready(()),
         };
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
@@ -19899,7 +19897,6 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
-            self.drag_and_drop_selection_enabled = editor_settings.drag_and_drop_selection;
         }
 
         if old_cursor_shape != self.cursor_shape {
