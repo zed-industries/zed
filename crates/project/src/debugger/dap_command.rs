@@ -1808,7 +1808,7 @@ impl LocalDapCommand for ReadMemory {
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
         let data = if let Some(data) = message.data {
-            base64::engine::general_purpose::STANDARD_NO_PAD
+            base64::engine::general_purpose::STANDARD
                 .decode(data)
                 .log_err()
                 .context("parsing base64 data from DAP's ReadMemory response")?
