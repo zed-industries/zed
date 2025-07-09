@@ -3,7 +3,8 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
+    NoAction, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -787,7 +788,7 @@ pub enum KeybindUpdateOperation<'a> {
 
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
-    pub keystrokes: &'a [Keystroke],
+    pub keystrokes: &'a [KeybindingKeystroke],
     pub action_name: &'a str,
     pub use_key_equivalents: bool,
     pub input: Option<&'a str>,
@@ -810,7 +811,7 @@ impl<'a> KeybindUpdateTarget<'a> {
     fn keystrokes_unparsed(&self) -> String {
         let mut keystrokes = String::with_capacity(self.keystrokes.len() * 8);
         for keystroke in self.keystrokes {
-            keystrokes.push_str(&keystroke.unparse());
+            keystrokes.push_str(&keystroke.inner.unparse());
             keystrokes.push(' ');
         }
         keystrokes.pop();

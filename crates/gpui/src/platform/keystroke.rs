@@ -21,6 +21,17 @@ pub struct Keystroke {
     pub key_char: Option<String>,
 }
 
+/// TODO:
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct KeybindingKeystroke {
+    /// TODO:
+    pub inner: Keystroke,
+    /// TODO:
+    pub modifiers: Modifiers,
+    /// TODO:
+    pub key: String,
+}
+
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
 /// markdown to display it.
 #[derive(Debug)]
@@ -55,7 +66,7 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    pub fn should_match(&self, target: &Keystroke) -> bool {
+    pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
@@ -68,7 +79,7 @@ impl Keystroke {
                 ..Default::default()
             };
 
-            if &target.key == key_char && target.modifiers == ime_modifiers {
+            if &target.inner.key == key_char && target.inner.modifiers == ime_modifiers {
                 return true;
             }
         }
@@ -80,12 +91,12 @@ impl Keystroke {
             .filter(|key_char| key_char != &&self.key)
         {
             // On Windows, if key_char is set, then the typed keystroke produced the key_char
-            if &target.key == key_char && target.modifiers == Modifiers::none() {
+            if &target.inner.key == key_char && target.inner.modifiers == Modifiers::none() {
                 return true;
             }
         }
 
-        target.modifiers == self.modifiers && target.key == self.key
+        target.inner.modifiers == self.modifiers && target.inner.key == self.key
     }
 
     /// key syntax is:
@@ -260,6 +271,132 @@ impl Keystroke {
             }
         }
         self
+    }
+
+    /// TODO:
+    pub fn into_keybinding_keystroke(self) -> KeybindingKeystroke {
+        let (key, modifiers) = temp_keyboard_mapper(self.key.clone(), self.modifiers);
+        KeybindingKeystroke {
+            inner: self,
+            modifiers,
+            key,
+        }
+    }
+}
+
+impl KeybindingKeystroke {
+    /// TODO:
+    pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
+        let keystroke = Keystroke::parse(source)?;
+        let Keystroke {
+            mut modifiers, key, ..
+        } = keystroke.clone();
+        let (key, modifiers) = temp_keyboard_mapper(key, modifiers);
+        Ok(KeybindingKeystroke {
+            inner: keystroke,
+            modifiers,
+            key,
+        })
+    }
+
+    /// TODO:
+    pub fn to_string(&self) -> String {
+        let keystroke = Keystroke {
+            modifiers: self.modifiers,
+            key: self.key.clone(),
+            key_char: None,
+        };
+        keystroke.to_string()
+    }
+}
+
+fn temp_keyboard_mapper(key: String, mut modifiers: Modifiers) -> (String, Modifiers) {
+    match key.as_str() {
+        "~" => {
+            modifiers.shift = true;
+            ("`".to_string(), modifiers)
+        }
+        "!" => {
+            modifiers.shift = true;
+            ("1".to_string(), modifiers)
+        }
+        "@" => {
+            modifiers.shift = true;
+            ("2".to_string(), modifiers)
+        }
+        "#" => {
+            modifiers.shift = true;
+            ("3".to_string(), modifiers)
+        }
+        "$" => {
+            modifiers.shift = true;
+            ("4".to_string(), modifiers)
+        }
+        "%" => {
+            modifiers.shift = true;
+            ("5".to_string(), modifiers)
+        }
+        "^" => {
+            modifiers.shift = true;
+            ("6".to_string(), modifiers)
+        }
+        "&" => {
+            modifiers.shift = true;
+            ("7".to_string(), modifiers)
+        }
+        "*" => {
+            modifiers.shift = true;
+            ("8".to_string(), modifiers)
+        }
+        "(" => {
+            modifiers.shift = true;
+            ("9".to_string(), modifiers)
+        }
+        ")" => {
+            modifiers.shift = true;
+            ("0".to_string(), modifiers)
+        }
+        "_" => {
+            modifiers.shift = true;
+            ("-".to_string(), modifiers)
+        }
+        "+" => {
+            modifiers.shift = true;
+            ("=".to_string(), modifiers)
+        }
+        "{" => {
+            modifiers.shift = true;
+            ("[".to_string(), modifiers)
+        }
+        "}" => {
+            modifiers.shift = true;
+            ("]".to_string(), modifiers)
+        }
+        "|" => {
+            modifiers.shift = true;
+            ("\\".to_string(), modifiers)
+        }
+        ":" => {
+            modifiers.shift = true;
+            (";".to_string(), modifiers)
+        }
+        "\"" => {
+            modifiers.shift = true;
+            ("'".to_string(), modifiers)
+        }
+        "<" => {
+            modifiers.shift = true;
+            (",".to_string(), modifiers)
+        }
+        ">" => {
+            modifiers.shift = true;
+            (">".to_string(), modifiers)
+        }
+        "?" => {
+            modifiers.shift = true;
+            ("/".to_string(), modifiers)
+        }
+        _ => (key, modifiers),
     }
 }
 

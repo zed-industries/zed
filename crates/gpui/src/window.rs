@@ -3316,7 +3316,7 @@ impl Window {
                 binding
                     .keystrokes()
                     .iter()
-                    .map(ToString::to_string)
+                    .map(|ks| ks.to_string())
                     .collect::<Vec<_>>()
                     .join(" ")
             })

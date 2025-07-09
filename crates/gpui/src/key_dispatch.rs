@@ -51,7 +51,7 @@
 ///
 use crate::{
     Action, ActionRegistry, App, BindingIndex, DispatchPhase, EntityId, FocusId, KeyBinding,
-    KeyContext, Keymap, Keystroke, ModifiersChangedEvent, Window,
+    KeyContext, KeybindingKeystroke, Keymap, Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -444,10 +444,11 @@ impl DispatchTree {
     fn binding_matches_predicate_and_not_shadowed(
         keymap: &Keymap,
         binding_index: BindingIndex,
-        keystrokes: &[Keystroke],
+        keystrokes: &[KeybindingKeystroke],
         context_stack: &[KeyContext],
     ) -> bool {
-        let (bindings, _) = keymap.bindings_for_input_with_indices(&keystrokes, context_stack);
+        let (bindings, _) =
+            keymap.bindings_for_keybinding_keystroke_with_indices(&keystrokes, context_stack);
         if let Some((highest_precedence_index, _)) = bindings.iter().next() {
             binding_index == *highest_precedence_index
         } else {

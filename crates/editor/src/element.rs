@@ -42,7 +42,7 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
+    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, KeybindingKeystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
@@ -6994,7 +6994,7 @@ fn header_jump_data(
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn keystroke(&self) -> Option<&Keystroke> {
+    pub fn keystroke(&self) -> Option<&KeybindingKeystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
                 [keystroke, ..] => Some(keystroke),

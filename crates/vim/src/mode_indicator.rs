@@ -50,6 +50,8 @@ impl ModeIndicator {
         }
     }
 
+    // TODO:
+    // what's this?
     fn update_pending_keys(&mut self, window: &mut Window, cx: &App) {
         self.pending_keys = window
             .pending_input_keystrokes()
