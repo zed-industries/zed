@@ -387,20 +387,26 @@ impl ShellBuilder {
     }
 
     /// Returns the program and arguments to run this task in a shell.
-    pub fn build(mut self, task_command: String, task_args: &Vec<String>) -> (String, Vec<String>) {
-        let combined_command = task_args
-            .into_iter()
-            .fold(task_command, |mut command, arg| {
-                command.push(' ');
-                command.push_str(&arg);
-                command
-            });
-        self.args.extend(
-            self.interactive
-                .then(|| "-i".to_owned())
+    pub fn build(
+        mut self,
+        task_command: Option<String>,
+        task_args: &Vec<String>,
+    ) -> (String, Vec<String>) {
+        if let Some(task_command) = task_command {
+            let combined_command = task_args
                 .into_iter()
-                .chain(["-c".to_owned(), combined_command]),
-        );
+                .fold(task_command, |mut command, arg| {
+                    command.push(' ');
+                    command.push_str(&arg);
+                    command
+                });
+            self.args.extend(
+                self.interactive
+                    .then(|| "-i".to_owned())
+                    .into_iter()
+                    .chain(["-c".to_owned(), combined_command]),
+            );
+        }
 
         (self.program, self.args)
     }
