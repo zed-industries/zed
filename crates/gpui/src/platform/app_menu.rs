@@ -20,6 +20,34 @@ impl Menu {
     }
 }
 
+/// OS menus are menus that are recognized by the operating system
+/// This allows the operating system to provide specialized items for
+/// these menus
+pub struct OsMenu {
+    /// The name of the menu
+    pub name: SharedString,
+
+    /// The type of menu
+    pub menu_type: SystemMenuType,
+}
+
+impl OsMenu {
+    /// Create an OwnedOsMenu from this OsMenu
+    pub fn owned(self) -> OwnedOsMenu {
+        OwnedOsMenu {
+            name: self.name.to_string().into(),
+            menu_type: self.menu_type,
+        }
+    }
+}
+
+/// The type of system menu
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum SystemMenuType {
+    /// The 'Services' menu in the Application menu on macOS
+    Services,
+}
+
 /// The different kinds of items that can be in a menu
 pub enum MenuItem {
     /// A separator between items
@@ -27,6 +55,9 @@ pub enum MenuItem {
 
     /// A submenu
     Submenu(Menu),
+
+    /// A menu, managed by the system (for example, the Services menu on macOS)
+    SystemMenu(OsMenu),
 
     /// An action that can be performed
     Action {
@@ -51,6 +82,14 @@ impl MenuItem {
     /// Creates a new menu item that is a submenu
     pub fn submenu(menu: Menu) -> Self {
         Self::Submenu(menu)
+    }
+
+    /// Creates a new submenu that is populated by the OS
+    pub fn os_submenu(name: impl Into<SharedString>, menu_type: SystemMenuType) -> Self {
+        Self::SystemMenu(OsMenu {
+            name: name.into(),
+            menu_type,
+        })
     }
 
     /// Creates a new menu item that invokes an action
@@ -89,8 +128,21 @@ impl MenuItem {
                 action,
                 os_action,
             },
+            MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
     }
+}
+
+/// OS menus are menus that are recognized by the operating system
+/// This allows the operating system to provide specialized items for
+/// these menus
+#[derive(Clone)]
+pub struct OwnedOsMenu {
+    /// The name of the menu
+    pub name: SharedString,
+
+    /// The type of menu
+    pub menu_type: SystemMenuType,
 }
 
 /// A menu of the application, either a main menu or a submenu
@@ -110,6 +162,9 @@ pub enum OwnedMenuItem {
 
     /// A submenu
     Submenu(OwnedMenu),
+
+    /// A menu, managed by the system (for example, the Services menu on macOS)
+    SystemMenu(OwnedOsMenu),
 
     /// An action that can be performed
     Action {
@@ -139,6 +194,7 @@ impl Clone for OwnedMenuItem {
                 action: action.boxed_clone(),
                 os_action: *os_action,
             },
+            OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }
     }
 }
