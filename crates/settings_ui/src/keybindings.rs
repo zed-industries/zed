@@ -1202,7 +1202,7 @@ async fn save_keybinding_update(
 }
 
 struct KeystrokeInput {
-    keystrokes: Vec<Keystroke>,
+    keystrokes: Vec<KeybindingKeystroke>,
     focus_handle: FocusHandle,
 }
 
@@ -1230,10 +1230,14 @@ impl KeystrokeInput {
                 last.modifiers = event.modifiers;
             }
         } else {
-            self.keystrokes.push(Keystroke {
+            self.keystrokes.push(KeybindingKeystroke {
+                inner: Keystroke {
+                    modifiers: event.modifiers,
+                    key: "".to_string(),
+                    key_char: None,
+                },
                 modifiers: event.modifiers,
                 key: "".to_string(),
-                key_char: None,
             });
         }
         cx.stop_propagation();
@@ -1249,12 +1253,13 @@ impl KeystrokeInput {
         if event.is_held {
             return;
         }
+        let keystroke = event.keystroke.clone().into_keybinding_keystroke();
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
         {
-            *last = event.keystroke.clone();
+            *last = keystroke;
         } else {
-            self.keystrokes.push(event.keystroke.clone());
+            self.keystrokes.push(keystroke);
         }
         cx.stop_propagation();
         cx.notify();
@@ -1266,22 +1271,27 @@ impl KeystrokeInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let keystroke = event.keystroke.clone().into_keybinding_keystroke();
         if let Some(last) = self.keystrokes.last_mut()
             && !last.key.is_empty()
-            && last.modifiers == event.keystroke.modifiers
+            && last.modifiers == keystroke.modifiers
         {
-            self.keystrokes.push(Keystroke {
-                modifiers: event.keystroke.modifiers,
+            self.keystrokes.push(KeybindingKeystroke {
+                inner: Keystroke {
+                    modifiers: event.keystroke.modifiers,
+                    key: "".to_string(),
+                    key_char: None,
+                },
+                modifiers: keystroke.modifiers,
                 key: "".to_string(),
-                key_char: None,
             });
         }
         cx.stop_propagation();
         cx.notify();
     }
 
-    fn keystrokes(&self) -> Vec<KeybindingKeystroke> {
-        let keystrokes = if self
+    fn keystrokes(&self) -> &[KeybindingKeystroke] {
+        if self
             .keystrokes
             .last()
             .map_or(false, |last| last.key.is_empty())
@@ -1289,12 +1299,7 @@ impl KeystrokeInput {
             &self.keystrokes[..self.keystrokes.len() - 1]
         } else {
             &self.keystrokes
-        };
-        keystrokes
-            .to_vec()
-            .into_iter()
-            .map(|keystroke| keystroke.into_keybinding_keystroke())
-            .collect()
+        }
     }
 }
 
