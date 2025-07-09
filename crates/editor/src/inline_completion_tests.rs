@@ -373,3 +373,46 @@ impl EditPredictionProvider for FakeInlineCompletionProvider {
         self.completion.clone()
     }
 }
+
+#[gpui::test]
+async fn test_partial_accept_inline_completion(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    cx.set_state("let x = ˇ;");
+
+    // Propose a completion with multiple words
+    propose_edits(
+        &provider,
+        vec![(Point::new(0, 8)..Point::new(0, 8), "hello world")],
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+
+    // Verify the completion is shown
+    cx.assert_editor_state("let x = ˇ;");
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_inline_completion());
+    });
+
+    // Accept partial completion - should accept first word
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_partial_inline_completion(&Default::default(), window, cx);
+    });
+
+    // Test documents current behavior - this shows the issue with partial accepts
+    // The fake provider doesn't adjust for what's already been typed
+    cx.assert_editor_state("let x = helloˇ;");
+    cx.editor(|editor, _, _| {
+        // For providers that don't handle partial accepts properly,
+        // the completion might still be active but suggesting the wrong thing
+        println!(
+            "Has active completion after partial accept: {}",
+            editor.has_active_inline_completion()
+        );
+    });
+}

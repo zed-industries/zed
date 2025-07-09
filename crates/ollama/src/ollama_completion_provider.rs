@@ -199,11 +199,34 @@ impl EditPredictionProvider for OllamaCompletionProvider {
         }
 
         let buffer_snapshot = buffer.read(cx);
+        let cursor_offset = cursor_position.to_offset(buffer_snapshot);
+
+        // Get text before cursor to check what's already been typed
+        let text_before_cursor = buffer_snapshot
+            .text_for_range(0..cursor_offset)
+            .collect::<String>();
+
+        // Find how much of the completion has already been typed by checking
+        // if the text before the cursor ends with a prefix of our completion
+        let mut prefix_len = 0;
+        for i in 1..=completion_text.len().min(text_before_cursor.len()) {
+            if text_before_cursor.ends_with(&completion_text[..i]) {
+                prefix_len = i;
+            }
+        }
+
+        // Only suggest the remaining part of the completion
+        let remaining_completion = &completion_text[prefix_len..];
+
+        if remaining_completion.trim().is_empty() {
+            return None;
+        }
+
         let position = cursor_position.bias_right(buffer_snapshot);
 
         Some(InlineCompletion {
             id: None,
-            edits: vec![(position..position, completion_text)],
+            edits: vec![(position..position, remaining_completion.to_string())],
             edit_preview: None,
         })
     }
@@ -428,5 +451,127 @@ mod tests {
     async fn test_show_completions_in_menu(_cx: &mut TestAppContext) {
         // Test that Ollama provider shows completions in menu to enable hover icon
         assert!(OllamaCompletionProvider::show_completions_in_menu());
+    }
+
+    #[gpui::test]
+    async fn test_partial_accept_behavior(cx: &mut TestAppContext) {
+        let provider = cx.new(|_| {
+            OllamaCompletionProvider::new(
+                Arc::new(FakeHttpClient::with_404_response()),
+                "http://localhost:11434".to_string(),
+                "codellama:7b".to_string(),
+                None,
+            )
+        });
+
+        let buffer_text = "let x = ";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+
+        // Set up a completion with multiple words
+        provider.update(cx, |provider, _| {
+            provider.current_completion = Some("hello world".to_string());
+            provider.buffer_id = Some(buffer.entity_id());
+        });
+
+        let cursor_position = cx.read(|cx| buffer.read(cx).anchor_after(text::Point::new(0, 8)));
+
+        // First suggestion should return the full completion
+        let completion = provider.update(cx, |provider, cx| {
+            provider.suggest(&buffer, cursor_position, cx)
+        });
+        assert!(completion.is_some());
+        let completion = completion.unwrap();
+        assert_eq!(completion.edits.len(), 1);
+        assert_eq!(completion.edits[0].1, "hello world");
+
+        // Simulate what happens after partial accept - cursor moves forward
+        let buffer_text_after_partial = "let x = hello";
+        let buffer_after_partial =
+            cx.new(|cx| language::Buffer::local(buffer_text_after_partial, cx));
+        let cursor_position_after = cx.read(|cx| {
+            buffer_after_partial
+                .read(cx)
+                .anchor_after(text::Point::new(0, 13))
+        });
+
+        // Update provider to track the new buffer
+        provider.update(cx, |provider, _| {
+            provider.buffer_id = Some(buffer_after_partial.entity_id());
+        });
+
+        // The provider should now adjust its completion based on what's already been typed
+        let completion_after = provider.update(cx, |provider, cx| {
+            provider.suggest(&buffer_after_partial, cursor_position_after, cx)
+        });
+
+        // With the fix, the provider should only suggest the remaining part " world"
+        assert!(completion_after.is_some());
+        let completion_after = completion_after.unwrap();
+        assert_eq!(completion_after.edits[0].1, " world");
+
+        // Test another partial accept scenario
+        let buffer_text_final = "let x = hello world";
+        let buffer_final = cx.new(|cx| language::Buffer::local(buffer_text_final, cx));
+        let cursor_position_final =
+            cx.read(|cx| buffer_final.read(cx).anchor_after(text::Point::new(0, 19)));
+
+        provider.update(cx, |provider, _| {
+            provider.buffer_id = Some(buffer_final.entity_id());
+        });
+
+        // Should return None since the full completion is already typed
+        let completion_final = provider.update(cx, |provider, cx| {
+            provider.suggest(&buffer_final, cursor_position_final, cx)
+        });
+        assert!(completion_final.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_partial_accept_with_non_word_characters(cx: &mut TestAppContext) {
+        let provider = cx.new(|_| {
+            OllamaCompletionProvider::new(
+                Arc::new(FakeHttpClient::with_404_response()),
+                "http://localhost:11434".to_string(),
+                "codellama:7b".to_string(),
+                None,
+            )
+        });
+
+        let buffer_text = "console.";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+
+        // Set up a completion with method call
+        provider.update(cx, |provider, _| {
+            provider.current_completion = Some("log('test')".to_string());
+            provider.buffer_id = Some(buffer.entity_id());
+        });
+
+        let cursor_position = cx.read(|cx| buffer.read(cx).anchor_after(text::Point::new(0, 8)));
+
+        // First suggestion should return the full completion
+        let completion = provider.update(cx, |provider, cx| {
+            provider.suggest(&buffer, cursor_position, cx)
+        });
+        assert!(completion.is_some());
+        let completion = completion.unwrap();
+        assert_eq!(completion.edits[0].1, "log('test')");
+
+        // Simulate partial typing of "log"
+        let buffer_text_after = "console.log";
+        let buffer_after = cx.new(|cx| language::Buffer::local(buffer_text_after, cx));
+        let cursor_position_after =
+            cx.read(|cx| buffer_after.read(cx).anchor_after(text::Point::new(0, 11)));
+
+        provider.update(cx, |provider, _| {
+            provider.buffer_id = Some(buffer_after.entity_id());
+        });
+
+        // Should suggest the remaining part "('test')"
+        let completion_after = provider.update(cx, |provider, cx| {
+            provider.suggest(&buffer_after, cursor_position_after, cx)
+        });
+        assert!(completion_after.is_some());
+        let completion_after = completion_after.unwrap();
+        assert_eq!(completion_after.edits[0].1, "('test')");
     }
 }
