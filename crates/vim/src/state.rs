@@ -1025,7 +1025,7 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
-            Operator::HelixMatch => "ℳ",
+            Operator::HelixMatch => "helix_m",
         }
     }
 
@@ -1039,6 +1039,7 @@ impl Operator {
             } => format!("^V{prefix}"),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
             _ => self.id().to_string(),
         }
     }

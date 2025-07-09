@@ -567,7 +567,7 @@
     }
   },
   {
-    "context": "vim_operator == ℳ",
+    "context": "vim_operator == helix_m",
     "bindings": {
       "m": "vim::Matching"
     }

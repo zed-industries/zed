@@ -86,6 +86,8 @@ fn helix_around_word(
 
 #[cfg(test)]
 mod test {
+    use db::indoc;
+
     use crate::{state::Mode, test::VimTestContext};
 
     #[gpui::test]
