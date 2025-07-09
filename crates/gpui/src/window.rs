@@ -31,6 +31,8 @@ use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
+use std::cell::Ref;
+use std::ops::Deref;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -4139,7 +4141,8 @@ impl Window {
         if let Some(inspector_id) = _inspector_id {
             if let Some(inspector) = &self.inspector {
                 let inspector = inspector.clone();
-                let active_element_id = inspector.read(cx).active_element_id();
+                let inspector_ref = inspector.read(cx);
+                let active_element_id = inspector_ref.active_element_id();
                 if Some(inspector_id) == active_element_id {
                     return inspector.update(cx, |inspector, _cx| {
                         inspector.with_active_element_state(self, f)
@@ -4213,9 +4216,9 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn paint_inspector_hitbox(&mut self, cx: &App) {
-        if let Some(inspector) = self.inspector.as_ref() {
-            let inspector = inspector.read(cx);
-            if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
+        if let Some(inspector) = self.inspector.clone() {
+            if let Some((hitbox_id, _)) =
+                self.hovered_inspector_hitbox(inspector.read(cx).deref(), &self.next_frame)
             {
                 if let Some(hitbox) = self
                     .next_frame
@@ -4379,7 +4382,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Read the root view out of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn read<'a>(&self, cx: &'a App) -> Result<&'a V> {
+    pub fn read(&self, cx: &App) -> Result<Ref<V>> {
         let x = cx
             .windows
             .get(self.id)
@@ -4392,7 +4395,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
-        Ok(x.read(cx))
+        todo!()
     }
 
     /// Read the root view out of this window, with a callback
@@ -4402,7 +4405,9 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        cx.read_window(self, |root_view, cx| read_with(root_view.read(cx), cx))
+        cx.read_window(self, |root_view, cx| {
+            read_with(root_view.read(cx).deref(), cx)
+        })
     }
 
     /// Read the root view pointer off of this window.

@@ -1740,7 +1740,8 @@ impl Project {
     }
 
     pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
-        let active_position = self.breakpoint_store.read(cx).active_position()?;
+        let store = self.breakpoint_store.read(cx);
+        let active_position = store.active_position()?;
         let session = self
             .dap_store
             .read(cx)

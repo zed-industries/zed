@@ -624,7 +624,8 @@ impl<V> Entity<V> {
                             handle
                                 .upgrade()
                                 .expect("view dropped with pending condition")
-                                .read(cx),
+                                .read(cx)
+                                .deref(),
                             cx,
                         ) {
                             break;

@@ -126,6 +126,7 @@ impl RemoteBufferStore {
         let version = buffer.version();
         let rpc = self.upstream_client.clone();
         let project_id = self.project_id;
+        drop(buffer);
         cx.spawn(async move |_, cx| {
             let response = rpc
                 .request(proto::SaveBuffer {
@@ -373,6 +374,7 @@ impl LocalBufferStore {
         let save = worktree.update(cx, |worktree, cx| {
             worktree.write_file(path.as_ref(), text, line_ending, cx)
         });
+        drop(buffer);
 
         cx.spawn(async move |this, cx| {
             let new_file = save.await?;
@@ -574,7 +576,8 @@ impl LocalBufferStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
-        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+        let buffer_ref = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer_ref.file()) else {
             return Task::ready(Err(anyhow!("buffer doesn't have a file")));
         };
         let worktree = file.worktree.clone();
@@ -922,6 +925,7 @@ impl BufferStore {
             self.path_to_buffer_id.insert(path, remote_id);
         }
 
+        drop(buffer);
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
         cx.emit(BufferStoreEvent::BufferAdded(buffer_entity));
         Ok(())

@@ -41,7 +41,7 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
@@ -343,7 +343,7 @@ pub trait File: Send + Sync + Any {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr;
+    fn file_name<'a>(&'a self, cx: &'a App) -> OsString;
 
     /// Returns the id of the worktree to which this file belongs.
     ///
@@ -4895,8 +4895,11 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a std::ffi::OsStr {
-        self.path().file_name().unwrap_or(self.root_name.as_ref())
+    fn file_name<'a>(&'a self, _: &'a gpui::App) -> OsString {
+        self.path()
+            .file_name()
+            .unwrap_or(self.root_name.as_ref())
+            .into()
     }
 
     fn worktree_id(&self, _: &App) -> WorktreeId {

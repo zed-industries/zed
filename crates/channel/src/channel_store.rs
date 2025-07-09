@@ -976,7 +976,8 @@ impl ChannelStore {
             if let OpenEntityHandle::Open(buffer) = buffer {
                 if let Some(buffer) = buffer.upgrade() {
                     let channel_buffer = buffer.read(cx);
-                    let buffer = channel_buffer.buffer().read(cx);
+                    let buffer = channel_buffer.buffer();
+                    let buffer = buffer.read(cx);
                     buffer_versions.push(proto::ChannelBufferVersion {
                         channel_id: channel_buffer.channel_id.0,
                         epoch: channel_buffer.epoch(),

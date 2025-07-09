@@ -8162,8 +8162,8 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     // One file is unmodified, the other is ignored.
     cx.read(|cx| {
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, false);
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "b.txt", None, true);
+        assert_entry_git_state(&tree.read(cx), &repository.read(cx), "a.xml", None, false);
+        assert_entry_git_state(&tree.read(cx), &repository.read(cx), "b.txt", None, true);
     });
 
     // Change the gitignore, and stage the newly non-ignored file.
@@ -8181,10 +8181,10 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, true);
+        assert_entry_git_state(&tree.read(cx), &repository.read(cx), "a.xml", None, true);
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "b.txt",
             Some(StatusCode::Added),
             false,
@@ -8597,22 +8597,22 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 
     cx.read(|cx| {
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "tracked-dir/tracked-file1",
             None,
             false,
         );
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "tracked-dir/ancestor-ignored-file1",
             None,
             false,
         );
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "ignored-dir/ignored-file1",
             None,
             true,
@@ -8649,22 +8649,22 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     cx.read(|cx| {
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "tracked-dir/tracked-file2",
             Some(StatusCode::Added),
             false,
         );
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "tracked-dir/ancestor-ignored-file2",
             None,
             false,
         );
         assert_entry_git_state(
-            tree.read(cx),
-            repository.read(cx),
+            &tree.read(cx),
+            &repository.read(cx),
             "ignored-dir/ignored-file2",
             None,
             true,

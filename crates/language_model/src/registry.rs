@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
-use std::{str::FromStr, sync::Arc};
+use std::{cell::Ref, str::FromStr, sync::Arc};
 use thiserror::Error;
 use util::maybe;
 
@@ -119,7 +119,7 @@ impl LanguageModelRegistry {
         cx.global::<GlobalLanguageModelRegistry>().0.clone()
     }
 
-    pub fn read_global(cx: &App) -> &Self {
+    pub fn read_global(cx: &App) -> Ref<Self> {
         cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
     }
 

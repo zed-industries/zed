@@ -1215,8 +1215,9 @@ impl MultiBuffer {
                     if let Some(excerpt) = cursor.item() {
                         if excerpt.locator == *excerpt_id {
                             let excerpt_buffer_start =
-                                excerpt.range.context.start.summary::<D>(buffer);
-                            let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+                                excerpt.range.context.start.summary::<D>(&buffer);
+                            let excerpt_buffer_end =
+                                excerpt.range.context.end.summary::<D>(&buffer);
                             let excerpt_range = excerpt_buffer_start..excerpt_buffer_end;
                             if excerpt_range.contains(&range.start)
                                 && excerpt_range.contains(&range.end)
@@ -2477,7 +2478,7 @@ impl MultiBuffer {
         };
 
         let buffer = buffer_state.buffer.read(cx);
-        let diff_change_range = range.to_offset(buffer);
+        let diff_change_range = range.to_offset(&buffer);
 
         let new_diff = diff.snapshot(cx);
         let mut snapshot = self.snapshot.borrow_mut();
@@ -2558,19 +2559,20 @@ impl MultiBuffer {
     }
 
     pub fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
-        let buffer_id = self
-            .snapshot
-            .borrow()
-            .excerpts
-            .first()
-            .map(|excerpt| excerpt.buffer.remote_id());
-        buffer_id
-            .and_then(|buffer_id| self.buffer(buffer_id))
-            .map(|buffer| {
-                let buffer = buffer.read(cx);
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-            })
-            .unwrap_or_else(move || self.language_settings_at(0, cx))
+        // let buffer_id = self
+        //     .snapshot
+        //     .borrow()
+        //     .excerpts
+        //     .first()
+        //     .map(|excerpt| excerpt.buffer.remote_id());
+        // buffer_id
+        //     .and_then(|buffer_id| self.buffer(buffer_id))
+        //     .map(|buffer| {
+        //         let buffer = buffer.read(cx);
+        //         language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+        //     })
+        //     .unwrap_or_else(move || self.language_settings_at(0, cx))
+        todo!()
     }
 
     pub fn language_settings_at<'a, T: ToOffset>(
@@ -2585,7 +2587,8 @@ impl MultiBuffer {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language.map(|l| l.name()), file, cx)
+        // language_settings(language.map(|l| l.name()), file, cx)
+        todo!()
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Entity<Buffer>)) {
@@ -2596,23 +2599,24 @@ impl MultiBuffer {
     }
 
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
-        if let Some(title) = self.title.as_ref() {
-            return title.into();
-        }
+        // if let Some(title) = self.title.as_ref() {
+        //     return title.into();
+        // }
 
-        if let Some(buffer) = self.as_singleton() {
-            let buffer = buffer.read(cx);
+        // if let Some(buffer) = self.as_singleton() {
+        //     let buffer = buffer.read(cx);
 
-            if let Some(file) = buffer.file() {
-                return file.file_name(cx).to_string_lossy();
-            }
+        //     if let Some(file) = buffer.file() {
+        //         return file.file_name(cx).to_string_lossy();
+        //     }
 
-            if let Some(title) = self.buffer_content_title(buffer) {
-                return title;
-            }
-        };
+        //     if let Some(title) = self.buffer_content_title(&buffer) {
+        //         return title;
+        //     }
+        // };
 
-        "untitled".into()
+        // "untitled".into()
+        todo!()
     }
 
     fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {

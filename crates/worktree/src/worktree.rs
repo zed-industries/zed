@@ -49,7 +49,7 @@ use std::{
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fmt,
     future::Future,
     mem::{self},
@@ -2667,17 +2667,18 @@ impl Snapshot {
     }
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        let path = path.as_ref();
-        debug_assert!(path.is_relative());
-        self.traverse_from_path(true, true, true, path)
-            .entry()
-            .and_then(|entry| {
-                if entry.path.as_ref() == path {
-                    Some(entry)
-                } else {
-                    None
-                }
-            })
+        // let path = path.as_ref();
+        // debug_assert!(path.is_relative());
+        // self.traverse_from_path(true, true, true, path)
+        //     .entry()
+        //     .and_then(|entry| {
+        //         if entry.path.as_ref() == path {
+        //             Some(entry)
+        //         } else {
+        //             None
+        //         }
+        //     })
+        todo!()
     }
 
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
@@ -3321,10 +3322,11 @@ impl language::File for File {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, cx: &'a App) -> OsString {
         self.path
             .file_name()
-            .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name))
+            .map(Into::into)
+            .unwrap_or_else(|| OsStr::new(&self.worktree.read(cx).root_name).into())
     }
 
     fn worktree_id(&self, cx: &App) -> WorktreeId {
@@ -3357,14 +3359,16 @@ impl language::LocalFile for File {
     }
 
     fn load(&self, cx: &App) -> Task<Result<String>> {
-        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let worktree = self.worktree.read(cx);
+        let worktree = worktree.as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move { fs.load(&abs_path?).await })
     }
 
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
-        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let worktree = self.worktree.read(cx);
+        let worktree = worktree.as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
         cx.background_spawn(async move { fs.load_bytes(&abs_path?).await })

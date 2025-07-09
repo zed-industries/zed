@@ -4,6 +4,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, 
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{
+    cell::Ref,
     cmp::Ordering,
     future::Future,
     iter,
@@ -1109,9 +1110,11 @@ impl BufferDiff {
         let unstaged_counterpart = self
             .secondary_diff
             .as_ref()
-            .map(|diff| &diff.read(cx).inner);
-        self.inner
-            .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
+            .map(|diff| Ref::map(diff.read(cx), |d| &d.inner));
+        // self.inner
+        //     .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
+        // todo! Figure out what to do here
+        None.into_iter()
     }
 
     pub fn hunks_intersecting_range_rev<'a>(

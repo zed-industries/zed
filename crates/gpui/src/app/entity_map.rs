@@ -6,7 +6,7 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
     any::{Any, TypeId, type_name},
-    cell::RefCell,
+    cell::{Ref, RefCell},
     cmp::Ordering,
     fmt::{self, Display},
     hash::{Hash, Hasher},
@@ -371,8 +371,11 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Grab a reference to this entity from the context.
-    pub fn read<'a>(&self, cx: &'a App) -> &'a T {
-        cx.entities.read(self)
+    /// todo! remove the cx param
+    pub fn read(&self, _cx: &App) -> Ref<T> {
+        Ref::map(self.any_entity.entity_data.borrow(), |data| {
+            data.downcast_ref().unwrap()
+        })
     }
 
     /// Read the entity referenced by this handle with the given function.
