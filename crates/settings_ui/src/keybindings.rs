@@ -31,6 +31,8 @@ use crate::{
     ui_components::table::{Table, TableInteractionState},
 };
 
+const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
+
 actions!(
     zed,
     [
@@ -572,19 +574,24 @@ impl KeybindContextString {
 }
 
 impl RenderOnce for KeybindContextString {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         match self {
-            KeybindContextString::Global => StyledText::new(KeybindContextString::GLOBAL.clone())
-                .with_highlights([(
-                    0..KeybindContextString::GLOBAL.len(),
-                    gpui::HighlightStyle::color(_cx.theme().colors().text_muted),
-                )])
-                .into_any_element(),
+            KeybindContextString::Global => {
+                muted_styled_text(KeybindContextString::GLOBAL.clone(), cx).into_any_element()
+            }
             KeybindContextString::Local(name, language) => {
                 SyntaxHighlightedText::new(name, language).into_any_element()
             }
         }
     }
+}
+
+fn muted_styled_text(text: SharedString, cx: &App) -> StyledText {
+    let len = text.len();
+    StyledText::new(text).with_highlights([(
+        0..len,
+        gpui::HighlightStyle::color(cx.theme().colors().text_muted),
+    )])
 }
 
 impl Item for KeymapEditor {
@@ -643,7 +650,7 @@ impl Render for KeymapEditor {
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
-                        cx.processor(move |this, range: Range<usize>, _window, _cx| {
+                        cx.processor(move |this, range: Range<usize>, _window, cx| {
                             range
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
@@ -673,12 +680,17 @@ impl Render for KeymapEditor {
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
-                                    let action_input = binding
-                                        .action_input
-                                        .clone()
-                                        .map_or(gpui::Empty.into_any_element(), |input| {
-                                            input.into_any_element()
-                                        });
+                                    let action_input = match binding.action_input.clone() {
+                                        Some(input) => input.into_any_element(),
+                                        None => {
+                                            if binding.action_schema.is_some() {
+                                                muted_styled_text(NO_ACTION_ARGUMENTS_TEXT, cx)
+                                                    .into_any_element()
+                                            } else {
+                                                gpui::Empty.into_any_element()
+                                            }
+                                        }
+                                    };
                                     let context = binding
                                         .context
                                         .clone()
