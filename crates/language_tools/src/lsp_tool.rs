@@ -735,8 +735,6 @@ impl LspTool {
                             state.update(cx, |state, cx| state.fill_menu(menu, cx))
                         });
                         lsp_tool.lsp_menu = Some(menu.clone());
-                        // TODO kb will this work?
-                        // what about the selections?
                         lsp_tool.popover_menu_handle.refresh_menu(
                             window,
                             cx,
