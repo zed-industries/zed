@@ -2,13 +2,16 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke, SharedString};
+use crate::{
+    Action, InvalidKeystrokeError, KeyBindingContextPredicate, KeybindingKeystroke, Keystroke,
+    SharedString,
+};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
-    pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
+    pub(crate) keystrokes: SmallVec<[KeybindingKeystroke; 2]>,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
     pub(crate) meta: Option<KeyBindingMetaIndex>,
     /// The json input string used when building the keybinding, if any
@@ -46,16 +49,17 @@ impl KeyBinding {
         key_equivalents: Option<&HashMap<char, char>>,
         action_input: Option<SharedString>,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
+        let mut keystrokes: SmallVec<[KeybindingKeystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(KeybindingKeystroke::parse)
             .collect::<std::result::Result<_, _>>()?;
 
         if let Some(equivalents) = key_equivalents {
             for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1 {
-                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-                        keystroke.key = key.to_string();
+                if keystroke.inner.key.chars().count() == 1 {
+                    if let Some(key) = equivalents.get(&keystroke.inner.key.chars().next().unwrap())
+                    {
+                        keystroke.inner.key = key.to_string();
                     }
                 }
             }
@@ -96,8 +100,23 @@ impl KeyBinding {
         Some(self.keystrokes.len() > typed.len())
     }
 
+    /// TODO:
+    pub fn match_keybinding_keystrokes(&self, typed: &[KeybindingKeystroke]) -> Option<bool> {
+        if self.keystrokes.len() < typed.len() {
+            return None;
+        }
+
+        for (target, typed) in self.keystrokes.iter().zip(typed.iter()) {
+            if !typed.inner.should_match(target) {
+                return None;
+            }
+        }
+
+        Some(self.keystrokes.len() > typed.len())
+    }
+
     /// Get the keystrokes associated with this binding
-    pub fn keystrokes(&self) -> &[Keystroke] {
+    pub fn keystrokes(&self) -> &[KeybindingKeystroke] {
         self.keystrokes.as_slice()
     }
 

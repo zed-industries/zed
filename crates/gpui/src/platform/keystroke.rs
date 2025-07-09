@@ -22,7 +22,8 @@ pub struct Keystroke {
 }
 
 /// TODO:
-pub struct KeybindKeystroke {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct KeybindingKeystroke {
     /// TODO:
     pub inner: Keystroke,
     /// TODO:
@@ -65,7 +66,7 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    pub fn should_match(&self, target: &Keystroke) -> bool {
+    pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
@@ -78,7 +79,7 @@ impl Keystroke {
                 ..Default::default()
             };
 
-            if &target.key == key_char && target.modifiers == ime_modifiers {
+            if &target.inner.key == key_char && target.inner.modifiers == ime_modifiers {
                 return true;
             }
         }
@@ -90,12 +91,12 @@ impl Keystroke {
             .filter(|key_char| key_char != &&self.key)
         {
             // On Windows, if key_char is set, then the typed keystroke produced the key_char
-            if &target.key == key_char && target.modifiers == Modifiers::none() {
+            if &target.inner.key == key_char && target.inner.modifiers == Modifiers::none() {
                 return true;
             }
         }
 
-        target.modifiers == self.modifiers && target.key == self.key
+        target.inner.modifiers == self.modifiers && target.inner.key == self.key
     }
 
     /// key syntax is:
@@ -273,7 +274,7 @@ impl Keystroke {
     }
 }
 
-impl KeybindKeystroke {
+impl KeybindingKeystroke {
     /// TODO:
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
         let keystroke = Keystroke::parse(source)?;
@@ -281,11 +282,21 @@ impl KeybindKeystroke {
             mut modifiers, key, ..
         } = keystroke.clone();
         let (key, modifiers) = temp_keyboard_mapper(key, modifiers);
-        Ok(KeybindKeystroke {
+        Ok(KeybindingKeystroke {
             inner: keystroke,
             modifiers,
             key,
         })
+    }
+
+    /// TODO:
+    pub fn to_string(&self) -> String {
+        let keystroke = Keystroke {
+            modifiers: self.modifiers,
+            key: self.key.clone(),
+            key_char: None,
+        };
+        keystroke.to_string()
     }
 }
 

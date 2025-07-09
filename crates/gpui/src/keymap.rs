@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, Keystroke, is_no_action};
+use crate::{Action, KeybindingKeystroke, Keystroke, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -177,10 +177,37 @@ impl Keymap {
                     .map(|pending| (BindingIndex(ix), binding, pending))
             });
 
+        self.bindings_for_keystrokes_with_indices_inner(possibilities, context_stack)
+    }
+
+    /// TODO:
+    pub fn bindings_for_keybinding_keystroke_with_indices(
+        &self,
+        input: &[KeybindingKeystroke],
+        context_stack: &[KeyContext],
+    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
+        let possibilities = self
+            .bindings()
+            .enumerate()
+            .rev()
+            .filter_map(|(ix, binding)| {
+                binding
+                    .match_keybinding_keystrokes(input)
+                    .map(|pending| (BindingIndex(ix), binding, pending))
+            });
+
+        self.bindings_for_keystrokes_with_indices_inner(possibilities, context_stack)
+    }
+
+    fn bindings_for_keystrokes_with_indices_inner<'a>(
+        &'a self,
+        possibilities: impl Iterator<Item = (BindingIndex, &'a KeyBinding, bool)>,
+        context_stack: &[KeyContext],
+    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
         let mut bindings: SmallVec<[(BindingIndex, KeyBinding, usize); 1]> = SmallVec::new();
 
         // (pending, is_no_action, depth, keystrokes)
-        let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
+        let mut pending_info_opt: Option<(bool, bool, usize, &[KeybindingKeystroke])> = None;
 
         'outer: for (binding_index, binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
