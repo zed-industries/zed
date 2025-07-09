@@ -44,8 +44,6 @@ function CheckEnvironmentVariables {
     }
 }
 
-$innoDir = "$env:ZED_WORKSPACE\inno"
-
 function PrepareForBundle {
     if (Test-Path "$innoDir") {
         Remove-Item -Path "$innoDir" -Recurse -Force
@@ -236,6 +234,8 @@ function BuildInstaller {
 }
 
 ParseZedWorkspace
+$innoDir = "$env:ZED_WORKSPACE\inno"
+
 CheckEnvironmentVariables
 PrepareForBundle
 BuildZedAndItsFriends
