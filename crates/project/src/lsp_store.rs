@@ -4965,7 +4965,10 @@ impl LspStore {
                 return Task::ready(Ok(hint));
             }
             let buffer_snapshot = buffer_handle.read(cx).snapshot();
-            cx.spawn(async move |_, cx| {
+            // Preserve the original hint data before resolution
+            let original_hint = hint.clone();
+
+            cx.spawn(async move |_this, cx| {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
                 );
@@ -4973,7 +4976,139 @@ impl LspStore {
                     .await
                     .into_response()
                     .context("inlay hint resolve LSP request")?;
-                let resolved_hint = InlayHints::lsp_to_project_hint(
+
+                // Check if we need to fetch hover info as a fallback
+                let needs_fallback = match &resolved_hint.label {
+                    lsp::InlayHintLabel::String(_) => resolved_hint.tooltip.is_none(),
+                    lsp::InlayHintLabel::LabelParts(parts) => {
+                        resolved_hint.tooltip.is_none()
+                            && parts
+                                .iter()
+                                .any(|p| p.tooltip.is_none() && p.location.is_some())
+                    }
+                };
+
+                let mut resolved_hint = resolved_hint;
+
+                if let lsp::InlayHintLabel::LabelParts(parts) = &resolved_hint.label {
+                    for (i, part) in parts.iter().enumerate() {
+                            "  Part {}: value='{}', tooltip={:?}, location={:?}",
+                            i, part.value, part.tooltip, part.location
+                        );
+                    }
+                }
+
+                if needs_fallback {
+                    // For label parts with locations but no tooltips, fetch hover info
+                    if let lsp::InlayHintLabel::LabelParts(parts) = &mut resolved_hint.label {
+                        for part in parts.iter_mut() {
+                            if part.tooltip.is_none() {
+                                if let Some(location) = &part.location {
+
+                                    // Open the document
+                                    let did_open_params = lsp::DidOpenTextDocumentParams {
+                                        text_document: lsp::TextDocumentItem {
+                                            uri: location.uri.clone(),
+                                            language_id: "rust".to_string(), // TODO: Detect language
+                                            version: 0,
+                                            text: std::fs::read_to_string(location.uri.path())
+                                                .unwrap_or_else(|_| String::new()),
+                                        },
+                                    };
+
+                                    lang_server.notify::<lsp::notification::DidOpenTextDocument>(
+                                        &did_open_params,
+                                    )?;
+
+                                    // Request hover at the location
+                                    let hover_params = lsp::HoverParams {
+                                        text_document_position_params:
+                                            lsp::TextDocumentPositionParams {
+                                                text_document: lsp::TextDocumentIdentifier {
+                                                    uri: location.uri.clone(),
+                                                },
+                                                position: location.range.start,
+                                            },
+                                        work_done_progress_params: Default::default(),
+                                    };
+
+                                    if let Ok(hover_response) = lang_server
+                                        .request::<lsp::request::HoverRequest>(hover_params)
+                                        .await
+                                        .into_response()
+                                    {
+
+                                        if let Some(hover) = hover_response {
+                                            // Convert hover contents to tooltip
+                                            part.tooltip = Some(match hover.contents {
+                                                lsp::HoverContents::Scalar(content) => {
+                                                    lsp::InlayHintLabelPartTooltip::String(
+                                                        match content {
+                                                            lsp::MarkedString::String(s) => s,
+                                                            lsp::MarkedString::LanguageString(
+                                                                ls,
+                                                            ) => ls.value,
+                                                        },
+                                                    )
+                                                }
+                                                lsp::HoverContents::Array(contents) => {
+                                                    let combined = contents
+                                                        .into_iter()
+                                                        .map(|c| match c {
+                                                            lsp::MarkedString::String(s) => s,
+                                                            lsp::MarkedString::LanguageString(
+                                                                ls,
+                                                            ) => ls.value,
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                        .join("\n\n");
+                                                    lsp::InlayHintLabelPartTooltip::String(combined)
+                                                }
+                                                lsp::HoverContents::Markup(markup) => {
+                                                    lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                                        markup,
+                                                    )
+                                                }
+                                            });
+                                        }
+                                    }
+
+                                    // Close the document
+                                    let did_close_params = lsp::DidCloseTextDocumentParams {
+                                        text_document: lsp::TextDocumentIdentifier {
+                                            uri: location.uri.clone(),
+                                        },
+                                    };
+
+                                    lang_server.notify::<lsp::notification::DidCloseTextDocument>(
+                                        &did_close_params,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check if we need to restore location data from the original hint
+                let mut resolved_hint = resolved_hint;
+                if let (
+                    lsp::InlayHintLabel::LabelParts(resolved_parts),
+                    crate::InlayHintLabel::LabelParts(original_parts),
+                ) = (&mut resolved_hint.label, &original_hint.label)
+                {
+                    for (resolved_part, original_part) in
+                        resolved_parts.iter_mut().zip(original_parts.iter())
+                    {
+                        if resolved_part.location.is_none() && original_part.location.is_some() {
+                            // Restore location from original hint
+                            if let Some((_server_id, location)) = &original_part.location {
+                                resolved_part.location = Some(location.clone());
+                            }
+                        }
+                    }
+                }
+
+                let mut resolved_hint = InlayHints::lsp_to_project_hint(
                     resolved_hint,
                     &buffer_handle,
                     server_id,
@@ -4982,6 +5117,28 @@ impl LspStore {
                     cx,
                 )
                 .await?;
+
+                // Final check: if resolved hint still has no tooltip but original had location,
+                // preserve the original hint's data
+                if resolved_hint.tooltip.is_none() {
+                    if let (
+                        crate::InlayHintLabel::LabelParts(resolved_parts),
+                        crate::InlayHintLabel::LabelParts(original_parts),
+                    ) = (&mut resolved_hint.label, &original_hint.label)
+                    {
+                        for (resolved_part, original_part) in
+                            resolved_parts.iter_mut().zip(original_parts.iter())
+                        {
+                            if resolved_part.tooltip.is_none()
+                                && resolved_part.location.is_none()
+                                && original_part.location.is_some()
+                            {
+                                resolved_part.location = original_part.location.clone();
+                            }
+                        }
+                    }
+                }
+
                 Ok(resolved_hint)
             })
         }

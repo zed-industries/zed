@@ -366,6 +366,15 @@ pub fn update_inlay_link_and_hover_points(
                         true // Process the hint
                     }
                     ResolveState::Resolving => {
+                        // Check if this hint was just resolved and needs hover
+                        if editor.check_resolved_inlay_hint_hover(
+                            hovered_hint.id,
+                            excerpt_id,
+                            window,
+                            cx,
+                        ) {
+                            return; // Hover was shown by check_resolved_inlay_hint_hover
+                        }
                         false // Don't process yet
                     }
                 };
