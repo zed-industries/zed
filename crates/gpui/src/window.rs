@@ -3509,10 +3509,6 @@ impl Window {
 
         let mut keystroke: Option<Keystroke> = None;
 
-        dbg!(&event.downcast_ref::<KeyDownEvent>());
-        dbg!(&event.downcast_ref::<crate::KeyUpEvent>());
-        dbg!(&event.downcast_ref::<ModifiersChangedEvent>());
-
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
