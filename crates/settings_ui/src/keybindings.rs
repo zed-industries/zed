@@ -12,7 +12,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
-    WeakEntity, actions, div, transparent_black,
+    WeakEntity, actions, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -683,7 +683,11 @@ impl Render for KeymapEditor {
                     .when(!self.conflicts.is_empty(), |this| {
                         this.child(
                             IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                .selected_icon_color(Color::Warning)
+                                .tooltip(Tooltip::text(match self.filter_state {
+                                    FilterState::All => "Show conflicts",
+                                    FilterState::Conflicts => "Hide conflicts",
+                                }))
+                                .selected_icon_color(Color::Error)
                                 .toggle_state(matches!(self.filter_state, FilterState::Conflicts))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.filter_state = this.filter_state.invert();
@@ -769,10 +773,8 @@ impl Render for KeymapEditor {
                                     this.selected_index = Some(row_index);
                                 }))
                                 .border_2()
-                                .border_color(if is_conflict {
-                                    cx.theme().colors().terminal_ansi_red
-                                } else {
-                                    transparent_black()
+                                .when(is_conflict, |row| {
+                                    row.bg(cx.theme().status().error_background)
                                 })
                                 .when(is_selected, |row| {
                                     row.border_color(cx.theme().colors().panel_focused_border)
