@@ -1061,11 +1061,10 @@ pub struct Editor {
     read_only: bool,
     leader_id: Option<CollaboratorId>,
     remote_id: Option<ViewId>,
-    hover_state: HoverState,
+    pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    resolved_inlay_hints_pending_hover: HashSet<InlayId>,
     edit_prediction_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_inline_completion: Option<InlineCompletionState>,
@@ -2080,7 +2079,6 @@ impl Editor {
             hover_state: HoverState::default(),
             pending_mouse_down: None,
             hovered_link_state: None,
-            resolved_inlay_hints_pending_hover: HashSet::default(),
             edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
@@ -20352,99 +20350,6 @@ impl Editor {
 
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
-    }
-
-    pub fn check_resolved_inlay_hint_hover(
-        &mut self,
-        inlay_id: InlayId,
-        excerpt_id: ExcerptId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if !self.resolved_inlay_hints_pending_hover.remove(&inlay_id) {
-            return false;
-        }
-        // Get the resolved hint from the cache
-        if let Some(cached_hint) = self.inlay_hint_cache.hint_by_id(excerpt_id, inlay_id) {
-            // Check if we have tooltip data to display
-            let mut hover_to_show = None;
-
-            // Check main tooltip
-            if let Some(tooltip) = &cached_hint.tooltip {
-                let inlay_hint = self
-                    .visible_inlay_hints(cx)
-                    .into_iter()
-                    .find(|hint| hint.id == inlay_id);
-
-                if let Some(inlay_hint) = inlay_hint {
-                    let range = crate::InlayHighlight {
-                        inlay: inlay_id,
-                        inlay_position: inlay_hint.position,
-                        range: 0..inlay_hint.text.len(),
-                    };
-                    hover_to_show = Some((tooltip.clone(), range));
-                }
-            } else if let project::InlayHintLabel::LabelParts(parts) = &cached_hint.label {
-                // Check label parts for tooltips
-                let inlay_hint = self
-                    .visible_inlay_hints(cx)
-                    .into_iter()
-                    .find(|hint| hint.id == inlay_id);
-
-                if let Some(inlay_hint) = inlay_hint {
-                    let mut offset = 0;
-                    for part in parts {
-                        if let Some(part_tooltip) = &part.tooltip {
-                            let range = crate::InlayHighlight {
-                                inlay: inlay_id,
-                                inlay_position: inlay_hint.position,
-                                range: offset..offset + part.value.len(),
-                            };
-                            // Convert InlayHintLabelPartTooltip to InlayHintTooltip
-                            let tooltip = match part_tooltip {
-                                project::InlayHintLabelPartTooltip::String(text) => {
-                                    project::InlayHintTooltip::String(text.clone())
-                                }
-                                project::InlayHintLabelPartTooltip::MarkupContent(content) => {
-                                    project::InlayHintTooltip::MarkupContent(content.clone())
-                                }
-                            };
-                            hover_to_show = Some((tooltip, range));
-                            break;
-                        }
-                        offset += part.value.len();
-                    }
-                }
-            }
-
-            // Show the hover if we have tooltip data
-            if let Some((tooltip, range)) = hover_to_show {
-                use crate::hover_popover::{InlayHover, hover_at_inlay};
-                use project::{HoverBlock, HoverBlockKind, InlayHintTooltip};
-
-                let hover_block = match tooltip {
-                    InlayHintTooltip::String(text) => HoverBlock {
-                        text,
-                        kind: HoverBlockKind::PlainText,
-                    },
-                    InlayHintTooltip::MarkupContent(content) => HoverBlock {
-                        text: content.value,
-                        kind: content.kind,
-                    },
-                };
-
-                hover_at_inlay(
-                    self,
-                    InlayHover {
-                        tooltip: hover_block,
-                        range,
-                    },
-                    window,
-                    cx,
-                );
-            }
-        }
-        true
     }
 
     pub fn replay_insert_event(

@@ -21,7 +21,6 @@ use clock::Global;
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
 use language::{Buffer, BufferSnapshot, language_settings::InlayHintKind};
-use lsp::LanguageServerId;
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
@@ -623,66 +622,44 @@ impl InlayHintCache {
             let mut guard = excerpt_hints.write();
             if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
                 if let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state {
-                    let server_id = *server_id;
                     let hint_to_resolve = cached_hint.clone();
+                    let server_id = *server_id;
                     cached_hint.resolve_state = ResolveState::Resolving;
                     drop(guard);
-                    self.resolve_hint(
-                        server_id,
-                        buffer_id,
-                        excerpt_id,
-                        id,
-                        hint_to_resolve,
-                        window,
-                        cx,
-                    )
+                    cx.spawn_in(window, async move |editor, cx| {
+                        let resolved_hint_task = editor.update(cx, |editor, cx| {
+                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                                hint_to_resolve,
+                                buffer,
+                                server_id,
+                                cx,
+                            )
+                        })?;
+                        if let Some(resolved_hint_task) = resolved_hint_task {
+                            let mut resolved_hint =
+                                resolved_hint_task.await.context("hint resolve task")?;
+                            editor.read_with(cx, |editor, _| {
+                                if let Some(excerpt_hints) =
+                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
+                                {
+                                    let mut guard = excerpt_hints.write();
+                                    if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
+                                        if cached_hint.resolve_state == ResolveState::Resolving {
+                                            resolved_hint.resolve_state = ResolveState::Resolved;
+                                            *cached_hint = resolved_hint;
+                                        }
+                                    }
+                                }
+                            })?;
+                        }
+
+                        anyhow::Ok(())
+                    })
                     .detach_and_log_err(cx);
                 }
             }
         }
-    }
-
-    fn resolve_hint(
-        &self,
-        server_id: LanguageServerId,
-        buffer_id: BufferId,
-        excerpt_id: ExcerptId,
-        inlay_id: InlayId,
-        hint_to_resolve: InlayHint,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<()>> {
-        cx.spawn_in(window, async move |editor, cx| {
-            let resolved_hint_task = editor.update(cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-                editor.semantics_provider.as_ref()?.resolve_inlay_hint(
-                    hint_to_resolve,
-                    buffer,
-                    server_id,
-                    cx,
-                )
-            })?;
-            if let Some(resolved_hint_task) = resolved_hint_task {
-                let mut resolved_hint = resolved_hint_task.await.context("hint resolve task")?;
-                editor.update(cx, |editor, cx| {
-                    if let Some(excerpt_hints) = editor.inlay_hint_cache.hints.get(&excerpt_id) {
-                        let mut guard = excerpt_hints.write();
-                        if let Some(cached_hint) = guard.hints_by_id.get_mut(&inlay_id) {
-                            if cached_hint.resolve_state == ResolveState::Resolving {
-                                resolved_hint.resolve_state = ResolveState::Resolved;
-                                *cached_hint = resolved_hint;
-                            }
-                        }
-                    }
-
-                    // Mark the hint as resolved and needing hover check
-                    editor.resolved_inlay_hints_pending_hover.insert(inlay_id);
-                    cx.notify();
-                })?;
-            }
-
-            anyhow::Ok(())
-        })
     }
 }
 

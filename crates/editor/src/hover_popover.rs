@@ -55,15 +55,7 @@ pub fn hover_at(
         if let Some(anchor) = anchor {
             show_hover(editor, anchor, false, window, cx);
         } else {
-            // Don't hide hover if there's an active inlay hover
-            let has_inlay_hover = editor
-                .hover_state
-                .info_popovers
-                .iter()
-                .any(|popover| matches!(popover.symbol_range, RangeInEditor::Inlay(_)));
-            if !has_inlay_hover {
-                hide_hover(editor, cx);
-            }
+            hide_hover(editor, cx);
         }
     }
 }
@@ -159,12 +151,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            return;
-        }
-
-        // Check if we have an in-progress hover task for a different location
-        if editor.hover_state.info_task.is_some() {
-            editor.hover_state.info_task = None;
+            hide_hover(editor, cx);
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
@@ -214,9 +201,7 @@ pub fn hover_at_inlay(
                 anyhow::Ok(())
             }
             .log_err()
-            .await;
-
-            Some(())
+            .await
         });
 
         editor.hover_state.info_task = Some(task);
@@ -1897,237 +1882,5 @@ mod tests {
                 "Rendered markdown element should remove backticks from text"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_hover_on_inlay_hint_types(cx: &mut gpui::TestAppContext) {
-        use crate::{DisplayPoint, PointForPosition};
-
-        init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                enabled: true,
-                show_type_hints: true,
-                show_value_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_background: false,
-                toggle_on_modifiers_press: None,
-            });
-        });
-
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                inlay_hint_provider: Some(lsp::OneOf::Right(
-                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
-                        resolve_provider: Some(true),
-                        ..Default::default()
-                    }),
-                )),
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
-
-        cx.set_state(indoc! {r#"
-            struct String;
-
-            fn main() {
-                let foo = "foo".to_string();
-                let bar: String = "bar".to_string();ˇ
-            }
-        "#});
-
-        // Set up inlay hint handler with proper label parts that include locations
-        let buffer_text = cx.buffer_text();
-        let hint_position = cx.to_lsp(buffer_text.find("foo =").unwrap() + 3);
-        let string_type_range = cx.lsp_range(indoc! {r#"
-            struct «String»;
-
-            fn main() {
-                let foo = "foo".to_string();
-                let bar: String = "bar".to_string();
-            }
-        "#});
-        let uri = cx.buffer_lsp_url.clone();
-
-        cx.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |_, _params, _| {
-            let uri = uri.clone();
-            async move {
-                Ok(Some(vec![lsp::InlayHint {
-                    position: hint_position,
-                    label: lsp::InlayHintLabel::LabelParts(vec![
-                        lsp::InlayHintLabelPart {
-                            value: ": ".to_string(),
-                            location: None,
-                            tooltip: None,
-                            command: None,
-                        },
-                        lsp::InlayHintLabelPart {
-                            value: "String".to_string(),
-                            location: Some(lsp::Location {
-                                uri: uri.clone(),
-                                range: string_type_range,
-                            }),
-                            tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
-                                lsp::MarkupContent {
-                                    kind: lsp::MarkupKind::Markdown,
-                                    value: "```rust\nstruct String\n```\n\nA UTF-8 encoded, growable string.".to_string(),
-                                }
-                            )),
-                            command: None,
-                        },
-                    ]),
-                    kind: Some(lsp::InlayHintKind::TYPE),
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: Some(false),
-                    padding_right: Some(false),
-                    data: None,
-                }]))
-            }
-        })
-        .next()
-        .await;
-
-        cx.background_executor.run_until_parked();
-
-        // Verify inlay hint is displayed
-        cx.update_editor(|editor, _, cx| {
-            let expected_layers = vec![": String".to_string()];
-            assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
-        });
-
-        // Set up hover handler for explicit type hover
-        let mut hover_requests =
-            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _params, _| {
-                async move {
-                    // Return hover info for any hover request (both line 0 and line 4 have String types)
-                    Ok(Some(lsp::Hover {
-                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                            kind: lsp::MarkupKind::Markdown,
-                            value:
-                                "```rust\nstruct String\n```\n\nA UTF-8 encoded, growable string."
-                                    .to_string(),
-                        }),
-                        range: None,
-                    }))
-                }
-            });
-
-        // Test hovering over the inlay hint type
-        // Get the position where the inlay hint is displayed
-        let inlay_range = cx
-            .ranges(indoc! {r#"
-                struct String;
-
-                fn main() {
-                    let foo« »= "foo".to_string();
-                    let bar: String = "bar".to_string();
-                }
-            "#})
-            .first()
-            .cloned()
-            .unwrap();
-
-        // Create a PointForPosition that simulates hovering over the "String" part of the inlay hint
-        let point_for_position = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let previous_valid = inlay_range.start.to_display_point(&snapshot);
-            let next_valid = inlay_range.end.to_display_point(&snapshot);
-            // The hint text is ": String", we want to hover over "String" which starts at index 2
-            // Add a bit more to ensure we're well within "String" (e.g., over the 'r')
-            let exact_unclipped = DisplayPoint::new(
-                previous_valid.row(),
-                previous_valid.column() + 4, // Position over 'r' in "String"
-            );
-            PointForPosition {
-                previous_valid,
-                next_valid,
-                exact_unclipped,
-                column_overshoot_after_line_end: 0,
-            }
-        });
-
-        // Update hovered link to trigger hover logic for inlay hints
-        cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            update_inlay_link_and_hover_points(
-                &snapshot,
-                point_for_position,
-                editor,
-                false, // secondary_held
-                false, // shift_held
-                window,
-                cx,
-            );
-        });
-
-        // Wait for the popover to appear
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-        cx.background_executor.run_until_parked();
-
-        // Check if hover popover is shown for inlay hint
-        let has_inlay_hover = cx.editor(|editor, _, _| editor.hover_state.info_popovers.len() > 0);
-
-        // Clear hover state
-        cx.update_editor(|editor, _, cx| {
-            hide_hover(editor, cx);
-        });
-
-        // Test hovering over the explicit type
-        let explicit_string_point = cx.display_point(indoc! {r#"
-            struct String;
-
-            fn main() {
-                let foo = "foo".to_string();
-                let bar: Sˇtring = "bar".to_string();
-            }
-        "#});
-
-        // Use hover_at to trigger hover on explicit type
-        cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let anchor = snapshot
-                .buffer_snapshot
-                .anchor_before(explicit_string_point.to_offset(&snapshot, Bias::Left));
-            hover_at(editor, Some(anchor), window, cx);
-        });
-
-        // Wait for hover request and give time for the popover to appear
-        hover_requests.next().await;
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-        cx.background_executor.run_until_parked();
-
-        // Check if hover popover is shown for explicit type
-        let has_explicit_hover =
-            cx.editor(|editor, _, _| editor.hover_state.info_popovers.len() > 0);
-
-        // Both should show hover popovers
-        assert!(
-            has_explicit_hover,
-            "Hover popover should be shown when hovering over explicit type"
-        );
-
-        assert!(
-            has_inlay_hover,
-            "Hover popover should be shown when hovering over inlay hint type"
-        );
-
-        // NOTE: This test demonstrates the proper fix for issue #33715:
-        // Language servers should provide inlay hints with label parts that include
-        // tooltip information. When users hover over a type in an inlay hint,
-        // they see the tooltip content, which should contain the same information
-        // as hovering over an actual type annotation.
-        //
-        // The issue occurs when language servers provide inlay hints as plain strings
-        // (e.g., ": String") without any tooltip information. In that case, there's
-        // no way for Zed to know what documentation to show when hovering.
     }
 }
