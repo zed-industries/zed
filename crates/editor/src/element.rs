@@ -6716,7 +6716,7 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        if self.editor.read(cx).mode.is_minimap() {
+        if layout.mode.is_minimap() {
             return;
         }
 
@@ -7846,9 +7846,14 @@ impl Element for EditorElement {
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
-        let focus_handle = self.editor.focus_handle(cx);
-        window.set_view_id(self.editor.entity_id());
-        window.set_focus_handle(&focus_handle, cx);
+
+        let is_minimap = self.editor.read(cx).mode.is_minimap();
+
+        if !is_minimap {
+            let focus_handle = self.editor.focus_handle(cx);
+            window.set_view_id(self.editor.entity_id());
+            window.set_focus_handle(&focus_handle, cx);
+        }
 
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
@@ -8291,7 +8296,7 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    let new_fold_widths = (!snapshot.mode.is_minimap()).then(|| {
+                    let new_fold_widths = (!is_minimap).then(|| {
                         line_layouts
                             .iter()
                             .flat_map(|layout| &layout.fragments)
@@ -8369,7 +8374,7 @@ impl Element for EditorElement {
                     let sticky_header_excerpt_id =
                         sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
 
-                    let blocks = (!snapshot.mode.is_minimap())
+                    let blocks = (!is_minimap)
                         .then(|| {
                             window.with_element_namespace("blocks", |window| {
                                 self.render_blocks(
