@@ -1755,8 +1755,8 @@ impl Session {
         };
         self.fetch(
             ReadMemory {
-                memory_reference: next_request.address.to_string(),
-                offset: None,
+                memory_reference: format!("0x{:X}", next_request.address),
+                offset: Some(0),
                 count: next_request.size,
             },
             move |this, memory, cx| {

@@ -291,7 +291,7 @@ fn render_single_memory_view_line(
         .child(
             div()
                 .child(
-                    Label::new(format!("{:08X}", base_address))
+                    Label::new(format!("{:016X}", base_address))
                         .buffer_font(cx)
                         .size(ui::LabelSize::Small)
                         .color(Color::Muted),
