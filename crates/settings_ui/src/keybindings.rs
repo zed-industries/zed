@@ -138,6 +138,7 @@ struct KeymapEditor {
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedKeybinding>,
+    conflicts: Vec<usize>,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
     matches: Vec<StringMatch>,
@@ -180,6 +181,7 @@ impl KeymapEditor {
         let mut this = Self {
             workspace,
             keybindings: vec![],
+            conflicts: Vec::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
             focus_handle: focus_handle.clone(),
@@ -340,6 +342,26 @@ impl KeymapEditor {
             let query = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
                     Self::process_bindings(json_language, rust_language, cx);
+
+                let mut conflicts: HashMap<_, Vec<usize>> = HashMap::default();
+
+                key_bindings
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, binding)| !binding.keystroke_text.is_empty())
+                    .for_each(|(index, binding)| {
+                        conflicts
+                            .entry(binding.get_action_mapping())
+                            .or_default()
+                            .push(index);
+                    });
+
+                this.conflicts = conflicts
+                    .into_values()
+                    .filter(|indices| indices.len() > 1)
+                    .flatten()
+                    .collect();
+
                 this.keybindings = key_bindings;
                 this.string_match_candidates = Arc::new(string_match_candidates);
                 this.matches = this
@@ -536,7 +558,21 @@ struct ProcessedKeybinding {
     source: Option<(KeybindSource, SharedString)>,
 }
 
-#[derive(Clone, Debug, IntoElement)]
+impl ProcessedKeybinding {
+    // todo! we should normalize the context string
+    // editor && agent_panel should be equal to agent_panel && editor
+    fn get_action_mapping(&self) -> (SharedString, Option<SharedString>) {
+        (
+            self.keystroke_text.clone(),
+            self.context
+                .as_ref()
+                .and_then(|context| context.local())
+                .cloned(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, IntoElement, PartialEq, Eq, Hash)]
 enum KeybindContextString {
     Global,
     Local(SharedString, Arc<Language>),
@@ -686,14 +722,24 @@ impl Render for KeymapEditor {
                     )
                     .map_row(
                         cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
+                            let is_conflict = this
+                                .matches
+                                .get(row_index)
+                                .map(|candidate| candidate.candidate_id)
+                                .is_some_and(|id| this.conflicts.contains(&id));
                             let is_selected = this.selected_index == Some(row_index);
+
                             let row = row
                                 .id(("keymap-table-row", row_index))
                                 .on_click(cx.listener(move |this, _event, _window, _cx| {
                                     this.selected_index = Some(row_index);
                                 }))
                                 .border_2()
-                                .border_color(transparent_black())
+                                .border_color(if is_conflict {
+                                    cx.theme().colors().terminal_ansi_red
+                                } else {
+                                    transparent_black()
+                                })
                                 .when(is_selected, |row| {
                                     row.border_color(cx.theme().colors().panel_focused_border)
                                 });
