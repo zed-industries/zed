@@ -48,6 +48,10 @@ pub fn hover_at(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    eprintln!(
+        "hover_at called with anchor: {}",
+        if anchor.is_some() { "Some" } else { "None" }
+    );
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, window, cx) {
             return;
@@ -110,7 +114,7 @@ pub fn find_hovered_hint_part(
         let mut part_start = hint_start;
         for part in label_parts {
             let part_len = part.value.chars().count();
-            if hovered_character > part_len {
+            if hovered_character >= part_len {
                 hovered_character -= part_len;
                 part_start.0 += part_len;
             } else {
@@ -128,6 +132,10 @@ pub fn hover_at_inlay(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    eprintln!(
+        "hover_at_inlay called - inlay_id: {:?}, range: {:?}",
+        inlay_hover.range.inlay, inlay_hover.range.range
+    );
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if editor.pending_rename.is_some() {
             return;
@@ -155,12 +163,18 @@ pub fn hover_at_inlay(
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+        eprintln!(
+            "hover_at_inlay: Creating task with {}ms delay",
+            hover_popover_delay
+        );
 
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
+                eprintln!("hover_at_inlay task: Starting delay");
                 cx.background_executor()
                     .timer(Duration::from_millis(hover_popover_delay))
                     .await;
+                eprintln!("hover_at_inlay task: Delay complete");
                 this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
@@ -193,6 +207,7 @@ pub fn hover_at_inlay(
                 };
 
                 this.update(cx, |this, cx| {
+                    eprintln!("hover_at_inlay task: Setting hover popover and calling notify");
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
@@ -205,6 +220,7 @@ pub fn hover_at_inlay(
         });
 
         editor.hover_state.info_task = Some(task);
+        eprintln!("hover_at_inlay: Task stored");
     }
 }
 
@@ -212,6 +228,7 @@ pub fn hover_at_inlay(
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
+    eprintln!("hide_hover called");
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -786,6 +803,12 @@ impl HoverState {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
+        let visible = self.visible();
+        eprintln!(
+            "HoverState::render - visible: {}, info_popovers: {}",
+            visible,
+            self.info_popovers.len()
+        );
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -809,9 +832,18 @@ impl HoverState {
                 })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
+        eprintln!(
+            "HoverState::render - point: {:?}, visible_rows: {:?}",
+            point, visible_rows
+        );
 
         // Don't render if the relevant point isn't on screen
         if !self.visible() || !visible_rows.contains(&point.row()) {
+            eprintln!(
+                "HoverState::render - Not rendering: visible={}, point_in_range={}",
+                self.visible(),
+                visible_rows.contains(&point.row())
+            );
             return None;
         }
 

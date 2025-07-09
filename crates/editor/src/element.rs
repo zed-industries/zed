@@ -1222,6 +1222,7 @@ impl EditorElement {
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hovered {
+            eprintln!("mouse_moved: text_hovered=true, calling update_hovered_link");
             editor.update_hovered_link(
                 point_for_position,
                 &position_map.snapshot,
@@ -1235,9 +1236,11 @@ impl EditorElement {
                     .snapshot
                     .buffer_snapshot
                     .anchor_before(point.to_offset(&position_map.snapshot, Bias::Left));
+                eprintln!("mouse_moved: Valid text position, calling hover_at with anchor");
                 hover_at(editor, Some(anchor), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
+                eprintln!("mouse_moved: Invalid position (inlay?), NOT calling hover_at");
                 // Don't call hover_at with None when we're over an inlay
                 // The inlay hover is already handled by update_hovered_link
             }
