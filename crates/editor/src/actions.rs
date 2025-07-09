@@ -303,7 +303,7 @@ actions!(
         ApplyDiffHunk,
         /// Deletes the character before the cursor.
         Backspace,
-        /// Cancels the current operation.
+        /// Cancels the current operation. Collapses expanded diff hunks, dismisses menus, and clears selections.
         Cancel,
         /// Cancels the running flycheck operation.
         CancelFlycheck,

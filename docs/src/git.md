@@ -112,6 +112,17 @@ by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
+## Diff Hunk Keyboard Shortcuts
+
+When viewing files with changes, Zed displays diff hunks that can be expanded or collapsed for detailed review:
+
+- **Expand all diff hunks**: {#action editor::ExpandAllDiffHunks} ({#kb editor::ExpandAllDiffHunks})
+- **Collapse all diff hunks**: Press `Escape` (bound to {#action editor::Cancel})
+- **Toggle selected diff hunks**: {#action editor::ToggleSelectedDiffHunks} ({#kb editor::ToggleSelectedDiffHunks})
+- **Navigate between hunks**: {#action editor::GoToHunk} and {#action editor::GoToPreviousHunk}
+
+> **Tip:** The `Escape` key is the quickest way to collapse all expanded diff hunks and return to an overview of your changes.
+
 ## Action Reference
 
 | Action                                 | Keybinding                         |
@@ -136,5 +147,7 @@ or by simply right clicking and selecting `Copy Permalink` with line(s) selected
 | {#action git::CheckoutBranch}          | {#kb git::CheckoutBranch}          |
 | {#action git::Blame}                   | {#kb git::Blame}                   |
 | {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
+| {#action editor::ExpandAllDiffHunks}   | {#kb editor::ExpandAllDiffHunks}   |
+| {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
