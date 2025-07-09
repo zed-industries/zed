@@ -605,14 +605,14 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let load_file = worktree.load_file(path.as_ref(), cx);
-            let reservation = cx.reserve_entity();
-            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+            let entity_id = cx.reserve_entity();
+            let buffer_id = BufferId::from(entity_id.as_non_zero_u64());
             cx.spawn(async move |_, cx| {
                 let loaded = load_file.await?;
                 let text_buffer = cx
                     .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
-                cx.insert_entity(reservation, |_| {
+                cx.insert_entity(entity_id, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
                 })
             })

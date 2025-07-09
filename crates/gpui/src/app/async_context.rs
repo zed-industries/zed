@@ -2,7 +2,6 @@ use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
     Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton,
     PromptLevel, Render, Result, Subscription, Task, VisualContext, Window, WindowHandle,
-    app::NewEntityListener,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};

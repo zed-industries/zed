@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
-use gpui::{App, AppContext, AsyncApp, Entity};
+use gpui::{App, AppContext, AsyncApp, Entity, EntityId};
 use language_model::{LanguageModel, Role, StopReason};
 use zed_llm_client::CompletionIntent;
 
@@ -402,16 +402,16 @@ impl AppContext for ExampleContext {
         self.app.new(build_entity)
     }
 
-    fn reserve_entity(&mut self) -> Self::Result<gpui::Reservation<T>> {
+    fn reserve_entity(&mut self) -> Self::Result<EntityId> {
         self.app.reserve_entity()
     }
 
     fn insert_entity<T: 'static>(
         &mut self,
-        reservation: gpui::Reservation<T>,
+        entity_id: EntityId,
         build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        self.app.insert_entity(reservation, build_entity)
+        self.app.insert_entity(entity_id, build_entity)
     }
 
     fn update_entity<T, R>(

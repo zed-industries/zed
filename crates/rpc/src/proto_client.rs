@@ -57,6 +57,10 @@ pub struct ProtoMessageHandlerSet {
     pub message_handlers: HashMap<TypeId, ProtoMessageHandler>,
 }
 
+// todo! try to remove these. we can't store handles inside send/sync stuff
+unsafe impl Send for ProtoMessageHandlerSet {}
+unsafe impl Sync for ProtoMessageHandlerSet {}
+
 pub type ProtoMessageHandler = Arc<
     dyn Send
         + Sync

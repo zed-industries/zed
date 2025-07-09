@@ -18,7 +18,6 @@ use std::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
-    thread::panicking,
 };
 
 use super::Context;
@@ -58,7 +57,7 @@ impl Display for EntityId {
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Rc<RefCell<dyn Any>>>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
-    pub(crate) ref_counts: Arc<RwLock<EntityRefCounts>>,
+    ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
 struct EntityRefCounts {
@@ -87,7 +86,7 @@ impl EntityMap {
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve(&self) -> EntityId {
-        self.ref_counts.write().counts.insert(1.into())
+        self.ref_counts.write().counts.insert(AtomicUsize::new(1))
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
@@ -161,45 +160,6 @@ impl EntityMap {
             .collect()
     }
 }
-
-#[track_caller]
-fn double_lease_panic<T>(operation: &str) -> ! {
-    panic!(
-        "cannot {operation} {} while it is already being updated",
-        std::any::type_name::<T>()
-    )
-}
-
-pub(crate) struct Lease<'a, T> {
-    entity: Option<Box<dyn Any>>,
-    pub pointer: &'a Entity<T>,
-    entity_type: PhantomData<T>,
-}
-
-impl<T: 'static> core::ops::Deref for Lease<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.entity.as_ref().unwrap().downcast_ref().unwrap()
-    }
-}
-
-impl<T: 'static> core::ops::DerefMut for Lease<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.entity.as_mut().unwrap().downcast_mut().unwrap()
-    }
-}
-
-impl<T> Drop for Lease<'_, T> {
-    fn drop(&mut self) {
-        if self.entity.is_some() && !panicking() {
-            panic!("Leases must be ended with EntityMap::end_lease")
-        }
-    }
-}
-
-#[derive(Deref, DerefMut)]
-pub(crate) struct Slot<T>(Entity<T>);
 
 /// A dynamically typed reference to a entity, which can be downcast into a `Entity<T>`.
 pub struct AnyEntity {
