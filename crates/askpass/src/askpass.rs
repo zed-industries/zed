@@ -42,15 +42,8 @@ impl AskPassDelegate {
         Ok(rx.await?)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn fake() -> Self {
-        // FIXME
+    pub fn new_always_failing() -> Self {
         let (tx, _rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
-        // let task = cx.spawn(
-        //     async move |_: &mut AsyncApp| {
-        //         while let Some(_) = rx.next().await {}
-        //     },
-        // );
         Self {
             tx,
             _task: Task::ready(()),

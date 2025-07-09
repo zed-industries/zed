@@ -6,7 +6,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -378,7 +378,7 @@ impl GitRepository for FakeGitRepository {
         _ask_pass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'static, Result<()>> {
         unimplemented!()
     }
 

@@ -1614,9 +1614,8 @@ impl GitPanel {
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
-                // FIXME use the output?
                 match result {
-                    Ok(_) => {
+                    Ok(()) => {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
                     }

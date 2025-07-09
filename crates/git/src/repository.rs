@@ -396,7 +396,7 @@ pub trait GitRepository: Send + Sync {
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<RemoteCommandOutput>>;
+    ) -> BoxFuture<'static, Result<()>>;
 
     fn push(
         &self,
@@ -1200,7 +1200,7 @@ impl GitRepository for RealGitRepository {
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<RemoteCommandOutput>> {
+    ) -> BoxFuture<'static, Result<()>> {
         let working_directory = self.working_directory();
         let executor = cx.background_executor().clone();
         async move {
@@ -1210,18 +1210,16 @@ impl GitRepository for RealGitRepository {
             command.current_dir(&working_directory).envs(env.iter());
 
             let ask_pass = if have_user_git_askpass {
-                dbg!("HAVE USER ASKPASS");
                 None
             } else {
-                dbg!("MAKE AN ASKPASS");
                 Some(AskPassSession::new(&executor, ask_pass).await?)
             };
 
             if let Some(ask_pass) = ask_pass.as_ref() {
-                command.arg("-c").arg(dbg!(format!(
+                command.arg("-c").arg(format!(
                     "gpg.program={}",
                     ask_pass.gpg_script_path().as_ref().to_string_lossy()
-                )));
+                ));
             }
 
             command
@@ -1241,7 +1239,8 @@ impl GitRepository for RealGitRepository {
                 command.env("GIT_ASKPASS", ask_pass.script_path());
                 let git_process = command.spawn()?;
 
-                run_askpass_command(ask_pass, git_process).await
+                run_askpass_command(ask_pass, git_process).await?;
+                Ok(())
             } else {
                 let git_process = command.spawn()?;
                 let output = git_process.output().await?;
@@ -1250,10 +1249,7 @@ impl GitRepository for RealGitRepository {
                     "{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                Ok(RemoteCommandOutput {
-                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                })
+                Ok(())
             }
         }
         .boxed()
@@ -2085,7 +2081,7 @@ mod tests {
                 "Initial commit".into(),
                 None,
                 CommitOptions::default(),
-                AskPassDelegate::fake(),
+                AskPassDelegate::new_always_failing(),
                 Arc::new(checkpoint_author_envs()),
                 cx,
             )
@@ -2118,7 +2114,7 @@ mod tests {
                 "Commit after checkpoint".into(),
                 None,
                 CommitOptions::default(),
-                AskPassDelegate::fake(),
+                AskPassDelegate::new_always_failing(),
                 Arc::new(checkpoint_author_envs()),
                 cx,
             )
@@ -2260,7 +2256,7 @@ mod tests {
                 "Initial commit".into(),
                 None,
                 CommitOptions::default(),
-                AskPassDelegate::fake(),
+                AskPassDelegate::new_always_failing(),
                 Arc::new(checkpoint_author_envs()),
                 cx,
             )
