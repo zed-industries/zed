@@ -358,7 +358,6 @@
       "shift-a": "vim::InsertEndOfLine",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
-      "m": "vim::PushHelixMatch",
       "~": "vim::ChangeCase",
       "ctrl-a": "vim::Increment",
       "ctrl-x": "vim::Decrement",
@@ -377,6 +376,7 @@
   {
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
+      "m": "vim::PushHelixMatch",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
       "left": "vim::WrappingLeft",
