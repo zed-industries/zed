@@ -267,11 +267,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                 let edits = ranges
                     .into_iter()
-                    .zip(
-                        content_before_undo
-                            .into_iter()
-                            .zip(current_content.into_iter()),
-                    )
+                    .zip(content_before_undo.into_iter().zip(current_content))
                     .filter_map(|((_, mut points), (mut old_text, new_text))| {
                         if new_text == old_text {
                             return None;
