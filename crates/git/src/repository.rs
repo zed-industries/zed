@@ -1223,9 +1223,12 @@ impl GitRepository for RealGitRepository {
             }
 
             command
-                .args(["commit", "--quiet", "-m"])
-                .arg(&message.to_string())
-                .arg("--cleanup=strip");
+                .args(["commit", "-m"])
+                .arg(message.to_string())
+                .arg("--cleanup=strip")
+                .stdin(smol::process::Stdio::null())
+                .stdout(smol::process::Stdio::piped())
+                .stderr(smol::process::Stdio::piped());
 
             if options.amend {
                 command.arg("--amend");
@@ -1826,7 +1829,6 @@ async fn run_askpass_command(
         }
         output = git_process.output().fuse() => {
             let output = output?;
-            // FIXME git output
             anyhow::ensure!(
                 output.status.success(),
                 "{}",

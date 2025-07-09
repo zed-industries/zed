@@ -3497,8 +3497,7 @@ impl Repository {
                     askpass_delegates.lock().insert(askpass_id, askpass);
                     let _defer = util::defer(|| {
                         let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                        // FIXME
-                        // debug_assert!(askpass_delegate.is_some());
+                        debug_assert!(askpass_delegate.is_some());
                     });
 
                     let (name, email) = name_and_email.unzip();
@@ -3514,8 +3513,8 @@ impl Repository {
                             }),
                             askpass_id: Some(askpass_id),
                         })
-                        .await
-                        .context("sending commit request")?;
+                        // FIXME
+                        .await?;
 
                     Ok(())
                 }
