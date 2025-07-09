@@ -42,12 +42,12 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, KeybindingKeystroke, Keystroke,
+    Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement,
+    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -6994,7 +6994,7 @@ fn header_jump_data(
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn keystroke(&self) -> Option<&Keystroke> {
+    pub fn keystroke(&self) -> Option<&KeybindingKeystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
                 [keystroke, ..] => Some(keystroke),

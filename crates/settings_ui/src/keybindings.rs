@@ -11,8 +11,8 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
-    WeakEntity, actions, div, transparent_black,
+    Global, KeyContext, KeybindingKeystroke, Keystroke, ModifiersChangedEvent, ScrollStrategy,
+    StyledText, Subscription, WeakEntity, actions, div, transparent_black,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -274,7 +274,7 @@ impl KeymapEditor {
         for key_binding in key_bindings {
             let source = key_binding.meta().map(settings::KeybindSource::from_meta);
 
-            let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
+            let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(
                 ui::KeyBinding::new_from_gpui(key_binding.clone(), cx)
                     .vim_mode(source == Some(settings::KeybindSource::Vim)),
@@ -1143,7 +1143,7 @@ async fn load_rust_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
 
 async fn save_keybinding_update(
     existing: ProcessedKeybinding,
-    new_keystrokes: &[Keystroke],
+    new_keystrokes: &[KeybindingKeystroke],
     new_context: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
@@ -1280,15 +1280,21 @@ impl KeystrokeInput {
         cx.notify();
     }
 
-    fn keystrokes(&self) -> &[Keystroke] {
-        if self
+    fn keystrokes(&self) -> Vec<KeybindingKeystroke> {
+        let keystrokes = if self
             .keystrokes
             .last()
             .map_or(false, |last| last.key.is_empty())
         {
-            return &self.keystrokes[..self.keystrokes.len() - 1];
-        }
-        return &self.keystrokes;
+            &self.keystrokes[..self.keystrokes.len() - 1]
+        } else {
+            &self.keystrokes
+        };
+        keystrokes
+            .to_vec()
+            .into_iter()
+            .map(|keystroke| keystroke.into_keybinding_keystroke())
+            .collect()
     }
 }
 
@@ -1332,7 +1338,8 @@ impl Render for KeystrokeInput {
                     .gap(ui::DynamicSpacing::Base04.rems(cx))
                     .children(self.keystrokes.iter().map(|keystroke| {
                         h_flex().children(ui::render_keystroke(
-                            keystroke,
+                            &keystroke.modifiers,
+                            &keystroke.key,
                             None,
                             Some(rems(0.875).into()),
                             ui::PlatformStyle::platform(),

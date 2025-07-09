@@ -138,7 +138,8 @@ impl RenderOnce for KeyBinding {
                     .rounded_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .children(render_keystroke(
-                        keystroke,
+                        &keystroke.modifiers,
+                        &keystroke.key,
                         color,
                         self.size,
                         self.platform_style,
@@ -149,7 +150,8 @@ impl RenderOnce for KeyBinding {
 }
 
 pub fn render_keystroke(
-    keystroke: &KeybindingKeystroke,
+    modifiers: &Modifiers,
+    key: &str,
     color: Option<Color>,
     size: impl Into<Option<AbsoluteLength>>,
     platform_style: PlatformStyle,
@@ -164,12 +166,7 @@ pub fn render_keystroke(
 
     if use_text {
         let element = Key::new(
-            keystroke_text(
-                &keystroke.modifiers,
-                &keystroke.key,
-                platform_style,
-                vim_mode,
-            ),
+            keystroke_text(modifiers, key, platform_style, vim_mode),
             color,
         )
         .size(size)
@@ -178,13 +175,13 @@ pub fn render_keystroke(
     } else {
         let mut elements = Vec::new();
         elements.extend(render_modifiers(
-            &keystroke.modifiers,
+            modifiers,
             platform_style,
             color,
             size,
             true,
         ));
-        elements.push(render_key(&keystroke.key, color, platform_style, size));
+        elements.push(render_key(key, color, platform_style, size));
         elements
     }
 }
@@ -387,10 +384,26 @@ impl KeyIcon {
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
     let key_binding = window.highest_precedence_binding_for_action(action)?;
-    Some(text_for_keystrokes(key_binding.keystrokes(), cx))
+    Some(text_for_keybinding_keystrokes(key_binding.keystrokes(), cx))
 }
 
-pub fn text_for_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
+pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
+    let platform_style = PlatformStyle::platform();
+    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    keystrokes
+        .iter()
+        .map(|keystroke| {
+            keystroke_text(
+                &keystroke.modifiers,
+                &keystroke.key,
+                platform_style,
+                vim_enabled,
+            )
+        })
+        .join(" ")
+}
+
+pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
     let vim_enabled = cx.try_global::<VimStyle>().is_some();
     keystrokes

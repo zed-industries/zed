@@ -272,6 +272,16 @@ impl Keystroke {
         }
         self
     }
+
+    /// TODO:
+    pub fn into_keybinding_keystroke(self) -> KeybindingKeystroke {
+        let (key, modifiers) = temp_keyboard_mapper(self.key.clone(), self.modifiers);
+        KeybindingKeystroke {
+            inner: self,
+            modifiers,
+            key,
+        }
+    }
 }
 
 impl KeybindingKeystroke {
