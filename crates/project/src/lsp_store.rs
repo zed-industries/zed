@@ -86,7 +86,6 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
-
 use rpc::{
     AnyProtoClient,
     proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
@@ -7122,6 +7121,22 @@ impl LspStore {
             summary.warning_count += path_summary.warning_count;
         }
         summary
+    }
+
+    /// Returns the diagnostic summary for a specific project path.
+    pub fn diagnostic_summary_for_path(
+        &self,
+        project_path: &ProjectPath,
+        _: &App,
+    ) -> DiagnosticSummary {
+        // TODO: If there's multiple `DiagnosticSummary` but for
+        // different language servers, which one should be returned?
+        self.diagnostic_summaries
+            .get(&project_path.worktree_id)
+            .and_then(|map| map.get(&project_path.path))
+            .and_then(|summaries| summaries.iter().next())
+            .map(|(_language_server_id, summary)| summary.clone())
+            .unwrap_or_default()
     }
 
     pub fn diagnostic_summaries<'a>(

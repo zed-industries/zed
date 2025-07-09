@@ -1,33 +1,63 @@
-use crate::{ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
-use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
+use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
+use gpui::{Context, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
 
 pub struct ToolbarControls {
-    editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+    editor: Option<DiagnosticsEditorHandle>,
 }
+
+enum DiagnosticsEditorHandle {
+    Project(WeakEntity<ProjectDiagnosticsEditor>),
+    Buffer(WeakEntity<BufferDiagnosticsEditor>),
+}
+
+impl DiagnosticsEditorHandle {}
 
 impl Render for ToolbarControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut include_warnings = false;
         let mut has_stale_excerpts = false;
+        let mut include_warnings = false;
         let mut is_updating = false;
 
-        if let Some(editor) = self.diagnostics() {
-            let diagnostics = editor.read(cx);
-            include_warnings = diagnostics.include_warnings;
-            has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
-            is_updating = diagnostics.update_excerpts_task.is_some()
-                || diagnostics
-                    .project
-                    .read(cx)
-                    .language_servers_running_disk_based_diagnostics(cx)
-                    .next()
-                    .is_some();
+        match &self.editor {
+            Some(DiagnosticsEditorHandle::Project(editor)) => {
+                if let Some(editor) = editor.upgrade() {
+                    let diagnostics = editor.read(cx);
+                    include_warnings = diagnostics.include_warnings;
+                    has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
+                    is_updating = diagnostics.update_excerpts_task.is_some()
+                        || diagnostics
+                            .project
+                            .read(cx)
+                            .language_servers_running_disk_based_diagnostics(cx)
+                            .next()
+                            .is_some();
+                }
+            }
+            Some(DiagnosticsEditorHandle::Buffer(editor)) => {
+                if let Some(editor) = editor.upgrade() {
+                    let diagnostics = editor.read(cx);
+                    include_warnings = diagnostics.include_warnings;
+                    // TODO: How to calculate this for the
+                    // `BufferDiagnosticsEditor`? Should we simply keep track if
+                    // there are any updates to the diagnostics for the path and
+                    // mark that instead of automatically updating?
+                    has_stale_excerpts = false;
+                    is_updating = diagnostics.update_excerpts_task.is_some()
+                        || diagnostics
+                            .project
+                            .read(cx)
+                            .language_servers_running_disk_based_diagnostics(cx)
+                            .next()
+                            .is_some();
+                }
+            }
+            None => {}
         }
 
-        let tooltip = if include_warnings {
+        let warning_tooltip = if include_warnings {
             "Exclude Warnings"
         } else {
             "Include Warnings"
@@ -52,11 +82,32 @@ impl Render for ToolbarControls {
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
-                                if let Some(diagnostics) = toolbar_controls.diagnostics() {
-                                    diagnostics.update(cx, |diagnostics, cx| {
-                                        diagnostics.update_excerpts_task = None;
-                                        cx.notify();
-                                    });
+                                match toolbar_controls.editor() {
+                                    Some(DiagnosticsEditorHandle::Buffer(
+                                        buffer_diagnostics_editor,
+                                    )) => {
+                                        let _ = buffer_diagnostics_editor.update(
+                                            cx,
+                                            |buffer_diagnostics_editor, cx| {
+                                                buffer_diagnostics_editor.update_excerpts_task =
+                                                    None;
+                                                cx.notify();
+                                            },
+                                        );
+                                    }
+                                    Some(DiagnosticsEditorHandle::Project(
+                                        project_diagnostics_editor,
+                                    )) => {
+                                        let _ = project_diagnostics_editor.update(
+                                            cx,
+                                            |project_diagnostics_editor, cx| {
+                                                project_diagnostics_editor.update_excerpts_task =
+                                                    None;
+                                                cx.notify();
+                                            },
+                                        );
+                                    }
+                                    None => {}
                                 }
                             })),
                     )
@@ -71,12 +122,32 @@ impl Render for ToolbarControls {
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener({
-                                move |toolbar_controls, _, window, cx| {
-                                    if let Some(diagnostics) = toolbar_controls.diagnostics() {
-                                        diagnostics.update(cx, move |diagnostics, cx| {
-                                            diagnostics.update_all_excerpts(window, cx);
-                                        });
+                                move |toolbar_controls, _, window, cx| match toolbar_controls
+                                    .editor()
+                                {
+                                    Some(DiagnosticsEditorHandle::Buffer(
+                                        buffer_diagnostics_editor,
+                                    )) => {
+                                        let _ = buffer_diagnostics_editor.update(
+                                            cx,
+                                            |buffer_diagnostics_editor, cx| {
+                                                buffer_diagnostics_editor
+                                                    .update_all_excerpts(window, cx);
+                                            },
+                                        );
                                     }
+                                    Some(DiagnosticsEditorHandle::Project(
+                                        project_diagnostics_editor,
+                                    )) => {
+                                        let _ = project_diagnostics_editor.update(
+                                            cx,
+                                            |project_diagnostics_editor, cx| {
+                                                project_diagnostics_editor
+                                                    .update_all_excerpts(window, cx);
+                                            },
+                                        );
+                                    }
+                                    None => {}
                                 }
                             })),
                     )
@@ -86,13 +157,33 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text(tooltip))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(editor) = this.diagnostics() {
-                            editor.update(cx, |editor, cx| {
-                                editor.toggle_warnings(&Default::default(), window, cx);
-                            });
+                    .tooltip(Tooltip::text(warning_tooltip))
+                    .on_click(cx.listener(|this, _, window, cx| match &this.editor {
+                        Some(DiagnosticsEditorHandle::Project(project_diagnostics_editor)) => {
+                            let _ = project_diagnostics_editor.update(
+                                cx,
+                                |project_diagnostics_editor, cx| {
+                                    project_diagnostics_editor.toggle_warnings(
+                                        &Default::default(),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            );
                         }
+                        Some(DiagnosticsEditorHandle::Buffer(buffer_diagnostics_editor)) => {
+                            let _ = buffer_diagnostics_editor.update(
+                                cx,
+                                |buffer_diagnostics_editor, cx| {
+                                    buffer_diagnostics_editor.toggle_warnings(
+                                        &Default::default(),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            );
+                        }
+                        _ => {}
                     })),
             )
     }
@@ -109,7 +200,10 @@ impl ToolbarItemView for ToolbarControls {
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
-                self.editor = Some(editor.downgrade());
+                self.editor = Some(DiagnosticsEditorHandle::Project(editor.downgrade()));
+                ToolbarItemLocation::PrimaryRight
+            } else if let Some(editor) = pane_item.downcast::<BufferDiagnosticsEditor>() {
+                self.editor = Some(DiagnosticsEditorHandle::Buffer(editor.downgrade()));
                 ToolbarItemLocation::PrimaryRight
             } else {
                 ToolbarItemLocation::Hidden
@@ -131,7 +225,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn diagnostics(&self) -> Option<Entity<ProjectDiagnosticsEditor>> {
-        self.editor.as_ref()?.upgrade()
+    fn editor(&self) -> Option<&DiagnosticsEditorHandle> {
+        self.editor.as_ref()
     }
 }
