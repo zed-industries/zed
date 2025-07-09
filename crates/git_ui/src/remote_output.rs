@@ -121,8 +121,11 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
         RemoteAction::Push(branch_name, remote_ref) => {
             if output.stderr.contains("* [new branch]") {
                 let pr_hints = [
+                    // GitHub
                     "Create a pull request",
+                    // Bitbucket
                     "Create pull request",
+                    // GitLab
                     "create a merge request",
                 ];
                 let style = if pr_hints
@@ -182,7 +185,7 @@ mod tests {
                 "
                 Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
                 remote:
-                remote: Create a pull request for 'test' on Example Git Platform by visiting:
+                remote: Create a pull request for 'test' on GitHub by visiting:
                 remote:      https://example.com/test/test/pull/new/test
                 remote:
                 To example.com:test/test.git
