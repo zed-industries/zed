@@ -1438,6 +1438,29 @@ impl CodeActionsMenu {
                                             .overflow_hidden()
                                             .child("debug: ")
                                             .child(scenario.label.clone())
+                                            .child(
+                                                IconButton::new(
+                                                    SharedString::new(format!("edit-{ix}")),
+                                                    IconName::Pencil,
+                                                )
+                                                .on_click(cx.listener(
+                                                    move |editor, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        if let Some(workspace) = editor.workspace()
+                                                        {
+                                                            workspace.update(cx, |this, cx| {
+                                                                // if let Some(panel) = this.panel::<DebugPanel>(cx) {
+                                                                //     let kind = todo!();
+                                                                //     let id = todo!();
+                                                                //     panel.update_in(cx, |panel, window, cx| {
+                                                                //         panel.go_to_scenario_definition(kind, scenario, id, window, cx)
+                                                                //     })?
+                                                                // }
+                                                            })
+                                                        }
+                                                    },
+                                                )),
+                                            )
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
                                             }),
