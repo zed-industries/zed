@@ -1826,6 +1826,7 @@ async fn run_askpass_command(
         }
         output = git_process.output().fuse() => {
             let output = output?;
+            // FIXME git output
             anyhow::ensure!(
                 output.status.success(),
                 "{}",

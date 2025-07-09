@@ -311,10 +311,10 @@ fn generate_gpg_script() -> String {
         unset GIT_CONFIG_PARAMETERS
         GPG_PROGRAM=$(git config gpg.program || echo 'gpg')
         PROMPT="Enter passphrase to unlock GPG key"
-        PASSPHRASE=$(${{GIT_ASKPASS}} "${{PROMPT}}")
+        PASSPHRASE=$(${GIT_ASKPASS} "${PROMPT}")
 
-        exec "${{GPG_PROGRAM}}" --batch --no-tty --yes --passphrase-fd 3 --pinentry-mode loopback "$@" 3<<EOF
-        ${{PASSPHRASE}}
+        exec "${GPG_PROGRAM}" --batch --no-tty --yes --passphrase-fd 3 --pinentry-mode loopback "$@" 3<<EOF
+        ${PASSPHRASE}
         EOF
     "#.unindent()
 }

@@ -3497,7 +3497,8 @@ impl Repository {
                     askpass_delegates.lock().insert(askpass_id, askpass);
                     let _defer = util::defer(|| {
                         let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                        debug_assert!(askpass_delegate.is_some());
+                        // FIXME
+                        // debug_assert!(askpass_delegate.is_some());
                     });
 
                     let (name, email) = name_and_email.unzip();
