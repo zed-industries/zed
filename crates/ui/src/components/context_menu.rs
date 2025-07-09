@@ -690,21 +690,15 @@ impl ContextMenu {
         cx: &mut Context<Self>,
     ) {
         if let Some(ix) = self.selected_index {
-            // TODO kb wrong
-            if ix == 0 {
-                self.handle_select_last(&SelectLast, window, cx);
-            } else {
-                for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
-                    if item.is_selectable() {
-                        self.select_index(ix, window, cx);
-                        cx.notify();
-                        break;
-                    }
+            for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
+                if item.is_selectable() {
+                    self.select_index(ix, window, cx);
+                    cx.notify();
+                    return;
                 }
             }
-        } else {
-            self.handle_select_last(&SelectLast, window, cx);
         }
+        self.handle_select_last(&SelectLast, window, cx);
     }
 
     fn select_index(
