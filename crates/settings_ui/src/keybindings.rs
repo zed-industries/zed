@@ -916,7 +916,7 @@ impl KeybindingEditorModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(KeystrokeInput::new);
+        let keybind_editor = cx.new(|cx| KeystrokeInput::new(window, cx));
 
         let context_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1315,14 +1315,22 @@ async fn save_keybinding_update(
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
+    intercept_subscription: Option<Subscription>,
+    _focus_subscriptions: [Subscription; 2],
 }
 
 impl KeystrokeInput {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
+        let _focus_subscriptions = [
+            cx.on_focus_in(&focus_handle, window, Self::on_focus_in),
+            cx.on_focus_out(&focus_handle, window, Self::on_focus_out),
+        ];
         Self {
             keystrokes: Vec::new(),
             focus_handle,
+            intercept_subscription: None,
+            _focus_subscriptions,
         }
     }
 
@@ -1351,21 +1359,13 @@ impl KeystrokeInput {
         cx.notify();
     }
 
-    fn on_key_down(
-        &mut self,
-        event: &gpui::KeyDownEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if event.is_held {
-            return;
-        }
+    fn handle_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
         {
-            *last = event.keystroke.clone();
-        } else {
-            self.keystrokes.push(event.keystroke.clone());
+            *last = keystroke.clone();
+        } else if Some(keystroke) != self.keystrokes.last() {
+            self.keystrokes.push(keystroke.clone());
         }
         cx.stop_propagation();
         cx.notify();
@@ -1389,6 +1389,24 @@ impl KeystrokeInput {
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn on_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.intercept_subscription.is_none() {
+            let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
+                this.handle_keystroke(&event.keystroke, cx);
+            });
+            self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
+        }
+    }
+
+    fn on_focus_out(
+        &mut self,
+        _event: gpui::FocusOutEvent,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.intercept_subscription.take();
     }
 
     fn keystrokes(&self) -> &[Keystroke] {
@@ -1418,7 +1436,6 @@ impl Render for KeystrokeInput {
             .id("keybinding_input")
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-            .on_key_down(cx.listener(Self::on_key_down))
             .on_key_up(cx.listener(Self::on_key_up))
             .focus(|mut style| {
                 style.border_color = Some(colors.border_focused);
