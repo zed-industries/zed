@@ -1047,6 +1047,17 @@ impl KeybindingEditorModal {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let input_base = || {
+            div()
+                .w_full()
+                .py_2()
+                .px_3()
+                .min_h_8()
+                .rounded_md()
+                .bg(theme.editor_background)
+                .border_1()
+                .border_color(theme.border_variant)
+        };
 
         return v_flex()
             .w(rems(34.))
@@ -1054,12 +1065,11 @@ impl Render for KeybindingEditorModal {
             .child(
                 v_flex()
                     .p_3()
-                    .gap_2()
+                    .child(Label::new("Edit Keystroke"))
                     .child(
-                        v_flex().child(Label::new("Edit Keystroke")).child(
-                            Label::new("Input the desired keystroke for the selected action.")
-                                .color(Color::Muted),
-                        ),
+                        Label::new("Input the desired keystroke for the selected action.")
+                            .color(Color::Muted)
+                            .mb_2(),
                     )
                     .child(self.keybind_editor.clone()),
             )
@@ -1067,49 +1077,27 @@ impl Render for KeybindingEditorModal {
                 this.child(
                     v_flex()
                         .p_3()
-                        .gap_3()
+                        .pt_0()
+                        .child(Label::new("Edit Input"))
                         .child(
-                            v_flex().child(Label::new("Edit Input")).child(
-                                Label::new("Input the desired input to the binding.")
-                                    .color(Color::Muted),
-                            ),
+                            Label::new("Input the desired input to the binding.")
+                                .color(Color::Muted)
+                                .mb_2(),
                         )
-                        .child(
-                            div()
-                                .w_full()
-                                .border_color(cx.theme().colors().border_variant)
-                                .border_1()
-                                .py_2()
-                                .px_3()
-                                .min_h_8()
-                                .rounded_md()
-                                .bg(theme.editor_background)
-                                .child(editor),
-                        ),
+                        .child(input_base().child(editor)),
                 )
             })
             .child(
                 v_flex()
                     .p_3()
-                    .gap_3()
+                    .pt_0()
+                    .child(Label::new("Edit Context"))
                     .child(
-                        v_flex().child(Label::new("Edit Context")).child(
-                            Label::new("Input the desired context for the binding.")
-                                .color(Color::Muted),
-                        ),
+                        Label::new("Input the desired context for the binding.")
+                            .color(Color::Muted)
+                            .mb_2(),
                     )
-                    .child(
-                        div()
-                            .w_full()
-                            .border_color(cx.theme().colors().border_variant)
-                            .border_1()
-                            .py_2()
-                            .px_3()
-                            .min_h_8()
-                            .rounded_md()
-                            .bg(theme.editor_background)
-                            .child(self.context_editor.clone()),
-                    ),
+                    .child(input_base().child(self.context_editor.clone())),
             )
             .child(
                 h_flex()
@@ -1118,7 +1106,7 @@ impl Render for KeybindingEditorModal {
                     .gap_1()
                     .justify_end()
                     .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(theme.border_variant)
                     .child(
                         Button::new("cancel", "Cancel")
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
@@ -1422,8 +1410,9 @@ impl Focusable for KeystrokeInput {
 }
 
 impl Render for KeystrokeInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let is_focused = self.focus_handle.is_focused(window);
 
         return h_flex()
             .id("keybinding_input")
@@ -1440,12 +1429,13 @@ impl Render for KeystrokeInput {
             .gap_2()
             .min_h_8()
             .w_full()
+            .flex_1()
             .justify_between()
+            .rounded_md()
+            .overflow_hidden()
             .bg(colors.editor_background)
             .border_1()
-            .rounded_md()
-            .flex_1()
-            .overflow_hidden()
+            .border_color(colors.border_variant)
             .child(
                 h_flex()
                     .w_full()
@@ -1470,6 +1460,7 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("backspace-btn", IconName::Delete)
                             .tooltip(Tooltip::text("Delete Keystroke"))
+                            .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.pop();
                                 cx.notify();
@@ -1478,6 +1469,7 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("clear-btn", IconName::Eraser)
                             .tooltip(Tooltip::text("Clear Keystrokes"))
+                            .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.clear();
                                 cx.notify();
