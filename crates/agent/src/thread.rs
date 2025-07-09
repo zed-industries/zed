@@ -1284,6 +1284,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(&model, cx),
+            thinking_allowed: true,
         };
 
         let available_tools = self.available_tools(cx, model.clone());
@@ -1449,6 +1450,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
+            thinking_allowed: false,
         };
 
         for message in &self.messages {

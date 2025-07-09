@@ -849,6 +849,7 @@ impl LanguageModel for CloudLanguageModel {
         let use_cloud = cx
             .update(|cx| cx.has_flag::<ZedCloudFeatureFlag>())
             .unwrap_or(false);
+        let thinking_allowed = request.thinking_allowed;
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -856,7 +857,7 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if self.model.id.0.ends_with("-thinking") {
+                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }

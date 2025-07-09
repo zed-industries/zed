@@ -1830,6 +1830,7 @@ impl GitPanel {
                     tool_choice: None,
                     stop: Vec::new(),
                     temperature,
+                    thinking_allowed: false,
                 };
 
                 let stream = model.stream_completion_text(request, &cx);
