@@ -159,10 +159,9 @@ where
 
         let mut iter = entries.iter().enumerate().peekable();
         while let Some((ix, current_entry)) = iter.next() {
-            let current_depth = current_entry.depth();
-            let index_in_range = ix;
+            let depth = current_entry.depth();
 
-            if current_depth < index_in_range {
+            if depth < ix {
                 sticky_anchor = Some(StickyAnchor {
                     entry: current_entry.clone(),
                     index: visible_range.start + ix,
@@ -172,9 +171,15 @@ where
 
             if let Some(&(_next_ix, next_entry)) = iter.peek() {
                 let next_depth = next_entry.depth();
+                let next_item_outdented = next_depth + 1 == depth;
 
-                if next_depth < current_depth && next_depth < index_in_range {
-                    last_item_is_drifting = true;
+                let depth_same_as_index = depth == ix;
+                let depth_greater_than_index = depth == ix + 1;
+
+                if next_item_outdented && (depth_same_as_index || depth_greater_than_index) {
+                    if depth_greater_than_index {
+                        last_item_is_drifting = true;
+                    }
                     sticky_anchor = Some(StickyAnchor {
                         entry: current_entry.clone(),
                         index: visible_range.start + ix,
@@ -216,7 +221,7 @@ where
 
         let drifting_y_offset = if last_item_is_drifting {
             let scroll_top = -scroll_offset.y;
-            let anchor_top = item_height * sticky_anchor.index;
+            let anchor_top = item_height * (sticky_anchor.index + 1);
             let sticky_area_height = item_height * items_count;
             (anchor_top - scroll_top - sticky_area_height).min(Pixels::ZERO)
         } else {
