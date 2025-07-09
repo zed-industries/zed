@@ -1194,8 +1194,8 @@ impl KeystrokeInput {
         {
             *last = keystroke.clone();
         } else if Some(keystroke) != self.keystrokes.last() {
-                self.keystrokes.push(keystroke.clone());
-            }
+            self.keystrokes.push(keystroke.clone());
+        }
         cx.stop_propagation();
         cx.notify();
     }
