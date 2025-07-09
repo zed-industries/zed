@@ -1,4 +1,5 @@
 mod object;
+mod select;
 
 use editor::{DisplayPoint, Editor, movement};
 use gpui::{Action, actions};

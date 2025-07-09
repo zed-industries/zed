@@ -7,7 +7,6 @@ mod paste;
 pub(crate) mod repeat;
 mod scroll;
 pub(crate) mod search;
-mod select;
 pub mod substitute;
 mod toggle_comments;
 pub(crate) mod yank;
