@@ -8,6 +8,7 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
+use unindent::Unindent as _;
 use util::ResultExt as _;
 
 #[derive(PartialEq, Eq)]
@@ -40,11 +41,28 @@ impl AskPassDelegate {
         self.tx.send((prompt, tx)).await?;
         Ok(rx.await?)
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake() -> Self {
+        // FIXME
+        let (tx, _rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
+        // let task = cx.spawn(
+        //     async move |_: &mut AsyncApp| {
+        //         while let Some(_) = rx.next().await {}
+        //     },
+        // );
+        Self {
+            tx,
+            _task: Task::ready(()),
+        }
+    }
 }
 
 pub struct AskPassSession {
     #[cfg(not(target_os = "windows"))]
     script_path: std::path::PathBuf,
+    #[cfg(not(target_os = "windows"))]
+    gpg_script_path: std::path::PathBuf,
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
@@ -59,6 +77,11 @@ const ASKPASS_SCRIPT_NAME: &str = "askpass.sh";
 #[cfg(target_os = "windows")]
 const ASKPASS_SCRIPT_NAME: &str = "askpass.ps1";
 
+#[cfg(not(target_os = "windows"))]
+const GPG_SCRIPT_NAME: &str = "gpg.sh";
+#[cfg(target_os = "windows")]
+const GPG_SCRIPT_NAME: &str = "gpg.ps1";
+
 impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
@@ -72,6 +95,7 @@ impl AskPassSession {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
+        let gpg_script_path = temp_dir.path().join(GPG_SCRIPT_NAME);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = UnixListener::bind(&askpass_socket).context("creating askpass socket")?;
         #[cfg(not(target_os = "windows"))]
@@ -135,10 +159,25 @@ impl AskPassSession {
             askpass_script_path.display()
         );
 
+        let gpg_script = generate_gpg_script();
+        fs::write(&gpg_script_path, gpg_script)
+            .await
+            .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
+        make_file_executable(&gpg_script_path).await?;
+        // FIXME
+        // #[cfg(target_os = "windows")]
+        // let gpg_helper = format!(
+        //     "powershell.exe -ExecutionPolicy Bypass -File {}",
+        //     gpg_script_path.display()
+        // );
+
         Ok(Self {
             #[cfg(not(target_os = "windows"))]
             script_path: askpass_script_path,
+            #[cfg(not(target_os = "windows"))]
+            gpg_script_path,
 
+            // FIXME gpg helper
             #[cfg(target_os = "windows")]
             secret,
             #[cfg(target_os = "windows")]
@@ -158,6 +197,11 @@ impl AskPassSession {
     #[cfg(target_os = "windows")]
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         &self.askpass_helper
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn gpg_script_path(&self) -> impl AsRef<OsStr> {
+        &self.gpg_script_path
     }
 
     // This will run the askpass task forever, resolving as many authentication requests as needed.
@@ -262,4 +306,22 @@ fn generate_askpass_script(zed_path: &std::path::Path, askpass_socket: &std::pat
         zed_exe = zed_path.display(),
         askpass_socket = askpass_socket.display(),
     )
+}
+
+#[inline]
+#[cfg(not(target_os = "windows"))]
+fn generate_gpg_script() -> String {
+    r#"
+        #!/bin/sh
+        set -eu
+
+        unset GIT_CONFIG_PARAMETERS
+        GPG_PROGRAM=$(git config gpg.program || echo 'gpg')
+        PROMPT="Enter passphrase to unlock GPG key"
+        PASSPHRASE=$(${{GIT_ASKPASS}} "${{PROMPT}}")
+
+        exec "${{GPG_PROGRAM}}" --batch --no-tty --yes --passphrase-fd 3 --pinentry-mode loopback "$@" 3<<EOF
+        ${{PASSPHRASE}}
+        EOF
+    "#.unindent()
 }

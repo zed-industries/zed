@@ -391,8 +391,12 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<()>>;
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
+    ) -> BoxFuture<'static, Result<RemoteCommandOutput>>;
 
     fn push(
         &self,
@@ -1193,36 +1197,66 @@ impl GitRepository for RealGitRepository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<()>> {
+        cx: AsyncApp,
+    ) -> BoxFuture<'static, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        self.executor
-            .spawn(async move {
-                let mut cmd = new_smol_command("git");
-                cmd.current_dir(&working_directory?)
-                    .envs(env.iter())
-                    .args(["commit", "--quiet", "-m"])
-                    .arg(&message.to_string())
-                    .arg("--cleanup=strip");
+        let executor = cx.background_executor().clone();
+        async move {
+            let working_directory = working_directory?;
+            let have_user_git_askpass = env.contains_key("GIT_ASKPASS");
+            let mut command = new_smol_command("git");
+            command.current_dir(&working_directory).envs(env.iter());
 
-                if options.amend {
-                    cmd.arg("--amend");
-                }
+            let ask_pass = if have_user_git_askpass {
+                dbg!("HAVE USER ASKPASS");
+                None
+            } else {
+                dbg!("MAKE AN ASKPASS");
+                Some(AskPassSession::new(&executor, ask_pass).await?)
+            };
 
-                if let Some((name, email)) = name_and_email {
-                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
-                }
+            if let Some(ask_pass) = ask_pass.as_ref() {
+                command.arg("-c").arg(dbg!(format!(
+                    "gpg.program={}",
+                    ask_pass.gpg_script_path().as_ref().to_string_lossy()
+                )));
+            }
 
-                let output = cmd.output().await?;
+            command
+                .args(["commit", "--quiet", "-m"])
+                .arg(&message.to_string())
+                .arg("--cleanup=strip");
 
+            if options.amend {
+                command.arg("--amend");
+            }
+
+            if let Some((name, email)) = name_and_email {
+                command.arg("--author").arg(&format!("{name} <{email}>"));
+            }
+
+            if let Some(ask_pass) = ask_pass {
+                command.env("GIT_ASKPASS", ask_pass.script_path());
+                let git_process = command.spawn()?;
+
+                run_askpass_command(ask_pass, git_process).await
+            } else {
+                let git_process = command.spawn()?;
+                let output = git_process.output().await?;
                 anyhow::ensure!(
                     output.status.success(),
-                    "Failed to commit:\n{}",
+                    "{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
-                Ok(())
-            })
-            .boxed()
+                Ok(RemoteCommandOutput {
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                })
+            }
+        }
+        .boxed()
     }
 
     fn push(
@@ -2046,12 +2080,16 @@ mod tests {
         )
         .await
         .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            Arc::new(checkpoint_author_envs()),
-        )
+        cx.spawn(|cx| {
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::fake(),
+                Arc::new(checkpoint_author_envs()),
+                cx,
+            )
+        })
         .await
         .unwrap();
 
@@ -2075,12 +2113,16 @@ mod tests {
         )
         .await
         .unwrap();
-        repo.commit(
-            "Commit after checkpoint".into(),
-            None,
-            CommitOptions::default(),
-            Arc::new(checkpoint_author_envs()),
-        )
+        cx.spawn(|cx| {
+            repo.commit(
+                "Commit after checkpoint".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::fake(),
+                Arc::new(checkpoint_author_envs()),
+                cx,
+            )
+        })
         .await
         .unwrap();
 
@@ -2213,12 +2255,16 @@ mod tests {
         )
         .await
         .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            Arc::new(checkpoint_author_envs()),
-        )
+        cx.spawn(|cx| {
+            repo.commit(
+                "Initial commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::fake(),
+                Arc::new(checkpoint_author_envs()),
+                cx,
+            )
+        })
         .await
         .unwrap();
 

@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/askpass.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
@@ -19,5 +22,6 @@ net.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
 tempfile.workspace = true
+unindent.workspace = true
 util.workspace = true
 workspace-hack.workspace = true

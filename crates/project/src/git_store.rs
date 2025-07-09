@@ -1731,18 +1731,19 @@ impl GitStore {
         let email = envelope.payload.email.map(SharedString::from);
         let options = envelope.payload.options.unwrap_or_default();
 
-        repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(
-                    message,
-                    name.zip(email),
-                    CommitOptions {
-                        amend: options.amend,
-                    },
-                    cx,
-                )
-            })?
-            .await??;
+        // FIXME
+        // repository_handle
+        //     .update(&mut cx, |repository_handle, cx| {
+        //         repository_handle.commit(
+        //             message,
+        //             name.zip(email),
+        //             CommitOptions {
+        //                 amend: options.amend,
+        //             },
+        //             cx,
+        //         )
+        //     })?
+        //     .await??;
         Ok(proto::Ack {})
     }
 
@@ -3462,11 +3463,12 @@ impl Repository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
+        askpass: AskPassDelegate,
         _cx: &mut App,
-    ) -> oneshot::Receiver<Result<()>> {
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
         let id = self.id;
 
-        self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
+        self.send_job(Some("git commit".into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -3474,26 +3476,28 @@ impl Repository {
                     ..
                 } => {
                     backend
-                        .commit(message, name_and_email, options, environment)
+                        .commit(message, name_and_email, options, askpass, environment, cx)
                         .await
                 }
                 RepositoryState::Remote { project_id, client } => {
-                    let (name, email) = name_and_email.unzip();
-                    client
-                        .request(proto::Commit {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            message: String::from(message),
-                            name: name.map(String::from),
-                            email: email.map(String::from),
-                            options: Some(proto::commit::CommitOptions {
-                                amend: options.amend,
-                            }),
-                        })
-                        .await
-                        .context("sending commit request")?;
+                    todo!()
 
-                    Ok(())
+                    // let (name, email) = name_and_email.unzip();
+                    // client
+                    //     .request(proto::Commit {
+                    //         project_id: project_id.0,
+                    //         repository_id: id.to_proto(),
+                    //         message: String::from(message),
+                    //         name: name.map(String::from),
+                    //         email: email.map(String::from),
+                    //         options: Some(proto::commit::CommitOptions {
+                    //             amend: options.amend,
+                    //         }),
+                    //     })
+                    //     .await
+                    //     .context("sending commit request")?;
+
+                    // Ok(())
                 }
             }
         })
