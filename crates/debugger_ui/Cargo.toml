@@ -45,6 +45,7 @@ language.workspace = true
 log.workspace = true
 menu.workspace = true
 parking_lot.workspace = true
+parse_int.workspace = true
 paths.workspace = true
 picker.workspace = true
 pretty_assertions.workspace = true

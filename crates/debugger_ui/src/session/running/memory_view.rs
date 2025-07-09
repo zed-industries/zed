@@ -281,6 +281,17 @@ impl MemoryView {
         )
         .handle(self.width_picker_handle.clone())
     }
+
+    fn change_address(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
+        use parse_int::parse;
+        let text = self.query_editor.read(cx).text(cx);
+
+        let Ok(as_address) = parse::<u64>(&text) else {
+            return;
+        };
+        self.view_state.next_row = as_address & !0xfff;
+        cx.notify();
+    }
 }
 
 #[derive(Clone)]
@@ -493,6 +504,7 @@ impl Render for MemoryView {
                             .p_0p5()
                             .mb_0p5()
                             .bg(cx.theme().colors().editor_background)
+                            .on_action(cx.listener(Self::change_address))
                             .when_else(
                                 self.query_editor
                                     .focus_handle(cx)
