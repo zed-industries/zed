@@ -16,16 +16,18 @@ use dap::{
     client::SessionId, debugger_settings::DebuggerSettings,
 };
 use dap::{DapRegistry, StartDebuggingRequestArguments};
+use editor::Editor;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task,
     WeakEntity, anchored, deferred,
 };
+use text::ToPoint as _;
 
 use itertools::Itertools as _;
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{DebugScenarioContext, Fs, ProjectPath, WorktreeId};
+use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -33,10 +35,11 @@ use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
-use util::maybe;
+use util::{ResultExt, maybe};
 use workspace::SplitDirection;
+use workspace::item::SaveOptions;
 use workspace::{
-    Pane, Workspace,
+    Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
@@ -363,11 +366,17 @@ impl DebugPanel {
         let label = curr_session.read(cx).label().clone();
         let adapter = curr_session.read(cx).adapter().clone();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
-        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
         let task_context = curr_session.read(cx).task_context().clone();
 
+        let curr_session_id = curr_session.read(cx).session_id();
+        self.sessions
+            .retain(|session| session.read(cx).session_id(cx) != curr_session_id);
+        let task = dap_store_handle.update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(curr_session_id, cx)
+        });
+
         cx.spawn_in(window, async move |this, cx| {
-            task.await;
+            task.await.log_err();
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
                 let session = dap_store.new_session(label, adapter, task_context, None, cx);
@@ -982,13 +991,90 @@ impl DebugPanel {
         cx.notify();
     }
 
-    pub(crate) fn save_scenario(
+    pub(crate) fn go_to_scenario_definition(
         &self,
-        scenario: &DebugScenario,
+        kind: TaskSourceKind,
+        scenario: DebugScenario,
         worktree_id: WorktreeId,
         window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<ProjectPath>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+        let project_path = match kind {
+            TaskSourceKind::AbsPath { abs_path, .. } => {
+                let Some(project_path) = workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .project_path_for_absolute_path(&abs_path, cx)
+                else {
+                    return Task::ready(Err(anyhow!("no abs path")));
+                };
+
+                project_path
+            }
+            TaskSourceKind::Worktree {
+                id,
+                directory_in_worktree: dir,
+                ..
+            } => {
+                let relative_path = if dir.ends_with(".vscode") {
+                    dir.join("launch.json")
+                } else {
+                    dir.join("debug.json")
+                };
+                ProjectPath {
+                    worktree_id: id,
+                    path: Arc::from(relative_path),
+                }
+            }
+            _ => return self.save_scenario(scenario, worktree_id, window, cx),
+        };
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace.open_path(project_path, None, true, window, cx)
+        });
+        cx.spawn_in(window, async move |_, cx| {
+            let editor = editor.await?;
+            let editor = cx
+                .update(|_, cx| editor.act_as::<Editor>(cx))?
+                .context("expected editor")?;
+
+            // unfortunately debug tasks don't have an easy way to globally
+            // identify them. to jump to the one that you just created or an
+            // old one that you're choosing to edit we use a heuristic of searching for a line with `label:  <your label>` from the end rather than the start so we bias towards more renctly
+            editor.update_in(cx, |editor, window, cx| {
+                let row = editor.text(cx).lines().enumerate().find_map(|(row, text)| {
+                    if text.contains(scenario.label.as_ref()) && text.contains("\"label\": ") {
+                        Some(row)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(row) = row {
+                    editor.go_to_singleton_buffer_point(
+                        text::Point::new(row as u32, 4),
+                        window,
+                        cx,
+                    );
+                }
+            })?;
+
+            Ok(())
+        })
+    }
+
+    pub(crate) fn save_scenario(
+        &self,
+        scenario: DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let this = cx.weak_entity();
+        let project = self.project.clone();
         self.workspace
             .update(cx, |workspace, cx| {
                 let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
@@ -1021,47 +1107,7 @@ impl DebugPanel {
                         )
                         .await?;
                     }
-
-                    let mut content = fs.load(path).await?;
-                    let new_scenario = serde_json_lenient::to_string_pretty(&serialized_scenario)?
-                        .lines()
-                        .map(|l| format!("  {l}"))
-                        .join("\n");
-
-                    static ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
-                        Query::new(
-                            &tree_sitter_json::LANGUAGE.into(),
-                            "(document (array (object) @object))", // TODO: use "." anchor to only match last object
-                        )
-                        .expect("Failed to create ARRAY_QUERY")
-                    });
-
-                    let mut parser = tree_sitter::Parser::new();
-                    parser
-                        .set_language(&tree_sitter_json::LANGUAGE.into())
-                        .unwrap();
-                    let mut cursor = tree_sitter::QueryCursor::new();
-                    let syntax_tree = parser.parse(&content, None).unwrap();
-                    let mut matches =
-                        cursor.matches(&ARRAY_QUERY, syntax_tree.root_node(), content.as_bytes());
-
-                    // we don't have `.last()` since it's a lending iterator, so loop over
-                    // the whole thing to find the last one
-                    let mut last_offset = None;
-                    while let Some(mat) = matches.next() {
-                        if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
-                            last_offset = Some(pos)
-                        }
-                    }
-
-                    if let Some(pos) = last_offset {
-                        content.insert_str(pos, &new_scenario);
-                        content.insert_str(pos, ",\n");
-                    }
-
-                    fs.write(path, content.as_bytes()).await?;
-
-                    workspace.update(cx, |workspace, cx| {
+                    let project_path = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
                             .read(cx)
@@ -1069,10 +1115,111 @@ impl DebugPanel {
                             .context(
                                 "Couldn't get project path for .zed/debug.json in active worktree",
                             )
-                    })?
+                    })??;
+
+                    let editor = this
+                        .update_in(cx, |this, window, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.open_path(project_path, None, true, window, cx)
+                            })
+                        })??
+                        .await?;
+                    let editor = cx
+                        .update(|_, cx| editor.act_as::<Editor>(cx))?
+                        .context("expected editor")?;
+
+                    let new_scenario = serde_json_lenient::to_string_pretty(&serialized_scenario)?
+                        .lines()
+                        .map(|l| format!("  {l}"))
+                        .join("\n");
+
+                    editor
+                        .update_in(cx, |editor, window, cx| {
+                            Self::insert_task_into_editor(editor, new_scenario, project, window, cx)
+                        })??
+                        .await
                 })
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))
+    }
+
+    pub fn insert_task_into_editor(
+        editor: &mut Editor,
+        new_scenario: String,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Result<Task<Result<()>>> {
+        static LAST_ITEM_QUERY: LazyLock<Query> = LazyLock::new(|| {
+            Query::new(
+                &tree_sitter_json::LANGUAGE.into(),
+                "(document (array (object) @object))", // TODO: use "." anchor to only match last object
+            )
+            .expect("Failed to create LAST_ITEM_QUERY")
+        });
+        static EMPTY_ARRAY_QUERY: LazyLock<Query> = LazyLock::new(|| {
+            Query::new(
+                &tree_sitter_json::LANGUAGE.into(),
+                "(document (array) @array)",
+            )
+            .expect("Failed to create EMPTY_ARRAY_QUERY")
+        });
+
+        let content = editor.text(cx);
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let syntax_tree = parser
+            .parse(&content, None)
+            .context("could not parse debug.json")?;
+        let mut matches = cursor.matches(
+            &LAST_ITEM_QUERY,
+            syntax_tree.root_node(),
+            content.as_bytes(),
+        );
+
+        let mut last_offset = None;
+        while let Some(mat) = matches.next() {
+            if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end) {
+                last_offset = Some(pos)
+            }
+        }
+        let mut edits = Vec::new();
+        let mut cursor_position = 0;
+
+        if let Some(pos) = last_offset {
+            edits.push((pos..pos, format!(",\n{new_scenario}")));
+            cursor_position = pos + ",\n  ".len();
+        } else {
+            let mut matches = cursor.matches(
+                &EMPTY_ARRAY_QUERY,
+                syntax_tree.root_node(),
+                content.as_bytes(),
+            );
+
+            if let Some(mat) = matches.next() {
+                if let Some(pos) = mat.captures.first().map(|m| m.node.byte_range().end - 1) {
+                    edits.push((pos..pos, format!("\n{new_scenario}\n")));
+                    cursor_position = pos + "\n  ".len();
+                }
+            } else {
+                edits.push((0..0, format!("[\n{}\n]", new_scenario)));
+                cursor_position = "[\n  ".len();
+            }
+        }
+        editor.transact(window, cx, |editor, window, cx| {
+            editor.edit(edits, cx);
+            let snapshot = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .snapshot();
+            let point = cursor_position.to_point(&snapshot);
+            editor.go_to_singleton_buffer_point(point, window, cx);
+        });
+        Ok(editor.save(SaveOptions::default(), project, window, cx))
     }
 
     pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1298,9 +1445,7 @@ impl Panel for DebugPanel {
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_sessions = self.sessions.len() > 0;
         let this = cx.weak_entity();
-        debug_assert_eq!(has_sessions, self.active_session.is_some());
 
         if self
             .active_session
@@ -1487,8 +1632,8 @@ impl Render for DebugPanel {
                 }))
             })
             .map(|this| {
-                if has_sessions {
-                    this.children(self.active_session.clone())
+                if let Some(active_session) = self.active_session.clone() {
+                    this.child(active_session)
                 } else {
                     let docked_to_bottom = self.position(window, cx) == DockPosition::Bottom;
                     let welcome_experience = v_flex()

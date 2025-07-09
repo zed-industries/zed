@@ -45,6 +45,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/explorer_command_injector",
     "crates/eval",
     "crates/extension",
     "crates/extension_api",
@@ -99,6 +100,7 @@ members = [
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/net",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
@@ -188,7 +190,6 @@ members = [
     "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
-    "extensions/perplexity",
     "extensions/proto",
     "extensions/ruff",
     "extensions/slash-commands-example",
@@ -311,6 +312,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
@@ -624,8 +626,10 @@ wasmtime = { version = "29", default-features = false, features = [
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
+windows-core = "0.61"
+wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "= 0.8.5"
+zed_llm_client = "= 0.8.6"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -660,6 +664,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
