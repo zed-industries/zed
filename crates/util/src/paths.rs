@@ -166,6 +166,98 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum PathStyle {
+    Posix,
+    Windows,
+}
+
+impl PathStyle {
+    #[cfg(target_os = "windows")]
+    pub const fn current() -> Self {
+        PathStyle::Windows
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub const fn current() -> Self {
+        PathStyle::Posix
+    }
+
+    #[inline]
+    pub fn separator(&self) -> &str {
+        match self {
+            PathStyle::Posix => "/",
+            PathStyle::Windows => "\\",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RemotePathBuf {
+    inner: PathBuf,
+    style: PathStyle,
+    string: String, // Cached string representation
+}
+
+impl RemotePathBuf {
+    pub fn new(path: PathBuf, style: PathStyle) -> Self {
+        #[cfg(target_os = "windows")]
+        let string = match style {
+            PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
+            PathStyle::Windows => path.to_string_lossy().into(),
+        };
+        #[cfg(not(target_os = "windows"))]
+        let string = match style {
+            PathStyle::Posix => path.to_string_lossy().to_string(),
+            PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
+        };
+        Self {
+            inner: path,
+            style,
+            string,
+        }
+    }
+
+    pub fn from_str(path: &str, style: PathStyle) -> Self {
+        let path_buf = PathBuf::from(path);
+        Self::new(path_buf, style)
+    }
+
+    pub fn to_string(&self) -> String {
+        self.string.clone()
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.to_string(),
+            PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn to_proto(self) -> String {
+        match self.path_style() {
+            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
+            PathStyle::Windows => self.to_string(),
+        }
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.inner
+    }
+
+    pub fn path_style(&self) -> PathStyle {
+        self.style
+    }
+
+    pub fn parent(&self) -> Option<RemotePathBuf> {
+        self.inner
+            .parent()
+            .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    }
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 

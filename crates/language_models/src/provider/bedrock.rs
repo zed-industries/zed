@@ -799,7 +799,9 @@ pub fn into_bedrock(
         max_tokens: max_output_tokens,
         system: Some(system_message),
         tools: Some(tool_config),
-        thinking: if let BedrockModelMode::Thinking { budget_tokens } = mode {
+        thinking: if request.thinking_allowed
+            && let BedrockModelMode::Thinking { budget_tokens } = mode
+        {
             Some(bedrock::Thinking::Enabled { budget_tokens })
         } else {
             None

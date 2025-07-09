@@ -16,13 +16,13 @@ doctest = false
 test-support = [
     "dap/test-support",
     "dap_adapters/test-support",
+    "debugger_tools/test-support",
     "editor/test-support",
     "gpui/test-support",
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
     "unindent",
-    "debugger_tools"
 ]
 
 [dependencies]
@@ -40,6 +40,7 @@ file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
@@ -60,6 +61,7 @@ task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
 terminal_view.workspace = true
+text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
 tree-sitter-json.workspace = true
@@ -67,7 +69,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
-debugger_tools = { workspace = true, optional = true }
+debugger_tools.workspace = true
 unindent = { workspace = true, optional = true }
 zed_actions.workspace = true
 
