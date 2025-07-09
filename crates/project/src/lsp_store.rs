@@ -10671,6 +10671,21 @@ impl LspStore {
         }
 
         // Tell the language server about every open buffer in the worktree that matches the language.
+        // Also check for buffers in worktrees that reused this server
+        let mut worktrees_using_server = vec![key.0];
+        if let Some(local) = self.as_local() {
+            // Find all worktrees that have this server in their language server tree
+            for (worktree_id, servers) in &local.lsp_tree.read(cx).instances {
+                if *worktree_id != key.0 {
+                    for (_, server_map) in &servers.roots {
+                        if server_map.contains_key(&key.1) {
+                            worktrees_using_server.push(*worktree_id);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
             for buffer_handle in buffer_store.buffers() {
@@ -10684,7 +10699,7 @@ impl LspStore {
                     None => continue,
                 };
 
-                if file.worktree.read(cx).id() != key.0
+                if !worktrees_using_server.contains(&file.worktree.read(cx).id())
                     || !self
                         .languages
                         .lsp_adapters(&language.name())
