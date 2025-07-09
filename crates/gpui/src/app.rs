@@ -38,9 +38,9 @@ use crate::{
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, ScreenCaptureSource, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -930,11 +930,11 @@ impl App {
                 break;
             }
 
-            for (entity_id, mut entity) in dropped {
+            for (entity_id, entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
                 for release_callback in self.release_listeners.remove(&entity_id) {
-                    release_callback(entity.as_mut(), self);
+                    release_callback(entity.borrow_mut().deref_mut(), self);
                 }
             }
         }
@@ -1746,9 +1746,9 @@ impl AppContext for App {
     /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.update(|cx| {
-            let slot = cx.entities.reserve();
-            let handle = slot.clone();
-            let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
+            let entity_id = cx.entities.reserve();
+            let entity = build_entity(&mut Context::new_context(cx, entity_id, None));
+            let handle = cx.entities.insert(entity_id, entity);
 
             cx.push_effect(Effect::EntityCreated {
                 entity: handle.clone().into_any(),
@@ -1756,24 +1756,22 @@ impl AppContext for App {
                 window: cx.window_update_stack.last().cloned(),
             });
 
-            cx.entities.insert(slot, entity);
             handle
         })
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
-        Reservation(self.entities.reserve())
+    fn reserve_entity(&mut self) -> Self::Result<EntityId> {
+        self.entities.reserve()
     }
 
     fn insert_entity<T: 'static>(
         &mut self,
-        reservation: Reservation<T>,
+        entity_id: EntityId,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.update(|cx| {
-            let slot = reservation.0;
-            let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
-            cx.entities.insert(slot, entity)
+            let entity = build_entity(&mut Context::new_context(cx, entity_id, None));
+            cx.entities.insert(entity_id, entity)
         })
     }
 
@@ -1785,13 +1783,11 @@ impl AppContext for App {
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
         self.update(|cx| {
-            let mut entity = cx.entities.lease(handle);
-            let result = update(
-                &mut entity,
-                &mut Context::new_context(cx, handle.downgrade()),
-            );
-            cx.entities.end_lease(entity);
-            result
+            let mut entity = cx.entities.get(handle.entity_id());
+            update(
+                entity.borrow_mut().downcast_mut().unwrap(),
+                &mut Context::new_context(cx, handle.entity_id(), Some(handle.downgrade())),
+            )
         })
     }
 

@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation, SubscriberSet,
-    Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, SubscriberSet, Subscription,
+    Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -22,17 +22,26 @@ pub struct Context<'a, T> {
     #[deref]
     #[deref_mut]
     app: &'a mut App,
-    entity_state: WeakEntity<T>,
+    entity_id: EntityId,
+    entity_state: Option<WeakEntity<T>>,
 }
 
 impl<'a, T: 'static> Context<'a, T> {
-    pub(crate) fn new_context(app: &'a mut App, entity_state: WeakEntity<T>) -> Self {
-        Self { app, entity_state }
+    pub(crate) fn new_context(
+        app: &'a mut App,
+        entity_id: EntityId,
+        entity_state: Option<WeakEntity<T>>,
+    ) -> Self {
+        Self {
+            app,
+            entity_id,
+            entity_state,
+        }
     }
 
     /// The entity id of the entity backing this context.
     pub fn entity_id(&self) -> EntityId {
-        self.entity_state.entity_id
+        self.entity_id
     }
 
     /// Returns a handle to the entity belonging to this context.
@@ -44,7 +53,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Returns a weak handle to the entity belonging to this context.
     pub fn weak_entity(&self) -> WeakEntity<T> {
-        self.entity_state.clone()
+        self.entity_state.as_ref().unwrap().clone()
     }
 
     /// Arranges for the given function to be called whenever [`Context::notify`] is
@@ -112,7 +121,7 @@ impl<'a, T: 'static> Context<'a, T> {
         T: 'static,
     {
         let (subscription, activate) = self.app.release_listeners.insert(
-            self.entity_state.entity_id,
+            self.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 on_release(this, cx);
@@ -193,7 +202,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Tell GPUI that this entity has changed and observers of it should be notified.
     pub fn notify(&mut self) {
-        self.app.notify(self.entity_state.entity_id);
+        self.app.notify(self.entity_id);
     }
 
     /// Spawn the future returned by the given function.
@@ -692,7 +701,7 @@ impl<T> Context<'_, T> {
         Evt: 'static,
     {
         self.app.pending_effects.push_back(Effect::Emit {
-            emitter: self.entity_state.entity_id,
+            emitter: self.entity_id,
             event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
@@ -706,16 +715,16 @@ impl<T> AppContext for Context<'_, T> {
         self.app.new(build_entity)
     }
 
-    fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
+    fn reserve_entity(&mut self) -> EntityId {
         self.app.reserve_entity()
     }
 
     fn insert_entity<U: 'static>(
         &mut self,
-        reservation: Reservation<U>,
+        entity_id: EntityId,
         build_entity: impl FnOnce(&mut Context<U>) -> U,
     ) -> Self::Result<Entity<U>> {
-        self.app.insert_entity(reservation, build_entity)
+        self.app.insert_entity(entity_id, build_entity)
     }
 
     fn update_entity<U: 'static, R>(

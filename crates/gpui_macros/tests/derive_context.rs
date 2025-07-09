@@ -1,6 +1,6 @@
 #[test]
 fn test_derive_context() {
-    use gpui::{App, Window};
+    use gpui::{App, EntityId, Window};
     use gpui_macros::{AppContext, VisualContext};
 
     #[derive(AppContext, VisualContext)]

@@ -30,16 +30,16 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
                 self.#app_variable.new(build_entity)
             }
 
-            fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
+            fn reserve_entity(&mut self) -> Self::Result<EntityId> {
                 self.#app_variable.reserve_entity()
             }
 
             fn insert_entity<T: 'static>(
                 &mut self,
-                reservation: gpui::Reservation<T>,
+                entity_id: EntityId,
                 build_entity: impl FnOnce(&mut gpui::Context<'_, T>) -> T,
             ) -> Self::Result<gpui::Entity<T>> {
-                self.#app_variable.insert_entity(reservation, build_entity)
+                self.#app_variable.insert_entity(entity_id, build_entity)
             }
 
             fn update_entity<T, R>(

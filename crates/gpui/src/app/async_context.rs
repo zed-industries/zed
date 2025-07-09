@@ -1,7 +1,8 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
-    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    Entity, EntityId, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton,
+    PromptLevel, Render, Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    app::NewEntityListener,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -32,7 +33,7 @@ impl AppContext for AsyncApp {
         Ok(app.new(build_entity))
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
+    fn reserve_entity(&mut self) -> Result<EntityId> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.reserve_entity())
@@ -40,12 +41,12 @@ impl AppContext for AsyncApp {
 
     fn insert_entity<T: 'static>(
         &mut self,
-        reservation: Reservation<T>,
+        entity_id: EntityId,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Result<Entity<T>> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
-        Ok(app.insert_entity(reservation, build_entity))
+        Ok(app.insert_entity(entity_id, build_entity))
     }
 
     fn update_entity<T: 'static, R>(
@@ -342,17 +343,17 @@ impl AppContext for AsyncWindowContext {
         self.window.update(self, |_, _, cx| cx.new(build_entity))
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
+    fn reserve_entity(&mut self) -> Result<EntityId> {
         self.window.update(self, |_, _, cx| cx.reserve_entity())
     }
 
     fn insert_entity<T: 'static>(
         &mut self,
-        reservation: Reservation<T>,
+        entity_id: EntityId,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
-            .update(self, |_, _, cx| cx.insert_entity(reservation, build_entity))
+            .update(self, |_, _, cx| cx.insert_entity(entity_id, build_entity))
     }
 
     fn update_entity<T: 'static, R>(

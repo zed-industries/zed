@@ -402,7 +402,7 @@ impl AppContext for ExampleContext {
         self.app.new(build_entity)
     }
 
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
+    fn reserve_entity(&mut self) -> Self::Result<gpui::Reservation<T>> {
         self.app.reserve_entity()
     }
 

@@ -967,7 +967,7 @@ impl Buffer {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
-        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let entity_id = cx.reserve_entity();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
@@ -992,7 +992,7 @@ impl Buffer {
     }
 
     pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
-        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let entity_id = cx.reserve_entity();
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
             TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
@@ -1015,7 +1015,7 @@ impl Buffer {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> BufferSnapshot {
-        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let entity_id = cx.reserve_entity();
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();

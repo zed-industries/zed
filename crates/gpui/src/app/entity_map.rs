@@ -13,6 +13,7 @@ use std::{
     marker::PhantomData,
     mem,
     num::NonZeroU64,
+    rc::{self, Rc},
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
@@ -55,9 +56,9 @@ impl Display for EntityId {
 }
 
 pub(crate) struct EntityMap {
-    entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    entities: SecondaryMap<EntityId, Rc<RefCell<dyn Any>>>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
-    ref_counts: Arc<RwLock<EntityRefCounts>>,
+    pub(crate) ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
 struct EntityRefCounts {
@@ -85,47 +86,28 @@ impl EntityMap {
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
-    pub fn reserve<T: 'static>(&self) -> Slot<T> {
-        let id = self.ref_counts.write().counts.insert(1.into());
-        Slot(Entity::new(id, Arc::downgrade(&self.ref_counts)))
+    pub fn reserve(&self) -> EntityId {
+        self.ref_counts.write().counts.insert(1.into())
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
-    pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Entity<T>
+    pub fn insert<T>(&mut self, entity_id: EntityId, entity: T) -> Entity<T>
     where
         T: 'static,
     {
         let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(slot.entity_id);
+        accessed_entities.insert(entity_id);
 
-        let handle = slot.0;
-        self.entities.insert(handle.entity_id, Box::new(entity));
-        handle
+        let entity_data = Rc::new(RefCell::new(entity));
+        self.entities.insert(entity_id, entity_data.clone());
+
+        Entity::new(entity_id, entity_data, Arc::downgrade(&self.ref_counts))
     }
 
-    /// Move an entity to the stack.
-    #[track_caller]
-    pub fn lease<'a, T>(&mut self, pointer: &'a Entity<T>) -> Lease<'a, T> {
-        self.assert_valid_context(pointer);
+    pub fn get(&self, entity_id: EntityId) -> Rc<RefCell<dyn Any>> {
         let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(pointer.entity_id);
-
-        let entity = Some(
-            self.entities
-                .remove(pointer.entity_id)
-                .unwrap_or_else(|| double_lease_panic::<T>("update")),
-        );
-        Lease {
-            entity,
-            pointer,
-            entity_type: PhantomData,
-        }
-    }
-
-    /// Returns an entity after moving it to the stack.
-    pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
-        self.entities
-            .insert(lease.pointer.entity_id, lease.entity.take().unwrap());
+        accessed_entities.insert(entity_id);
+        self.entities.get(entity_id).unwrap().clone()
     }
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
@@ -133,15 +115,16 @@ impl EntityMap {
         let mut accessed_entities = self.accessed_entities.borrow_mut();
         accessed_entities.insert(entity.entity_id);
 
-        self.entities
-            .get(entity.entity_id)
-            .and_then(|entity| entity.downcast_ref())
-            .unwrap_or_else(|| double_lease_panic::<T>("read"))
+        // self.entities
+        //     .get(entity.entity_id)
+        //     .and_then(|entity| entity.borrow().downcast_ref())
+        //     .unwrap_or_else(|| double_lease_panic::<T>("read"))
+        todo!("interface will need to change here")
     }
 
     fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
-            Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
+            Weak::ptr_eq(&entity.ref_counts, &Arc::downgrade(&self.ref_counts)),
             "used a entity with the wrong context"
         );
     }
@@ -156,7 +139,7 @@ impl EntityMap {
         self.accessed_entities.borrow_mut().clear();
     }
 
-    pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
+    pub fn take_dropped(&mut self) -> Vec<(EntityId, Rc<RefCell<dyn Any>>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
         let mut accessed_entities = self.accessed_entities.borrow_mut();
@@ -222,19 +205,26 @@ pub(crate) struct Slot<T>(Entity<T>);
 pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
-    entity_map: Weak<RwLock<EntityRefCounts>>,
+    entity_data: Rc<RefCell<dyn Any>>,
+    ref_counts: Weak<RwLock<EntityRefCounts>>,
     #[cfg(any(test, feature = "leak-detection"))]
     handle_id: HandleId,
 }
 
 impl AnyEntity {
-    fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
+    fn new(
+        id: EntityId,
+        entity_type: TypeId,
+        entity_data: Rc<RefCell<dyn Any>>,
+        ref_counts: Weak<RwLock<EntityRefCounts>>,
+    ) -> Self {
         Self {
             entity_id: id,
             entity_type,
-            entity_map: entity_map.clone(),
+            entity_data,
+            ref_counts: ref_counts.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
-            handle_id: entity_map
+            handle_id: ref_counts
                 .upgrade()
                 .unwrap()
                 .write()
@@ -258,7 +248,8 @@ impl AnyEntity {
         AnyWeakEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_ref_counts: self.entity_map.clone(),
+            entity_data: Rc::downgrade(&self.entity_data),
+            entity_ref_counts: self.ref_counts.clone(),
         }
     }
 
@@ -278,7 +269,7 @@ impl AnyEntity {
 
 impl Clone for AnyEntity {
     fn clone(&self) -> Self {
-        if let Some(entity_map) = self.entity_map.upgrade() {
+        if let Some(entity_map) = self.ref_counts.upgrade() {
             let entity_map = entity_map.read();
             let count = entity_map
                 .counts
@@ -291,10 +282,11 @@ impl Clone for AnyEntity {
         Self {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_map: self.entity_map.clone(),
+            entity_data: self.entity_data.clone(),
+            ref_counts: self.ref_counts.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: self
-                .entity_map
+                .ref_counts
                 .upgrade()
                 .unwrap()
                 .write()
@@ -306,7 +298,7 @@ impl Clone for AnyEntity {
 
 impl Drop for AnyEntity {
     fn drop(&mut self) {
-        if let Some(entity_map) = self.entity_map.upgrade() {
+        if let Some(entity_map) = self.ref_counts.upgrade() {
             let entity_map = entity_map.upgradable_read();
             let count = entity_map
                 .counts
@@ -322,7 +314,7 @@ impl Drop for AnyEntity {
         }
 
         #[cfg(any(test, feature = "leak-detection"))]
-        if let Some(entity_map) = self.entity_map.upgrade() {
+        if let Some(entity_map) = self.ref_counts.upgrade() {
             entity_map
                 .write()
                 .leak_detector
@@ -386,12 +378,16 @@ unsafe impl<T> Sync for Entity<T> {}
 impl<T> Sealed for Entity<T> {}
 
 impl<T: 'static> Entity<T> {
-    fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
+    fn new(
+        id: EntityId,
+        entity_data: Rc<RefCell<T>>,
+        ref_counts: Weak<RwLock<EntityRefCounts>>,
+    ) -> Self
     where
         T: 'static,
     {
         Self {
-            any_entity: AnyEntity::new(id, TypeId::of::<T>(), entity_map),
+            any_entity: AnyEntity::new(id, TypeId::of::<T>(), entity_data, ref_counts),
             entity_type: PhantomData,
         }
     }
@@ -504,6 +500,7 @@ impl<T: 'static> PartialOrd for Entity<T> {
 pub struct AnyWeakEntity {
     pub(crate) entity_id: EntityId,
     entity_type: TypeId,
+    entity_data: rc::Weak<RefCell<dyn Any>>,
     entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
 }
 
@@ -538,7 +535,8 @@ impl AnyWeakEntity {
         Some(AnyEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_map: self.entity_ref_counts.clone(),
+            entity_data: self.entity_data.upgrade()?,
+            ref_counts: self.entity_ref_counts.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: self
                 .entity_ref_counts
@@ -592,6 +590,7 @@ impl AnyWeakEntity {
             //   read in the first place, so we're good!
             entity_id: entity_id.into(),
             entity_type: TypeId::of::<()>(),
+            entity_data: Rc::downgrade(&(Rc::new(RefCell::new(())) as Rc<RefCell<dyn Any>>)),
             entity_ref_counts: Weak::new(),
         }
     }
@@ -836,10 +835,10 @@ mod test {
         // Tests that slots are not re-used before take_dropped.
         let mut entity_map = EntityMap::new();
 
-        let slot = entity_map.reserve::<TestEntity>();
+        let slot = entity_map.reserve();
         entity_map.insert(slot, TestEntity { i: 1 });
 
-        let slot = entity_map.reserve::<TestEntity>();
+        let slot = entity_map.reserve();
         entity_map.insert(slot, TestEntity { i: 2 });
 
         let dropped = entity_map.take_dropped();
@@ -848,7 +847,7 @@ mod test {
         assert_eq!(
             dropped
                 .into_iter()
-                .map(|(_, entity)| entity.downcast::<TestEntity>().unwrap().i)
+                .map(|(_, entity)| entity.borrow().downcast_ref::<TestEntity>().unwrap().i)
                 .collect::<Vec<i32>>(),
             vec![1, 2],
         );
@@ -859,7 +858,7 @@ mod test {
         // Tests that weak handles are not upgraded before take_dropped
         let mut entity_map = EntityMap::new();
 
-        let slot = entity_map.reserve::<TestEntity>();
+        let slot = entity_map.reserve();
         let handle = entity_map.insert(slot, TestEntity { i: 1 });
         let weak = handle.downgrade();
         drop(handle);
@@ -873,7 +872,7 @@ mod test {
         assert_eq!(
             dropped
                 .into_iter()
-                .map(|(_, entity)| entity.downcast::<TestEntity>().unwrap().i)
+                .map(|(_, entity)| entity.borrow().downcast_ref::<TestEntity>().unwrap().i)
                 .collect::<Vec<i32>>(),
             vec![1],
         );

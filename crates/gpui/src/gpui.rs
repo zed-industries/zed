@@ -175,16 +175,15 @@ pub trait AppContext {
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
-    /// Reserve a slot for a entity to be inserted later.
-    /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+    /// Reserve an EntityId for a entity to be inserted later.
+    fn reserve_entity(&mut self) -> Self::Result<EntityId>;
 
-    /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
+    /// Insert a new entity in the app context based on a [EntityId] previously obtained from [`reserve_entity`].
     ///
     /// [`reserve_entity`]: Self::reserve_entity
     fn insert_entity<T: 'static>(
         &mut self,
-        reservation: Reservation<T>,
+        reservation: EntityId,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
@@ -229,17 +228,6 @@ pub trait AppContext {
     fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
     where
         G: Global;
-}
-
-/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_entity].
-/// Allows you to obtain the [EntityId] for a entity before it is created.
-pub struct Reservation<T>(pub(crate) Slot<T>);
-
-impl<T: 'static> Reservation<T> {
-    /// Returns the [EntityId] that will be associated with the entity once it is inserted.
-    pub fn entity_id(&self) -> EntityId {
-        self.0.entity_id()
-    }
 }
 
 /// This trait is used for the different visual contexts in GPUI that
