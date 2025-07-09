@@ -958,17 +958,8 @@ impl LanguageModel for CloudLanguageModel {
             }
             zed_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
-                let request = into_google(
-                    request,
-                    self.model.id.to_string(),
-                    if thinking_allowed {
-                        GoogleModelMode::Default
-                    } else {
-                        GoogleModelMode::Thinking {
-                            budget_tokens: Some(0),
-                        }
-                    },
-                );
+                let request =
+                    into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
