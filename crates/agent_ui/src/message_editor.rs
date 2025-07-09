@@ -1453,6 +1453,7 @@ impl MessageEditor {
                         tool_choice: None,
                         stop: vec![],
                         temperature: AgentSettings::temperature_for_model(&model.model, cx),
+                        thinking_allowed: true,
                     };
 
                     Some(model.model.count_tokens(request, cx))

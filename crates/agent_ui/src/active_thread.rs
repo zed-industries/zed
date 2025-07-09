@@ -1461,6 +1461,7 @@ impl ActiveThread {
                             &configured_model.model,
                             cx,
                         ),
+                        thinking_allowed: true,
                     };
 
                     Some(configured_model.model.count_tokens(request, cx))

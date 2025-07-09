@@ -559,11 +559,15 @@ pub fn into_google(
             stop_sequences: Some(request.stop),
             max_output_tokens: None,
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
-            thinking_config: match mode {
-                GoogleModelMode::Thinking { budget_tokens } => {
-                    budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
+            thinking_config: if request.thinking_allowed {
+                match mode {
+                    GoogleModelMode::Thinking { budget_tokens } => {
+                        budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
+                    }
+                    GoogleModelMode::Default => None,
                 }
-                GoogleModelMode::Default => None,
+            } else {
+                Some(ThinkingConfig { thinking_budget: 0 })
             },
             top_p: None,
             top_k: None,
