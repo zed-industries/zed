@@ -865,9 +865,19 @@ pub trait Addon: 'static {
     }
 }
 
+struct ChangeLocation {
+    current: Option<Vec<Anchor>>,
+    original: Vec<Anchor>,
+}
+impl ChangeLocation {
+    fn locations(&self) -> &[Anchor] {
+        self.current.as_ref().unwrap_or(&self.original)
+    }
+}
+
 /// A set of caret positions, registered when the editor was edited.
 pub struct ChangeList {
-    changes: Vec<Vec<Anchor>>,
+    changes: Vec<ChangeLocation>,
     /// Currently "selected" change.
     position: Option<usize>,
 }
@@ -894,20 +904,38 @@ impl ChangeList {
             (prev + count).min(self.changes.len() - 1)
         };
         self.position = Some(next);
-        self.changes.get(next).map(|anchors| anchors.as_slice())
+        self.changes.get(next).map(|change| change.locations())
     }
 
     /// Adds a new change to the list, resetting the change list position.
-    pub fn push_to_change_list(&mut self, pop_state: bool, new_positions: Vec<Anchor>) {
+    pub fn push_to_change_list(&mut self, group: bool, new_positions: Vec<Anchor>) {
         self.position.take();
-        if pop_state {
-            self.changes.pop();
+        if let Some(last) = self.changes.last_mut()
+            && group
+        {
+            last.current = Some(new_positions)
+        } else {
+            self.changes.push(ChangeLocation {
+                original: new_positions,
+                current: None,
+            });
         }
-        self.changes.push(new_positions.clone());
     }
 
     pub fn last(&self) -> Option<&[Anchor]> {
-        self.changes.last().map(|anchors| anchors.as_slice())
+        self.changes.last().map(|change| change.locations())
+    }
+
+    pub fn last_before_grouping(&self) -> Option<&[Anchor]> {
+        self.changes.last().map(|change| change.original.as_slice())
+    }
+
+    pub fn invert_last_group(&mut self) {
+        if let Some(last) = self.changes.last_mut() {
+            if let Some(current) = last.current.as_mut() {
+                mem::swap(&mut last.original, current);
+            }
+        }
     }
 }
 
