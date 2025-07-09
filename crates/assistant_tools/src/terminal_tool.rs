@@ -90,7 +90,7 @@ impl Tool for TerminalTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Terminal
+        IconName::ToolTerminal
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
