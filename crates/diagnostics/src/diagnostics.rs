@@ -51,6 +51,8 @@ actions!(
     [
         /// Opens the project diagnostics view.
         Deploy,
+        /// Opens the project diagnostics view for the currently focused file.
+        DeployCurrentFile,
         /// Toggles the display of warning-level diagnostics.
         ToggleWarnings,
         /// Toggles automatic refresh of diagnostics.
@@ -78,6 +80,12 @@ pub(crate) struct ProjectDiagnosticsEditor {
     multibuffer: Entity<MultiBuffer>,
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
+    /// Whether to filter the diagnostics by only the active path.
+    filter_path: bool,
+    /// The currently active path in the project's diagnostics. Together with
+    /// `filter_path`, this determines whether only diagnostics for this file
+    /// should be shown.
+    active_path: Option<ProjectPath>,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     diagnostic_summary_update: Task<()>,
@@ -157,10 +165,13 @@ impl ProjectDiagnosticsEditor {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(Self::deploy_current_file);
     }
 
     fn new(
         include_warnings: bool,
+        filter_path: bool,
+        active_path: Option<ProjectPath>,
         project_handle: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -263,6 +274,7 @@ impl ProjectDiagnosticsEditor {
             this.update_all_diagnostics(false, window, cx);
         })
         .detach();
+
         cx.observe_release(&cx.entity(), |editor, _, cx| {
             editor.stop_cargo_diagnostics_fetch(cx);
         })
@@ -275,6 +287,8 @@ impl ProjectDiagnosticsEditor {
             diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
+            filter_path,
+            active_path,
             workspace,
             multibuffer: excerpts,
             focus_handle,
@@ -353,6 +367,60 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     include_warnings,
+                    false,
+                    None,
+                    workspace.project().clone(),
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            });
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
+        }
+    }
+
+    fn deploy_current_file(
+        workspace: &mut Workspace,
+        _: &DeployCurrentFile,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        // Determine the currently opened path by grabbing the active editor and
+        // finding the project path for the buffer.
+        let path = workspace
+            .active_item_as::<Editor>(cx)
+            .map_or(None, |editor| editor.project_path(cx));
+
+        if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
+            // TODO: If the project's diagnostics editor is already open, update the
+            // `active_path` field and enable the `filter_path` option.
+            dbg!(&existing.read(cx).active_path);
+            let is_active = workspace
+                .active_item(cx)
+                .is_some_and(|item| item.item_id() == existing.item_id());
+
+            existing.update(cx, |diagnostics, _cx| {
+                diagnostics.set_active_path(path);
+                diagnostics.set_filter_path(true);
+            });
+
+            workspace.activate_item(&existing, true, !is_active, window, cx);
+        } else {
+            let workspace_handle = cx.entity().downgrade();
+
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
+            };
+
+            let diagnostics = cx.new(|cx| {
+                ProjectDiagnosticsEditor::new(
+                    include_warnings,
+                    // TODO: Should these two be provided in the `new` function?
+                    // Or should we simply have `set_active_path` and
+                    // `set_filter_path` methods? Is there any downside to that?
+                    true,
+                    path,
                     workspace.project().clone(),
                     workspace_handle,
                     window,
@@ -479,7 +547,13 @@ impl ProjectDiagnosticsEditor {
         self.project.update(cx, |project, cx| {
             let mut paths = project
                 .diagnostic_summaries(false, cx)
-                .map(|(path, _, _)| path)
+                .map(|(project_path, _, _)| project_path)
+                .filter(
+                    |project_path| match (self.filter_path, self.active_path.clone()) {
+                        (true, Some(active_path)) => *project_path.path == *active_path.path,
+                        _ => true,
+                    },
+                )
                 .collect::<BTreeSet<_>>();
             self.multibuffer.update(cx, |multibuffer, cx| {
                 for buffer in multibuffer.all_buffers() {
@@ -700,6 +774,14 @@ impl ProjectDiagnosticsEditor {
         })
     }
 
+    fn set_active_path(&mut self, active_path: Option<ProjectPath>) {
+        self.active_path = active_path;
+    }
+
+    fn set_filter_path(&mut self, filter_path: bool) {
+        self.filter_path = filter_path;
+    }
+
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
         let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
             .diagnostics
@@ -839,6 +921,8 @@ impl Item for ProjectDiagnosticsEditor {
         Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
+                self.filter_path,
+                self.active_path.clone(),
                 self.project.clone(),
                 self.workspace.clone(),
                 window,
