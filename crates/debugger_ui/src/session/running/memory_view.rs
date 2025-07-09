@@ -9,10 +9,10 @@ use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Color, Context, Div, Divider, Element, FluentBuilder,
-    InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Render, Scrollbar,
-    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, TextSize, Window, div,
-    h_flex, px, v_flex,
+    ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
+    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
+    PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
+    Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 
@@ -25,6 +25,7 @@ pub(crate) struct MemoryView {
     view_state: ViewState,
     query_editor: Entity<Editor>,
     session: Entity<Session>,
+    width_picker_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl Focusable for MemoryView {
@@ -74,12 +75,12 @@ struct ViewState {
     /// Whenever we render an item at a list boundary, we decrement/increment base index.
     next_row: u64,
     /// How many cells per row do we have?
-    line_width: u64,
+    line_width: ViewWidth,
     selection: Option<SelectedMemoryRange>,
 }
 
 impl ViewState {
-    fn new(base_row: u64, line_width: u64) -> Self {
+    fn new(base_row: u64, line_width: ViewWidth) -> Self {
         Self {
             base_row,
             next_row: base_row,
@@ -91,7 +92,7 @@ impl ViewState {
         // This was picked fully arbitrarily. There's no incentive for us to care about page sizes other than the fact that it seems to be a good
         // middle ground for data size.
         const PAGE_SIZE: u64 = 4096;
-        PAGE_SIZE / self.line_width
+        PAGE_SIZE / self.line_width.width as u64
     }
     fn schedule_scroll_down(&mut self) {
         self.next_row = self.next_row.saturating_add(1)
@@ -113,10 +114,14 @@ impl MemoryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let view_state = ViewState::new(0, 16);
+        let view_state = ViewState::new(0, WIDTHS[4].clone());
         let scroll_handle = UniformListScrollHandle::default();
 
-        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let query_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Memory Address or Expression", cx);
+            editor
+        });
         let scroll_state = ScrollbarState::new(scroll_handle.clone());
         Self {
             scroll_state,
@@ -127,6 +132,7 @@ impl MemoryView {
             view_state,
             query_editor,
             session,
+            width_picker_handle: Default::default(),
         }
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -189,17 +195,18 @@ impl MemoryView {
             "debugger-memory-view",
             self.view_state.row_count() as usize,
             move |range, _, cx| {
-                let mut line_buffer = Vec::with_capacity(view_state.line_width as usize);
+                let mut line_buffer = Vec::with_capacity(view_state.line_width.width as usize);
                 let memory_start =
-                    (view_state.base_row + range.start as u64) * view_state.line_width;
-                let memory_end =
-                    (view_state.base_row + range.end as u64) * view_state.line_width - 1;
+                    (view_state.base_row + range.start as u64) * view_state.line_width.width as u64;
+                let memory_end = (view_state.base_row + range.end as u64)
+                    * view_state.line_width.width as u64
+                    - 1;
                 let mut memory = session.update(cx, |this, cx| {
                     this.read_memory(memory_start..=memory_end, cx)
                 });
                 let mut rows = Vec::with_capacity(range.end - range.start);
                 for ix in range {
-                    line_buffer.extend((&mut memory).take(view_state.line_width as usize));
+                    line_buffer.extend((&mut memory).take(view_state.line_width.width as usize));
                     rows.push(render_single_memory_view_line(
                         &line_buffer,
                         ix as u64,
@@ -243,7 +250,62 @@ impl MemoryView {
             ..Default::default()
         }
     }
+
+    fn render_width_picker(&self, window: &mut Window, cx: &mut Context<Self>) -> DropdownMenu {
+        let weak = cx.weak_entity();
+        let selected_width = self.view_state.line_width.clone();
+        DropdownMenu::new(
+            "memory-view-width-picker",
+            selected_width.label.clone(),
+            ContextMenu::build(window, cx, |mut this, window, cx| {
+                for width in &WIDTHS {
+                    let weak = weak.clone();
+                    let width = width.clone();
+                    this = this.entry(width.label.clone(), None, move |_, cx| {
+                        _ = weak.update(cx, |this, cx| {
+                            this.view_state.line_width = width.clone();
+                        });
+                    });
+                }
+                if let Some(ix) = WIDTHS
+                    .iter()
+                    .position(|width| width.width == selected_width.width)
+                {
+                    for i in 0..=ix {
+                        this.select_next(&Default::default(), window, cx);
+                    }
+                }
+                this
+            }),
+        )
+        .handle(self.width_picker_handle.clone())
+    }
 }
+
+#[derive(Clone)]
+struct ViewWidth {
+    width: u8,
+    label: SharedString,
+}
+
+impl ViewWidth {
+    const fn new(width: u8, label: &'static str) -> Self {
+        Self {
+            width,
+            label: SharedString::new_static(label),
+        }
+    }
+}
+
+static WIDTHS: [ViewWidth; 7] = [
+    ViewWidth::new(1, "1 byte"),
+    ViewWidth::new(2, "2 bytes"),
+    ViewWidth::new(4, "4 bytes"),
+    ViewWidth::new(8, "8 bytes"),
+    ViewWidth::new(16, "16 bytes"),
+    ViewWidth::new(32, "32 bytes"),
+    ViewWidth::new(64, "64 bytes"),
+];
 
 fn render_single_memory_view_line(
     memory: &[MemoryCell],
@@ -277,15 +339,17 @@ fn render_single_memory_view_line(
         {
             this.view_state.schedule_scroll_up();
         }
-        let line_width = this.view_state.line_width;
         this.view_state.clone()
     }) else {
         return div().into_any();
     };
-    let base_address = (view_state.base_row + ix) * view_state.line_width;
+    let base_address = (view_state.base_row + ix) * view_state.line_width.width as u64;
 
     h_flex()
-        .id(("memory-view-row-full", ix * view_state.line_width))
+        .id((
+            "memory-view-row-full",
+            ix * view_state.line_width.width as u64,
+        ))
         .size_full()
         .gap_x_2()
         .child(
@@ -302,7 +366,10 @@ fn render_single_memory_view_line(
         )
         .child(
             h_flex()
-                .id(("memory-view-row-raw-memory", ix * view_state.line_width))
+                .id((
+                    "memory-view-row-raw-memory",
+                    ix * view_state.line_width.width as u64,
+                ))
                 .size_full()
                 .px_1()
                 .children(memory.iter().enumerate().map(|(cell_ix, cell)| {
@@ -366,7 +433,10 @@ fn render_single_memory_view_line(
         )
         .child(
             h_flex()
-                .id(("memory-view-row-ascii-memory", ix * view_state.line_width))
+                .id((
+                    "memory-view-row-ascii-memory",
+                    ix * view_state.line_width.width as u64,
+                ))
                 .h_full()
                 .px_1()
                 .mr_4()
@@ -413,19 +483,27 @@ impl Render for MemoryView {
             }))
             .child(
                 h_flex()
-                    .rounded_md()
-                    .border_1()
-                    .p_0p5()
+                    .w_full()
                     .mb_0p5()
-                    .bg(cx.theme().colors().editor_background)
-                    .when_else(
-                        self.query_editor
-                            .focus_handle(cx)
-                            .contains_focused(window, cx),
-                        |this| this.border_color(cx.theme().colors().border_focused),
-                        |this| this.border_color(cx.theme().colors().border_transparent),
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .rounded_md()
+                            .border_1()
+                            .p_0p5()
+                            .mb_0p5()
+                            .bg(cx.theme().colors().editor_background)
+                            .when_else(
+                                self.query_editor
+                                    .focus_handle(cx)
+                                    .contains_focused(window, cx),
+                                |this| this.border_color(cx.theme().colors().border_focused),
+                                |this| this.border_color(cx.theme().colors().border_transparent),
+                            )
+                            .child(self.render_query_bar(cx)),
                     )
-                    .child(self.render_query_bar(cx)),
+                    .child(self.render_width_picker(window, cx)),
             )
             .child(Divider::horizontal())
             .child(
