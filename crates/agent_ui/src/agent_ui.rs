@@ -57,8 +57,8 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
-        /// Creates a new Gemini CLI-based conversation thread.
-        NewGeminiThread,
+        /// Creates a new external agent conversation thread.
+        NewAcpThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
         /// Toggles the navigation menu for switching between threads and views.

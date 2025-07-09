@@ -7,7 +7,7 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use crate::NewGeminiThread;
+use crate::NewAcpThread;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
@@ -112,7 +112,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &NewGeminiThread, window, cx| {
+                .register_action(|workspace, _: &NewAcpThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_gemini_thread(window, cx));
@@ -436,7 +436,8 @@ pub struct AgentPanel {
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
     hovered_recent_history_item: Option<usize>,
-    assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
+    new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
+    agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
@@ -700,7 +701,8 @@ impl AgentPanel {
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             hovered_recent_history_item: None,
-            assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
+            new_thread_menu_handle: PopoverMenuHandle::default(),
+            agent_panel_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu: None,
             width: None,
@@ -1094,7 +1096,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.assistant_dropdown_menu_handle.toggle(window, cx);
+        self.agent_panel_menu_handle.toggle(window, cx);
     }
 
     pub fn increase_font_size(
@@ -1790,7 +1792,45 @@ impl AgentPanel {
             | ActiveView::Configuration => None,
         };
 
-        let agent_extra_menu = PopoverMenu::new("agent-options-menu")
+        let new_thread_menu = PopoverMenu::new("new_thread_menu")
+            .trigger_with_tooltip(
+                IconButton::new("new_thread_menu_btn", IconName::Plus).icon_size(IconSize::Small),
+                Tooltip::text("New Thread…"),
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.new_thread_menu_handle.clone())
+            .menu(move |window, cx| {
+                let active_thread = active_thread.clone();
+                Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
+                    menu = menu
+                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            this.header("Zed Agent")
+                        })
+                        .action("New Thread", NewThread::default().boxed_clone())
+                        .action("New Text Thread", NewTextThread.boxed_clone())
+                        .when_some(active_thread, |this, active_thread| {
+                            let thread = active_thread.read(cx);
+                            if !thread.is_empty() {
+                                this.action(
+                                    "New From Summary",
+                                    Box::new(NewThread {
+                                        from_thread_id: Some(thread.id().clone()),
+                                    }),
+                                )
+                            } else {
+                                this
+                            }
+                        })
+                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            this.separator()
+                                .header("External Agents")
+                                .action("New Gemini Thread", NewAcpThread.boxed_clone())
+                        });
+                    menu
+                }))
+            });
+
+        let agent_panel_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
                     .icon_size(IconSize::Small),
@@ -1808,44 +1848,9 @@ impl AgentPanel {
                 },
             )
             .anchor(Corner::TopRight)
-            .with_handle(self.assistant_dropdown_menu_handle.clone())
+            .with_handle(self.agent_panel_menu_handle.clone())
             .menu(move |window, cx| {
-                let active_thread = active_thread.clone();
-                Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
-                    menu = menu
-                        .action("New Thread", NewThread::default().boxed_clone())
-                        .action("New Text Thread", NewTextThread.boxed_clone())
-                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                            this.action("New Gemini Thread", NewGeminiThread.boxed_clone())
-                        })
-                        .when_some(active_thread, |this, active_thread| {
-                            let thread = active_thread.read(cx);
-                            if !thread.is_empty() {
-                                this.action(
-                                    "New From Summary",
-                                    Box::new(NewThread {
-                                        from_thread_id: Some(thread.id().clone()),
-                                    }),
-                                )
-                            } else {
-                                this
-                            }
-                        })
-                        .separator();
-
-                    menu = menu
-                        .header("MCP Servers")
-                        .action(
-                            "View Server Extensions",
-                            Box::new(zed_actions::Extensions {
-                                category_filter: Some(
-                                    zed_actions::ExtensionCategoryFilter::ContextServers,
-                                ),
-                            }),
-                        )
-                        .action("Add Custom Server…", Box::new(AddContextServer))
-                        .separator();
-
+                Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                     if let Some(usage) = usage {
                         menu = menu
                             .header_with_link("Prompt Usage", "Manage", account_url.clone())
@@ -1882,6 +1887,19 @@ impl AgentPanel {
                             )
                             .separator()
                     }
+
+                    menu = menu
+                        .header("MCP Servers")
+                        .action(
+                            "View Server Extensions",
+                            Box::new(zed_actions::Extensions {
+                                category_filter: Some(
+                                    zed_actions::ExtensionCategoryFilter::ContextServers,
+                                ),
+                            }),
+                        )
+                        .action("Add Custom Server…", Box::new(AddContextServer))
+                        .separator();
 
                     menu = menu
                         .action("Rules…", Box::new(OpenRulesLibrary::default()))
@@ -1924,27 +1942,8 @@ impl AgentPanel {
                             .px(DynamicSpacing::Base08.rems(cx))
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
-                            .child(
-                                IconButton::new("new", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "New Thread",
-                                            &NewThread::default(),
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(
-                                            NewThread::default().boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
-                            )
-                            .child(agent_extra_menu),
+                            .child(new_thread_menu)
+                            .child(agent_panel_menu),
                     ),
             )
     }
@@ -3054,8 +3053,10 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        if matches!(self.active_view, ActiveView::TextThread { .. }) {
-            key_context.add("prompt_editor");
+        match &self.active_view {
+            ActiveView::AcpThread { .. } => key_context.add("acp_thread"),
+            ActiveView::TextThread { .. } => key_context.add("prompt_editor"),
+            ActiveView::Thread { .. } | ActiveView::History | ActiveView::Configuration => {}
         }
         key_context
     }
