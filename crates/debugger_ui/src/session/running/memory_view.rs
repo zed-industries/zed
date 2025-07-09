@@ -289,7 +289,7 @@ impl MemoryView {
         let Ok(as_address) = parse::<u64>(&text) else {
             return;
         };
-        self.view_state.next_row = as_address & !0xfff;
+        self.view_state.next_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
         cx.notify();
     }
 }
