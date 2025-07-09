@@ -14676,6 +14676,7 @@ dependencies = [
  "search",
  "serde",
  "settings",
+ "tempfile",
  "theme",
  "tree-sitter-json",
  "tree-sitter-rust",
