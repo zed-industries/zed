@@ -1622,6 +1622,7 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
