@@ -1367,7 +1367,6 @@ fn parse_normal_key(
     Some(Keystroke {
         modifiers,
         key,
-        key_en: None,
         key_char,
     })
 }
