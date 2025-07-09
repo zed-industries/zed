@@ -198,11 +198,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &UndoLastLine, window, cx| {
         Vim::take_forced_motion(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
-            let Some(last_change) = editor.change_list.last() else {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let Some(last_change) = editor.change_list.last_before_grouping() else {
                 return;
             };
+
             let anchors = last_change.iter().cloned().collect::<Vec<_>>();
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
             let mut last_row = None;
             let ranges: Vec<_> = anchors
                 .iter()
@@ -223,19 +224,58 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 .collect();
 
             let edits = editor.buffer().update(cx, |buffer, cx| {
-                buffer.undo(cx);
-                let edits = ranges
-                    .into_iter()
-                    .map(|(anchors, mut points)| {
-                        let mut old_text = buffer
+                let current_content = ranges
+                    .iter()
+                    .map(|(anchors, _)| {
+                        buffer
                             .snapshot(cx)
                             .text_for_range(anchors.clone())
-                            .collect::<String>();
-                        let new_text = snapshot.text_for_range(anchors.clone()).collect::<String>();
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>();
+                let mut content_before_undo = current_content.clone();
+                let mut undo_count = 0;
+
+                loop {
+                    buffer.undo(cx);
+                    undo_count += 1;
+                    let mut content_after_undo = Vec::new();
+
+                    let mut line_changed = false;
+                    for ((anchors, _), text_before_undo) in
+                        ranges.iter().zip(content_before_undo.iter())
+                    {
+                        let snapshot = buffer.snapshot(cx);
+                        let text_after_undo =
+                            snapshot.text_for_range(anchors.clone()).collect::<String>();
+
+                        if &text_after_undo != text_before_undo {
+                            line_changed = true;
+                        }
+                        content_after_undo.push(text_after_undo);
+                    }
+
+                    content_before_undo = content_after_undo;
+                    if !line_changed {
+                        break;
+                    }
+                }
+
+                let edits = ranges
+                    .into_iter()
+                    .zip(
+                        content_before_undo
+                            .into_iter()
+                            .zip(current_content.into_iter()),
+                    )
+                    .filter_map(|((_, mut points), (mut old_text, new_text))| {
+                        if new_text == old_text {
+                            return None;
+                        }
                         let common_suffix_starts_at = old_text
                             .char_indices()
                             .rev()
-                            .zip(new_text.chars())
+                            .zip(new_text.chars().rev())
                             .find_map(
                                 |((i, a), b)| {
                                     if a != b { Some(i + a.len_utf8()) } else { None }
@@ -252,10 +292,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         points.start.column = common_prefix_len as u32;
                         old_text = old_text.split_at(common_prefix_len).1.to_string();
 
-                        (points, old_text)
+                        Some((points, old_text))
                     })
                     .collect::<Vec<_>>();
-                buffer.redo(cx);
+
+                for _ in 0..undo_count {
+                    buffer.redo(cx);
+                }
                 edits
             });
             editor.finalize_last_transaction(cx);
@@ -1988,6 +2031,26 @@ mod test {
         cx.simulate_shared_keystrokes("shift-g k").await;
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("o h e l l o escape").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("shift-u").await;
+    }
+
+    #[gpui::test]
+    async fn test_undo_last_line_newline_many_changes(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇfn a() { }
+            fn a() { }
+            fn a() { }
+        "})
+            .await;
+        // do a jump to reset vim's undo grouping
+        cx.simulate_shared_keystrokes("x shift-g k").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("x f a x f { x").await;
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("shift-u").await;
         cx.shared_state().await.assert_matches();
