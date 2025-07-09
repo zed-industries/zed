@@ -805,12 +805,12 @@ impl AcpThread {
 
     pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
         let connection = self.connection.clone();
-        async move { connection.request(acp::InitializeParams).await }
+        async move { Ok(connection.request(acp::InitializeParams).await?) }
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
         let connection = self.connection.clone();
-        async move { connection.request(acp::AuthenticateParams).await }
+        async move { Ok(connection.request(acp::AuthenticateParams).await?) }
     }
 
     pub fn send(
@@ -842,7 +842,7 @@ impl AcpThread {
 
         async move {
             match rx.await {
-                Ok(Err(e)) => Err(e),
+                Ok(Err(e)) => Err(e)?,
                 _ => Ok(()),
             }
         }
@@ -1616,7 +1616,10 @@ mod tests {
             &self,
             message: T,
         ) -> BoxedLocal<Result<T::Response>> {
-            self.connection.request(message).boxed_local()
+            self.connection
+                .request(message)
+                .map(|f| f.map_err(|err| anyhow!(err)))
+                .boxed_local()
         }
     }
 }
