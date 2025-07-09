@@ -4381,7 +4381,7 @@ impl Editor {
                                     .take_while(|c| c.is_whitespace())
                                     .count();
                                 let comment_candidate = snapshot
-                                    .chars_for_range(range)
+                                    .chars_for_range(range.clone())
                                     .skip(num_of_whitespaces)
                                     .take(max_len_of_delimiter)
                                     .collect::<String>();
@@ -4396,6 +4396,22 @@ impl Editor {
                                         }
                                     })
                                     .max_by_key(|(_, len)| *len)?;
+
+                                if let Some((block_start, _)) = language.block_comment_delimiters()
+                                {
+                                    let block_start_trimmed = block_start.trim_end();
+                                    if block_start_trimmed.starts_with(delimiter.trim_end()) {
+                                        let line_content = snapshot
+                                            .chars_for_range(range)
+                                            .skip(num_of_whitespaces)
+                                            .take(block_start_trimmed.len())
+                                            .collect::<String>();
+
+                                        if line_content.starts_with(block_start_trimmed) {
+                                            return None;
+                                        }
+                                    }
+                                }
 
                                 let cursor_is_placed_after_comment_marker =
                                     num_of_whitespaces + trimmed_len <= start_point.column as usize;

@@ -3081,6 +3081,45 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let lua_language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["--".into()],
+            block_comment: Some(("--[[".into(), "]]".into())),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(lua_language), cx));
+
+    // Line with line comment should extend
+    cx.set_state(indoc! {"
+        --ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --
+        --ˇ
+    "});
+
+    // Line with block comment that matches line comment should not extend
+    cx.set_state(indoc! {"
+        --[[ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --[[
+        ˇ
+    "});
+}
+
+#[gpui::test]
 fn test_insert_with_old_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
