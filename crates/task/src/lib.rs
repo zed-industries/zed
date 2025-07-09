@@ -434,21 +434,29 @@ impl ShellBuilder {
     }
 
     /// Returns the program and arguments to run this task in a shell.
-    pub fn build(mut self, task_command: String, task_args: &Vec<String>) -> (String, Vec<String>) {
-        let combined_command = task_args
-            .into_iter()
-            .fold(task_command, |mut command, arg| {
-                command.push(' ');
-                command.push_str(&self.to_windows_shell_variable(arg.to_string()));
-                command
-            });
+    pub fn build(
+        mut self,
+        task_command: Option<String>,
+        task_args: &Vec<String>,
+    ) -> (String, Vec<String>) {
+        if let Some(task_command) = task_command {
+            let combined_command = task_args
+                .into_iter()
+                .fold(task_command, |mut command, arg| {
+                    command.push(' ');
+                    command.push_str(&self.to_windows_shell_variable(arg.to_string()));
+                    command
+                });
 
-        match self.windows_shell_type() {
-            WindowsShellType::Powershell => self.args.extend(["-C".to_owned(), combined_command]),
-            WindowsShellType::Cmd => self.args.extend(["/C".to_owned(), combined_command]),
-            WindowsShellType::Other => {
-                self.args
-                    .extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+            match self.windows_shell_type() {
+                WindowsShellType::Powershell => {
+                    self.args.extend(["-C".to_owned(), combined_command])
+                }
+                WindowsShellType::Cmd => self.args.extend(["/C".to_owned(), combined_command]),
+                WindowsShellType::Other => {
+                    self.args
+                        .extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                }
             }
         }
 
