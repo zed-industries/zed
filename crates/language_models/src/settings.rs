@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,6 +33,7 @@ pub struct AllLanguageModelSettings {
     pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
+    pub openai_compatible: HashMap<Arc<str>, OpenAiSettings>,
     pub open_router: OpenRouterSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
@@ -47,6 +51,7 @@ pub struct AllLanguageModelSettingsContent {
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
@@ -100,6 +105,12 @@ pub struct MistralSettingsContent {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct OpenAiCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<provider::open_ai::AvailableModel>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -218,6 +229,17 @@ impl settings::Settings for AllLanguageModelSettings {
                 &mut settings.openai.available_models,
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
+
+            // OpenAI Compatible
+            for (id, openai_compatible_settings) in value.openai_compatible.clone() {
+                settings.openai_compatible.insert(
+                    id,
+                    OpenAiSettings {
+                        api_url: openai_compatible_settings.api_url,
+                        available_models: openai_compatible_settings.available_models,
+                    },
+                );
+            }
 
             // Vercel
             let vercel = value.vercel.clone();

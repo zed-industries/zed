@@ -701,3 +701,15 @@ impl From<String> for LanguageModelProviderName {
         Self(SharedString::from(value))
     }
 }
+
+impl From<Arc<str>> for LanguageModelProviderId {
+    fn from(value: Arc<str>) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<Arc<str>> for LanguageModelProviderName {
+    fn from(value: Arc<str>) -> Self {
+        Self(SharedString::from(value))
+    }
+}
