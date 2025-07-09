@@ -8957,6 +8957,19 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
 
+    fn edit_prediction_icon_for_provider(&self) -> IconName {
+        if let Some(provider) = &self.edit_prediction_provider {
+            match provider.provider.name() {
+                "ollama" => IconName::AiOllama,
+                "copilot" => IconName::Copilot,
+                "supermaven" => IconName::Supermaven,
+                _ => IconName::ZedPredict,
+            }
+        } else {
+            IconName::ZedPredict
+        }
+    }
+
     fn render_edit_prediction_cursor_popover(
         &self,
         min_width: Pixels,
@@ -8994,7 +9007,7 @@ impl Editor {
                         h_flex()
                             .flex_1()
                             .gap_2()
-                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Icon::new(self.edit_prediction_icon_for_provider()))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
                             .child(
@@ -9010,12 +9023,10 @@ impl Editor {
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
-        fn pending_completion_container() -> Div {
-            h_flex()
-                .h_full()
-                .flex_1()
-                .gap_2()
-                .child(Icon::new(IconName::ZedPredict))
+        let provider_icon = self.edit_prediction_icon_for_provider();
+
+        fn pending_completion_container(icon: IconName) -> Div {
+            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
         }
 
         let completion = match &self.active_inline_completion {
@@ -9040,12 +9051,15 @@ impl Editor {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
+                                        // For move predictions, still use directional icons
                                         Icon::new(IconName::ZedPredictDown)
                                     } else {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                InlineCompletion::Edit { .. } => {
+                                    Icon::new(self.edit_prediction_icon_for_provider())
+                                }
                             }))
                             .child(
                                 h_flex()
@@ -9112,12 +9126,11 @@ impl Editor {
                     cx,
                 )?,
 
-                None => {
-                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
-                }
+                None => pending_completion_container(provider_icon)
+                    .child(Label::new("...").size(LabelSize::Small)),
             },
 
-            None => pending_completion_container().child(Label::new("No Prediction")),
+            None => pending_completion_container(provider_icon).child(Label::new("No Prediction")),
         };
 
         let completion = if is_refreshing {
@@ -9268,7 +9281,7 @@ impl Editor {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    Icon::new(IconName::ZedPredict).into_any_element()
+                    Icon::new(self.edit_prediction_icon_for_provider()).into_any_element()
                 };
 
                 Some(

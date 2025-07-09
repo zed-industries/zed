@@ -22904,3 +22904,29 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .map(Rgba::from)
         .collect()
 }
+
+#[gpui::test]
+async fn test_edit_prediction_icon_for_provider(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("test", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    // Test with no provider - should default to ZedPredict
+    let _ = editor.update(cx, |editor, _window, _cx| {
+        let icon = editor.edit_prediction_icon_for_provider();
+        assert_eq!(icon, IconName::ZedPredict);
+    });
+
+    // Test with fake inline completion provider - should still default to ZedPredict
+    // since the fake provider name is "fake-completion-provider"
+    let fake_provider = cx.new(|_| FakeInlineCompletionProvider::default());
+
+    let _ = editor.update(cx, |editor, window, cx| {
+        editor.set_edit_prediction_provider(Some(fake_provider), window, cx);
+        let icon = editor.edit_prediction_icon_for_provider();
+        assert_eq!(icon, IconName::ZedPredict);
+    });
+}

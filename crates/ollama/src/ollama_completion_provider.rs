@@ -80,7 +80,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, _cx: &App) -> bool {
@@ -404,7 +404,7 @@ mod tests {
         let prefix = "def test():";
         let suffix = "    pass";
 
-        let request_with_key = GenerateRequest {
+        let _request_with_key = GenerateRequest {
             model: provider_with_key.model.clone(),
             prompt: prefix.to_string(),
             suffix: Some(suffix.to_string()),
@@ -422,5 +422,11 @@ mod tests {
         // The actual API key usage would be tested in the generate function
         // but we can verify the provider stores it correctly
         assert_eq!(provider_with_key.api_key, Some("test-api-key".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_show_completions_in_menu(_cx: &mut TestAppContext) {
+        // Test that Ollama provider shows completions in menu to enable hover icon
+        assert!(OllamaCompletionProvider::show_completions_in_menu());
     }
 }
