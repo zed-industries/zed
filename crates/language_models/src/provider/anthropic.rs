@@ -663,12 +663,10 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if request.thinking_allowed {
-            if let AnthropicModelMode::Thinking { budget_tokens } = mode {
-                Some(anthropic::Thinking::Enabled { budget_tokens })
-            } else {
-                None
-            }
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {
             None
         },
