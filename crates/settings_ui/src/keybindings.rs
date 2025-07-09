@@ -387,6 +387,10 @@ impl KeymapEditor {
                     .flatten()
                     .collect();
 
+                if this.conflicts.is_empty() {
+                    this.filter_state = FilterState::All;
+                }
+
                 this.keybindings = key_bindings;
                 this.string_match_candidates = Arc::new(string_match_candidates);
                 this.matches = this
