@@ -119,7 +119,7 @@ impl DapLocator for CargoLocator {
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
         let (program, args) = builder.build(
-            "cargo".into(),
+            Some("cargo".into()),
             &build_config
                 .args
                 .iter()
