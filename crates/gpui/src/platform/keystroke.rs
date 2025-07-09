@@ -16,7 +16,7 @@ pub struct Keystroke {
     pub key: String,
 
     /// key_en is keyboard layout independent key char in en_US layout
-    pub key_en: Option<char>,
+    // pub key_en: Option<char>,
 
     /// key_char is the character that could have been typed when
     /// this binding was pressed.
@@ -71,19 +71,9 @@ impl Keystroke {
                 ..Default::default()
             };
 
-            if &target.key == key_char && target.modifiers == ime_modifiers {
-                return true;
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        if let Some(key_en) = self.key_en.as_ref() {
-            let ime_modifiers = Modifiers {
-                control: self.modifiers.control,
-                platform: self.modifiers.platform,
-                ..Default::default()
-            };
-            if target.key == String::from(*key_en) && target.modifiers == ime_modifiers {
+            if ((&target.key == key_char) || (&target.key == &self.key))
+                && target.modifiers == ime_modifiers
+            {
                 return true;
             }
         }
@@ -207,7 +197,6 @@ impl Keystroke {
             modifiers,
             key,
             key_char,
-            key_en: None,
         })
     }
 

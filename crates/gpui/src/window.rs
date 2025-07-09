@@ -3500,7 +3500,6 @@ impl Window {
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
-                        key_en: None,
                         key_char: None,
                         modifiers: Modifiers::default(),
                     });

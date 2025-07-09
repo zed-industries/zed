@@ -723,6 +723,17 @@ impl crate::Keystroke {
         let key_utf8 = state.key_get_utf8(keycode);
         let key_sym = state.key_get_one_sym(keycode);
 
+        #[allow(unreachable_code)]
+        fn keycode_to_key(key: u32) -> Option<char> {
+            #[cfg(feature = "x11")]
+            return keycode_to_key_x11(key);
+
+            #[cfg(feature = "wayland")]
+            return keycode_to_key_wayland(key);
+
+            None
+        }
+
         let key = match key_sym {
             Keysym::Return => "enter".to_owned(),
             Keysym::Prior => "pageup".to_owned(),
@@ -779,6 +790,8 @@ impl crate::Keystroke {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if let Some(key_en) = keycode_to_key(keycode.raw()) {
+                    String::from(key_en)
                 } else {
                     name
                 }
@@ -798,22 +811,9 @@ impl crate::Keystroke {
         let key_char = (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.clone().is_empty())
             .then_some(key_utf8.clone());
 
-        #[allow(unreachable_code)]
-        fn keycode_to_key(key: u32) -> Option<char> {
-            #[cfg(feature = "x11")]
-            return keycode_to_key_x11(key);
-
-            #[cfg(feature = "wayland")]
-            return keycode_to_key_wayland(key);
-
-            None
-        }
-
-        let key_en = keycode_to_key(keycode.raw());
         Self {
             modifiers,
             key,
-            key_en,
             key_char,
         }
     }
