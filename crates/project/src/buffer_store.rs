@@ -576,12 +576,14 @@ impl LocalBufferStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
-        let buffer_ref = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer_ref.file()) else {
-            return Task::ready(Err(anyhow!("buffer doesn't have a file")));
+        let (worktree, path) = {
+            let buffer_ref = buffer.read(cx);
+            let Some(file) = File::from_dyn(buffer_ref.file()) else {
+                return Task::ready(Err(anyhow!("buffer doesn't have a file")));
+            };
+            (file.worktree.clone(), file.path.clone())
         };
-        let worktree = file.worktree.clone();
-        self.save_local_buffer(buffer, worktree, file.path.clone(), false, cx)
+        self.save_local_buffer(buffer, worktree, path, false, cx)
     }
 
     fn save_buffer_as(
@@ -1026,9 +1028,9 @@ impl BufferStore {
     }
 
     fn buffer_changed_file(&mut self, buffer: Entity<Buffer>, cx: &mut App) -> Option<()> {
-        let file = File::from_dyn(buffer.read(cx).file())?;
-
-        let remote_id = buffer.read(cx).remote_id();
+        let buffer_ref = buffer.read(cx);
+        let file = File::from_dyn(buffer_ref.file())?;
+        let remote_id = buffer_ref.remote_id();
         if let Some(entry_id) = file.entry_id {
             if let Some(local) = self.as_local_mut() {
                 match local.local_buffer_ids_by_entry_id.get(&entry_id) {
@@ -1065,10 +1067,13 @@ impl BufferStore {
         let mut open_buffers = HashSet::default();
         let mut unnamed_buffers = Vec::new();
         for handle in self.buffers() {
-            let buffer = handle.read(cx);
-            if self.non_searchable_buffers.contains(&buffer.remote_id()) {
+            let (remote_id, entry_id) = {
+                let buffer = handle.read(cx);
+                (buffer.remote_id(), buffer.entry_id(cx))
+            };
+            if self.non_searchable_buffers.contains(&remote_id) {
                 continue;
-            } else if let Some(entry_id) = buffer.entry_id(cx) {
+            } else if let Some(entry_id) = entry_id {
                 open_buffers.insert(entry_id);
             } else {
                 limit = limit.saturating_sub(1);

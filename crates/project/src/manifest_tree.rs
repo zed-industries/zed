@@ -62,8 +62,8 @@ impl WorktreeRoots {
                     }
                     WorktreeEvent::UpdatedGitRepositories(_) => {}
                     WorktreeEvent::DeletedEntry(entry_id) => {
-                        let Some(entry) = this.worktree_store.read(cx).entry_for_id(*entry_id, cx)
-                        else {
+                        let worktree_store = this.worktree_store.read(cx);
+                        let Some(entry) = worktree_store.entry_for_id(*entry_id, cx) else {
                             return;
                         };
                         let path = TriePath::from(entry.path.as_ref());

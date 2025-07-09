@@ -710,11 +710,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let (old_entry_ids, old_mtimes) = project.read_with(cx, |project, cx| {
-            let tree = project.worktrees(cx).next().unwrap().read(cx);
-            (
-                tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
-                tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
-            )
+            let worktree = project.worktrees(cx).next().unwrap();
+            let tree = worktree.read(cx);
+            let entry_ids = tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>();
+            let mtimes = tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>();
+            (entry_ids, mtimes)
         });
 
         // Regression test: after the directory is scanned, touch the git repo's
@@ -724,11 +724,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         let (new_entry_ids, new_mtimes) = project.read_with(cx, |project, cx| {
-            let tree = project.worktrees(cx).next().unwrap().read(cx);
-            (
-                tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
-                tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
-            )
+            let worktree = project.worktrees(cx).next().unwrap();
+            let tree = worktree.read(cx);
+            let entry_ids = tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>();
+            let mtimes = tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>();
+            (entry_ids, mtimes)
         });
         assert_eq!(new_entry_ids, old_entry_ids);
         assert_ne!(new_mtimes, old_mtimes);

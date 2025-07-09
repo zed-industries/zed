@@ -155,7 +155,7 @@ impl DapStore {
     ) -> Self {
         let mode = DapStoreMode::Ssh(SshDapStore {
             upstream_client: ssh_client.read(cx).proto_client(),
-            ssh_client,
+            ssh_client: ssh_client.clone(),
             upstream_project_id: project_id,
         });
 

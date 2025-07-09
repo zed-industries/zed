@@ -338,15 +338,16 @@ impl LocalToolchainStore {
                 .ok()?;
             let toolchains = language.toolchain_lister()?;
             let manifest_name = toolchains.manifest_name();
-            let (snapshot, worktree) = this
+            let worktree = this
                 .update(cx, |this, cx| {
-                    this.worktree_store
-                        .read(cx)
-                        .worktree_for_id(path.worktree_id, cx)
-                        .map(|worktree| (worktree.read(cx).snapshot(), worktree))
+                    let store = this.worktree_store.read(cx);
+                    store.worktree_for_id(path.worktree_id, cx)
                 })
                 .ok()
                 .flatten()?;
+            let snapshot = worktree
+                .read_with(cx, |worktree, _| worktree.snapshot())
+                .ok()?;
             let worktree_id = snapshot.id();
             let worktree_root = snapshot.abs_path().to_path_buf();
             let relative_path = manifest_tree

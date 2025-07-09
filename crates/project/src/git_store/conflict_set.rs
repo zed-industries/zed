@@ -641,7 +641,7 @@ mod tests {
         conflict_set.update(cx, |conflict_set, cx| {
             let conflict_range = conflict_set.snapshot().conflicts[0]
                 .range
-                .to_point(buffer.read(cx));
+                .to_point(&buffer.read(cx).snapshot());
             assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
         });
 
@@ -673,7 +673,7 @@ mod tests {
         conflict_set.update(cx, |conflict_set, cx| {
             let conflict_range = conflict_set.snapshot().conflicts[0]
                 .range
-                .to_point(buffer.read(cx));
+                .to_point(&buffer.read(cx).snapshot());
             assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
         });
     }

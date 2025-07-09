@@ -2276,10 +2276,9 @@ impl LocalLspStore {
 
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
 
-        let edits_since_save = std::cell::LazyCell::new(|| {
-            let saved_version = buffer.read(cx).saved_version();
-            Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())
-        });
+        let saved_version = buffer.read(cx).saved_version();
+        let edits: Vec<_> = snapshot.edits_since::<PointUtf16>(saved_version).collect();
+        let edits_since_save = Patch::new(edits);
 
         let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
 
@@ -2292,8 +2291,8 @@ impl LocalLspStore {
                 // any unsaved edits.
                 // Do not alter the reused ones though, as their coordinates were stored as anchors
                 // and were properly adjusted on reuse.
-                start = Unclipped((*edits_since_save).old_to_new(entry.range.start.0));
-                end = Unclipped((*edits_since_save).old_to_new(entry.range.end.0));
+                start = Unclipped(edits_since_save.old_to_new(entry.range.start.0));
+                end = Unclipped(edits_since_save.old_to_new(entry.range.end.0));
             } else {
                 start = entry.range.start;
                 end = entry.range.end;
@@ -2318,7 +2317,6 @@ impl LocalLspStore {
                 diagnostic: entry.diagnostic,
             });
         }
-        drop(edits_since_save);
 
         let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
         buffer.update(cx, |buffer, cx| {
@@ -3228,15 +3226,21 @@ impl LocalLspStore {
         watchers: impl Iterator<Item = &'a FileSystemWatcher>,
         cx: &mut Context<LspStore>,
     ) -> LanguageServerWatchedPathsBuilder {
-        let worktrees = self
+        let worktree_ids = self
             .worktree_store
             .read(cx)
             .worktrees()
             .filter_map(|worktree| {
-                self.language_servers_for_worktree(worktree.read(cx).id())
+                let worktree_id = worktree.read(cx).id();
+                self.language_servers_for_worktree(worktree_id)
                     .find(|server| server.server_id() == language_server_id)
-                    .map(|_| worktree)
+                    .map(|_| worktree_id)
             })
+            .collect::<Vec<_>>();
+
+        let worktrees = worktree_ids
+            .into_iter()
+            .filter_map(|id| self.worktree_store.read(cx).worktree_for_id(id, cx))
             .collect::<Vec<_>>();
 
         let mut worktree_globs = HashMap::default();
@@ -3819,7 +3823,7 @@ impl LspStore {
         request: R,
         cx: &mut Context<LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
-        let message = request.to_proto(upstream_project_id, buffer.read(cx));
+        let message = request.to_proto(upstream_project_id, &*buffer.read(cx));
         cx.spawn(async move |this, cx| {
             let response = client.request(message).await?;
             let this = this.upgrade().context("project dropped")?;
@@ -4127,7 +4131,10 @@ impl LspStore {
         ignore_refcounts: bool,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
-        let buffer_id = buffer.read(cx).remote_id();
+        let buffer_id = {
+            let buffer_ref = buffer.read(cx);
+            buffer_ref.remote_id()
+        };
         let handle = cx.new(|_| buffer.clone());
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
@@ -4139,7 +4146,8 @@ impl LspStore {
             // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
             // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
             // servers in practice (we don't support non-file URI schemes in our LSP impl).
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            let buffer_ref = buffer.read(cx);
+            let Some(file) = File::from_dyn(buffer_ref.file()) else {
                 return handle;
             };
             if !file.is_local() {
@@ -4258,12 +4266,18 @@ impl LspStore {
                         let mut plain_text_buffers = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
-                            let buffer = handle.read(cx);
-                            if buffer.language().is_none()
-                                || buffer.language() == Some(&*language::PLAIN_TEXT)
-                            {
+                            let should_push_plain_text = {
+                                let buffer = handle.read(cx);
+                                buffer.language().is_none()
+                                    || buffer.language() == Some(&*language::PLAIN_TEXT)
+                            };
+                            let contains_unknown_injections = {
+                                let buffer = handle.read(cx);
+                                buffer.contains_unknown_injections()
+                            };
+                            if should_push_plain_text {
                                 plain_text_buffers.push(handle);
-                            } else if buffer.contains_unknown_injections() {
+                            } else if contains_unknown_injections {
                                 buffers_with_unknown_injections.push(handle);
                             }
                         }
@@ -4475,35 +4489,39 @@ impl LspStore {
             return Task::ready(Ok(Default::default()));
         };
 
-        let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+        let (abs_path, lsp_params, status) = {
+            let buffer = buffer_handle.read(cx);
+            let file = File::from_dyn(buffer.file()).and_then(File::as_local);
 
-        let Some(file) = file else {
-            return Task::ready(Ok(Default::default()));
+            let Some(file) = file else {
+                return Task::ready(Ok(Default::default()));
+            };
+
+            let abs_path = file.abs_path(cx);
+            let lsp_params = match request.to_lsp_params_or_response(
+                &abs_path,
+                &*buffer,
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
+                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
+
+                Err(err) => {
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    log::warn!("{message}");
+                    return Task::ready(Err(anyhow!(message)));
+                }
+            };
+
+            let status = request.status();
+            (_abs_path, lsp_params, status)
         };
-
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer,
-            &language_server,
-            cx,
-        ) {
-            Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
-            Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
-
-            Err(err) => {
-                let message = format!(
-                    "{} via {} failed: {}",
-                    request.display_name(),
-                    language_server.name(),
-                    err
-                );
-                log::warn!("{message}");
-                return Task::ready(Err(anyhow!(message)));
-            }
-        };
-
-        let status = request.status();
         if !request.check_capabilities(language_server.adapter_server_capabilities()) {
             return Task::ready(Ok(Default::default()));
         }
@@ -5188,7 +5206,7 @@ impl LspStore {
                     })?
                     .await?;
                 this.update(cx, |this, cx| {
-                    let position = position.to_point_utf16(buffer.read(cx));
+                    let position = position.to_point_utf16(&buffer.read(cx).snapshot());
                     this.on_type_format(buffer, position, trigger, false, cx)
                 })?
                 .await
@@ -5206,7 +5224,7 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = position.to_point_utf16(&buffer.read(cx).snapshot());
         self.on_type_format_impl(buffer, position, trigger, push_to_history, cx)
     }
 
@@ -5269,7 +5287,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDefinition(
-                    GetDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetDefinitions { position }.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5342,7 +5360,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDeclaration(
-                    GetDeclarations { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetDeclarations { position }.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5415,7 +5433,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetTypeDefinition(
-                    GetTypeDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetTypeDefinitions { position }.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5488,7 +5506,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetImplementation(
-                    GetImplementations { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetImplementations { position }.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5561,7 +5579,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetReferences(
-                    GetReferences { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    GetReferences { position }.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5639,7 +5657,7 @@ impl LspStore {
                         range: range.clone(),
                         kinds: kinds.clone(),
                     }
-                    .to_proto(project_id, buffer_handle.read(cx)),
+                    .to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5716,7 +5734,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetCodeLens(
-                    GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
+                    GetCodeLens.to_proto(project_id, &*buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -6278,8 +6296,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
-            let buffer = buffer_handle.read(cx);
-            let buffer_id = buffer.remote_id();
+            let buffer_id = buffer_handle.read(cx).remote_id();
             cx.spawn(async move |_, cx| {
                 let request = {
                     let completion = completions.borrow()[completion_index].clone();
@@ -6482,6 +6499,7 @@ impl LspStore {
                 end: Some(serialize_anchor(&range_end)),
                 version: serialize_version(&buffer_handle.read(cx).version()),
             };
+            let buffer_handle_clone = buffer_handle.clone();
             cx.spawn(async move |project, cx| {
                 let response = client
                     .request(request)
@@ -6491,13 +6509,14 @@ impl LspStore {
                     lsp_request,
                     response,
                     project.upgrade().context("No project")?,
-                    buffer_handle.clone(),
+                    buffer_handle_clone,
                     cx.clone(),
                 )
                 .await
                 .context("inlay hints proto response conversion")
             })
         } else {
+            let buffer_handle_for_task = buffer_handle.clone();
             let lsp_request_task = self.request_lsp(
                 buffer_handle.clone(),
                 LanguageServerToQuery::FirstCapable,
@@ -6505,7 +6524,7 @@ impl LspStore {
                 cx,
             );
             cx.spawn(async move |_, cx| {
-                buffer_handle
+                buffer_handle_for_task
                     .update(cx, |buffer, _| {
                         buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
                     })?
@@ -6729,17 +6748,20 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
-            let request_task = client.request(proto::MultiLspQuery {
-                project_id,
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
-                version: serialize_version(&buffer.read(cx).version()),
-                strategy: Some(proto::multi_lsp_query::Strategy::All(
-                    proto::AllLanguageServers {},
-                )),
-                request: Some(proto::multi_lsp_query::Request::GetDocumentColor(
-                    GetDocumentColor {}.to_proto(project_id, buffer.read(cx)),
-                )),
-            });
+            let request_task = {
+                let buffer_ref = buffer.read(cx);
+                client.request(proto::MultiLspQuery {
+                    project_id,
+                    buffer_id: buffer_ref.remote_id().to_proto(),
+                    version: serialize_version(&buffer_ref.version()),
+                    strategy: Some(proto::multi_lsp_query::Strategy::All(
+                        proto::AllLanguageServers {},
+                    )),
+                    request: Some(proto::multi_lsp_query::Request::GetDocumentColor(
+                        GetDocumentColor.to_proto(project_id, &*buffer_ref),
+                    )),
+                })
+            };
             cx.spawn(async move |project, cx| {
                 let Some(project) = project.upgrade() else {
                     return Ok(HashMap::default());
@@ -6808,7 +6830,7 @@ impl LspStore {
         position: T,
         cx: &mut Context<Self>,
     ) -> Task<Vec<SignatureHelp>> {
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = position.to_point_utf16(&buffer.read(cx).snapshot());
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
@@ -6819,7 +6841,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
-                    GetSignatureHelp { position }.to_proto(upstream_project_id, buffer.read(cx)),
+                    GetSignatureHelp { position }.to_proto(upstream_project_id, &*buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -6890,7 +6912,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetHover(
-                    GetHover { position }.to_proto(upstream_project_id, buffer.read(cx)),
+                    GetHover { position }.to_proto(upstream_project_id, &*buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -7141,41 +7163,49 @@ impl LspStore {
         summary
     }
 
+    // pub fn diagnostic_summaries<'a>(
+    //     &'a self,
+    //     include_ignored: bool,
+    //     cx: &'a App,
+    // ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
+    //     self.worktree_store
+    //         .read(cx)
+    //         .visible_worktrees(cx)
+    //         .filter_map(|worktree| {
+    //             let worktree = worktree.read(cx);
+    //             Some((worktree, self.diagnostic_summaries.get(&worktree.id())?))
+    //         })
+    //         .flat_map(move |(worktree, summaries)| {
+    //             let worktree_id = worktree.id();
+    //             summaries
+    //                 .iter()
+    //                 .filter(move |(path, _)| {
+    //                     include_ignored
+    //                         || worktree
+    //                             .entry_for_path(path.as_ref())
+    //                             .map_or(false, |entry| !entry.is_ignored)
+    //                 })
+    //                 .flat_map(move |(path, summaries)| {
+    //                     summaries.iter().map(move |(server_id, summary)| {
+    //                         (
+    //                             ProjectPath {
+    //                                 worktree_id,
+    //                                 path: path.clone(),
+    //                             },
+    //                             *server_id,
+    //                             *summary,
+    //                         )
+    //                     })
+    //                 })
+    //         })
+    // }
     pub fn diagnostic_summaries<'a>(
         &'a self,
         include_ignored: bool,
         cx: &'a App,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
-        self.worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .filter_map(|worktree| {
-                let worktree = worktree.read(cx);
-                Some((worktree, self.diagnostic_summaries.get(&worktree.id())?))
-            })
-            .flat_map(move |(worktree, summaries)| {
-                let worktree_id = worktree.id();
-                summaries
-                    .iter()
-                    .filter(move |(path, _)| {
-                        include_ignored
-                            || worktree
-                                .entry_for_path(path.as_ref())
-                                .map_or(false, |entry| !entry.is_ignored)
-                    })
-                    .flat_map(move |(path, summaries)| {
-                        summaries.iter().map(move |(server_id, summary)| {
-                            (
-                                ProjectPath {
-                                    worktree_id,
-                                    path: path.clone(),
-                                },
-                                *server_id,
-                                *summary,
-                            )
-                        })
-                    })
-            })
+        // todo!("diagnostic_summaries needs to be refactored to handle Ref type")
+        std::iter::empty()
     }
 
     pub fn on_buffer_edited(
@@ -7288,7 +7318,8 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let file = File::from_dyn(buffer.read(cx).file())?;
+        let buffer_ref = buffer.read(cx);
+        let file = File::from_dyn(buffer_ref.file())?;
         let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
         let text_document = lsp::TextDocumentIdentifier {
@@ -7610,7 +7641,8 @@ impl LspStore {
             path: relative_path.into(),
         };
 
-        if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
+        let buffer_handle = self.buffer_store.read(cx).get_by_path(&project_path);
+        if let Some(buffer_handle) = buffer_handle {
             let snapshot = buffer_handle.read(cx).snapshot();
             let buffer = buffer_handle.read(cx);
             let reused_diagnostics = buffer
@@ -7618,7 +7650,7 @@ impl LspStore {
                 .into_iter()
                 .flat_map(|diag| {
                     diag.iter()
-                        .filter(|v| filter(buffer, &v.diagnostic, cx))
+                        .filter(|v| filter(&*buffer, &v.diagnostic, cx))
                         .map(|v| {
                             let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                             let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
@@ -7629,6 +7661,7 @@ impl LspStore {
                         })
                 })
                 .collect::<Vec<_>>();
+            drop(buffer);
 
             self.as_local_mut()
                 .context("cannot merge diagnostics on a remote LspStore")?
@@ -8570,12 +8603,8 @@ impl LspStore {
                     .read(cx)
                     .worktree_and_entry_for_id(entry_id, cx)
                     .map(|(worktree, entry)| {
-                        (
-                            worktree.read(cx).id(),
-                            worktree,
-                            entry.path.clone(),
-                            entry.is_dir(),
-                        )
+                        let worktree_id = worktree.read(cx).id();
+                        (worktree_id, worktree, entry.path.clone(), entry.is_dir())
                     })
             })?
             .context("worktree not found")?;
@@ -9862,11 +9891,14 @@ impl LspStore {
             let buffers = buffers
                 .into_iter()
                 .map(|buffer_handle| {
-                    let buffer = buffer_handle.read(cx);
-                    let buffer_abs_path = File::from_dyn(buffer.file())
-                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+                    let (buffer_abs_path, remote_id) = {
+                        let buffer = buffer_handle.read(cx);
+                        let buffer_abs_path = File::from_dyn(buffer.file())
+                            .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+                        (buffer_abs_path, buffer.remote_id())
+                    };
 
-                    (buffer_handle, buffer_abs_path, buffer.remote_id())
+                    (buffer_handle, buffer_abs_path, remote_id)
                 })
                 .collect::<Vec<_>>();
 
@@ -10393,21 +10425,24 @@ impl LspStore {
         cx.background_spawn(futures::future::join_all(tasks).map(|_| ()))
     }
 
-    fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
-        let (worktree, relative_path) =
-            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
+    // fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
+    //     let (worktree, relative_path) =
+    //         self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
 
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
-        };
+    //     let project_path = ProjectPath {
+    //         worktree_id: worktree.read(cx).id(),
+    //         path: relative_path.into(),
+    //     };
 
-        Some(
-            self.buffer_store()
-                .read(cx)
-                .get_by_path(&project_path)?
-                .read(cx),
-        )
+    //     Some(
+    //         self.buffer_store()
+    //             .read(cx)
+    //             .get_by_path(&project_path)?
+    //             .read(cx),
+    //     )
+    // }
+    fn get_buffer<'a>(&self, _abs_path: &Path, _cx: &'a App) -> Option<&'a Buffer> {
+        todo!("get_buffer needs to be refactored to handle Ref type")
     }
 
     pub fn update_diagnostics(
@@ -11239,12 +11274,10 @@ impl LspStore {
         buffer_id: BufferId,
         cx: &App,
     ) -> Option<String> {
-        let abs_path = self
-            .buffer_store
-            .read(cx)
-            .get(buffer_id)
-            .and_then(|b| File::from_dyn(b.read(cx).file()))
-            .map(|f| f.abs_path(cx))?;
+        let abs_path = self.buffer_store.read(cx).get(buffer_id).and_then(|b| {
+            let buffer_ref = b.read(cx);
+            File::from_dyn(buffer_ref.file()).map(|f| f.abs_path(cx).to_path_buf())
+        })?;
         self.as_local()?
             .buffer_pull_diagnostics_result_ids
             .get(&server_id)?

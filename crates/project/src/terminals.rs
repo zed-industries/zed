@@ -478,9 +478,12 @@ impl Project {
                 let bin_path = venv_path.join(bin_dir_name);
                 self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
-                        worktree.read(cx).entry_for_path(&relative_path)
+                        worktree
+                            .read(cx)
+                            .entry_for_path(&relative_path)
+                            .map(|entry| entry.is_dir())
                     })
-                    .is_some_and(|entry| entry.is_dir())
+                    .unwrap_or(false)
             })
     }
 
@@ -491,7 +494,7 @@ impl Project {
         cx: &App,
     ) -> Option<PathBuf> {
         let (worktree, _) = self.find_worktree(abs_path, cx)?;
-        let fs = worktree.read(cx).as_local()?.fs();
+        let fs = worktree.read(cx).as_local()?.fs().clone();
         let bin_dir_name = match std::env::consts::OS {
             "windows" => "Scripts",
             _ => "bin",

@@ -1151,7 +1151,7 @@ pub async fn location_links_from_lsp(
             let target_end =
                 target_buffer.clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
             let target_location = Location {
-                buffer: target_buffer_handle,
+                buffer: target_buffer_handle.clone(),
                 range: target_buffer.anchor_after(target_start)
                     ..target_buffer.anchor_before(target_end),
             };
@@ -1212,7 +1212,7 @@ pub async fn location_link_from_lsp(
         let target_end =
             target_buffer.clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
         let target_location = Location {
-            buffer: target_buffer_handle,
+            buffer: target_buffer_handle.clone(),
             range: target_buffer.anchor_after(target_start)
                 ..target_buffer.anchor_before(target_end),
         };

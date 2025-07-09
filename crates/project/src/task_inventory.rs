@@ -305,12 +305,14 @@ impl Inventory {
         let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
-            let (file, language) = {
+            let (file, language_name, language) = {
                 let buffer = location.buffer.read(cx);
-                (buffer.file(), buffer.language())
+                let file = buffer.file().cloned();
+                let language = buffer.language().clone();
+                let language_name = language.as_ref().map(|l| l.name());
+                (file, language_name, language)
             };
-            let language_name = language.as_ref().map(|l| l.name());
-            let adapter = language_settings(language_name, file, cx)
+            let adapter = language_settings(language_name, file.as_ref(), cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -435,11 +437,17 @@ impl Inventory {
         let fs = self.fs.clone();
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
-        let language = location.and_then(|location| location.buffer.read(cx).language().clone());
+        let language = location.and_then(|location| {
+            let buffer = location.buffer.read(cx);
+            buffer.language().clone()
+        });
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
+        let file = location.and_then(|location| {
+            let buffer = location.buffer.read(cx);
+            buffer.file().cloned()
+        });
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;

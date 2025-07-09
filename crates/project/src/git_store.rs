@@ -947,14 +947,18 @@ impl GitStore {
         selection: Range<u32>,
         cx: &mut App,
     ) -> Task<Result<url::Url>> {
-        let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
+        let (worktree, path) = {
+            let buffer_ref = buffer.read(cx);
+            let Some(file) = File::from_dyn(buffer_ref.file()) else {
+                return Task::ready(Err(anyhow!("buffer has no file")));
+            };
+            (file.worktree.clone(), file.path.clone())
         };
 
-        let Some((repo, repo_path)) = self.repository_and_path_for_project_path(
-            &(file.worktree.read(cx).id(), file.path.clone()).into(),
-            cx,
-        ) else {
+        let worktree_id = worktree.read(cx).id();
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_project_path(&(worktree_id, path.clone()).into(), cx)
+        else {
             // If we're not in a Git repo, check whether this is a Rust source
             // file in the Cargo registry (presumably opened with go-to-definition
             // from a normal Rust file). If so, we can put together a permalink
@@ -966,7 +970,7 @@ impl GitStore {
             {
                 return Task::ready(Err(anyhow!("no permalink available")));
             }
-            let Some(file_path) = file.worktree.read(cx).absolutize(&file.path).ok() else {
+            let Some(file_path) = worktree.read(cx).absolutize(&path).ok() else {
                 return Task::ready(Err(anyhow!("no permalink available")));
             };
             return cx.spawn(async move |cx| {
@@ -2062,7 +2066,7 @@ impl GitStore {
                 .or_default();
             shared_diffs.entry(buffer_id).or_default().uncommitted = Some(diff.clone());
         })?;
-        diff.read_with(&cx, |diff, cx| {
+        Ok(diff.read_with(&cx, |diff, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
             let unstaged_diff = diff.secondary_diff();
@@ -2076,14 +2080,14 @@ impl GitStore {
             let committed_text;
             if diff.base_text_exists() {
                 let committed_snapshot = diff.base_text();
-                committed_text = Some(committed_snapshot.text());
+                committed_text = Some(committed_snapshot.text().to_string());
                 if let Some(index_text) = index_snapshot {
                     if index_text.remote_id() == committed_snapshot.remote_id() {
                         mode = Mode::IndexMatchesHead;
                         staged_text = None;
                     } else {
                         mode = Mode::IndexAndHead;
-                        staged_text = Some(index_text.text());
+                        staged_text = Some(index_text.text().to_string());
                     }
                 } else {
                     mode = Mode::IndexAndHead;
@@ -2092,15 +2096,17 @@ impl GitStore {
             } else {
                 mode = Mode::IndexAndHead;
                 committed_text = None;
-                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
+                staged_text = index_snapshot
+                    .as_ref()
+                    .map(|buffer| buffer.text().to_string());
             }
 
             proto::OpenUncommittedDiffResponse {
                 committed_text,
                 staged_text,
-                mode: mode.into(),
+                mode: mode as i32,
             }
-        })
+        })?)
     }
 
     async fn handle_update_diff_bases(
@@ -2842,9 +2848,15 @@ impl Repository {
                             .filter_map(|(buffer_id, diff_state)| {
                                 let buffer_store = git_store.buffer_store.read(cx);
                                 let buffer = buffer_store.get(*buffer_id)?;
-                                let file = File::from_dyn(buffer.read(cx).file())?;
-                                let abs_path =
-                                    file.worktree.read(cx).absolutize(&file.path).ok()?;
+                                let (worktree, path) = {
+                                    let buffer_ref = buffer.read(cx);
+                                    let file = File::from_dyn(buffer_ref.file())?;
+                                    (file.worktree.clone(), file.path.clone())
+                                };
+                                let abs_path = {
+                                    let worktree_ref = worktree.read(cx);
+                                    worktree_ref.absolutize(&path).ok()?
+                                };
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
                                 log::debug!(
                                     "start reload diff bases for repo path {}",
@@ -3066,18 +3078,21 @@ impl Repository {
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
-        let worktree_store = git_store.read(cx).worktree_store.read(cx);
+        let git_store_ref = git_store.read(cx);
+        let worktree_store = git_store_ref.worktree_store.read(cx);
         let abs_path = self.snapshot.work_directory_abs_path.join(&path.0);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
+        let worktree_id = worktree.read(cx).id();
         Some(ProjectPath {
-            worktree_id: worktree.read(cx).id(),
+            worktree_id,
             path: relative_path.into(),
         })
     }
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath, cx: &App) -> Option<RepoPath> {
         let git_store = self.git_store.upgrade()?;
-        let worktree_store = git_store.read(cx).worktree_store.read(cx);
+        let git_store_ref = git_store.read(cx);
+        let worktree_store = git_store_ref.worktree_store.read(cx);
         let abs_path = worktree_store.absolutize(path, cx)?;
         self.snapshot.abs_path_to_repo_path(&abs_path)
     }

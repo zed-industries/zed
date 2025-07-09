@@ -185,22 +185,36 @@ impl WorktreeStore {
         }
     }
 
-    pub fn entry_for_id<'a>(&'a self, entry_id: ProjectEntryId, cx: &'a App) -> Option<&'a Entry> {
-        self.worktrees()
-            .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
+    // pub fn entry_for_id<'a>(&'a self, entry_id: ProjectEntryId, cx: &'a App) -> Option<&'a Entry> {
+    //     self.worktrees()
+    //         .find_map(|worktree| worktree.read(cx).entry_for_id(entry_id))
+    // }
+    pub fn entry_for_id<'a>(
+        &'a self,
+        _entry_id: ProjectEntryId,
+        _cx: &'a App,
+    ) -> Option<&'a Entry> {
+        todo!("entry_for_id needs to be refactored to handle Ref type")
     }
 
+    // pub fn worktree_and_entry_for_id<'a>(
+    //     &'a self,
+    //     entry_id: ProjectEntryId,
+    //     cx: &'a App,
+    // ) -> Option<(Entity<Worktree>, &'a Entry)> {
+    //     self.worktrees().find_map(|worktree| {
+    //         worktree
+    //             .read(cx)
+    //             .entry_for_id(entry_id)
+    //             .map(|e| (worktree.clone(), e))
+    //     })
+    // }
     pub fn worktree_and_entry_for_id<'a>(
         &'a self,
-        entry_id: ProjectEntryId,
-        cx: &'a App,
+        _entry_id: ProjectEntryId,
+        _cx: &'a App,
     ) -> Option<(Entity<Worktree>, &'a Entry)> {
-        self.worktrees().find_map(|worktree| {
-            worktree
-                .read(cx)
-                .entry_for_id(entry_id)
-                .map(|e| (worktree.clone(), e))
-        })
+        todo!("worktree_and_entry_for_id needs to be refactored to handle Ref type")
     }
 
     pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
@@ -453,7 +467,8 @@ impl WorktreeStore {
             .drain(..)
             .filter_map(|worktree| {
                 let worktree = worktree.upgrade()?;
-                Some((worktree.read(cx).id(), worktree))
+                let worktree_id = worktree.read(cx).id();
+                Some((worktree_id, worktree))
             })
             .collect::<HashMap<_, _>>();
 
