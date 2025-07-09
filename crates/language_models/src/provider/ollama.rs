@@ -23,7 +23,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
+use ui::{Indicator, List, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
@@ -730,8 +730,7 @@ impl ConfigurationView {
     }
 
     fn should_render_api_key_editor(&self, cx: &mut Context<Self>) -> bool {
-        let state = self.state.read(cx);
-        !state.is_authenticated() || (!state.api_key_from_env && state.api_key.is_some())
+        !self.state.read(cx).api_key.is_some()
     }
 
     fn save_api_url(&mut self, cx: &mut Context<Self>) {
@@ -791,194 +790,273 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
         let env_var_set = self.state.read(cx).api_key_from_env;
 
-        let ollama_intro =
-            "Get up & running with Llama 3.3, Mistral, Gemma 2, and other LLMs with Ollama.";
-
         if self.loading_models_task.is_some() {
-            div().child(Label::new("Loading models...")).into_any()
-        } else {
-            v_flex()
-                .gap_2()
+            div()
                 .child(
-                    v_flex().gap_1().child(Label::new(ollama_intro)).child(
-                        List::new()
-                            .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
-                            .child(InstructionListItem::text_only(
-                                "Once installed, try `ollama run llama3.2`",
-                            ))
-                            .child(InstructionListItem::text_only(
-                                "For remote Ollama instances, optionally provide an API key below.",
-                            )),
-                    ),
-                )
-                .child(
-                    if self.should_render_api_key_editor(cx) {
-                        v_flex()
-                            .on_action(cx.listener(Self::save_api_key))
-                            .child(self.api_key_editor.clone())
-                            .child(
-                                Label::new(
-                                    if env_var_set {
-                                        "API key loaded from OLLAMA_API_KEY environment variable"
-                                    } else {
-                                        "API key is optional for local Ollama instances"
-                                    }
-                                )
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .into_any()
-                    } else {
-                        h_flex()
-                            .mt_1()
-                            .p_1()
-                            .justify_between()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().background)
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Indicator::dot().color(Color::Success))
-                                    .child(Label::new(
-                                        if env_var_set {
-                                            "API key loaded from OLLAMA_API_KEY"
-                                        } else {
-                                            "Connected to Ollama"
-                                        }
-                                    ))
-                            )
-                            .child(
-                                Button::new("reset-api-key", "Reset API Key")
-                                    .style(ButtonStyle::Subtle)
-                                    .icon(IconName::Trash)
-                                    .icon_size(IconSize::XSmall)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.reset_api_key(window, cx)
-                                    }))
-                            )
-                            .into_any()
-                    }
-                )
-                .child(
-                    {
-                        let custom_api_url_set = AllLanguageModelSettings::get_global(cx).ollama.api_url != OLLAMA_API_URL;
-
-                        if custom_api_url_set {
-                            h_flex()
-                                .mt_1()
-                                .p_1()
-                                .justify_between()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().background)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Custom API URL"))
-                                )
-                                .child(
-                                    Button::new("reset-api-url", "Reset API URL")
-                                        .style(ButtonStyle::Subtle)
-                                        .icon(IconName::Trash)
-                                        .icon_size(IconSize::XSmall)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset_api_url(window, cx)
-                                        }))
-                                )
-                                .into_any()
-                        } else {
-                            v_flex()
-                                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
-                                    this.save_api_url(cx);
-                                    cx.notify();
-                                }))
-                                .mt_2()
-                                .pt_2()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .gap_1()
-                                .child(Label::new("Configure a custom API URL (optional)"))
-                                .child(self.api_url_editor.clone())
-                                .into_any()
-                        }
-                    }
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
+                    v_flex()
                         .gap_2()
                         .child(
                             h_flex()
-                                .w_full()
                                 .gap_2()
-                                .map(|this| {
-                                    if is_authenticated {
-                                        this.child(
-                                            Button::new("ollama-site", "Ollama")
-                                                .style(ButtonStyle::Subtle)
-                                                .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
-                                                .icon_color(Color::Muted)
-                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
-                                                .into_any_element(),
-                                        )
-                                    } else {
-                                        this.child(
-                                            Button::new(
-                                                "download_ollama_button",
-                                                "Download Ollama",
-                                            )
-                                            .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .on_click(move |_, _, cx| {
-                                                cx.open_url(OLLAMA_DOWNLOAD_URL)
-                                            })
-                                            .into_any_element(),
-                                        )
-                                    }
-                                })
-                                .child(
-                                    Button::new("view-models", "All Models")
-                                        .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
-                                ),
+                                .child(Indicator::dot().color(Color::Accent))
+                                .child(Label::new("Connecting to Ollama...")),
                         )
                         .child(
-                            if is_authenticated {
-                                ButtonLike::new("connected")
-                                    .disabled(true)
-                                    .cursor_style(gpui::CursorStyle::Arrow)
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(Indicator::dot().color(Color::Success))
-                                            .child(Label::new("Connected"))
-                                            .into_any_element(),
-                                    )
-                                    .into_any_element()
-                            } else {
-                                Button::new("retry_ollama_models", "Connect")
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon(IconName::Play)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.retry_connection(cx)
-                                    }))
-                                    .into_any_element()
-                            }
-                        )
+                            Label::new("Checking for available models and server status")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                 )
                 .into_any()
+        } else {
+            v_flex()
+              .gap_4()
+              .child(
+                  v_flex()
+                      .gap_2()
+                      .child(
+                          Label::new("Run powerful language models locally on your machine with Ollama. Get started with Llama 3.3, Mistral, Gemma 2, and hundreds of other models.")
+                              .size(LabelSize::Small)
+                              .color(Color::Muted)
+                      )
+              )
+              .child(
+                  if !is_authenticated {
+                      v_flex()
+                          .gap_2()
+                          .child(
+                              Label::new("Getting Started")
+                                  .size(LabelSize::Small)
+                                  .color(Color::Default)
+                          )
+                          .child(
+                              List::new()
+                                  .child(InstructionListItem::text_only("1. Download and install Ollama from ollama.com"))
+                                  .child(InstructionListItem::text_only("2. Start Ollama and download a model: `ollama run llama3.2`"))
+                                  .child(InstructionListItem::text_only("3. Click 'Connect' below to start using Ollama in Zed"))
+                          )
+                          .into_any()
+                  } else {
+                      div().into_any()
+                  }
+              )
+              .child(
+                  if self.should_render_api_key_editor(cx) {
+                      v_flex()
+                          .gap_2()
+                          .child(
+                              Label::new("API Key (Optional)")
+                                  .size(LabelSize::Small)
+                                  .color(Color::Default)
+                          )
+                          .child(
+                              Label::new("Only required for remote Ollama instances or servers with authentication enabled")
+                                  .size(LabelSize::XSmall)
+                                  .color(Color::Muted)
+                          )
+                          .child(
+                              v_flex()
+                                  .on_action(cx.listener(Self::save_api_key))
+                                  .child(self.api_key_editor.clone())
+                                  .child(
+                                      Label::new(
+                                          format!("You can also assign the {OLLAMA_API_KEY_VAR} environment variable and restart Zed.")
+                                      )
+                                      .size(LabelSize::XSmall)
+                                      .color(Color::Muted),
+                                  )
+                          )
+                          .into_any()
+                  } else {
+                      v_flex()
+                          .gap_2()
+                          .child(
+                              Label::new("API Key")
+                                  .size(LabelSize::Small)
+                                  .color(Color::Default)
+                          )
+                          .child(
+                              h_flex()
+                                  .p_3()
+                                  .justify_between()
+                                  .rounded_md()
+                                  .border_1()
+                                  .border_color(cx.theme().colors().border)
+                                  .bg(cx.theme().colors().elevated_surface_background)
+                                  .child(
+                                      h_flex()
+                                          .gap_2()
+                                          .child(Indicator::dot().color(Color::Success))
+                                          .child(
+                                              Label::new(
+                                                  if env_var_set {
+                                                      format!("API key set in {OLLAMA_API_KEY_VAR} environment variable.")
+                                                  } else {
+                                                      "API key configured.".to_string()
+                                                  }
+                                              )
+                                          )
+                                  )
+                                  .child(
+                                      Button::new("reset-api-key", "Reset API Key")
+                                          .style(ButtonStyle::Subtle)
+                                          .icon(IconName::Undo)
+                                          .icon_size(IconSize::XSmall)
+                                          .on_click(cx.listener(|this, _, window, cx| {
+                                              this.reset_api_key(window, cx)
+                                          }))
+                                  )
+                          )
+                          .into_any()
+                  }
+              )
+              .child({
+                  let custom_api_url_set = AllLanguageModelSettings::get_global(cx).ollama.api_url != OLLAMA_API_URL;
+
+                  if custom_api_url_set {
+                      v_flex()
+                          .gap_2()
+                          .child(
+                              Label::new("API URL (Optional)")
+                                  .size(LabelSize::Small)
+                                  .color(Color::Default)
+                          )
+                          .child(
+                              Label::new("Only required for remote Ollama instances or custom ports")
+                                  .size(LabelSize::XSmall)
+                                  .color(Color::Muted)
+                          )
+                          .child(
+                              v_flex()
+                                  .gap_2()
+                                  .child(
+                                      h_flex()
+                                          .p_3()
+                                          .justify_between()
+                                          .rounded_md()
+                                          .border_1()
+                                          .border_color(cx.theme().colors().border)
+                                          .bg(cx.theme().colors().elevated_surface_background)
+                                          .child(
+                                              h_flex()
+                                                  .gap_2()
+                                                  .child(Indicator::dot().color(Color::Success))
+                                                  .child(
+                                                      v_flex()
+                                                          .gap_1()
+                                                          .child(Label::new("Custom server configured"))
+                                                          .child(
+                                                              Label::new(&AllLanguageModelSettings::get_global(cx).ollama.api_url)
+                                                                  .size(LabelSize::XSmall)
+                                                                  .color(Color::Muted)
+                                                          )
+                                                  )
+                                          )
+                                          .child(
+                                              Button::new("reset-api-url", "Reset")
+                                                  .style(ButtonStyle::Subtle)
+                                                  .icon(IconName::Undo)
+                                                  .icon_size(IconSize::XSmall)
+                                                  .on_click(cx.listener(|this, _, window, cx| {
+                                                      this.reset_api_url(window, cx)
+                                                  }))
+                                          )
+                                  )
+                          )
+                          .into_any()
+                  } else {
+                      v_flex()
+                          .gap_2()
+                          .child(
+                              Label::new("API URL (Optional)")
+                                  .size(LabelSize::Small)
+                                  .color(Color::Default)
+                          )
+                          .child(
+                              Label::new("Only required for remote Ollama instances or custom ports")
+                                  .size(LabelSize::XSmall)
+                                  .color(Color::Muted)
+                          )
+                          .child(
+                              v_flex()
+                                  .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                                      this.save_api_url(cx);
+                                      cx.notify();
+                                  }))
+                                  .gap_2()
+                                  .child(self.api_url_editor.clone())
+                          )
+                          .into_any()
+                  }
+              })
+              .child(
+                  v_flex()
+                      .gap_2()
+                      .child(
+                          h_flex()
+                              .w_full()
+                              .justify_between()
+                              .gap_2()
+                              .child({
+                                  let mut buttons = h_flex()
+                                      .w_full()
+                                      .gap_2();
+                                  if is_authenticated {
+                                      buttons = buttons.child(
+                                          Button::new("ollama-site", "Ollama Homepage")
+                                              .style(ButtonStyle::Subtle)
+                                              .icon(IconName::ArrowUpRight)
+                                              .icon_size(IconSize::XSmall)
+                                              .icon_color(Color::Muted)
+                                              .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
+                                              .into_any_element(),
+                                      );
+                                  } else {
+                                      buttons = buttons.child(
+                                          Button::new(
+                                              "download_ollama_button",
+                                              "Download Ollama",
+                                          )
+                                          .style(ButtonStyle::Filled)
+                                          .icon(IconName::Download)
+                                          .icon_size(IconSize::XSmall)
+                                          .on_click(move |_, _, cx| {
+                                              cx.open_url(OLLAMA_DOWNLOAD_URL)
+                                          })
+                                          .into_any_element(),
+                                      );
+                                  }
+                                  buttons.child(
+                                      Button::new("view-models", "Browse Models")
+                                          .style(ButtonStyle::Subtle)
+                                          .icon(IconName::Library)
+                                          .icon_size(IconSize::XSmall)
+                                          .icon_color(Color::Muted)
+                                          .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                                  )
+                              })
+                              .child(
+                                  if is_authenticated {
+                                      h_flex()
+                                          .gap_2()
+                                          .child(Indicator::dot().color(Color::Success))
+                                          .child(Label::new("Connected").size(LabelSize::Small))
+                                          .into_any_element()
+                                  } else {
+                                      Button::new("retry_ollama_models", "Connect")
+                                          .style(ButtonStyle::Filled)
+                                          .icon_position(IconPosition::Start)
+                                          .icon_size(IconSize::XSmall)
+                                          .icon(IconName::Play)
+                                          .on_click(cx.listener(move |this, _, _, cx| {
+                                              this.retry_connection(cx)
+                                          }))
+                                          .into_any_element()
+                                  }
+                              )
+                      )
+              )
+              .into_any()
         }
     }
 }
