@@ -2581,8 +2581,8 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::LightBulb)
-                                            .size(IconSize::XSmall)
+                                        Icon::new(IconName::ToolBulb)
+                                            .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
                                     .child(LoadingLabel::new("Thinking").size(LabelSize::Small)),
@@ -2995,7 +2995,7 @@ impl ActiveThread {
                                         .overflow_x_scroll()
                                         .child(
                                             Icon::new(tool_use.icon)
-                                                .size(IconSize::XSmall)
+                                                .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
                                         .child(
