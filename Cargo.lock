@@ -8961,6 +8961,7 @@ dependencies = [
  "client",
  "collections",
  "component",
+ "convert_case 0.8.0",
  "copilot",
  "credentials_provider",
  "deepseek",
