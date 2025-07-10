@@ -1,9 +1,7 @@
 use crate::{
-    
-    LinuxKeyboardMapper, platform::{xcb_flush, Capslock},
-    scap_screen_capture::scap_screen_sources,
+    LinuxKeyboardMapper,
+    platform::{Capslock, xcb_flush},
     underlying_dead_key,
-,
 };
 use core::str;
 use std::{
@@ -15,10 +13,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use calloop::{
-    generic::{FdWrapper, Generic},
     EventLoop, LoopHandle, RegistrationToken,
+    generic::{FdWrapper, Generic},
 };
 use collections::HashMap;
 use http_client::Url;
@@ -37,40 +35,40 @@ use x11rb::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
         ConnectionExt as _, EventMask, KeyPressEvent, Visibility,
     },
-    protocol::{randr, render, xinput, xkb, xproto, Event},
+    protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
-use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
+use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, State, STATE_LAYOUT_EFFECTIVE};
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE, State};
 
 use super::{
-    button_or_scroll_from_event_detail, check_reply,
+    ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
+    XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
     get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
-    pressed_button_from_mask, ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr,
-    XcbAtoms, XimCallbackEvent, XimHandler,
+    pressed_button_from_mask,
 };
 
 use crate::platform::{
+    LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
-        get_xkb_compose_state, is_within_click_distance, log_cursor_icon_warning,
-        open_uri_internal,
+        DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
+        log_cursor_icon_warning, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-        LinuxClient, DEFAULT_CURSOR_ICON_NAME,
     },
-    LinuxCommon, PlatformWindow,
 };
 use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent,
-    MouseButton, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point,
-    RequestFrameOptions, ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
+    ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
