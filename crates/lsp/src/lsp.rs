@@ -1242,6 +1242,18 @@ impl LanguageServer {
             params,
         })
         .unwrap();
+        eprintln!("{}", {
+            let value = serde_json::from_str::<serde_json::Value>(&message).unwrap();
+            if !value
+                .get("method")
+                .and_then(|method| method.as_str())
+                .map_or(false, |method| method.starts_with("json"))
+            {
+                "other".to_string()
+            } else {
+                serde_json::to_string_pretty(&value).unwrap()
+            }
+        });
         outbound_tx.try_send(message)?;
         Ok(())
     }

@@ -1,5 +1,6 @@
 use std::{
     ops::{Not, Range},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -15,6 +16,8 @@ use gpui::{
     StyledText, Subscription, WeakEntity, actions, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
+use project::Project;
+use schemars::JsonSchema as _;
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
@@ -62,6 +65,7 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &OpenKeymapEditor, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            // todo! with_local_workspace
             let existing = workspace
                 .active_pane()
                 .read(cx)
@@ -394,7 +398,9 @@ impl KeymapEditor {
                 action_name: action_name.into(),
                 action_input,
                 action_docs,
-                action_schema: action_schema.get(action_name).cloned(),
+                action_schema: action_schema.get(action_name).map(|action_schema| {
+                    root_schema_from_action_schema(action_schema, &mut generator)
+                }),
                 context: Some(context),
                 source,
             });
@@ -411,7 +417,9 @@ impl KeymapEditor {
                 action_name: action_name.into(),
                 action_input: None,
                 action_docs: action_documentation.get(action_name).copied(),
-                action_schema: action_schema.get(action_name).cloned(),
+                action_schema: action_schema.get(action_name).map(|action_schema| {
+                    root_schema_from_action_schema(action_schema, &mut generator)
+                }),
                 context: None,
                 source: None,
             });
@@ -424,7 +432,13 @@ impl KeymapEditor {
     fn update_keybindings(&mut self, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
-            let json_language = load_json_language(workspace.clone(), cx).await;
+            let json_language = load_json_language(
+                workspace
+                    .read_with(cx, |workspace, _cx| workspace.project().downgrade())
+                    .ok(),
+                cx,
+            )
+            .await;
             let rust_language = load_rust_language(workspace.clone(), cx).await;
 
             let query = this.update(cx, |this, cx| {
@@ -583,17 +597,27 @@ impl KeymapEditor {
             return;
         };
         let keymap_editor = cx.entity();
+        let Some((fs, project)) = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                (
+                    workspace.app_state().fs.clone(),
+                    workspace.project().clone(),
+                )
+            })
+            .ok()
+        else {
+            return;
+        };
         self.workspace
             .update(cx, |workspace, cx| {
-                let fs = workspace.app_state().fs.clone();
-                let workspace_weak = cx.weak_entity();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let modal = KeybindingEditorModal::new(
                         create,
                         keybind,
                         keybind_idx,
                         keymap_editor,
-                        workspace_weak,
+                        project,
                         fs,
                         window,
                         cx,
@@ -971,6 +995,10 @@ struct KeybindingEditorModal {
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<Editor>,
     input_editor: Option<Entity<Editor>>,
+    _input_editor_data: (
+        Option<Entity<Entity<language::Buffer>>>,
+        Option<tempfile::TempDir>,
+    ),
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -992,10 +1020,10 @@ impl KeybindingEditorModal {
         editing_keybind: ProcessedKeybinding,
         editing_keybind_idx: usize,
         keymap_editor: Entity<KeymapEditor>,
-        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let keybind_editor = cx.new(|cx| KeystrokeInput::new(window, cx));
 
@@ -1030,31 +1058,104 @@ impl KeybindingEditorModal {
             editor
         });
 
-        let input_editor = editing_keybind.action_schema.clone().map(|_schema| {
-            cx.new(|cx| {
-                let mut editor = Editor::auto_height_unbounded(1, window, cx);
-                if let Some(input) = editing_keybind.action_input.clone() {
-                    editor.set_text(input.text, window, cx);
-                } else {
-                    // TODO: default value from schema?
-                    editor.set_placeholder_text("Action input", cx);
-                }
-                cx.spawn(async |editor, cx| {
-                    let json_language = load_json_language(workspace, cx).await;
-                    editor
-                        .update(cx, |editor, cx| {
-                            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                                buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(Some(json_language), cx)
-                                });
+        if let Some(schema) = editing_keybind.action_schema.clone() {
+            let project = project.downgrade();
+            let fs = fs.clone();
+            let file_name = file_name_for_action_input(&editing_keybind.action_name);
+            let action_input = editing_keybind
+                .action_input
+                .as_ref()
+                .map(|input| input.text.clone());
+            cx.spawn_in(window, async move |this, cx| {
+                // todo! fix when modal is dropped, buffer and temp_dir are dropped before worktree, resulting in worktree scan errors
+                // being printed due to the non existant worktree
+                let (buffer, temp_dir) = create_temp_buffer_for_action_input(file_name.clone(), project.clone(), fs, cx)
+                    .await
+                    .context("Failed to create temporary buffer for action input. Auto-complete will not work")
+                    .log_err()
+                    .unzip();
+                let buffer = match buffer {
+                    Some(buffer) => buffer,
+                    None => cx.new(|cx| language::Buffer::local("", cx))?
+                };
+                let open_lsp_handle =
+                    project.update(cx, |project, cx| {
+                        project.register_buffer_with_language_servers(&buffer, cx)
+                    }).ok();
+                cx.spawn(
+                    {
+                        let project = project.clone();
+                        let buffer = buffer.downgrade();
+                    async move |cx| {
+                        let json_language = load_json_language(Some(project), cx).await;
+                        buffer
+                            .update(cx, |buffer, cx| {
+                                buffer.set_language(Some(json_language), cx)
+                            })
+                            .context(
+                                "Failed to load JSON language for editing keybinding action input",
+                            ).log_err()
+
+                }}).detach();
+
+                cx.spawn({
+                    let project = project.clone();
+                    let buffer = buffer.downgrade();
+
+
+                    async move |cx| {
+                        cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
+                        let Some(project) = project.upgrade() else {
+                            return;
+                        };
+                        let Some(buffer) = buffer.upgrade() else {
+                            return;
+                        };
+                        let uri = "lol://some.uri".into();
+                        let schema_associations = vec![
+                            project::lsp_store::json_language_server_ext::SchemaAssociation {
+                                uri,
+                                file_match: vec![file_name],
+                                folder_uri: None,
+                                schema: Some(schema.to_value()),
                             }
-                        })
-                        .context("Failed to load JSON language for editing keybinding action input")
+                        ];
+                        cx.update(|_, cx| {
+                            project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer, &schema_associations, cx);
+                        }).ok();
+                    }
+                }).detach();
+
+                let editor = cx.new_window_entity(|window, cx| {
+                    let multi_buffer =
+                        cx.new(|cx| editor::MultiBuffer::singleton(buffer.clone(), cx));
+                    let mut editor = Editor::new(
+                        editor::EditorMode::AutoHeight {
+                            min_lines: 1,
+                            max_lines: Some(10),
+                        },
+                        multi_buffer.clone(),
+                        project.upgrade(),
+                        window,
+                        cx,
+                    );
+                    if let Some(input) = action_input {
+                        editor.set_text(input, window, cx);
+                    } else {
+                        // TODO: default value from schema?
+                        editor.set_placeholder_text("Action input", cx);
+                    }
+
+                    editor
+                })?;
+
+                this.update(cx, |this, _cx| {
+                    this.input_editor = Some(editor);
+                    this._input_editor_data = (open_lsp_handle, temp_dir);
                 })
-                .detach_and_log_err(cx);
-                editor
             })
-        });
+            .detach_and_log_err(cx);
+        }
 
         Self {
             creating: create,
@@ -1063,7 +1164,8 @@ impl KeybindingEditorModal {
             fs,
             keybind_editor,
             context_editor,
-            input_editor,
+            input_editor: None,
+            _input_editor_data: (None, None),
             error: None,
             keymap_editor,
         }
@@ -1276,6 +1378,53 @@ impl Render for KeybindingEditorModal {
     }
 }
 
+fn file_name_for_action_input(action_name: &SharedString) -> String {
+    let mut file_name = action_name.as_ref().replace("::", "_");
+    file_name.push_str(".json");
+    file_name
+}
+
+async fn create_temp_buffer_for_action_input(
+    file_name: String,
+    project: WeakEntity<Project>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<(Entity<language::Buffer>, tempfile::TempDir)> {
+    let (temp_file_path, temp_dir) = create_temp_file_for_action_input(file_name.clone(), fs)
+        .await
+        .context("Failed to create backing file")?;
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(temp_file_path, cx)
+        })?
+        .await
+        .context("Failed to create buffer")
+        .map(|buffer| (buffer, temp_dir))
+}
+
+async fn create_temp_file_for_action_input(
+    file_name: String,
+    fs: Arc<dyn Fs>,
+) -> anyhow::Result<(PathBuf, tempfile::TempDir)> {
+    let temp_dir = paths::temp_dir();
+    let sub_temp_dir = tempfile::Builder::new()
+        .tempdir_in(temp_dir)
+        .context("Failed to create temporary directory")?;
+
+    let path = sub_temp_dir.path().join(file_name);
+    fs.create_file(
+        &path,
+        fs::CreateOptions {
+            ignore_if_exists: true,
+            overwrite: false,
+        },
+    )
+    .await
+    .context("Failed to create temporary file")?;
+    Ok((path, sub_temp_dir))
+}
+
 struct KeyContextCompletionProvider {
     contexts: Vec<SharedString>,
 }
@@ -1339,17 +1488,18 @@ impl CompletionProvider for KeyContextCompletionProvider {
     }
 }
 
-async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp) -> Arc<Language> {
-    let json_language_task = workspace
-        .read_with(cx, |workspace, cx| {
-            workspace
-                .project()
-                .read(cx)
-                .languages()
-                .language_for_name("JSON")
-        })
-        .context("Failed to load JSON language")
-        .log_err();
+async fn load_json_language(
+    project: Option<WeakEntity<Project>>,
+    cx: &mut AsyncApp,
+) -> Arc<Language> {
+    let json_language_task = project.and_then(|project| {
+        project
+            .read_with(cx, |project, _| {
+                project.languages().language_for_name("JSON")
+            })
+            .context("Failed to load JSON language")
+            .log_err()
+    });
     let json_language = match json_language_task {
         Some(task) => task.await.context("Failed to load JSON language").log_err(),
         None => None,
@@ -1456,6 +1606,28 @@ async fn save_keybinding_update(
         .await
         .context("Failed to write keymap file")?;
     Ok(())
+}
+
+fn root_schema_from_action_schema(
+    action_schema: &schemars::Schema,
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    let meta_schema = generator
+        .settings()
+        .meta_schema
+        .as_ref()
+        .expect("meta_schema should be present in schemars settings")
+        .to_string();
+    let defs = generator.definitions();
+    let mut schema = schemars::json_schema!({
+        "$schema": meta_schema,
+        "allowTrailingCommas": true,
+        "$defs": defs,
+    });
+    schema
+        .ensure_object()
+        .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
+    schema
 }
 
 struct KeystrokeInput {
