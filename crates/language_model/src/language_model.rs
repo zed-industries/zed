@@ -621,7 +621,7 @@ pub enum LanguageModelProviderTosView {
     ThreadEmptyState,
     /// When there are no past interactions in the Agent Panel.
     ThreadFreshStart,
-    PromptEditorPopup,
+    TextThreadPopup,
     Configuration,
 }
 

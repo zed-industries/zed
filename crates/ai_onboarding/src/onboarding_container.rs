@@ -43,6 +43,7 @@ impl RenderOnce for OnboardingContainer {
                     .bg(cx.theme().colors().panel_background)
                     .child(
                         div()
+                            .opacity(0.5)
                             .absolute()
                             .top(px(-8.0))
                             .right_0()

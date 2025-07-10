@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
-use ui::{Divider, List, ListItem, RegisterComponent, prelude::*};
+use ui::{Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
 
 pub struct BulletItem {
     label: SharedString,
@@ -64,15 +64,16 @@ pub struct ZedAiOnboarding {
     pub has_accepted_terms_of_service: bool,
     pub plan: Option<proto::Plan>,
     pub account_too_young: bool,
-    pub continue_with_plan: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub accept_terms_of_service: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl ZedAiOnboarding {
     pub fn new(
         client: Arc<Client>,
         user_store: &Entity<UserStore>,
-        continue_with_plan: Arc<dyn Fn(&mut Window, &mut App)>,
+        continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
         cx: &mut App,
     ) -> Self {
         let store = user_store.read(cx);
@@ -82,7 +83,14 @@ impl ZedAiOnboarding {
             has_accepted_terms_of_service: store.current_user_has_accepted_terms().unwrap_or(false),
             plan: store.current_plan(),
             account_too_young: store.account_too_young(),
-            continue_with_plan,
+            continue_with_zed_ai,
+            accept_terms_of_service: Arc::new({
+                let store = user_store.clone();
+                move |_window, cx| {
+                    let task = store.update(cx, |store, cx| store.accept_terms_of_service(cx));
+                    task.detach_and_log_err(cx);
+                }
+            }),
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
                     let client = client.clone();
@@ -133,7 +141,7 @@ impl ZedAiOnboarding {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click({
-                        let callback = self.continue_with_plan.clone();
+                        let callback = self.continue_with_zed_ai.clone();
                         move |_, window, cx| callback(window, cx)
                     }),
             )
@@ -162,11 +170,7 @@ impl ZedAiOnboarding {
             )
             .child(
                 List::new()
-                    .child(BulletItem::new(
-                        // "500 prompts per month (usage-based billing beyond it) with Claude models",
-                        // dl: do we really need the usage-based disclaimer here?
-                        "500 prompts per month with Claude models",
-                    ))
+                    .child(BulletItem::new("500 prompts per month with Claude models"))
                     .child(BulletItem::new("Unlimited edit predictions"))
                     .when(!self.account_too_young, |this| {
                         this.child(BulletItem::new(
@@ -182,12 +186,47 @@ impl ZedAiOnboarding {
             )
     }
 
-    fn render_young_account_disclaimer() -> impl IntoElement {
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free Pro plan trial.";
+    fn render_accept_terms_of_service(&self) -> Div {
+        let terms_link = Button::new("terms_of_service", "Terms of Service")
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::ArrowUpRight)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::XSmall)
+            .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
-        Label::new(YOUNG_ACCOUNT_DISCLAIMER)
-            .size(LabelSize::Small)
-            .color(Color::Muted)
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(Headline::new("Before starting…"))
+            .child(
+                h_flex()
+                    .child(Label::new(
+                        "Make sure you have read and accepted Zed's AI terms of service.",
+                    ))
+                    .child(terms_link),
+            )
+            .child(
+                Button::new("terms_of_service", "View and Read the Terms of Service")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .icon(IconName::ArrowUpRight)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(move |_, _window, cx| {
+                        cx.open_url("https://zed.dev/terms-of-service")
+                    }),
+            )
+            .child(
+                Button::new("accept_terms", "I accept")
+                    .full_width()
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon(IconName::Check)
+                    .icon_size(IconSize::Small)
+                    .on_click({
+                        let callback = self.accept_terms_of_service.clone();
+                        move |_, window, cx| (callback)(window, cx)
+                    }),
+            )
     }
 
     fn render_terms_or_service_disclaimer() -> impl IntoElement {
@@ -205,6 +244,14 @@ impl ZedAiOnboarding {
                     .label_size(LabelSize::Small)
                     .on_click(Self::view_terms_of_service),
             )
+    }
+
+    fn render_young_account_disclaimer() -> impl IntoElement {
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free Pro plan trial.";
+
+        Label::new(YOUNG_ACCOUNT_DISCLAIMER)
+            .size(LabelSize::Small)
+            .color(Color::Muted)
     }
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
@@ -276,7 +323,7 @@ impl ZedAiOnboarding {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click({
-                        let callback = self.continue_with_plan.clone();
+                        let callback = self.continue_with_zed_ai.clone();
                         move |_, window, cx| callback(window, cx)
                     }),
             )
@@ -301,7 +348,7 @@ impl ZedAiOnboarding {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click({
-                        let callback = self.continue_with_plan.clone();
+                        let callback = self.continue_with_zed_ai.clone();
                         move |_, window, cx| callback(window, cx)
                     }),
             )
@@ -311,10 +358,14 @@ impl ZedAiOnboarding {
 impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
-            match self.plan {
-                None | Some(proto::Plan::Free) => self.render_free_plan_onboarding(cx),
-                Some(proto::Plan::ZedProTrial) => self.render_trial_onboarding(cx),
-                Some(proto::Plan::ZedPro) => self.render_pro_plan_onboarding(cx),
+            if self.has_accepted_terms_of_service {
+                match self.plan {
+                    None | Some(proto::Plan::Free) => self.render_free_plan_onboarding(cx),
+                    Some(proto::Plan::ZedProTrial) => self.render_trial_onboarding(cx),
+                    Some(proto::Plan::ZedPro) => self.render_pro_plan_onboarding(cx),
+                }
+            } else {
+                self.render_accept_terms_of_service()
             }
         } else {
             self.render_sign_in_disclaimer(cx)
@@ -339,8 +390,9 @@ impl Component for ZedAiOnboarding {
                 has_accepted_terms_of_service,
                 plan,
                 account_too_young,
-                continue_with_plan: Arc::new(|_, _| {}),
+                continue_with_zed_ai: Arc::new(|_, _| {}),
                 sign_in: Arc::new(|_, _| {}),
+                accept_terms_of_service: Arc::new(|_, _| {}),
             }
             .into_any_element()
         }
@@ -351,11 +403,11 @@ impl Component for ZedAiOnboarding {
                 .gap_4()
                 .children(vec![
                     single_example(
-                        "Not Signed-In",
+                        "Not Signed-in",
                         onboarding(SignInStatus::SignedOut, false, None, false),
                     ),
                     single_example(
-                        "Not accepted TOS",
+                        "Not Accepted ToS",
                         onboarding(SignInStatus::SignedIn, false, None, false),
                     ),
                     single_example(
@@ -363,11 +415,11 @@ impl Component for ZedAiOnboarding {
                         onboarding(SignInStatus::SignedIn, false, None, true),
                     ),
                     single_example(
-                        "Current Plan = Free",
+                        "Free Plan",
                         onboarding(SignInStatus::SignedIn, true, Some(proto::Plan::Free), false),
                     ),
                     single_example(
-                        "Current Plan = Trial",
+                        "Pro Trial",
                         onboarding(
                             SignInStatus::SignedIn,
                             true,
@@ -376,7 +428,7 @@ impl Component for ZedAiOnboarding {
                         ),
                     ),
                     single_example(
-                        "Current Plan = Pro",
+                        "Pro Plan",
                         onboarding(
                             SignInStatus::SignedIn,
                             true,

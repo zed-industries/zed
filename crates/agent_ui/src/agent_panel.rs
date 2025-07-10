@@ -180,7 +180,7 @@ pub fn init(cx: &mut App) {
                     window.refresh();
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
-                    Upsell::set_dismissed(false, cx);
+                    OnboardingUpsell::set_dismissed(false, cx);
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
                     TrialEndUpsell::set_dismissed(false, cx);
@@ -681,7 +681,7 @@ impl AgentPanel {
 
         let onboarding = cx.new(|_cx| {
             AgentPanelOnboarding::new(user_store.clone(), client, |_window, cx| {
-                Upsell::set_dismissed(true, cx);
+                OnboardingUpsell::set_dismissed(true, cx);
             })
         });
 
@@ -2085,42 +2085,28 @@ impl AgentPanel {
         matches!(plan, Some(Plan::Free)) && has_previous_trial
     }
 
-    fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
-        true
+    fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
+        if OnboardingUpsell::dismissed() {
+            return false;
+        }
 
-        // if Upsell::dismissed() {
-        //     return false;
-        // }
-
-        // match &self.active_view {
-        //     ActiveView::Thread { thread, .. } => {
-        //         let is_using_zed_provider = thread
-        //             .read(cx)
-        //             .thread()
-        //             .read(cx)
-        //             .configured_model()
-        //             .map_or(false, |model| model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID);
-
-        //         if !is_using_zed_provider {
-        //             return false;
-        //         }
-        //     }
-        //     ActiveView::TextThread { .. } => {
-        //         let is_using_zed_provider = LanguageModelRegistry::global(cx)
-        //             .read(cx)
-        //             .default_model()
-        //             .map_or(false, |model| model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID);
-
-        //         if !is_using_zed_provider {
-        //             return false;
-        //         }
-        //     }
-        //     ActiveView::AcpThread { .. } | ActiveView::History | ActiveView::Configuration => return false,
-        // }
-
-        // // TODO: change this when the "signing in is === free plan" is in place
-        // let plan = self.user_store.read(cx).current_plan();
-        // plan.is_none()
+        match &self.active_view {
+            ActiveView::Thread { thread, .. } => thread
+                .read(cx)
+                .thread()
+                .read(cx)
+                .configured_model()
+                .map_or(true, |model| {
+                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
+                }),
+            ActiveView::TextThread { .. } => LanguageModelRegistry::global(cx)
+                .read(cx)
+                .default_model()
+                .map_or(true, |model| {
+                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
+                }),
+            ActiveView::AcpThread { .. } | ActiveView::History | ActiveView::Configuration => false,
+        }
     }
 
     fn render_onboarding(
@@ -2128,7 +2114,7 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if !self.should_render_upsell(cx) {
+        if !self.should_render_onboarding(cx) {
             return None;
         }
 
@@ -2873,12 +2859,14 @@ impl Render for AgentPanel {
                     ..
                 } => parent
                     .relative()
-                    .child(if thread.read(cx).is_empty() {
-                        self.render_thread_empty_state(window, cx)
-                            .into_any_element()
-                    } else {
-                        thread.clone().into_any_element()
-                    })
+                    .child(
+                        if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
+                            self.render_thread_empty_state(window, cx)
+                                .into_any_element()
+                        } else {
+                            thread.clone().into_any_element()
+                        },
+                    )
                     .children(self.render_tool_use_limit_reached(window, cx))
                     .when_some(thread.read(cx).last_error(), |this, last_error| {
                         this.child(
@@ -3081,9 +3069,9 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     }
 }
 
-struct Upsell;
+struct OnboardingUpsell;
 
-impl Dismissable for Upsell {
+impl Dismissable for OnboardingUpsell {
     const KEY: &'static str = "dismissed-upsell";
 }
 
