@@ -102,7 +102,7 @@ impl ViewState {
 
 static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
-
+static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
 impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
@@ -395,7 +395,7 @@ fn render_single_memory_view_line(
                 .children(memory.iter().enumerate().map(|(cell_ix, cell)| {
                     let weak = weak.clone();
                     div()
-                        .id(("memory-view-row-raw-memory", base_address + cell_ix as u64))
+                        .id(("memory-view-row-raw-memory-cell", cell_ix as u64))
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
@@ -403,10 +403,14 @@ fn render_single_memory_view_line(
                             })
                         })
                         .child(
-                            Label::new(HEX_BYTES_MEMOIZED[cell.0.unwrap_or(0) as usize].clone())
-                                .buffer_font(cx)
-                                .when(cell.0.is_none(), |this| this.color(Color::Muted))
-                                .size(ui::LabelSize::Small),
+                            Label::new(
+                                cell.0
+                                    .map(|val| HEX_BYTES_MEMOIZED[val as usize].clone())
+                                    .unwrap_or_else(|| UNKNOWN_BYTE.clone()),
+                            )
+                            .buffer_font(cx)
+                            .when(cell.0.is_none(), |this| this.color(Color::Muted))
+                            .size(ui::LabelSize::Small),
                         )
                         .on_drag(
                             Drag {
