@@ -3286,17 +3286,15 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
-            LineWithInvisibles::from_chunks(
-                chunks,
-                &style,
-                MAX_LINE_LEN,
-                rows.len(),
-                &snapshot.mode,
+            snapshot.dynamic_font_features.layout_lines_with_features(
+                rows,
+                snapshot,
+                style,
                 editor_width,
                 is_row_soft_wrapped,
                 window,
                 cx,
+                MAX_LINE_LEN,
             )
         }
     }
@@ -3380,6 +3378,7 @@ impl EditorElement {
                             is_row_soft_wrapped,
                             window,
                             cx,
+                            true,
                         ))
                     };
 
@@ -7173,7 +7172,7 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
-    fn from_chunks<'a>(
+    pub(crate) fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
         max_line_len: usize,
@@ -8379,6 +8378,7 @@ impl Element for EditorElement {
                         is_row_soft_wrapped,
                         window,
                         cx,
+                        true,
                     )
                     .width;
 
@@ -9674,11 +9674,20 @@ pub fn layout_line(
     is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
     window: &mut Window,
     cx: &mut App,
+    respect_dynamic_font_features: bool,
 ) -> LineWithInvisibles {
-    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
+    let mut editor_style = style.clone();
+
+    if respect_dynamic_font_features {
+        if let Some(refinement) = snapshot.dynamic_font_features.get_style_for_line(row.0) {
+            editor_style.text.refine(&refinement);
+        }
+    }
+
+    let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, &editor_style);
     LineWithInvisibles::from_chunks(
         chunks,
-        &style,
+        &editor_style,
         MAX_LINE_LEN,
         1,
         &snapshot.mode,
