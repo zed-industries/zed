@@ -264,17 +264,16 @@ dependencies = [
 [[package]]
 name = "agentic-coding-protocol"
 version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1ac0351749af7bf53c65042ef69fefb9351aa8b7efa0a813d6281377605c37d"
 dependencies = [
- "anyhow",
  "chrono",
  "futures 0.3.31",
  "log",
  "parking_lot",
+ "paste",
  "schemars",
  "serde",
  "serde_json",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
