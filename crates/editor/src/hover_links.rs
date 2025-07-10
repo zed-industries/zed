@@ -440,7 +440,6 @@ pub fn update_inlay_link_and_hover_points(
                                         part.location.clone()
                                     {
                                         // When there's no tooltip but we have a location, perform a "Go to Definition" style operation
-                                        // First show a loading message
                                         let filename = location
                                             .uri
                                             .path()
@@ -448,20 +447,6 @@ pub fn update_inlay_link_and_hover_points(
                                             .next_back()
                                             .unwrap_or("unknown")
                                             .to_string();
-
-                                        hover_popover::hover_at_inlay(
-                                            editor,
-                                            InlayHover {
-                                                tooltip: HoverBlock {
-                                                    text: "Loading documentation...".to_string(),
-                                                    kind: HoverBlockKind::PlainText,
-                                                },
-                                                range: highlight.clone(),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                        hover_updated = true;
 
                                         // Prepare data needed for the async task
                                         let project = editor.project.clone().unwrap();
@@ -471,11 +456,6 @@ pub fn update_inlay_link_and_hover_points(
 
                                         // Spawn async task to fetch documentation
                                         cx.spawn_in(window, async move |editor, cx| {
-                                            // Small delay to show the loading message first
-                                            cx.background_executor()
-                                                .timer(std::time::Duration::from_millis(50))
-                                                .await;
-
                                             // Convert LSP URL to file path
                                             let file_path = location.uri.to_file_path()
                                                 .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
