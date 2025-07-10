@@ -814,24 +814,12 @@ impl Render for KeymapEditor {
                                 });
 
                             right_click_menu(("keymap-table-row-menu", row_index))
-                                .trigger({
-                                    let this = cx.weak_entity();
-                                    move |is_menu_open: bool, _window, cx| {
-                                        if is_menu_open {
-                                            this.update(cx, |this, cx| {
-                                                if this.selected_index != Some(row_index) {
-                                                    this.selected_index = Some(row_index);
-                                                    cx.notify();
-                                                }
-                                            })
-                                            .ok();
-                                        }
-                                        row
-                                    }
-                                })
+                                .trigger(move |_, _, _| row)
                                 .menu({
                                     let this = cx.weak_entity();
-                                    move |window, cx| build_keybind_context_menu(&this, window, cx)
+                                    move |window, cx| {
+                                        build_keybind_context_menu(&this, row_index, window, cx)
+                                    }
                                 })
                                 .into_any_element()
                         }),
@@ -1503,14 +1491,19 @@ impl Render for KeystrokeInput {
 
 fn build_keybind_context_menu(
     this: &WeakEntity<KeymapEditor>,
+    item_idx: usize,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
     ContextMenu::build(window, cx, |menu, _window, cx| {
-        let Some(this) = this.upgrade() else {
-            return menu;
-        };
-        let selected_binding = this.read_with(cx, |this, _cx| this.selected_binding().cloned());
+        let selected_binding = this
+            .update(cx, |this, _cx| {
+                this.selected_index = Some(item_idx);
+                this.selected_binding().cloned()
+            })
+            .ok()
+            .flatten();
+
         let Some(selected_binding) = selected_binding else {
             return menu;
         };
