@@ -238,6 +238,15 @@ impl MemoryView {
             Self::editor_style(&self.query_editor, cx),
         )
     }
+    pub fn go_to_memory_reference(&mut self, memory_reference: &str, cx: &mut Context<Self>) {
+        use parse_int::parse;
+        let Ok(as_address) = parse::<u64>(&memory_reference) else {
+            return;
+        };
+        self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
+        cx.notify();
+    }
+
     fn editor_style(editor: &Entity<Editor>, cx: &Context<Self>) -> EditorStyle {
         let is_read_only = editor.read(cx).read_only(cx);
         let settings = ThemeSettings::get_global(cx);

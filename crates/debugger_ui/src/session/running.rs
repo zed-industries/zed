@@ -683,14 +683,21 @@ impl RunningState {
 
         let debug_terminal =
             parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
-
-        let variable_list =
-            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
+        let memory_view = cx.new(|cx| MemoryView::new(session.clone(), window, cx));
+        let variable_list = cx.new(|cx| {
+            VariableList::new(
+                session.clone(),
+                stack_frame_list.clone(),
+                memory_view.clone(),
+                window,
+                cx,
+            )
+        });
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
         let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
-        let memory_view = cx.new(|cx| MemoryView::new(session.clone(), window, cx));
+
         let console = cx.new(|cx| {
             Console::new(
                 session.clone(),
