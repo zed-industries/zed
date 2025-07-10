@@ -11,12 +11,9 @@ pub struct Keystroke {
     /// the state of the modifier keys at the time the keystroke was generated
     pub modifiers: Modifiers,
 
-    /// key is the character printed on the key that was pressed
+    /// key is the character printed on the key that was pressed in en-qwerty layout
     /// e.g. for option-s, key is "s"
     pub key: String,
-
-    /// key_en is keyboard layout independent key char in en_US layout
-    // pub key_en: Option<char>,
 
     /// key_char is the character that could have been typed when
     /// this binding was pressed.
