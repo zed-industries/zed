@@ -22,9 +22,8 @@ use lsp::{
 use serde::Serialize;
 use serde_json::Value;
 use util::{ResultExt, fs::make_file_executable, maybe};
-use workspace::AppState;
 
-use crate::LanguageServerRegistryProxy;
+use crate::{LanguageServerRegistryProxy, LspAccess};
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
 struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
@@ -80,27 +79,41 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     ) -> Task<Result<()>> {
         self.language_registry
             .remove_lsp_adapter(language, language_server_name);
+
         let mut tasks = Vec::new();
-        if let Some(app_state) = AppState::try_global(cx).and_then(|state| state.upgrade()) {
-            app_state.workspace_store.update(cx, |workspace_store, cx| {
-                for workspace in workspace_store.workspaces() {
-                    workspace
-                        .update(cx, |workspace, _, cx| {
-                            let lsp_store = workspace.project().read(cx).lsp_store().clone();
-                            lsp_store.update(cx, |lsp_store, cx| {
-                                let stop_task = lsp_store.stop_language_servers_for_buffers(
-                                    Vec::new(),
-                                    HashSet::from_iter([LanguageServerSelector::Name(
-                                        language_server_name.clone(),
-                                    )]),
-                                    cx,
-                                );
-                                tasks.push(stop_task);
-                            });
-                        })
-                        .ok();
-                }
-            })
+        match &self.lsp_access {
+            LspAccess::ViaLspStore(lsp_store) => lsp_store.update(cx, |lsp_store, cx| {
+                let stop_task = lsp_store.stop_language_servers_for_buffers(
+                    Vec::new(),
+                    HashSet::from_iter([LanguageServerSelector::Name(
+                        language_server_name.clone(),
+                    )]),
+                    cx,
+                );
+                tasks.push(stop_task);
+            }),
+            LspAccess::ViaWorkspaces(workspace_store) => {
+                workspace_store.update(cx, |workspace_store, cx| {
+                    for workspace in workspace_store.workspaces() {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                let lsp_store = workspace.project().read(cx).lsp_store().clone();
+                                lsp_store.update(cx, |lsp_store, cx| {
+                                    let stop_task = lsp_store.stop_language_servers_for_buffers(
+                                        Vec::new(),
+                                        HashSet::from_iter([LanguageServerSelector::Name(
+                                            language_server_name.clone(),
+                                        )]),
+                                        cx,
+                                    );
+                                    tasks.push(stop_task);
+                                });
+                            })
+                            .ok();
+                    }
+                })
+            }
+            LspAccess::Noop => {}
         }
 
         cx.background_spawn(async move {

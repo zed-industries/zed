@@ -439,12 +439,17 @@ pub fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        language_extension::init(extension_host_proxy.clone(), languages.clone());
+        language_extension::init(
+            language_extension::LspAccess::ViaWorkspaces(workspace_store.clone()),
+            extension_host_proxy.clone(),
+            languages.clone(),
+        );
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         Client::set_global(client.clone(), cx);
 

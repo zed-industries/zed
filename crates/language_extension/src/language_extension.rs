@@ -5,13 +5,27 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
+use gpui::Entity;
 use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use project::LspStore;
+use workspace::WorkspaceStore;
+
+#[derive(Clone)]
+pub enum LspAccess {
+    ViaLspStore(Entity<LspStore>),
+    ViaWorkspaces(Entity<WorkspaceStore>),
+    Noop,
+}
 
 pub fn init(
+    lsp_access: LspAccess,
     extension_host_proxy: Arc<ExtensionHostProxy>,
     language_registry: Arc<LanguageRegistry>,
 ) {
-    let language_server_registry_proxy = LanguageServerRegistryProxy { language_registry };
+    let language_server_registry_proxy = LanguageServerRegistryProxy {
+        language_registry,
+        lsp_access,
+    };
     extension_host_proxy.register_grammar_proxy(language_server_registry_proxy.clone());
     extension_host_proxy.register_language_proxy(language_server_registry_proxy.clone());
     extension_host_proxy.register_language_server_proxy(language_server_registry_proxy);
@@ -20,6 +34,7 @@ pub fn init(
 #[derive(Clone)]
 struct LanguageServerRegistryProxy {
     language_registry: Arc<LanguageRegistry>,
+    lsp_access: LspAccess,
 }
 
 impl ExtensionGrammarProxy for LanguageServerRegistryProxy {
