@@ -364,7 +364,6 @@ fn render_single_memory_view_line(
     weak: gpui::WeakEntity<MemoryView>,
     cx: &mut App,
 ) -> AnyElement {
-    let ix = ix as u64;
     let Ok(view_state) = weak.update(cx, |this, _| this.view_state.clone()) else {
         return div().into_any();
     };
@@ -556,7 +555,7 @@ impl Render for MemoryView {
                         if false {
                             //ix == row_count - 1 {
                             this.view_state.schedule_scroll_down();
-                        } else if false
+                        } else if !true
                             && (this.scroll_state.is_dragging()
                                 || this
                                     .view_state

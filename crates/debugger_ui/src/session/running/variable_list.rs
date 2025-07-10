@@ -199,7 +199,7 @@ pub struct VariableList {
 }
 
 impl VariableList {
-    pub fn new(
+    pub(crate) fn new(
         session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
         memory_view: Entity<MemoryView>,
