@@ -520,7 +520,6 @@ pub async fn stream_completion(
             _ => Err(OpenRouterError::ApiError(ApiError {
                 code: code,
                 message: error_response.message,
-                metadata: error_response.metadata,
             })),
         }
     }
@@ -630,7 +629,6 @@ pub async fn list_models(
             _ => Err(OpenRouterError::ApiError(ApiError {
                 code: code,
                 message: error_response.message,
-                metadata: error_response.metadata,
             })),
         }
     }
@@ -681,8 +679,6 @@ pub struct OpenRouterErrorResponse {
 pub struct ApiError {
     pub code: ApiErrorCode,
     pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// An OpenROuter API error code.
