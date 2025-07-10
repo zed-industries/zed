@@ -336,6 +336,8 @@ Ollama edit predictions use the first available model from your language model c
 
 Language models configured here will be listed in the Edit Prediction UI menu, which allows you to switch between them. It changes the order of the models in the settings file behind the scenes.
 
+The setting allows for configuring Ollama's API url too, so one can use it either locally or remotely. The Edit Prediction menu includes a shortcut for it that will open the settings file where the url is set.
+
 ### Authentication
 
 Ollama itself doesn't require an API key, but when running it remotely it's a good idea and common practice to setup a proxy server in front of it that does. When sending edit prediction requests to it, Zed will forward the API key as an authentication header so the proxy can authenticate against it:
