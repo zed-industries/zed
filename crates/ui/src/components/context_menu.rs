@@ -159,6 +159,7 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     documentation_aside: Option<(usize, DocumentationAside)>,
     fixed_width: Option<DefiniteLength>,
+    align_popover_top: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -215,6 +216,7 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
+                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -257,6 +259,7 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
+                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -297,6 +300,7 @@ impl ContextMenu {
                     |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
                 ),
                 keep_open_on_confirm: false,
+                align_popover_top: true,
                 documentation_aside: None,
                 fixed_width: None,
                 end_slot_action: None,
@@ -778,6 +782,11 @@ impl ContextMenu {
         self
     }
 
+    pub fn align_popover_bottom(mut self) -> Self {
+        self.align_popover_top = false;
+        self
+    }
+
     fn render_menu_item(
         &self,
         ix: usize,
@@ -1100,7 +1109,13 @@ impl Render for ContextMenu {
             .when(is_wide_window, |this| this.flex_row())
             .when(!is_wide_window, |this| this.flex_col())
             .w_full()
-            .items_start()
+            .map(|div| {
+                if self.align_popover_top {
+                    div.items_start()
+                } else {
+                    div.items_end()
+                }
+            })
             .gap_1()
             .child(div().children(aside.clone().and_then(|(_, aside)| {
                 (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))
