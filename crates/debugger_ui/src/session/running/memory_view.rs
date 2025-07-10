@@ -2,8 +2,8 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, MouseMoveEvent,
-    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, list, point,
+    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
+    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, point,
     uniform_list,
 };
 use project::debugger::{MemoryCell, session::Session};
@@ -215,7 +215,7 @@ impl MemoryView {
             },
         )
         .track_scroll(self.scroll_handle.clone())
-        .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, cx| {
+        .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let delta = evt.delta.pixel_delta(window.line_height());
             let scroll_handle = this.scroll_state.scroll_handle();
             let size = scroll_handle.content_size();
@@ -532,7 +532,7 @@ impl Render for MemoryView {
             .child(
                 v_flex()
                     .size_full()
-                    .on_mouse_move(cx.listener(|this, evt: &MouseMoveEvent, window, cx| {
+                    .on_mouse_move(cx.listener(|this, evt: &MouseMoveEvent, _, _| {
                         if !evt.dragging() {
                             return;
                         }

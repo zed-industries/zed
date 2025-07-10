@@ -1,7 +1,4 @@
-use crate::{
-    debugger_panel::DebugPanel,
-    session::running::{RunningState, memory_view::MemoryView},
-};
+use crate::session::running::{RunningState, memory_view::MemoryView};
 
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{
@@ -593,7 +590,7 @@ impl VariableList {
             let weak_panel = self.weak_running.clone();
 
             window.defer(cx, move |window, cx| {
-                weak_panel.update(cx, |this, cx| {
+                _ = weak_panel.update(cx, |this, cx| {
                     this.activate_item(
                         crate::persistence::DebuggerPaneItem::MemoryView,
                         window,

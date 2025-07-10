@@ -66,7 +66,7 @@ impl MappedPageContents {
 /// of the memory of a debuggee.
 
 #[derive(Default)]
-struct MappedPageContents(
+pub(super) struct MappedPageContents(
     /// Most of the time there should be only one chunk (either mapped or unmapped),
     /// but we do leave the possibility open of having multiple regions of memory in a single page.
     SmallVec<[PageChunk; 1]>,
@@ -234,7 +234,7 @@ fn page_contents_into_iter(data: Arc<MappedPageContents>) -> Box<dyn Iterator<It
             let contents = &data_ref.0[index];
             match contents {
                 PageChunk::Mapped(items) => {
-                    let chunk_range = (0..items.len());
+                    let chunk_range = 0..items.len();
                     let items = items.clone();
                     Box::new(
                         chunk_range
@@ -319,12 +319,12 @@ impl Iterator for MemoryIterator {
 mod tests {
     use crate::debugger::{
         MemoryCell,
-        memory::{MappedPageContents, MemoryIterator, PageAddress, PageContents},
+        memory::{MemoryIterator, PageAddress, PageContents},
     };
 
     #[test]
     fn iterate_over_unmapped_memory() {
-        let mut empty_iterator = MemoryIterator::new(0..=127, Default::default());
+        let empty_iterator = MemoryIterator::new(0..=127, Default::default());
         let actual = empty_iterator.collect::<Vec<_>>();
         let expected = vec![MemoryCell(None); 128];
         assert_eq!(actual.len(), expected.len());
@@ -332,7 +332,7 @@ mod tests {
     }
     #[test]
     fn iterate_over_partially_mapped_memory() {
-        let mut empty_iterator = MemoryIterator::new(
+        let empty_iterator = MemoryIterator::new(
             0..=127,
             vec![(PageAddress(5), PageContents::mapped(vec![1]))].into_iter(),
         );
