@@ -61,9 +61,7 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
-use xkbcommon::xkb::{
-    self, KEYMAP_COMPILE_NO_FLAGS, Keycode, State, ffi::XKB_KEYMAP_FORMAT_TEXT_V1,
-};
+use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, ffi::XKB_KEYMAP_FORMAT_TEXT_V1};
 
 use super::{
     display::WaylandDisplay,
@@ -76,8 +74,7 @@ use crate::{
     LinuxKeyboardLayout, LinuxKeyboardMapper, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels,
-    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px,
-    size,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 use crate::{
     SharedString,
@@ -213,7 +210,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
-    keymap_state: Option<State>,
+    keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
     keyboard_layout: LinuxKeyboardLayout,
     keyboard_mapper: Option<Rc<LinuxKeyboardMapper>>,
@@ -347,7 +344,7 @@ impl WaylandClientStatePtr {
         text_input.commit();
     }
 
-    pub fn handle_keyboard_layout_change(&self) {
+    pub fn handle_keyboard_layout_change(&self, locked_group: u32) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         let changed = if let Some(keymap_state) = &state.keymap_state {
@@ -360,7 +357,12 @@ impl WaylandClientStatePtr {
                 let mapper = state
                     .keyboard_mapper_cache
                     .entry(layout_name.to_string())
-                    .or_insert(Rc::new(LinuxKeyboardMapper::new(&keymap, 0, 0, 0)))
+                    .or_insert(Rc::new(LinuxKeyboardMapper::new(
+                        &keymap,
+                        0,
+                        0,
+                        locked_group,
+                    )))
                     .clone();
                 state.keyboard_mapper = Some(mapper);
             }
@@ -1230,7 +1232,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.compose_state = get_xkb_compose_state(&xkb_context);
                 drop(state);
 
-                this.handle_keyboard_layout_change();
+                this.handle_keyboard_layout_change(0);
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -1286,7 +1288,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 }
 
                 if group != old_layout {
-                    this.handle_keyboard_layout_change();
+                    this.handle_keyboard_layout_change(group);
                 }
             }
             wl_keyboard::Event::Key {
@@ -1305,7 +1307,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 let keymap_state = state.keymap_state.as_ref().unwrap();
                 let keyboard_mapper = state.keyboard_mapper.as_ref().unwrap();
-                let keycode = Keycode::from(key + MIN_KEYCODE);
+                let keycode = xkb::Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
                 match key_state {

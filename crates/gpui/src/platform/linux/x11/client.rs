@@ -1,8 +1,3 @@
-use crate::{
-    LinuxKeyboardMapper,
-    platform::{Capslock, xcb_flush},
-    underlying_dead_key,
-};
 use core::str;
 use std::{
     cell::RefCell,
@@ -42,7 +37,7 @@ use x11rb::{
 };
 use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE, State};
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
@@ -53,7 +48,7 @@ use super::{
 };
 
 use crate::platform::{
-    LinuxCommon, PlatformWindow,
+    Capslock, LinuxCommon, PlatformWindow,
     blade::BladeContext,
     linux::{
         DEFAULT_CURSOR_ICON_NAME, LinuxClient, get_xkb_compose_state, is_within_click_distance,
@@ -62,13 +57,14 @@ use crate::platform::{
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+    xcb_flush,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
-    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
-    ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
-    modifiers_from_xinput_info, point, px,
+    LinuxKeyboardLayout, LinuxKeyboardMapper, Modifiers, ModifiersChangedEvent, MouseButton,
+    Pixels, Platform, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point,
+    RequestFrameOptions, ScaledPixels, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px, underlying_dead_key,
 };
 
 /// Value for DeviceId parameters which selects all devices.
