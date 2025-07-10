@@ -10,9 +10,9 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy, StyledText, Subscription,
-    WeakEntity, actions, div,
+    AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy,
+    StyledText, Subscription, WeakEntity, actions, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -797,9 +797,14 @@ impl Render for KeymapEditor {
 
                             let row = row
                                 .id(("keymap-table-row", row_index))
-                                .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                    this.selected_index = Some(row_index);
-                                }))
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        this.selected_index = Some(row_index);
+                                        if event.up.click_count == 2 {
+                                            this.open_edit_keybinding_modal(false, window, cx);
+                                        }
+                                    },
+                                ))
                                 .border_2()
                                 .when(is_conflict, |row| {
                                     row.bg(cx.theme().status().error_background)
