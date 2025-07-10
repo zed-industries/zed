@@ -71,7 +71,7 @@ jobs:
             echo "run_license=false" >> $GITHUB_OUTPUT
           fi
           NIX_REGEX='^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)'
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep "$NIX_REGEX") ]]; then
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -P "$NIX_REGEX") ]]; then
             echo "run_nix=true" >> $GITHUB_OUTPUT
           else
             echo "run_nix=false" >> $GITHUB_OUTPUT
