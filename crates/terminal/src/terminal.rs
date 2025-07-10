@@ -405,10 +405,7 @@ impl TerminalBuilder {
             }),
         };
         let shell_program = shell_params.as_ref().map(|params| params.program.clone());
-        let terminal_title_override = shell_params
-            .as_ref()
-            .map(|e| e.title_override.clone())
-            .flatten();
+        let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
         let pty_options = {
             let alac_shell = shell_params.map(|params| {
