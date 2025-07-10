@@ -1377,7 +1377,7 @@
     // This will be merged with the platform's default font fallbacks
     // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // The weight of the editor font in standard CSS units from 100 to 900.
-    // "font_weight": 400,
+    "font_weight": 400,
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
