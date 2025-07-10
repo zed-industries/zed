@@ -92,26 +92,21 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
                 );
                 tasks.push(stop_task);
             }),
-            LspAccess::ViaWorkspaces(workspace_store) => {
-                workspace_store.update(cx, |workspace_store, cx| {
-                    for workspace in workspace_store.workspaces() {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                let lsp_store = workspace.project().read(cx).lsp_store().clone();
-                                lsp_store.update(cx, |lsp_store, cx| {
-                                    let stop_task = lsp_store.stop_language_servers_for_buffers(
-                                        Vec::new(),
-                                        HashSet::from_iter([LanguageServerSelector::Name(
-                                            language_server_name.clone(),
-                                        )]),
-                                        cx,
-                                    );
-                                    tasks.push(stop_task);
-                                });
-                            })
-                            .ok();
+            LspAccess::ViaWorkspaces(lsp_store_provider) => {
+                if let Ok(lsp_stores) = lsp_store_provider(cx) {
+                    for lsp_store in lsp_stores {
+                        lsp_store.update(cx, |lsp_store, cx| {
+                            let stop_task = lsp_store.stop_language_servers_for_buffers(
+                                Vec::new(),
+                                HashSet::from_iter([LanguageServerSelector::Name(
+                                    language_server_name.clone(),
+                                )]),
+                                cx,
+                            );
+                            tasks.push(stop_task);
+                        });
                     }
-                })
+                }
             }
             LspAccess::Noop => {}
         }

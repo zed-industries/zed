@@ -5,15 +5,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
-use gpui::Entity;
+use gpui::{App, Entity};
 use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
 use project::LspStore;
-use workspace::WorkspaceStore;
 
 #[derive(Clone)]
 pub enum LspAccess {
     ViaLspStore(Entity<LspStore>),
-    ViaWorkspaces(Entity<WorkspaceStore>),
+    ViaWorkspaces(Arc<dyn Fn(&mut App) -> Result<Vec<Entity<LspStore>>> + Send + Sync + 'static>),
     Noop,
 }
 

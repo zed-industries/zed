@@ -8982,7 +8982,6 @@ dependencies = [
  "serde",
  "serde_json",
  "util",
- "workspace",
  "workspace-hack",
 ]
 

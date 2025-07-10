@@ -446,7 +446,22 @@ pub fn main() {
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         language_extension::init(
-            language_extension::LspAccess::ViaWorkspaces(workspace_store.clone()),
+            language_extension::LspAccess::ViaWorkspaces({
+                let workspace_store = workspace_store.clone();
+                Arc::new(move |cx: &mut App| {
+                    workspace_store.update(cx, |workspace_store, cx| {
+                        workspace_store
+                            .workspaces()
+                            .iter()
+                            .map(|workspace| {
+                                workspace.update(cx, |workspace, _, cx| {
+                                    workspace.project().read(cx).lsp_store()
+                                })
+                            })
+                            .collect()
+                    })
+                })
+            }),
             extension_host_proxy.clone(),
             languages.clone(),
         );
