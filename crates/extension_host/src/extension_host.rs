@@ -884,15 +884,30 @@ impl ExtensionStore {
                 .update(cx, |extension_store, cx| extension_store.reload(None, cx))?
                 .await;
 
-            fs.remove_dir(
-                &work_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
-            .await
-            .with_context(|| format!("Removing extension work dir {work_dir:?}"))?;
+            // There's a race between wasm extension fully stopping and the directory removal.
+            // On Windows, it's impossible to remove a directory that has a process running in it.
+            for i in 0..3 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(i * 100))
+                    .await;
+                let removal_result = fs
+                    .remove_dir(
+                        &work_dir,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await;
+                match removal_result {
+                    Ok(()) => break,
+                    Err(e) => {
+                        if i == 2 {
+                            log::error!("Failed to remove extension work dir {work_dir:?} : {e}");
+                        }
+                    }
+                }
+            }
 
             extension_store.update(cx, |_, cx| {
                 cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
