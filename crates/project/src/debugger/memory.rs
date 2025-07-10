@@ -28,11 +28,11 @@ pub(super) enum PageContents {
 }
 
 impl PageContents {
-    fn len(&self) -> u64 {
-        match self {
-            PageContents::Unmapped => PAGE_SIZE,
-            PageContents::Mapped(contents) => contents.len(),
-        }
+    #[cfg(test)]
+    fn mapped(contents: Vec<u8>) -> Self {
+        PageContents::Mapped(Arc::new(MappedPageContents(
+            vec![PageChunk::Mapped(contents.into())].into(),
+        )))
     }
 }
 
@@ -101,7 +101,7 @@ pub(super) struct Memory {
 }
 
 /// Represents a single memory cell (or None if a given cell is unmapped/unknown).
-#[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
 pub struct MemoryCell(pub Option<u8>);
 
@@ -297,14 +297,51 @@ impl Iterator for MemoryIterator {
         }
         if let Some((current_page_address, current_memory_chunk)) = self.current_known_page.as_mut()
         {
-            if let Some(next_cell) = current_memory_chunk.next() {
-                self.start += 1;
-                return Some(next_cell);
+            if current_page_address.0 <= self.start {
+                if let Some(next_cell) = current_memory_chunk.next() {
+                    self.start += 1;
+                    return Some(next_cell);
+                } else {
+                    self.current_known_page.take();
+                }
             }
         }
         if !self.fetch_next_page() {
-            return None;
-        };
-        self.next()
+            self.start += 1;
+            return Some(MemoryCell(None));
+        } else {
+            self.next()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::debugger::{
+        MemoryCell,
+        memory::{MappedPageContents, MemoryIterator, PageAddress, PageContents},
+    };
+
+    #[test]
+    fn iterate_over_unmapped_memory() {
+        let mut empty_iterator = MemoryIterator::new(0..=127, Default::default());
+        let actual = empty_iterator.collect::<Vec<_>>();
+        let expected = vec![MemoryCell(None); 128];
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual, expected);
+    }
+    #[test]
+    fn iterate_over_partially_mapped_memory() {
+        let mut empty_iterator = MemoryIterator::new(
+            0..=127,
+            vec![(PageAddress(5), PageContents::mapped(vec![1]))].into_iter(),
+        );
+        let actual = empty_iterator.collect::<Vec<_>>();
+        let expected = std::iter::repeat_n(MemoryCell(None), 5)
+            .chain(std::iter::once(MemoryCell(Some(1))))
+            .chain(std::iter::repeat_n(MemoryCell(None), 122))
+            .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual, expected);
     }
 }
