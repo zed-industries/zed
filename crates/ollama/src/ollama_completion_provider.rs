@@ -42,8 +42,8 @@ impl OllamaCompletionProvider {
     }
 
     /// Updates the model used by this provider
-    pub fn update_model(&mut self, new_model: String) {
-        self.model = new_model;
+    pub fn update_model(&mut self, model: String) {
+        self.model = model;
     }
 
     /// Updates the file extension used by this provider

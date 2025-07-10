@@ -335,12 +335,14 @@ fn assign_edit_prediction_provider(
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
             let api_url = settings.api_url.clone();
 
-            // Use first available model or default
+            // Use first available model or default to a FIM-capable model
+            // NOTE: codellama:7b and deepseek-coder:latest do NOT support FIM
+            // Use qwen2.5-coder:3b or starcoder2:latest instead
             let model = settings
                 .available_models
                 .first()
                 .map(|m| m.name.clone())
-                .unwrap_or_else(|| "codellama:7b".to_string());
+                .unwrap_or_else(|| "qwen2.5-coder:3b".to_string());
 
             // Get API key from environment variable only (credentials would require async handling)
             let api_key = std::env::var("OLLAMA_API_KEY").ok();
