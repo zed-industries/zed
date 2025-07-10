@@ -48,10 +48,6 @@ pub fn hover_at(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    eprintln!(
-        "hover_at called with anchor: {}",
-        if anchor.is_some() { "Some" } else { "None" }
-    );
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, window, cx) {
             return;
@@ -216,7 +212,6 @@ pub fn hover_at_inlay(
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
 pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
-    eprintln!("hide_hover called");
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -791,12 +786,6 @@ impl HoverState {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
-        let visible = self.visible();
-        eprintln!(
-            "HoverState::render - visible: {}, info_popovers: {}",
-            visible,
-            self.info_popovers.len()
-        );
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
         let anchor = self
@@ -820,18 +809,9 @@ impl HoverState {
                 })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
-        eprintln!(
-            "HoverState::render - point: {:?}, visible_rows: {:?}",
-            point, visible_rows
-        );
 
         // Don't render if the relevant point isn't on screen
         if !self.visible() || !visible_rows.contains(&point.row()) {
-            eprintln!(
-                "HoverState::render - Not rendering: visible={}, point_in_range={}",
-                self.visible(),
-                visible_rows.contains(&point.row())
-            );
             return None;
         }
 
