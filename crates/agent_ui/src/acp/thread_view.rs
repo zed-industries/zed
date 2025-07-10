@@ -15,9 +15,9 @@ use editor::{
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use gpui::{
-    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId, Focusable,
-    Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div,
+    Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
+    Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div,
     linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
@@ -43,7 +43,7 @@ use ::acp::{
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
-use crate::{Follow, KeepAll, OpenAgentDiff, RejectAll};
+use crate::{AgentDiffPane, Follow, KeepAll, OpenAgentDiff, RejectAll};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -261,7 +261,15 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn thread(&self) -> Option<&Entity<AcpThread>> {
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
+    pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => {
                 Some(thread)
@@ -385,6 +393,14 @@ impl AcpThreadView {
             window,
             cx,
         );
+    }
+
+    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let this = cx.entity();
+        window.defer(cx, move |window, cx| {
+            AgentDiffPane::deploy(this, workspace, window, cx).log_err();
+        });
     }
 
     fn set_draft_message(
@@ -531,7 +547,7 @@ impl AcpThreadView {
             cx.spawn(async move |action_log, cx| {
                 let buffers = futures::future::join_all(buffers).await;
                 // todo! figure out when to call buffer_edited
-                cx.background_executor().timer(Duration::from_secs(1)).await;
+                cx.background_executor().timer(Duration::from_secs(5)).await;
                 action_log
                     .update(cx, |action_log, cx| {
                         for (buffer, line) in buffers {
@@ -1765,9 +1781,8 @@ impl AcpThreadView {
                                     )
                                 }
                             })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                // todo!
-                                // this.handle_review_click(window, cx)
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
                             })),
                     )
                     .child(Divider::vertical().color(DividerColor::Border))
@@ -2201,6 +2216,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
+            .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()

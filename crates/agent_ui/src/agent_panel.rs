@@ -8,6 +8,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
 use crate::NewAcpThread;
+use crate::agent_diff::AgentDiffThread;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
@@ -624,7 +625,7 @@ impl AgentPanel {
             }
         };
 
-        AgentDiff::set_active_thread(&workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
         let weak_panel = weak_self.clone();
 
@@ -848,7 +849,7 @@ impl AgentPanel {
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
 
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -893,11 +894,22 @@ impl AgentPanel {
 
         cx.spawn_in(window, async move |this, cx| {
             let thread_view = cx.new_window_entity(|window, cx| {
-                crate::acp::AcpThreadView::new(workspace, project, window, cx)
+                crate::acp::AcpThreadView::new(workspace.clone(), project, window, cx)
             })?;
             this.update_in(cx, |this, window, cx| {
-                this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
+                this.set_active_view(
+                    ActiveView::AcpThread {
+                        thread_view: thread_view.clone(),
+                    },
+                    window,
+                    cx,
+                );
+
+                AgentDiff::set_active_thread(&workspace, thread_view, window, cx);
             })
+            .log_err();
+
+            anyhow::Ok(())
         })
         .detach();
     }
@@ -1053,7 +1065,7 @@ impl AgentPanel {
 
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
@@ -1184,7 +1196,12 @@ impl AgentPanel {
                 let thread = thread.read(cx).thread().clone();
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
+                        AgentDiffPane::deploy_in_workspace(
+                            AgentDiffThread::Native(thread),
+                            workspace,
+                            window,
+                            cx,
+                        )
                     })
                     .log_err();
             }
