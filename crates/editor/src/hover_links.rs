@@ -448,15 +448,7 @@ pub fn update_inlay_link_and_hover_points(
                                             .next_back()
                                             .unwrap_or("unknown")
                                             .to_string();
-                                        let _loading_text = format!(
-                                            "{}\n\nLoading documentation from {}...",
-                                            part.value.trim(),
-                                            filename
-                                        );
-                                        eprintln!(
-                                            "Showing loading message for type: {}",
-                                            part.value.trim()
-                                        );
+
                                         hover_popover::hover_at_inlay(
                                             editor,
                                             InlayHover {
@@ -474,27 +466,21 @@ pub fn update_inlay_link_and_hover_points(
                                         // Prepare data needed for the async task
                                         let project = editor.project.clone().unwrap();
                                         let hint_value = part.value.clone();
-                                        let location_uri = location.uri.as_str().to_string();
                                         let highlight = highlight.clone();
                                         let filename = filename.clone();
 
                                         // Spawn async task to fetch documentation
                                         cx.spawn_in(window, async move |editor, cx| {
-                                            eprintln!("Starting async documentation fetch for {}", hint_value);
-
                                             // Small delay to show the loading message first
                                             cx.background_executor()
                                                 .timer(std::time::Duration::from_millis(50))
                                                 .await;
 
                                             // Convert LSP URL to file path
-                                            eprintln!("Converting LSP URI to file path: {}", location_uri);
                                             let file_path = location.uri.to_file_path()
                                                 .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
-                                            eprintln!("File path: {:?}", file_path);
 
                                             // Open the definition file
-                                            eprintln!("Opening definition file via project.open_local_buffer");
                                             let definition_buffer = project
                                                 .update(cx, |project, cx| {
                                                     project.open_local_buffer(file_path, cx)
@@ -502,11 +488,9 @@ pub fn update_inlay_link_and_hover_points(
                                                 .await?;
 
                                             // Register the buffer with language servers
-                                            eprintln!("Registering buffer with language servers");
                                             let _lsp_handle = project.update(cx, |project, cx| {
                                                 project.register_buffer_with_language_servers(&definition_buffer, cx)
                                             })?;
-                                            eprintln!("Successfully opened and registered definition buffer with LSP");
 
                                             // Give LSP a moment to process the didOpen notification
                                             cx.background_executor()
@@ -515,7 +499,6 @@ pub fn update_inlay_link_and_hover_points(
 
                                             // Try to get hover documentation from LSP
                                             let hover_position = location.range.start;
-                                            eprintln!("Requesting hover at position {:?}", hover_position);
 
                                             // Convert LSP position to a point
                                             let hover_point = definition_buffer.update(cx, |buffer, _| {
@@ -531,14 +514,10 @@ pub fn update_inlay_link_and_hover_points(
                                                 })?
                                                 .await;
 
-                                            eprintln!("Hover response: {} hovers", hover_response.len());
-
                                             if !hover_response.is_empty() {
                                                 // Get the first hover response
                                                 let hover = &hover_response[0];
                                                 if !hover.contents.is_empty() {
-                                                    eprintln!("Got {} hover blocks from LSP!", hover.contents.len());
-
                                                     // Format the hover blocks as markdown
                                                     let mut formatted_docs = String::new();
 
@@ -581,12 +560,9 @@ pub fn update_inlay_link_and_hover_points(
                                                 }
                                             }
 
-                                            eprintln!("No hover documentation from LSP, falling back to parsing source");
-
                                             // Fallback: Extract documentation directly from the source
                                             let documentation = definition_buffer.update(cx, |buffer, _| {
                                                 let line_number = location.range.start.line as usize;
-                                                eprintln!("Looking for documentation at line {}", line_number);
 
                                                 // Get the text of the buffer
                                                 let text = buffer.text();
@@ -629,20 +605,15 @@ pub fn update_inlay_link_and_hover_points(
                                                     .map(|s| s.trim().to_string())
                                                     .unwrap_or_else(|| hint_value.clone());
 
-                                                eprintln!("Found {} doc lines", doc_lines.len());
-
                                                 if doc_lines.is_empty() {
                                                     None
                                                 } else {
                                                     let docs = doc_lines.join("\n");
-                                                    eprintln!("Extracted docs: {}", docs.chars().take(100).collect::<String>());
                                                     Some((definition, docs))
                                                 }
                                             })?;
 
                                             if let Some((definition, docs)) = documentation {
-                                                eprintln!("Got documentation from source!");
-
                                                 // Format as markdown with the definition as a code block
                                                 let formatted_docs = format!("```rust\n{}\n```\n\n{}", definition, docs);
 
@@ -661,7 +632,6 @@ pub fn update_inlay_link_and_hover_points(
                                                     );
                                                 }).log_err();
                                             } else {
-                                                eprintln!("No documentation found in source, falling back to location info");
                                                 // Fallback to showing just the location info
                                                 let fallback_text = format!(
                                                     "{}\n\nDefined in {} at line {}",
@@ -685,7 +655,6 @@ pub fn update_inlay_link_and_hover_points(
                                                 }).log_err();
                                             }
 
-                                            eprintln!("Documentation fetch complete");
                                             anyhow::Ok(())
                                         }).detach();
                                     }
