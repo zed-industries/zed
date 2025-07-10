@@ -640,9 +640,18 @@ impl KeymapFile {
             else {
                 anyhow::bail!("Failed to find keybinding to remove");
             };
+            let is_only_binding = keymap.0[index]
+                .bindings
+                .as_ref()
+                .map_or(true, |bindings| bindings.len() == 1);
+            let key_path: &[&str] = if is_only_binding {
+                &[]
+            } else {
+                &["bindings", keystrokes_str]
+            };
             let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
                 &keymap_contents,
-                &["bindings", keystrokes_str],
+                key_path,
                 None,
                 None,
                 index,
@@ -1397,6 +1406,55 @@ mod tests {
                 target_keybind_source: KeybindSource::User,
             },
             r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "b": "foo::baz",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": ["foo::bar", true],
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    use_key_equivalents: false,
+                    input: Some("true"),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "b": "foo::baz",
+                    }
+                },
                 {
                     "context": "SomeContext",
                     "bindings": {
