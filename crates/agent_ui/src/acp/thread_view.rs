@@ -16,11 +16,11 @@ use file_icons::FileIcons;
 use futures::channel::oneshot;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription,
-    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div,
-    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Window, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
+    pulsating_between,
 };
-use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
@@ -393,14 +393,6 @@ impl AcpThreadView {
             window,
             cx,
         );
-    }
-
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        let this = cx.entity();
-        window.defer(cx, move |window, cx| {
-            AgentDiffPane::deploy(this, workspace, window, cx).log_err();
-        });
     }
 
     fn set_draft_message(
@@ -1708,12 +1700,7 @@ impl AcpThreadView {
                     .cursor_pointer()
                     .w_full()
                     .gap_1()
-                    .child(
-                        Disclosure::new("edits-disclosure", expanded), // todo! doesn't this propagate?
-                                                                       // .on_click(cx.listener(|this, _, _, cx| {
-                                                                       //     this.handle_edit_bar_expand(cx)
-                                                                       // })),
-                    )
+                    .child(Disclosure::new("edits-disclosure", expanded))
                     .map(|this| {
                         if pending_edits {
                             this.child(
@@ -1802,13 +1789,14 @@ impl AcpThreadView {
                                 )
                                 .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                // todo!
-                                // this.handle_reject_all(window, cx)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.action_log.update(cx, |action_log, cx| {
+                                    action_log.reject_all_edits(cx).detach();
+                                })
                             })),
                     )
                     .child(
-                        Button::new("accept-all-changes", "Accept All")
+                        Button::new("keep-all-changes", "Keep All")
                             .label_size(LabelSize::Small)
                             .disabled(pending_edits)
                             .when(pending_edits, |this| {
@@ -1819,8 +1807,9 @@ impl AcpThreadView {
                                     .map(|kb| kb.size(rems_from_px(10.))),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
-                                // todo!
-                                // this.handle_accept_all(window, cx)
+                                this.action_log.update(cx, |action_log, cx| {
+                                    action_log.keep_all_edits(cx);
+                                })
                             })),
                     ),
             )
@@ -1931,29 +1920,33 @@ impl AcpThreadView {
                                     .disabled(pending_edits)
                                     .on_click({
                                         let buffer = buffer.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            // todo!
-                                            // this.handle_reject_file_changes(
-                                            //     buffer.clone(),
-                                            //     window,
-                                            //     cx,
-                                            // );
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.action_log.update(cx, |action_log, cx| {
+                                                action_log
+                                                    .reject_edits_in_ranges(
+                                                        buffer.clone(),
+                                                        vec![Anchor::MIN..Anchor::MAX],
+                                                        cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                            })
                                         })
                                     }),
                             )
                             .child(
-                                Button::new("accept-file", "Accept")
+                                Button::new("keep-file", "Keep")
                                     .label_size(LabelSize::Small)
                                     .disabled(pending_edits)
                                     .on_click({
                                         let buffer = buffer.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            // todo!
-                                            // this.handle_accept_file_changes(
-                                            //     buffer.clone(),
-                                            //     window,
-                                            //     cx,
-                                            // );
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.action_log.update(cx, |action_log, cx| {
+                                                action_log.keep_edits_in_range(
+                                                    buffer.clone(),
+                                                    Anchor::MIN..Anchor::MAX,
+                                                    cx,
+                                                );
+                                            })
                                         })
                                     }),
                             ),
@@ -2216,7 +2209,14 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
-            .on_action(cx.listener(Self::open_agent_diff))
+            .on_action({
+                let workspace = self.workspace.clone();
+                let this = cx.entity();
+                move |_: &OpenAgentDiff, window, cx| {
+                    // not using `cx.listener` because deploy reads the `AcpThreadView`
+                    AgentDiffPane::deploy(this.clone(), workspace.clone(), window, cx).log_err();
+                }
+            })
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()
