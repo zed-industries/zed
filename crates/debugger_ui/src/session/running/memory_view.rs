@@ -244,6 +244,10 @@ impl MemoryView {
             return;
         };
         self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
+        self.view_state.selection = Some(SelectedMemoryRange::DragComplete(Drag {
+            start_address: as_address,
+            end_address: as_address + 10,
+        }));
         cx.notify();
     }
 

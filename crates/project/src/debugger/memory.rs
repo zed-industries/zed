@@ -12,11 +12,7 @@
 //! It is picked arbitrarily as a ubiquous default - other than that, the underlying format of Zed's memory storage should not be relevant
 //! to the users of this module.
 
-use std::{
-    collections::BTreeMap,
-    ops::{Range, RangeInclusive},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, ops::RangeInclusive, sync::Arc};
 
 use smallvec::SmallVec;
 
