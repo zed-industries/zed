@@ -1,4 +1,4 @@
-//! This module defines the format in which memory of debugee is represented.
+//! This module defines the format in which memory of debuggee is represented.
 //!
 //! Each byte in memory can either be mapped or unmapped. We try to mimic that twofold:
 //! - We assume that the memory is divided into pages of a fixed size.
