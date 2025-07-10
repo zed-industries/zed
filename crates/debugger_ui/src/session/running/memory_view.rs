@@ -243,12 +243,23 @@ impl MemoryView {
         let Ok(as_address) = parse::<u64>(&memory_reference) else {
             return;
         };
-        self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
-        self.view_state.selection = Some(SelectedMemoryRange::DragComplete(Drag {
-            start_address: as_address,
-            end_address: as_address + 10,
-        }));
-        cx.notify();
+        let access_size = self
+            .session
+            .update(cx, |this, cx| this.data_access_size(as_address, cx));
+        cx.spawn(async move |this, cx| {
+            let access_size = access_size.await.unwrap_or(1);
+            this.update(cx, |this, cx| {
+                this.view_state.base_row =
+                    (as_address & !0xfff) / this.view_state.line_width.width as u64;
+                this.view_state.selection = Some(SelectedMemoryRange::DragComplete(Drag {
+                    start_address: as_address,
+                    end_address: as_address + access_size - 1,
+                }));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn editor_style(editor: &Entity<Editor>, cx: &Context<Self>) -> EditorStyle {

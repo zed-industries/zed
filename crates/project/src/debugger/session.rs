@@ -26,9 +26,10 @@ use dap::{
     messages::{Events, Message},
 };
 use dap::{
-    ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
-    RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
+    DataBreakpointInfoArguments, ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent,
+    OutputEventCategory, RunInTerminalRequestArguments, StackFramePresentationHint,
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    VariablePresentationHint,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
@@ -1718,6 +1719,28 @@ impl Session {
         &self.modules
     }
 
+    // CodeLLDB returns the size of a pointed-to-memory, which we can use to make the experience of go-to-memory better.
+    pub fn data_access_size(&mut self, address: u64, cx: &mut Context<Self>) -> Task<Option<u64>> {
+        let request = self.request(
+            DataBreakpointInfoArguments {
+                variables_reference: None,
+                as_address: Some(true),
+                name: address.to_string(),
+                frame_id: None,
+                mode: None,
+                bytes: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            let id = result.data_id.as_ref()?;
+            // codelldb uses `{address}/{size}` to represent the data breakpoint.
+            let size = id.split('/').nth(1).and_then(|s| s.parse().ok());
+            size
+        })
+    }
     pub fn read_memory(
         &mut self,
         range: RangeInclusive<u64>,

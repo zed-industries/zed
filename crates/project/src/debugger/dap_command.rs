@@ -1795,6 +1795,11 @@ impl LocalDapCommand for ReadMemory {
     type DapRequest = dap::requests::ReadMemory;
     const CACHEABLE: bool = true;
 
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_read_memory_request
+            .unwrap_or_default()
+    }
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ReadMemoryArguments {
             memory_reference: self.memory_reference.clone(),
@@ -1821,5 +1826,24 @@ impl LocalDapCommand for ReadMemory {
             content: data.into(),
             unreadable_bytes: message.unreadable_bytes,
         })
+    }
+}
+
+impl LocalDapCommand for dap::DataBreakpointInfoArguments {
+    type Response = dap::DataBreakpointInfoResponse;
+    type DapRequest = dap::requests::DataBreakpointInfo;
+    const CACHEABLE: bool = true;
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
     }
 }
