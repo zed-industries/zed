@@ -3513,7 +3513,6 @@ impl Repository {
                             }),
                             askpass_id: Some(askpass_id),
                         })
-                        // FIXME
                         .await?;
 
                     Ok(())

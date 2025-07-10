@@ -155,14 +155,8 @@ impl AskPassSession {
         let gpg_script = generate_gpg_script();
         fs::write(&gpg_script_path, gpg_script)
             .await
-            .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
+            .with_context(|| format!("creating gpg wrapper script at {gpg_script_path:?}"))?;
         make_file_executable(&gpg_script_path).await?;
-        // FIXME
-        // #[cfg(target_os = "windows")]
-        // let gpg_helper = format!(
-        //     "powershell.exe -ExecutionPolicy Bypass -File {}",
-        //     gpg_script_path.display()
-        // );
 
         Ok(Self {
             #[cfg(not(target_os = "windows"))]
@@ -170,7 +164,6 @@ impl AskPassSession {
             #[cfg(not(target_os = "windows"))]
             gpg_script_path,
 
-            // FIXME gpg helper
             #[cfg(target_os = "windows")]
             secret,
             #[cfg(target_os = "windows")]
@@ -193,8 +186,16 @@ impl AskPassSession {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn gpg_script_path(&self) -> impl AsRef<OsStr> {
-        &self.gpg_script_path
+    pub fn gpg_script_path(&self) -> Option<impl AsRef<OsStr>> {
+        Some(&self.gpg_script_path)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn gpg_script_path(&self) -> Option<impl AsRef<OsStr>> {
+        // TODO implement wrapping GPG on Windows. This is more difficult than on Unix
+        // because we can't use --passphrase-fd with a nonstandard FD, and both --passphrase
+        // and --passphrase-file are insecure.
+        None
     }
 
     // This will run the askpass task forever, resolving as many authentication requests as needed.
