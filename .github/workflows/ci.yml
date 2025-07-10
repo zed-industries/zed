@@ -390,7 +390,7 @@ jobs:
 
   windows_tests:
     timeout-minutes: 60
-    name: (Windows) Run Tests
+    name: (Windows) Run Clippy and tests
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
