@@ -405,6 +405,7 @@ fn render_single_memory_view_line(
                         .child(
                             Label::new(HEX_BYTES_MEMOIZED[cell.0.unwrap_or(0) as usize].clone())
                                 .buffer_font(cx)
+                                .when(cell.0.is_none(), |this| this.color(Color::Muted))
                                 .size(ui::LabelSize::Small),
                         )
                         .on_drag(
@@ -470,6 +471,7 @@ fn render_single_memory_view_line(
                     };
                     Label::new(format!("{as_visible}"))
                         .buffer_font(cx)
+                        .when(cell.0.is_none(), |this| this.color(Color::Muted))
                         .size(ui::LabelSize::Small)
                 })),
         )
