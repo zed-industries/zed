@@ -502,11 +502,21 @@ impl AcpThreadView {
             return;
         }
         let locations = call.locations.clone();
-        let diff = if let Some(ToolCallContent::Diff { diff }) = &call.content {
+        let applied_diff = if let ToolCall {
+            status:
+                ToolCallStatus::Allowed {
+                    status: acp::ToolCallStatus::Finished,
+                    ..
+                },
+            content: Some(ToolCallContent::Diff { diff }),
+            ..
+        } = &call
+        {
             Some((diff.old_buffer.clone(), diff.new_buffer.clone()))
         } else {
             None
         };
+        let thread_view = cx.entity();
         action_log.update(cx, |action_log, cx| {
             let buffers = action_log.project().update(cx, |project, cx| {
                 locations
@@ -520,33 +530,42 @@ impl AcpThreadView {
             });
             cx.spawn(async move |action_log, cx| {
                 let buffers = futures::future::join_all(buffers).await;
-                action_log.update(cx, |action_log, cx| {
-                    for (buffer, line) in buffers {
-                        let Some(buffer) = buffer.log_err() else {
-                            continue;
-                        };
-                        let position = if let Some(line) = line {
-                            let snapshot = buffer.read(cx).snapshot();
-                            let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
-                            buffer.read(cx).snapshot().anchor_before(point)
-                        } else {
-                            Anchor::MIN
-                        };
-                        let location = AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        };
-                        // todo! actually show diff...
-                        if let Some(diff) = diff.clone() {
-                            action_log.buffer_edited(buffer, cx);
-                        } else {
-                            action_log.buffer_read(buffer, cx);
+                // todo! figure out when to call buffer_edited
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                action_log
+                    .update(cx, |action_log, cx| {
+                        for (buffer, line) in buffers {
+                            let Some(buffer) = buffer.log_err() else {
+                                continue;
+                            };
+                            let position = if let Some(line) = line {
+                                let snapshot = buffer.read(cx).snapshot();
+                                let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
+                                buffer.read(cx).snapshot().anchor_before(point)
+                            } else {
+                                Anchor::MIN
+                            };
+                            let location = AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            };
+                            if let Some(diff) = applied_diff.clone() {
+                                let old_snapshot = diff.0.read(cx).snapshot();
+                                action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
+                            } else {
+                                action_log.buffer_read(buffer, cx);
+                            }
+                            action_log.project().update(cx, |project, cx| {
+                                project.set_agent_location(Some(location), cx);
+                            });
                         }
-                        action_log.project().update(cx, |project, cx| {
-                            project.set_agent_location(Some(location), cx);
-                        });
-                    }
-                })
+                    })
+                    .log_err();
+                thread_view
+                    .update(cx, |_, cx| {
+                        cx.notify();
+                    })
+                    .log_err();
             })
             .detach();
         })
