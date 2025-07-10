@@ -2,8 +2,8 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful, Task,
-    TextStyle, UniformList, UniformListScrollHandle, list, uniform_list,
+    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, ScrollWheelEvent,
+    Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, list, point, uniform_list,
 };
 use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
@@ -71,9 +71,7 @@ impl SelectedMemoryRange {
 struct ViewState {
     /// Uppermost row index
     base_row: u64,
-    /// To implement the infinite scrolling feature, we track two row indices: base (applicable to current frame) and next frame.
-    /// Whenever we render an item at a list boundary, we decrement/increment base index.
-    next_row: u64,
+
     /// How many cells per row do we have?
     line_width: ViewWidth,
     selection: Option<SelectedMemoryRange>,
@@ -83,7 +81,6 @@ impl ViewState {
     fn new(base_row: u64, line_width: ViewWidth) -> Self {
         Self {
             base_row,
-            next_row: base_row,
             line_width,
             selection: None,
         }
@@ -95,13 +92,10 @@ impl ViewState {
         PAGE_SIZE / self.line_width.width as u64
     }
     fn schedule_scroll_down(&mut self) {
-        self.next_row = self.next_row.saturating_add(1)
+        self.base_row = self.base_row.saturating_add(1)
     }
     fn schedule_scroll_up(&mut self) {
-        self.next_row = self.next_row.saturating_sub(1);
-    }
-    fn perform_scheduled_scroll(&mut self) {
-        self.base_row = self.next_row;
+        self.base_row = self.base_row.saturating_sub(1);
     }
 }
 
@@ -220,6 +214,22 @@ impl MemoryView {
             },
         )
         .track_scroll(self.scroll_handle.clone())
+        .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, cx| {
+            let delta = evt.delta.pixel_delta(window.line_height());
+            let scroll_handle = this.scroll_state.scroll_handle();
+            let size = scroll_handle.content_size();
+            let viewport = scroll_handle.viewport();
+            let current_offset = scroll_handle.offset();
+            let first_entry_offset_boundary = size.height / this.view_state.row_count() as f32;
+            let last_entry_offset_boundary = size.height - first_entry_offset_boundary;
+            if first_entry_offset_boundary + viewport.size.height > current_offset.y.abs() {
+                // The topmost entry is visible, hence if we're scrolling up, we need to load extra lines.
+                this.view_state.schedule_scroll_up();
+            } else if last_entry_offset_boundary < current_offset.y.abs() + viewport.size.height {
+                this.view_state.schedule_scroll_down();
+            }
+            scroll_handle.set_offset(current_offset + point(px(0.), delta.y));
+        }))
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         EditorElement::new(
@@ -289,7 +299,7 @@ impl MemoryView {
         let Ok(as_address) = parse::<u64>(&text) else {
             return;
         };
-        self.view_state.next_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
+        self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
         cx.notify();
     }
 }
@@ -340,7 +350,7 @@ fn render_single_memory_view_line(
                     .as_ref()
                     .is_some_and(|selection| selection.is_dragging()))
         {
-            this.view_state.schedule_scroll_down();
+            // this.view_state.schedule_scroll_down();
         } else if ix == 0
             && (this.scroll_state.is_dragging()
                 || this
@@ -349,7 +359,7 @@ fn render_single_memory_view_line(
                     .as_ref()
                     .is_some_and(|selection| selection.is_dragging()))
         {
-            this.view_state.schedule_scroll_up();
+            //this.view_state.schedule_scroll_up();
         }
         this.view_state.clone()
     }) else {
@@ -465,7 +475,6 @@ fn render_single_memory_view_line(
                         .size(ui::LabelSize::Small)
                 })),
         )
-        .overflow_x_scroll()
         .into_any()
 }
 
@@ -475,7 +484,6 @@ impl Render for MemoryView {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        self.view_state.perform_scheduled_scroll();
         let this = cx.weak_entity();
         v_flex()
             .id("Memory-view")
