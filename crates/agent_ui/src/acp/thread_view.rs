@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -5,6 +6,7 @@ use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
 use assistant_tool::ActionLog;
+use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
@@ -15,8 +17,8 @@ use futures::channel::oneshot;
 use gpui::{
     Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId, Focusable,
     Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage,
-    prelude::*, pulsating_between,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div,
+    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
@@ -28,7 +30,7 @@ use rope::Point;
 use settings::Settings as _;
 use text::{Anchor, Bias};
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
@@ -39,9 +41,9 @@ use ::acp::{
     ToolCallId, ToolCallStatus,
 };
 
-use crate::Follow;
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
+use crate::{Follow, KeepAll, OpenAgentDiff, RejectAll};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -58,6 +60,7 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
+    edits_expanded: bool,
     message_history: MessageHistory<acp::SendUserMessageParams>,
 }
 
@@ -154,6 +157,7 @@ impl AcpThreadView {
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            edits_expanded: false,
             message_history: MessageHistory::new(),
         }
     }
@@ -1601,6 +1605,342 @@ impl AcpThreadView {
         container.into_any()
     }
 
+    fn render_edits_bar(&self, window: &mut Window, cx: &Context<Self>) -> Option<AnyElement> {
+        let action_log = self.action_log.read(cx);
+        let changed_buffers = action_log.changed_buffers(cx);
+
+        if changed_buffers.is_empty() {
+            return None;
+        }
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let active_color = cx.theme().colors().element_selected;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
+        // todo!
+        let pending_edits = false;
+        let expanded = self.edits_expanded;
+
+        v_flex()
+            .mt_1()
+            .mx_2()
+            .bg(bg_edit_files_disclosure)
+            .border_1()
+            .border_b_0()
+            .border_color(cx.theme().colors().border)
+            .rounded_t_md()
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::black().opacity(0.15),
+                offset: point(px(1.), px(-1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            }])
+            .child(self.render_edits_bar_summary(
+                &changed_buffers,
+                expanded,
+                pending_edits,
+                window,
+                cx,
+            ))
+            .when(expanded, |parent| {
+                parent.child(self.render_edits_bar_files(&changed_buffers, pending_edits, cx))
+            })
+            .into_any()
+            .into()
+    }
+
+    fn render_edits_bar_summary(
+        &self,
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        expanded: bool,
+        pending_edits: bool,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
+
+        let focus_handle = self.focus_handle(cx);
+
+        h_flex()
+            .p_1()
+            .justify_between()
+            .when(expanded, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id("edits-container")
+                    .cursor_pointer()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Disclosure::new("edits-disclosure", expanded), // todo! doesn't this propagate?
+                                                                       // .on_click(cx.listener(|this, _, _, cx| {
+                                                                       //     this.handle_edit_bar_expand(cx)
+                                                                       // })),
+                    )
+                    .map(|this| {
+                        if pending_edits {
+                            this.child(
+                                Label::new(format!(
+                                    "Editing {} {}…",
+                                    changed_buffers.len(),
+                                    if changed_buffers.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ))
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .with_animation(
+                                    "edit-label",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.3, 0.7)),
+                                    |label, delta| label.alpha(delta),
+                                ),
+                            )
+                        } else {
+                            this.child(
+                                Label::new("Edits")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    changed_buffers.len(),
+                                    if changed_buffers.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.edits_expanded = !this.edits_expanded;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("review-changes", IconName::ListTodo)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Review Changes",
+                                        &OpenAgentDiff,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                // todo!
+                                // this.handle_review_click(window, cx)
+                            })),
+                    )
+                    .child(Divider::vertical().color(DividerColor::Border))
+                    .child(
+                        Button::new("reject-all-changes", "Reject All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &RejectAll,
+                                    &focus_handle.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                // todo!
+                                // this.handle_reject_all(window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("accept-all-changes", "Accept All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                // todo!
+                                // this.handle_accept_all(window, cx)
+                            })),
+                    ),
+            )
+    }
+
+    fn render_edits_bar_files(
+        &self,
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        pending_edits: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let editor_bg_color = cx.theme().colors().editor_background;
+
+        v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+            |(index, (buffer, _diff))| {
+                let file = buffer.read(cx).file()?;
+                let path = file.path();
+
+                let file_path = path.parent().and_then(|parent| {
+                    let parent_str = parent.to_string_lossy();
+
+                    if parent_str.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            Label::new(format!("/{}{}", parent_str, std::path::MAIN_SEPARATOR_STR))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
+                        )
+                    }
+                });
+
+                let file_name = path.file_name().map(|name| {
+                    Label::new(name.to_string_lossy().to_string())
+                        .size(LabelSize::XSmall)
+                        .buffer_font(cx)
+                });
+
+                let file_icon = FileIcons::get_icon(&path, cx)
+                    .map(Icon::from_path)
+                    .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::File)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    });
+
+                let overlay_gradient = linear_gradient(
+                    90.,
+                    linear_color_stop(editor_bg_color, 1.),
+                    linear_color_stop(editor_bg_color.opacity(0.2), 0.),
+                );
+
+                let element = h_flex()
+                    .group("edited-code")
+                    .id(("file-container", index))
+                    .relative()
+                    .py_1()
+                    .pl_2()
+                    .pr_1()
+                    .gap_2()
+                    .justify_between()
+                    .bg(editor_bg_color)
+                    .when(index < changed_buffers.len() - 1, |parent| {
+                        parent.border_color(cx.theme().colors().border).border_b_1()
+                    })
+                    .child(
+                        h_flex()
+                            .id(("file-name", index))
+                            .pr_8()
+                            .gap_1p5()
+                            .max_w_full()
+                            .overflow_x_scroll()
+                            .child(file_icon)
+                            .child(h_flex().gap_0p5().children(file_name).children(file_path))
+                            .on_click({
+                                let buffer = buffer.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    // todo!
+                                    // this.handle_file_click(buffer.clone(), window, cx);
+                                })
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .visible_on_hover("edited-code")
+                            .child(
+                                Button::new("review", "Review")
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            // todo!
+                                            // this.handle_file_click(
+                                            //     buffer.clone(),
+                                            //     window,
+                                            //     cx,
+                                            // );
+                                        })
+                                    }),
+                            )
+                            .child(Divider::vertical().color(DividerColor::BorderVariant))
+                            .child(
+                                Button::new("reject-file", "Reject")
+                                    .label_size(LabelSize::Small)
+                                    .disabled(pending_edits)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            // todo!
+                                            // this.handle_reject_file_changes(
+                                            //     buffer.clone(),
+                                            //     window,
+                                            //     cx,
+                                            // );
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("accept-file", "Accept")
+                                    .label_size(LabelSize::Small)
+                                    .disabled(pending_edits)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            // todo!
+                                            // this.handle_accept_file_changes(
+                                            //     buffer.clone(),
+                                            //     window,
+                                            //     cx,
+                                            // );
+                                        })
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("gradient-overlay")
+                            .absolute()
+                            .h_full()
+                            .w_12()
+                            .top_0()
+                            .bottom_0()
+                            .right(px(152.))
+                            .bg(overlay_gradient),
+                    );
+
+                Some(element)
+            },
+        ))
+    }
+
     fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let settings = ThemeSettings::get_global(cx);
         let font_size = TextSize::Small
@@ -1895,6 +2235,7 @@ impl Render for AcpThreadView {
                                 .child(LoadingLabel::new("").size(LabelSize::Small))
                                 .into(),
                         })
+                        .children(self.render_edits_bar(window, cx))
                     } else {
                         this.child(self.render_empty_state(false, cx))
                     }
