@@ -139,13 +139,6 @@ impl From<xim::ClientError> for EventHandlerError {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-struct XKBStateNotiy {
-    depressed_layout: LayoutIndex,
-    latched_layout: LayoutIndex,
-    locked_layout: LayoutIndex,
-}
-
 #[derive(Debug, Default)]
 pub struct Xdnd {
     other_window: xproto::Window,
@@ -198,7 +191,6 @@ pub struct X11ClientState {
     pub(crate) mouse_focused_window: Option<xproto::Window>,
     pub(crate) keyboard_focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
-    previous_xkb_state: XKBStateNotiy,
     keyboard_layout: LinuxKeyboardLayout,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
@@ -510,7 +502,6 @@ impl X11Client {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             xkb: xkb_state,
-            previous_xkb_state: XKBStateNotiy::default(),
             keyboard_layout,
             ximc,
             xim_handler,
@@ -931,6 +922,22 @@ impl X11Client {
                 if let Some(handler) = state.xim_handler.as_mut() {
                     handler.window = event.event;
                 }
+                let reply = state
+                    .xcb_connection
+                    .xkb_get_state(xkb::ID::USE_CORE_KBD.into())
+                    .reply()
+                    .context("Failed to get XKB state on focus")
+                    .log_err();
+                if let Some(reply) = reply {
+                    state.xkb.update_mask(
+                        reply.base_mods.into(),
+                        reply.latched_mods.into(),
+                        reply.locked_mods.into(),
+                        reply.base_group as u32,
+                        reply.latch_group as u32,
+                        reply.lock_group.into(),
+                    );
+                }
                 drop(state);
                 self.enable_ime();
             }
@@ -965,11 +972,6 @@ impl X11Client {
                 let depressed_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
                 let latched_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
                 let locked_layout = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
-                state.previous_xkb_state = XKBStateNotiy {
-                    depressed_layout,
-                    latched_layout,
-                    locked_layout,
-                };
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
@@ -986,11 +988,6 @@ impl X11Client {
                     event.latched_group as u32,
                     event.locked_group.into(),
                 );
-                state.previous_xkb_state = XKBStateNotiy {
-                    depressed_layout: event.base_group as u32,
-                    latched_layout: event.latched_group as u32,
-                    locked_layout: event.locked_group.into(),
-                };
 
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 let capslock = Capslock::from_xkb(&state.xkb);
@@ -1026,17 +1023,45 @@ impl X11Client {
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
+
+                if let Ok(server_state) = state
+                    .xcb_connection
+                    .xkb_get_state(xkb::ID::USE_CORE_KBD.into())
+                    .reply()
+                {
+                    let client_effective_mods = state.xkb.serialize_mods(xkb::STATE_MODS_EFFECTIVE);
+                    let server_effective_mods = (server_state.base_mods
+                        | server_state.latched_mods
+                        | server_state.locked_mods)
+                        as u32;
+
+                    let num_groups = state.xkb.get_keymap().num_groups();
+                    let server_effective_layout =
+                        ((server_state.lock_group + server_state.latch_group + server_state.group)
+                            as u32)
+                            % num_groups;
+                    let client_effective_layout =
+                        state.xkb.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
+
+                    if server_effective_mods != client_effective_mods
+                        || server_effective_layout != client_effective_layout
+                    {
+                        state.xkb.update_mask(
+                            server_state.base_mods.into(),
+                            server_state.latched_mods.into(),
+                            server_state.locked_mods.into(),
+                            server_state.group as u32,
+                            server_state.latch_group as u32,
+                            server_state.lock_group.into(),
+                        );
+                        log::warn!("XKB state desync detected and corrected on KeyPress");
+                    }
+                } else {
+                    log::error!("Failed to query XKB state for desync check");
+                }
+
                 let keystroke = {
                     let code = event.detail.into();
-                    let xkb_state = state.previous_xkb_state.clone();
-                    state.xkb.update_mask(
-                        event.state.bits() as ModMask,
-                        0,
-                        0,
-                        xkb_state.depressed_layout,
-                        xkb_state.latched_layout,
-                        xkb_state.locked_layout,
-                    );
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
@@ -1096,15 +1121,6 @@ impl X11Client {
 
                 let keystroke = {
                     let code = event.detail.into();
-                    let xkb_state = state.previous_xkb_state.clone();
-                    state.xkb.update_mask(
-                        event.state.bits() as ModMask,
-                        0,
-                        0,
-                        xkb_state.depressed_layout,
-                        xkb_state.latched_layout,
-                        xkb_state.locked_layout,
-                    );
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
