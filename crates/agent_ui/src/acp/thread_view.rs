@@ -53,7 +53,7 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
-    message_history: MessageHistory<acp::UserMessage>,
+    message_history: MessageHistory<acp::SendUserMessageParams>,
 }
 
 enum ThreadState {
@@ -294,7 +294,7 @@ impl AcpThreadView {
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
                             chunks.push(acp::UserMessageChunk::Text {
-                                chunk: text[ix..crease_range.start].to_string(),
+                                text: text[ix..crease_range.start].to_string(),
                             });
                         }
                         if let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) {
@@ -307,7 +307,9 @@ impl AcpThreadView {
                 if ix < text.len() {
                     let last_chunk = text[ix..].trim();
                     if !last_chunk.is_empty() {
-                        chunks.push(last_chunk.into());
+                        chunks.push(acp::UserMessageChunk::Text {
+                            text: last_chunk.into(),
+                        });
                     }
                 }
             })
@@ -318,7 +320,7 @@ impl AcpThreadView {
         }
 
         let Some(thread) = self.thread() else { return };
-        let message = acp::UserMessage { chunks };
+        let message = acp::SendUserMessageParams { chunks };
         let task = thread.update(cx, |thread, cx| thread.send(message.clone(), cx));
 
         cx.spawn(async move |this, cx| {
@@ -379,7 +381,7 @@ impl AcpThreadView {
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         project: Entity<Project>,
-        message: Option<&acp::UserMessage>,
+        message: Option<&acp::SendUserMessageParams>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -398,7 +400,7 @@ impl AcpThreadView {
 
         for chunk in &message.chunks {
             match chunk {
-                acp::UserMessageChunk::Text { chunk } => {
+                acp::UserMessageChunk::Text { text: chunk } => {
                     text.push_str(&chunk);
                 }
                 acp::UserMessageChunk::Path { path } => {

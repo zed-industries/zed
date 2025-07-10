@@ -28,15 +28,15 @@ pub struct UserMessage {
 
 impl UserMessage {
     pub fn from_acp(
-        message: acp::UserMessage,
+        message: &acp::SendUserMessageParams,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         let mut md_source = String::new();
 
-        for chunk in message.chunks {
+        for chunk in &message.chunks {
             match chunk {
-                UserMessageChunk::Text { chunk } => md_source.push_str(&chunk),
+                UserMessageChunk::Text { text } => md_source.push_str(&text),
                 UserMessageChunk::Path { path } => {
                     write!(&mut md_source, "{}", MentionPath(&path)).unwrap()
                 }
@@ -116,11 +116,12 @@ impl AssistantMessageChunk {
         cx: &mut App,
     ) -> Self {
         match chunk {
-            acp::AssistantMessageChunk::Text { chunk } => Self::Text {
-                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            acp::AssistantMessageChunk::Text { text } => Self::Text {
+                chunk: cx.new(|cx| Markdown::new(text.into(), Some(language_registry), None, cx)),
             },
-            acp::AssistantMessageChunk::Thought { chunk } => Self::Thought {
-                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            acp::AssistantMessageChunk::Thought { thought } => Self::Thought {
+                chunk: cx
+                    .new(|cx| Markdown::new(thought.into(), Some(language_registry), None, cx)),
             },
         }
     }
@@ -607,11 +608,11 @@ impl AcpThread {
             match (chunks.last_mut(), &chunk) {
                 (
                     Some(AssistantMessageChunk::Text { chunk: old_chunk }),
-                    acp::AssistantMessageChunk::Text { chunk: new_chunk },
+                    acp::AssistantMessageChunk::Text { text: new_chunk },
                 )
                 | (
                     Some(AssistantMessageChunk::Thought { chunk: old_chunk }),
-                    acp::AssistantMessageChunk::Thought { chunk: new_chunk },
+                    acp::AssistantMessageChunk::Thought { thought: new_chunk },
                 ) => {
                     old_chunk.update(cx, |old_chunk, cx| {
                         old_chunk.append(&new_chunk, cx);
@@ -813,16 +814,31 @@ impl AcpThread {
         async move { Ok(connection.request(acp::AuthenticateParams).await?) }
     }
 
+    #[cfg(test)]
+    pub fn send_raw(
+        &mut self,
+        message: &str,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<()>> {
+        self.send(
+            acp::SendUserMessageParams {
+                chunks: vec![acp::UserMessageChunk::Text {
+                    text: message.to_string(),
+                }],
+            },
+            cx,
+        )
+    }
+
     pub fn send(
         &mut self,
-        message: impl Into<acp::UserMessage>,
+        message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<()>> {
         let agent = self.connection.clone();
-        let message = message.into();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
-                message.clone(),
+                &message,
                 self.project.read(cx).languages().clone(),
                 cx,
             )),
@@ -835,7 +851,7 @@ impl AcpThread {
         self.send_task = Some(cx.spawn(async move |this, cx| {
             cancel.await.log_err();
 
-            let result = agent.request(acp::SendUserMessageParams { message }).await;
+            let result = agent.request(message).await;
             tx.send(result).log_err();
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
@@ -1030,8 +1046,6 @@ mod tests {
     async fn test_thinking_concatenation(cx: &mut TestAppContext) {
         init_test(cx);
 
-        cx.executor().allow_parking();
-
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (thread, fake_server) = fake_acp_thread(project, cx);
@@ -1042,7 +1056,7 @@ mod tests {
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
                             chunk: acp::AssistantMessageChunk::Thought {
-                                chunk: "Thinking ".into(),
+                                thought: "Thinking ".into(),
                             },
                         })
                     })?
@@ -1052,7 +1066,7 @@ mod tests {
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
                             chunk: acp::AssistantMessageChunk::Thought {
-                                chunk: "hard!".into(),
+                                thought: "hard!".into(),
                             },
                         })
                     })?
@@ -1064,7 +1078,7 @@ mod tests {
         });
 
         thread
-            .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
             .await
             .unwrap();
 
@@ -1123,7 +1137,7 @@ mod tests {
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.send("Fetch https://example.com", cx)
+            thread.send_raw("Fetch https://example.com", cx)
         });
 
         run_until_first_tool_call(&thread, cx).await;
@@ -1197,7 +1211,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
-            .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
             .await
             .unwrap();
 
@@ -1235,11 +1249,17 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.send(
-                    acp::UserMessage {
+                    acp::SendUserMessageParams {
                         chunks: vec![
-                            "Read the file ".into(),
-                            Path::new("foo.rs").into(),
-                            " and tell me what the content of the println! is".into(),
+                            acp::UserMessageChunk::Text {
+                                text: "Read the file ".into(),
+                            },
+                            acp::UserMessageChunk::Path {
+                                path: Path::new("foo.rs").into(),
+                            },
+                            acp::UserMessageChunk::Text {
+                                text: " and tell me what the content of the println! is".into(),
+                            },
                         ],
                     },
                     cx,
@@ -1283,7 +1303,7 @@ mod tests {
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
             .update(cx, |thread, cx| {
-                thread.send(
+                thread.send_raw(
                     "Read the '/private/tmp/foo' file and tell me what you see.",
                     cx,
                 )
@@ -1317,7 +1337,7 @@ mod tests {
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
-            thread.send(r#"Run `echo "Hello, world!"`"#, cx)
+            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
         run_until_first_tool_call(&thread, cx).await;
@@ -1386,7 +1406,7 @@ mod tests {
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
-            thread.send(r#"Run `echo "Hello, world!"`"#, cx)
+            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
         let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
@@ -1427,7 +1447,7 @@ mod tests {
 
         thread
             .update(cx, |thread, cx| {
-                thread.send(r#"Stop running and say goodbye to me."#, cx)
+                thread.send_raw(r#"Stop running and say goodbye to me."#, cx)
             })
             .await
             .unwrap();
