@@ -795,39 +795,37 @@ impl AcpThread {
             });
             cx.spawn(async move |action_log, cx| {
                 let buffers = futures::future::join_all(buffers).await;
-                // todo! figure out when to call buffer_edited
-                cx.background_executor().timer(Duration::from_secs(5)).await;
-                action_log
-                    .update(cx, |action_log, cx| {
-                        for (buffer, line) in buffers {
-                            let Some(buffer) = buffer.log_err() else {
-                                continue;
-                            };
-                            let position = if let Some(line) = line {
-                                let snapshot = buffer.read(cx).snapshot();
-                                let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
-                                buffer.read(cx).snapshot().anchor_before(point)
-                            } else {
-                                Anchor::MIN
-                            };
-                            let location = AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position,
-                            };
-                            if let Some(diff) = applied_diff.clone() {
-                                let old_snapshot = diff.0.read(cx).snapshot();
-                                action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
-                            } else {
-                                action_log.buffer_read(buffer, cx);
-                            }
-                            action_log.project().update(cx, |project, cx| {
-                                project.set_agent_location(Some(location), cx);
-                            });
+                for (buffer, line) in buffers {
+                    let buffer = buffer?;
+                    cx.background_executor().timer(Duration::from_secs(3)).await;
+                    action_log.update(cx, |action_log, cx| {
+                        let position = if let Some(line) = line {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
+                            buffer.read(cx).snapshot().anchor_before(point)
+                        } else {
+                            Anchor::MIN
+                        };
+                        let location = AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        };
+                        if let Some(diff) = applied_diff.clone() {
+                            let old_snapshot = diff.0.read(cx).snapshot();
+                            action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
+                        } else {
+                            action_log.buffer_read(buffer, cx);
                         }
-                    })
-                    .log_err();
+
+                        action_log.project().update(cx, |project, cx| {
+                            project.set_agent_location(Some(location), cx);
+                        });
+                    })?
+                }
+
+                anyhow::Ok(())
             })
-            .detach();
+            .detach_and_log_err(cx);
         })
     }
 
