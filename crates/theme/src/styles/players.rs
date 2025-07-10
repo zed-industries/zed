@@ -3,9 +3,7 @@
 use gpui::Hsla;
 use serde_derive::Deserialize;
 
-use crate::{
-    PlayerColorContent, amber, blue, jade, lime, orange, pink, purple, red, try_parse_color,
-};
+use crate::{PlayerColorContent, default::default_dark_theme, try_parse_color};
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
 pub struct PlayerColor {
@@ -28,99 +26,7 @@ impl Default for PlayerColors {
     /// We have to have a default to be `[refineable::Refinable]`.
     /// TODO "Find a way to not need this for Refinable"
     fn default() -> Self {
-        Self::dark()
-    }
-}
-
-impl PlayerColors {
-    pub fn dark() -> Self {
-        Self(vec![
-            PlayerColor {
-                cursor: blue().dark().step_9(),
-                background: blue().dark().step_5(),
-                selection: blue().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: orange().dark().step_9(),
-                background: orange().dark().step_5(),
-                selection: orange().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: pink().dark().step_9(),
-                background: pink().dark().step_5(),
-                selection: pink().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: lime().dark().step_9(),
-                background: lime().dark().step_5(),
-                selection: lime().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: purple().dark().step_9(),
-                background: purple().dark().step_5(),
-                selection: purple().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: amber().dark().step_9(),
-                background: amber().dark().step_5(),
-                selection: amber().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: jade().dark().step_9(),
-                background: jade().dark().step_5(),
-                selection: jade().dark().step_3(),
-            },
-            PlayerColor {
-                cursor: red().dark().step_9(),
-                background: red().dark().step_5(),
-                selection: red().dark().step_3(),
-            },
-        ])
-    }
-
-    pub fn light() -> Self {
-        Self(vec![
-            PlayerColor {
-                cursor: blue().light().step_9(),
-                background: blue().light().step_4(),
-                selection: blue().light().step_3(),
-            },
-            PlayerColor {
-                cursor: orange().light().step_9(),
-                background: orange().light().step_4(),
-                selection: orange().light().step_3(),
-            },
-            PlayerColor {
-                cursor: pink().light().step_9(),
-                background: pink().light().step_4(),
-                selection: pink().light().step_3(),
-            },
-            PlayerColor {
-                cursor: lime().light().step_9(),
-                background: lime().light().step_4(),
-                selection: lime().light().step_3(),
-            },
-            PlayerColor {
-                cursor: purple().light().step_9(),
-                background: purple().light().step_4(),
-                selection: purple().light().step_3(),
-            },
-            PlayerColor {
-                cursor: amber().light().step_9(),
-                background: amber().light().step_4(),
-                selection: amber().light().step_3(),
-            },
-            PlayerColor {
-                cursor: jade().light().step_9(),
-                background: jade().light().step_4(),
-                selection: jade().light().step_3(),
-            },
-            PlayerColor {
-                cursor: red().light().step_9(),
-                background: red().light().step_4(),
-                selection: red().light().step_3(),
-            },
-        ])
+        default_dark_theme().players().clone()
     }
 }
 

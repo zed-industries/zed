@@ -1,7 +1,6 @@
 #![allow(unused, dead_code)]
 use gpui::{AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, actions, hsla};
 use strum::IntoEnumIterator;
-use theme::all_theme_colors;
 use ui::{
     AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
     Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
@@ -281,56 +280,6 @@ impl ThemePreview {
             )
     }
 
-    fn render_colors(
-        &self,
-        layer: ElevationIndex,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let bg = layer.bg(cx);
-        let all_colors = all_theme_colors(cx);
-
-        v_flex()
-            .gap_1()
-            .child(
-                Headline::new("Colors")
-                    .size(HeadlineSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(all_colors.into_iter().map(|(color, name)| {
-                        let id = ElementId::Name(format!("{:?}-preview", color).into());
-                        let name = name.clone();
-                        div().size_8().flex_none().child(
-                            ButtonLike::new(id)
-                                .child(
-                                    div()
-                                        .size_8()
-                                        .bg(color)
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .overflow_hidden(),
-                                )
-                                .size(ButtonSize::None)
-                                .style(ButtonStyle::Transparent)
-                                .tooltip(move |window, cx| {
-                                    let name = name.clone();
-                                    Tooltip::with_meta(
-                                        name,
-                                        None,
-                                        format!("{:?}", color),
-                                        window,
-                                        cx,
-                                    )
-                                }),
-                        )
-                    })),
-            )
-    }
-
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
@@ -344,7 +293,6 @@ impl ThemePreview {
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
             .child(self.render_text(layer, window, cx))
-            .child(self.render_colors(layer, window, cx))
     }
 
     fn render_overview_page(

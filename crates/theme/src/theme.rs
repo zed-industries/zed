@@ -8,13 +8,11 @@
 //!
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
-mod default_colors;
-mod fallback_themes;
+mod default;
 mod font_family_cache;
 mod icon_theme;
 mod icon_theme_schema;
 mod registry;
-mod scale;
 mod schema;
 mod settings;
 mod styles;
@@ -25,7 +23,6 @@ use std::sync::Arc;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;
-use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
 use gpui::{
     App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
@@ -34,13 +31,12 @@ use gpui::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-pub use crate::default_colors::*;
-use crate::fallback_themes::apply_theme_color_defaults;
+use crate::default::default_dark_theme;
+use crate::default::default_light_theme;
 pub use crate::font_family_cache::*;
 pub use crate::icon_theme::*;
 pub use crate::icon_theme_schema::*;
 pub use crate::registry::*;
-pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::settings::*;
 pub use crate::styles::*;
@@ -135,6 +131,39 @@ impl ActiveTheme for App {
     }
 }
 
+// If a theme customizes a foreground version of a status color, but does not
+// customize the background color, then use a partly-transparent version of the
+// foreground color for the background color.
+pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
+    for (fg_color, bg_color) in [
+        (&status.deleted, &mut status.deleted_background),
+        (&status.created, &mut status.created_background),
+        (&status.modified, &mut status.modified_background),
+        (&status.conflict, &mut status.conflict_background),
+        (&status.error, &mut status.error_background),
+        (&status.hidden, &mut status.hidden_background),
+    ] {
+        if bg_color.is_none() {
+            if let Some(fg_color) = fg_color {
+                *bg_color = Some(fg_color.opacity(0.25));
+            }
+        }
+    }
+}
+
+pub(crate) fn apply_theme_color_defaults(
+    theme_colors: &mut ThemeColorsRefinement,
+    player_colors: &PlayerColors,
+) {
+    if theme_colors.element_selection_background.is_none() {
+        let mut selection = player_colors.local().selection;
+        if selection.a == 1.0 {
+            selection.a = 0.25;
+        }
+        theme_colors.element_selection_background = Some(selection);
+    }
+}
+
 /// A theme family is a grouping of themes under a single name.
 ///
 /// For example, the "One" theme family contains the "One Light" and "One Dark" themes.
@@ -151,9 +180,6 @@ pub struct ThemeFamily {
     pub author: SharedString,
     /// The [Theme]s in the family.
     pub themes: Vec<Theme>,
-    /// The color scales used by the themes in the family.
-    /// Note: This will be removed in the future.
-    pub scales: ColorScales,
 }
 
 impl ThemeFamily {
@@ -166,32 +192,28 @@ impl ThemeFamily {
             AppearanceContent::Dark => Appearance::Dark,
         };
 
-        let mut refined_status_colors = match theme.appearance {
-            AppearanceContent::Light => StatusColors::light(),
-            AppearanceContent::Dark => StatusColors::dark(),
+        let default_theme = match appearance {
+            Appearance::Light => default_light_theme(),
+            Appearance::Dark => default_dark_theme(),
         };
+
+        let mut refined_status_colors = default_theme.status().clone();
         let mut status_colors_refinement = theme.style.status_colors_refinement();
+
         apply_status_color_defaults(&mut status_colors_refinement);
         refined_status_colors.refine(&status_colors_refinement);
 
-        let mut refined_player_colors = match theme.appearance {
-            AppearanceContent::Light => PlayerColors::light(),
-            AppearanceContent::Dark => PlayerColors::dark(),
-        };
+        let mut refined_player_colors = default_theme.players().clone();
         refined_player_colors.merge(&theme.style.players);
 
-        let mut refined_theme_colors = match theme.appearance {
-            AppearanceContent::Light => ThemeColors::light(),
-            AppearanceContent::Dark => ThemeColors::dark(),
-        };
+        // TODO:
+        let mut refined_theme_colors = default_theme.colors().clone();
         let mut theme_colors_refinement = theme.style.theme_colors_refinement();
+
         apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
         refined_theme_colors.refine(&theme_colors_refinement);
 
-        let mut refined_accent_colors = match theme.appearance {
-            AppearanceContent::Light => AccentColors::light(),
-            AppearanceContent::Dark => AccentColors::dark(),
-        };
+        let mut refined_accent_colors = default_theme.accents().clone();
         refined_accent_colors.merge(&theme.style.accents);
 
         let syntax_highlights = theme
@@ -253,7 +275,6 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
         name: name.clone().into(),
         author: author.clone().into(),
         themes: vec![],
-        scales: default_color_scales(),
     };
 
     let refined_themes = theme_family_content

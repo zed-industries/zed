@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
+use crate::default::default_theme_family;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -91,7 +92,7 @@ impl ThemeRegistry {
 
         // We're loading the Zed default theme, as we need a theme to be loaded
         // for tests.
-        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+        registry.insert_theme_families([default_theme_family()]);
 
         let default_icon_theme = crate::default_icon_theme();
         registry

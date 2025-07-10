@@ -3,7 +3,7 @@
 use gpui::Hsla;
 use refineable::Refineable;
 
-use crate::{blue, grass, neutral, red, yellow};
+use crate::default::default_dark_theme;
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
@@ -80,112 +80,14 @@ pub struct StatusColors {
     pub warning_border: Hsla,
 }
 
+impl Default for StatusColors {
+    fn default() -> Self {
+        default_dark_theme().status().clone()
+    }
+}
+
 pub struct DiagnosticColors {
     pub error: Hsla,
     pub warning: Hsla,
     pub info: Hsla,
-}
-
-impl StatusColors {
-    pub fn dark() -> Self {
-        Self {
-            conflict: red().dark().step_9(),
-            conflict_background: red().dark().step_9(),
-            conflict_border: red().dark().step_9(),
-            created: grass().dark().step_9(),
-            created_background: grass().dark().step_9().opacity(0.25),
-            created_border: grass().dark().step_9(),
-            deleted: red().dark().step_9(),
-            deleted_background: red().dark().step_9().opacity(0.25),
-            deleted_border: red().dark().step_9(),
-            error: red().dark().step_9(),
-            error_background: red().dark().step_9(),
-            error_border: red().dark().step_9(),
-            hidden: neutral().dark().step_9(),
-            hidden_background: neutral().dark().step_9(),
-            hidden_border: neutral().dark().step_9(),
-            hint: blue().dark().step_9(),
-            hint_background: blue().dark().step_9(),
-            hint_border: blue().dark().step_9(),
-            ignored: neutral().dark().step_9(),
-            ignored_background: neutral().dark().step_9(),
-            ignored_border: neutral().dark().step_9(),
-            info: blue().dark().step_9(),
-            info_background: blue().dark().step_9(),
-            info_border: blue().dark().step_9(),
-            modified: yellow().dark().step_9(),
-            modified_background: yellow().dark().step_9().opacity(0.25),
-            modified_border: yellow().dark().step_9(),
-            predictive: neutral().dark_alpha().step_9(),
-            predictive_background: neutral().dark_alpha().step_9(),
-            predictive_border: neutral().dark_alpha().step_9(),
-            renamed: blue().dark().step_9(),
-            renamed_background: blue().dark().step_9(),
-            renamed_border: blue().dark().step_9(),
-            success: grass().dark().step_9(),
-            success_background: grass().dark().step_9(),
-            success_border: grass().dark().step_9(),
-            unreachable: neutral().dark().step_10(),
-            unreachable_background: neutral().dark().step_10(),
-            unreachable_border: neutral().dark().step_10(),
-            warning: yellow().dark().step_9(),
-            warning_background: yellow().dark().step_9(),
-            warning_border: yellow().dark().step_9(),
-        }
-    }
-
-    pub fn light() -> Self {
-        Self {
-            conflict: red().light().step_9(),
-            conflict_background: red().light().step_9(),
-            conflict_border: red().light().step_9(),
-            created: grass().light().step_9(),
-            created_background: grass().light().step_9(),
-            created_border: grass().light().step_9(),
-            deleted: red().light().step_9(),
-            deleted_background: red().light().step_9(),
-            deleted_border: red().light().step_9(),
-            error: red().light().step_9(),
-            error_background: red().light().step_9(),
-            error_border: red().light().step_9(),
-            hidden: neutral().light().step_9(),
-            hidden_background: neutral().light().step_9(),
-            hidden_border: neutral().light().step_9(),
-            hint: blue().light().step_9(),
-            hint_background: blue().light().step_9(),
-            hint_border: blue().light().step_9(),
-            ignored: neutral().light().step_9(),
-            ignored_background: neutral().light().step_9(),
-            ignored_border: neutral().light().step_9(),
-            info: blue().light().step_9(),
-            info_background: blue().light().step_9(),
-            info_border: blue().light().step_9(),
-            modified: yellow().light().step_9(),
-            modified_background: yellow().light().step_9(),
-            modified_border: yellow().light().step_9(),
-            predictive: neutral().light_alpha().step_9(),
-            predictive_background: neutral().light_alpha().step_9(),
-            predictive_border: neutral().light_alpha().step_9(),
-            renamed: blue().light().step_9(),
-            renamed_background: blue().light().step_9(),
-            renamed_border: blue().light().step_9(),
-            success: grass().light().step_9(),
-            success_background: grass().light().step_9(),
-            success_border: grass().light().step_9(),
-            unreachable: neutral().light().step_10(),
-            unreachable_background: neutral().light().step_10(),
-            unreachable_border: neutral().light().step_10(),
-            warning: yellow().light().step_9(),
-            warning_background: yellow().light().step_9(),
-            warning_border: yellow().light().step_9(),
-        }
-    }
-
-    pub fn diagnostic(&self) -> DiagnosticColors {
-        DiagnosticColors {
-            error: self.error,
-            warning: self.warning,
-            info: self.info,
-        }
-    }
 }

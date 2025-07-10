@@ -1,14 +1,10 @@
 #![allow(missing_docs)]
-
-use gpui::{App, Hsla, SharedString, WindowBackgroundAppearance};
+use crate::StatusColorsRefinement;
+use gpui::{Hsla, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
-use strum::{AsRefStr, EnumIter, IntoEnumIterator};
 
-use crate::{
-    AccentColors, ActiveTheme, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors,
-};
+use crate::{AccentColors, PlayerColors, StatusColors, SyntaxTheme, SystemColors};
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
@@ -305,11 +301,13 @@ pub struct ThemeStyles {
 mod tests {
     use serde_json::json;
 
+    use crate::default::default_dark_theme;
+
     use super::*;
 
     #[test]
     fn override_a_single_theme_color() {
-        let mut colors = ThemeColors::light();
+        let mut colors = default_dark_theme().colors().clone();
 
         let magenta: Hsla = gpui::rgb(0xff00ff).into();
 
@@ -327,7 +325,7 @@ mod tests {
 
     #[test]
     fn override_multiple_theme_colors() {
-        let mut colors = ThemeColors::light();
+        let mut colors = default_dark_theme().colors().clone();
 
         let magenta: Hsla = gpui::rgb(0xff00ff).into();
         let green: Hsla = gpui::rgb(0x00ff00).into();

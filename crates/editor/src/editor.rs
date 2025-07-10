@@ -571,7 +571,7 @@ impl Default for EditorStyle {
             // HACK: Status colors don't have a real default.
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
-            status: StatusColors::dark(),
+            status: StatusColors::default(),
             inlay_hints_style: HighlightStyle::default(),
             inline_completion_styles: InlineCompletionStyles {
                 insertion: HighlightStyle::default(),

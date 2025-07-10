@@ -1,4 +1,4 @@
-use crate::fallback_themes::zed_default_dark;
+use crate::default::{DEFAULT_DARK_THEME_NAME, default_dark_theme};
 use crate::{
     Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
     ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
@@ -846,7 +846,7 @@ impl settings::Settings for ThemeSettings {
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
-                .or(themes.get(&zed_default_dark().name))
+                .or(themes.get(&DEFAULT_DARK_THEME_NAME))
                 .unwrap(),
             theme_overrides: None,
             icon_theme_selection: defaults.icon_theme.clone(),
