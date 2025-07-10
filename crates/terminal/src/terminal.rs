@@ -371,35 +371,49 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
-        let mut terminal_title_override = None;
+        #[derive(Default)]
+        struct ShellParams {
+            program: String,
+            args: Option<Vec<String>>,
+            title_override: Option<SharedString>,
+        }
+
+        let shell_params = match shell.clone() {
+            Shell::System => {
+                #[cfg(target_os = "windows")]
+                {
+                    Some(ShellParams {
+                        program: util::get_windows_system_shell(),
+                        ..Default::default()
+                    })
+                }
+                #[cfg(not(target_os = "windows"))]
+                None
+            }
+            Shell::Program(program) => Some(ShellParams {
+                program,
+                ..Default::default()
+            }),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => Some(ShellParams {
+                program,
+                args: Some(args),
+                title_override,
+            }),
+        };
+        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
+        let terminal_title_override = shell_params
+            .as_ref()
+            .map(|e| e.title_override.clone())
+            .flatten();
 
         let pty_options = {
-            let alac_shell = match shell.clone() {
-                Shell::System => {
-                    #[cfg(target_os = "windows")]
-                    {
-                        Some(alacritty_terminal::tty::Shell::new(
-                            util::get_windows_system_shell(),
-                            Vec::new(),
-                        ))
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        None
-                    }
-                }
-                Shell::Program(program) => {
-                    Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
-                }
-                Shell::WithArguments {
-                    program,
-                    args,
-                    title_override,
-                } => {
-                    terminal_title_override = title_override;
-                    Some(alacritty_terminal::tty::Shell::new(program, args))
-                }
-            };
+            let alac_shell = shell_params.map(|params| {
+                alacritty_terminal::tty::Shell::new(params.program, params.args.unwrap_or_default())
+            });
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
@@ -492,6 +506,7 @@ impl TerminalBuilder {
             matches: Vec::new(),
             selection_head: None,
             pty_info,
+            shell_program,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
@@ -652,6 +667,7 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
+    shell_program: Option<String>,
     title_override: Option<SharedString>,
     pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
@@ -708,6 +724,20 @@ impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
+                // ignore default shell program title change as windows always sends those events
+                // and it would end up showing the shell executable path in breadcrumbs
+                #[cfg(windows)]
+                {
+                    if self
+                        .shell_program
+                        .as_ref()
+                        .map(|e| *e == title)
+                        .unwrap_or(false)
+                    {
+                        return;
+                    }
+                }
+
                 self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
