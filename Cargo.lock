@@ -8978,6 +8978,7 @@ dependencies = [
  "gpui",
  "language",
  "lsp",
+ "project",
  "serde",
  "serde_json",
  "util",
