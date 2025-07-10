@@ -367,7 +367,6 @@ fn render_single_memory_view_line(
                     "memory-view-row-raw-memory",
                     ix * view_state.line_width.width as u64,
                 ))
-                .size_full()
                 .px_1()
                 .children(memory.iter().enumerate().map(|(cell_ix, cell)| {
                     let weak = weak.clone();
