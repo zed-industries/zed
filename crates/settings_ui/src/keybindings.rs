@@ -20,8 +20,8 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ContextMenu, ParentElement as _, Render, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
+    SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
 use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
 
@@ -153,12 +153,68 @@ impl FilterState {
     }
 }
 
+type ActionMapping = (SharedString, Option<SharedString>);
+
+#[derive(Default)]
+struct ConflictState {
+    conflicts: Vec<usize>,
+    action_keybind_mapping: HashMap<ActionMapping, Vec<usize>>,
+}
+
+impl ConflictState {
+    fn new(key_bindings: &Vec<ProcessedKeybinding>) -> Self {
+        let mut action_keybind_mapping: HashMap<_, Vec<usize>> = HashMap::default();
+
+        key_bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| !binding.keystroke_text.is_empty())
+            .for_each(|(index, binding)| {
+                action_keybind_mapping
+                    .entry(binding.get_action_mapping())
+                    .or_default()
+                    .push(index);
+            });
+
+        Self {
+            conflicts: action_keybind_mapping
+                .values()
+                .filter(|indices| indices.len() > 1)
+                .flatten()
+                .copied()
+                .collect(),
+            action_keybind_mapping,
+        }
+    }
+
+    fn conflicting_indices_for_mapping(
+        &self,
+        action_mapping: ActionMapping,
+        keybind_idx: usize,
+    ) -> Option<Vec<usize>> {
+        self.action_keybind_mapping
+            .get(&action_mapping)
+            .and_then(|indices| {
+                let mut indices = indices.iter().filter(|&idx| *idx != keybind_idx).peekable();
+                indices.peek().is_some().then(|| indices.copied().collect())
+            })
+    }
+
+    fn has_conflict(&self, candidate_idx: &usize) -> bool {
+        self.conflicts.contains(candidate_idx)
+    }
+
+    fn any_conflicts(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+}
+
 struct KeymapEditor {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     keybindings: Vec<ProcessedKeybinding>,
-    conflicts: Vec<usize>,
+    keybinding_conflict_state: ConflictState,
     filter_state: FilterState,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
@@ -202,7 +258,7 @@ impl KeymapEditor {
         let mut this = Self {
             workspace,
             keybindings: vec![],
-            conflicts: Vec::default(),
+            keybinding_conflict_state: ConflictState::default(),
             filter_state: FilterState::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
@@ -252,7 +308,10 @@ impl KeymapEditor {
         this.update(cx, |this, cx| {
             match this.filter_state {
                 FilterState::Conflicts => {
-                    matches.retain(|candidate| this.conflicts.contains(&candidate.candidate_id));
+                    matches.retain(|candidate| {
+                        this.keybinding_conflict_state
+                            .has_conflict(&candidate.candidate_id)
+                    });
                 }
                 FilterState::All => {}
             }
@@ -372,26 +431,9 @@ impl KeymapEditor {
                 let (key_bindings, string_match_candidates) =
                     Self::process_bindings(json_language, rust_language, cx);
 
-                let mut conflicts: HashMap<_, Vec<usize>> = HashMap::default();
+                this.keybinding_conflict_state = ConflictState::new(&key_bindings);
 
-                key_bindings
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, binding)| !binding.keystroke_text.is_empty())
-                    .for_each(|(index, binding)| {
-                        conflicts
-                            .entry(binding.get_action_mapping())
-                            .or_default()
-                            .push(index);
-                    });
-
-                this.conflicts = conflicts
-                    .into_values()
-                    .filter(|indices| indices.len() > 1)
-                    .flatten()
-                    .collect();
-
-                if this.conflicts.is_empty() {
+                if !this.keybinding_conflict_state.any_conflicts() {
                     this.filter_state = FilterState::All;
                 }
 
@@ -451,10 +493,14 @@ impl KeymapEditor {
         self.selected_index.take();
     }
 
-    fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
+    fn selected_keybind_idx(&self) -> Option<usize> {
         self.selected_index
             .and_then(|match_index| self.matches.get(match_index))
             .map(|r#match| r#match.candidate_id)
+    }
+
+    fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
+        self.selected_keybind_idx()
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
     }
 
@@ -530,16 +576,28 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(keybind) = self.selected_binding().cloned() else {
+        let Some((keybind_idx, keybind)) = self
+            .selected_keybind_idx()
+            .zip(self.selected_binding().cloned())
+        else {
             return;
         };
+        let keymap_editor = cx.entity();
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
                 let workspace_weak = cx.weak_entity();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let modal =
-                        KeybindingEditorModal::new(create, keybind, workspace_weak, fs, window, cx);
+                    let modal = KeybindingEditorModal::new(
+                        create,
+                        keybind,
+                        keybind_idx,
+                        keymap_editor,
+                        workspace_weak,
+                        fs,
+                        window,
+                        cx,
+                    );
                     window.focus(&modal.focus_handle(cx));
                     modal
                 });
@@ -601,7 +659,7 @@ struct ProcessedKeybinding {
 }
 
 impl ProcessedKeybinding {
-    fn get_action_mapping(&self) -> (SharedString, Option<SharedString>) {
+    fn get_action_mapping(&self) -> ActionMapping {
         (
             self.keystroke_text.clone(),
             self.context
@@ -703,7 +761,7 @@ impl Render for KeymapEditor {
                     .border_color(theme.colors().border)
                     .rounded_lg()
                     .child(self.filter_editor.clone())
-                    .when(!self.conflicts.is_empty(), |this| {
+                    .when(self.keybinding_conflict_state.any_conflicts(), |this| {
                         this.child(
                             IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
                                 .tooltip(Tooltip::text(match self.filter_state {
@@ -792,7 +850,7 @@ impl Render for KeymapEditor {
                                 .matches
                                 .get(row_index)
                                 .map(|candidate| candidate.candidate_id)
-                                .is_some_and(|id| this.conflicts.contains(&id));
+                                .is_some_and(|id| this.keybinding_conflict_state.has_conflict(&id));
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row = row
@@ -880,14 +938,42 @@ impl RenderOnce for SyntaxHighlightedText {
     }
 }
 
+#[derive(PartialEq)]
+enum InputError {
+    Warning(SharedString),
+    Error(SharedString),
+}
+
+impl InputError {
+    fn warning(message: impl Into<SharedString>) -> Self {
+        Self::Warning(message.into())
+    }
+
+    fn error(message: impl Into<SharedString>) -> Self {
+        Self::Error(message.into())
+    }
+
+    fn content(&self) -> &SharedString {
+        match self {
+            InputError::Warning(content) | InputError::Error(content) => content,
+        }
+    }
+
+    fn is_warning(&self) -> bool {
+        matches!(self, InputError::Warning(_))
+    }
+}
+
 struct KeybindingEditorModal {
     creating: bool,
     editing_keybind: ProcessedKeybinding,
+    editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<Editor>,
     input_editor: Option<Entity<Editor>>,
     fs: Arc<dyn Fs>,
-    error: Option<String>,
+    error: Option<InputError>,
+    keymap_editor: Entity<KeymapEditor>,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -904,6 +990,8 @@ impl KeybindingEditorModal {
     pub fn new(
         create: bool,
         editing_keybind: ProcessedKeybinding,
+        editing_keybind_idx: usize,
+        keymap_editor: Entity<KeymapEditor>,
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -971,11 +1059,27 @@ impl KeybindingEditorModal {
         Self {
             creating: create,
             editing_keybind,
+            editing_keybind_idx,
             fs,
             keybind_editor,
             context_editor,
             input_editor,
             error: None,
+            keymap_editor,
+        }
+    }
+
+    fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|old_error| old_error.is_warning() && *old_error == error)
+        {
+            false
+        } else {
+            self.error = Some(error);
+            cx.notify();
+            true
         }
     }
 
@@ -986,8 +1090,7 @@ impl KeybindingEditorModal {
             .keybind_editor
             .read_with(cx, |editor, _| editor.keystrokes().to_vec());
         if new_keystrokes.is_empty() {
-            self.error = Some("Keystrokes cannot be empty".to_string());
-            cx.notify();
+            self.set_error(InputError::error("Keystrokes cannot be empty"), cx);
             return;
         }
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
@@ -1003,9 +1106,56 @@ impl KeybindingEditorModal {
         if let Some(err) = new_context_err {
             // TODO: store and display as separate error
             // TODO: also, should be validating on keystroke
-            self.error = Some(err.to_string());
-            cx.notify();
+            self.set_error(InputError::error(err.to_string()), cx);
             return;
+        }
+
+        let action_mapping: ActionMapping = (
+            ui::text_for_keystrokes(&new_keystrokes, cx).into(),
+            new_context
+                .as_ref()
+                .map(Into::into)
+                .or_else(|| existing_keybind.get_action_mapping().1),
+        );
+
+        if let Some(conflicting_indices) = self
+            .keymap_editor
+            .read(cx)
+            .keybinding_conflict_state
+            .conflicting_indices_for_mapping(action_mapping, self.editing_keybind_idx)
+        {
+            let first_conflicting_index = conflicting_indices[0];
+            let conflicting_action_name = self
+                .keymap_editor
+                .read(cx)
+                .keybindings
+                .get(first_conflicting_index)
+                .map(|keybind| keybind.action_name.clone());
+
+            let warning_message = match conflicting_action_name {
+                Some(name) => {
+                    let confliction_action_amount = conflicting_indices.len() - 1;
+                    if confliction_action_amount > 0 {
+                        format!(
+                            "Your keybind would conflict with the \"{}\" action and {} other bindings",
+                            name, confliction_action_amount
+                        )
+                    } else {
+                        format!("Your keybind would conflict with the \"{}\" action", name)
+                    }
+                }
+                None => {
+                    log::info!(
+                        "Could not find action in keybindings with index {}",
+                        first_conflicting_index
+                    );
+                    "Your keybind would conflict with other actions".to_string()
+                }
+            };
+
+            if self.set_error(InputError::warning(warning_message), cx) {
+                return;
+            }
         }
 
         let create = self.creating;
@@ -1022,8 +1172,7 @@ impl KeybindingEditorModal {
             .await
             {
                 this.update(cx, |this, cx| {
-                    this.error = Some(err.to_string());
-                    cx.notify();
+                    this.set_error(InputError::error(err.to_string()), cx);
                 })
                 .log_err();
             } else {
@@ -1052,7 +1201,7 @@ impl Render for KeybindingEditorModal {
                 .border_color(theme.border_variant)
         };
 
-        return v_flex()
+        v_flex()
             .w(rems(34.))
             .elevation_3(cx)
             .child(
@@ -1092,6 +1241,20 @@ impl Render for KeybindingEditorModal {
                     )
                     .child(input_base().child(self.context_editor.clone())),
             )
+            .when_some(self.error.as_ref(), |this, error| {
+                this.child(
+                    div().p_2().child(
+                        Banner::new()
+                            .map(|banner| match error {
+                                InputError::Error(_) => banner.severity(ui::Severity::Error),
+                                InputError::Warning(_) => banner.severity(ui::Severity::Warning),
+                            })
+                            // For some reason, the div overflows its container to the
+                            // right. The padding accounts for that.
+                            .child(div().size_full().pr_2().child(Label::new(error.content()))),
+                    ),
+                )
+            })
             .child(
                 h_flex()
                     .p_2()
@@ -1110,16 +1273,6 @@ impl Render for KeybindingEditorModal {
                         ),
                     ),
             )
-            .when_some(self.error.clone(), |this, error| {
-                this.child(
-                    div()
-                        .bg(theme.background)
-                        .border_color(theme.border)
-                        .border_2()
-                        .rounded_md()
-                        .child(error),
-                )
-            });
     }
 }
 
