@@ -10,7 +10,7 @@ use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
-    EditorStyle, MinimapVisibility, MultiBuffer,
+    EditorStyle, MinimapVisibility, MultiBuffer, PathKey,
 };
 use file_icons::FileIcons;
 use futures::channel::oneshot;
@@ -25,10 +25,9 @@ use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::{AgentLocation, Project};
-use rope::Point;
+use project::Project;
 use settings::Settings as _;
-use text::{Anchor, Bias};
+use text::Anchor;
 use theme::ThemeSettings;
 use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
@@ -43,6 +42,7 @@ use ::acp::{
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
+use crate::agent_diff::AgentDiff;
 use crate::{AgentDiffPane, Follow, KeepAll, OpenAgentDiff, RejectAll};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -51,7 +51,6 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
-    action_log: Entity<ActionLog>,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     message_editor: Entity<Editor>,
     mention_set: Arc<Mutex<MentionSet>>,
@@ -70,7 +69,7 @@ enum ThreadState {
     },
     Ready {
         thread: Entity<AcpThread>,
-        _subscription: Subscription,
+        _subscription: [Subscription; 2],
     },
     LoadError(LoadError),
     Unauthenticated {
@@ -142,15 +141,13 @@ impl AcpThreadView {
                 }
             }),
         );
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
-            workspace,
+            workspace: workspace.clone(),
             project: project.clone(),
-            thread_state: Self::initial_state(project, window, cx),
+            thread_state: Self::initial_state(workspace, project, window, cx),
             message_editor,
             mention_set,
-            action_log,
             diff_editors: Default::default(),
             list_state: list_state,
             last_error: None,
@@ -163,6 +160,7 @@ impl AcpThreadView {
     }
 
     fn initial_state(
+        workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -230,15 +228,23 @@ impl AcpThreadView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(()) => {
-                        let subscription =
+                        let thread_subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
+
+                        let action_log = thread.read(cx).action_log().clone();
+                        let action_log_subscription =
+                            cx.observe(&action_log, |_, _, cx| cx.notify());
+
                         this.list_state
                             .splice(0..0, thread.read(cx).entries().len());
 
+                        AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
+
                         this.thread_state = ThreadState::Ready {
                             thread,
-                            _subscription: subscription,
+                            _subscription: [thread_subscription, action_log_subscription],
                         };
+
                         cx.notify();
                     }
                     Err(err) => {
@@ -259,14 +265,6 @@ impl AcpThreadView {
             self.thread_state = ThreadState::LoadError(LoadError::Other(err.to_string().into()))
         }
         cx.notify();
-    }
-
-    pub fn action_log(&self) -> &Entity<ActionLog> {
-        &self.action_log
-    }
-
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
     }
 
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
@@ -395,6 +393,33 @@ impl AcpThreadView {
         );
     }
 
+    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
+        }
+    }
+
+    fn open_edited_buffer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let Some(diff) =
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
+        else {
+            return;
+        };
+
+        diff.update(cx, |diff, cx| {
+            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+        })
+    }
+
     fn set_draft_message(
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
@@ -484,99 +509,15 @@ impl AcpThreadView {
             AcpThreadEvent::NewEntry => {
                 let index = thread.read(cx).entries().len() - 1;
                 self.sync_thread_entry_view(index, window, cx);
-                Self::sync_thread_to_action_log(&self.action_log, thread, index, cx);
                 self.list_state.splice(count..count, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 let index = *index;
                 self.sync_thread_entry_view(index, window, cx);
-                Self::sync_thread_to_action_log(&self.action_log, thread, index, cx);
                 self.list_state.splice(index..index + 1, 1);
             }
         }
         cx.notify();
-    }
-
-    fn sync_thread_to_action_log(
-        action_log: &Entity<ActionLog>,
-        thread: &Entity<AcpThread>,
-        index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(call) = thread.read(cx).tool_call_at(index) else {
-            return;
-        };
-        if call.locations.is_empty() {
-            return;
-        }
-        let locations = call.locations.clone();
-        let applied_diff = if let ToolCall {
-            status:
-                ToolCallStatus::Allowed {
-                    status: acp::ToolCallStatus::Finished,
-                    ..
-                },
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        } = &call
-        {
-            Some((diff.old_buffer.clone(), diff.new_buffer.clone()))
-        } else {
-            None
-        };
-        let thread_view = cx.entity();
-        action_log.update(cx, |action_log, cx| {
-            let buffers = action_log.project().update(cx, |project, cx| {
-                locations
-                    .into_iter()
-                    .filter_map(|location| {
-                        let path = project.project_path_for_absolute_path(&location.path, cx)?;
-                        let open = project.open_buffer(path, cx);
-                        Some(async move { (open.await, location.line) })
-                    })
-                    .collect::<Vec<_>>()
-            });
-            cx.spawn(async move |action_log, cx| {
-                let buffers = futures::future::join_all(buffers).await;
-                // todo! figure out when to call buffer_edited
-                cx.background_executor().timer(Duration::from_secs(5)).await;
-                action_log
-                    .update(cx, |action_log, cx| {
-                        for (buffer, line) in buffers {
-                            let Some(buffer) = buffer.log_err() else {
-                                continue;
-                            };
-                            let position = if let Some(line) = line {
-                                let snapshot = buffer.read(cx).snapshot();
-                                let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
-                                buffer.read(cx).snapshot().anchor_before(point)
-                            } else {
-                                Anchor::MIN
-                            };
-                            let location = AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position,
-                            };
-                            if let Some(diff) = applied_diff.clone() {
-                                let old_snapshot = diff.0.read(cx).snapshot();
-                                action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
-                            } else {
-                                action_log.buffer_read(buffer, cx);
-                            }
-                            action_log.project().update(cx, |project, cx| {
-                                project.set_agent_location(Some(location), cx);
-                            });
-                        }
-                    })
-                    .log_err();
-                thread_view
-                    .update(cx, |_, cx| {
-                        cx.notify();
-                    })
-                    .log_err();
-            })
-            .detach();
-        })
     }
 
     fn sync_thread_entry_view(
@@ -669,7 +610,8 @@ impl AcpThreadView {
                             Markdown::new(format!("Error: {err}").into(), None, None, cx)
                         }))
                     } else {
-                        this.thread_state = Self::initial_state(project.clone(), window, cx)
+                        this.thread_state =
+                            Self::initial_state(this.workspace.clone(), project.clone(), window, cx)
                     }
                     this.auth_task.take()
                 })
@@ -1632,9 +1574,14 @@ impl AcpThreadView {
         container.into_any()
     }
 
-    fn render_edits_bar(&self, window: &mut Window, cx: &Context<Self>) -> Option<AnyElement> {
-        let action_log = self.action_log.read(cx);
-        let changed_buffers = action_log.changed_buffers(cx);
+    fn render_edits_bar(
+        &self,
+        thread: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let action_log = thread.read(cx).action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         if changed_buffers.is_empty() {
             return None;
@@ -1663,6 +1610,7 @@ impl AcpThreadView {
                 spread_radius: px(0.),
             }])
             .child(self.render_edits_bar_summary(
+                action_log,
                 &changed_buffers,
                 expanded,
                 pending_edits,
@@ -1670,7 +1618,12 @@ impl AcpThreadView {
                 cx,
             ))
             .when(expanded, |parent| {
-                parent.child(self.render_edits_bar_files(&changed_buffers, pending_edits, cx))
+                parent.child(self.render_edits_bar_files(
+                    action_log,
+                    &changed_buffers,
+                    pending_edits,
+                    cx,
+                ))
             })
             .into_any()
             .into()
@@ -1678,6 +1631,7 @@ impl AcpThreadView {
 
     fn render_edits_bar_summary(
         &self,
+        action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         expanded: bool,
         pending_edits: bool,
@@ -1789,11 +1743,14 @@ impl AcpThreadView {
                                 )
                                 .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.action_log.update(cx, |action_log, cx| {
-                                    action_log.reject_all_edits(cx).detach();
+                            .on_click({
+                                let action_log = action_log.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    action_log.update(cx, |action_log, cx| {
+                                        action_log.reject_all_edits(cx).detach();
+                                    })
                                 })
-                            })),
+                            }),
                     )
                     .child(
                         Button::new("keep-all-changes", "Keep All")
@@ -1806,17 +1763,21 @@ impl AcpThreadView {
                                 KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
                                     .map(|kb| kb.size(rems_from_px(10.))),
                             )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.action_log.update(cx, |action_log, cx| {
-                                    action_log.keep_all_edits(cx);
+                            .on_click({
+                                let action_log = action_log.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    action_log.update(cx, |action_log, cx| {
+                                        action_log.keep_all_edits(cx);
+                                    })
                                 })
-                            })),
+                            }),
                     ),
             )
     }
 
     fn render_edits_bar_files(
         &self,
+        action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
         pending_edits: bool,
         cx: &Context<Self>,
@@ -1889,8 +1850,7 @@ impl AcpThreadView {
                             .on_click({
                                 let buffer = buffer.clone();
                                 cx.listener(move |this, _, window, cx| {
-                                    // todo!
-                                    // this.handle_file_click(buffer.clone(), window, cx);
+                                    this.open_edited_buffer(&buffer, window, cx);
                                 })
                             }),
                     )
@@ -1904,12 +1864,7 @@ impl AcpThreadView {
                                     .on_click({
                                         let buffer = buffer.clone();
                                         cx.listener(move |this, _, window, cx| {
-                                            // todo!
-                                            // this.handle_file_click(
-                                            //     buffer.clone(),
-                                            //     window,
-                                            //     cx,
-                                            // );
+                                            this.open_edited_buffer(&buffer, window, cx);
                                         })
                                     }),
                             )
@@ -1920,8 +1875,9 @@ impl AcpThreadView {
                                     .disabled(pending_edits)
                                     .on_click({
                                         let buffer = buffer.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.action_log.update(cx, |action_log, cx| {
+                                        let action_log = action_log.clone();
+                                        move |_, _, cx| {
+                                            action_log.update(cx, |action_log, cx| {
                                                 action_log
                                                     .reject_edits_in_ranges(
                                                         buffer.clone(),
@@ -1930,7 +1886,7 @@ impl AcpThreadView {
                                                     )
                                                     .detach_and_log_err(cx);
                                             })
-                                        })
+                                        }
                                     }),
                             )
                             .child(
@@ -1939,15 +1895,16 @@ impl AcpThreadView {
                                     .disabled(pending_edits)
                                     .on_click({
                                         let buffer = buffer.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.action_log.update(cx, |action_log, cx| {
+                                        let action_log = action_log.clone();
+                                        move |_, _, cx| {
+                                            action_log.update(cx, |action_log, cx| {
                                                 action_log.keep_edits_in_range(
                                                     buffer.clone(),
                                                     Anchor::MIN..Anchor::MAX,
                                                     cx,
                                                 );
                                             })
-                                        })
+                                        }
                                     }),
                             ),
                     )
@@ -2182,8 +2139,6 @@ impl Focusable for AcpThreadView {
 
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let text = self.message_editor.read(cx).text(cx);
-
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
@@ -2209,14 +2164,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
-            .on_action({
-                let workspace = self.workspace.clone();
-                let this = cx.entity();
-                move |_: &OpenAgentDiff, window, cx| {
-                    // not using `cx.listener` because deploy reads the `AcpThreadView`
-                    AgentDiffPane::deploy(this.clone(), workspace.clone(), window, cx).log_err();
-                }
-            })
+            .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()
@@ -2270,7 +2218,7 @@ impl Render for AcpThreadView {
                                 .child(LoadingLabel::new("").size(LabelSize::Small))
                                 .into(),
                         })
-                        .children(self.render_edits_bar(window, cx))
+                        .children(self.render_edits_bar(&thread, window, cx))
                     } else {
                         this.child(self.render_empty_state(false, cx))
                     }

@@ -2,16 +2,18 @@ pub use acp::ToolCallId;
 use agent_servers::AgentServer;
 use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
-use editor::{MultiBuffer, PathKey};
+use editor::{Bias, MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
-use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
+use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point};
 use markdown::Markdown;
-use project::Project;
+use project::{AgentLocation, Project};
 use std::error::Error;
 use std::fmt::{Formatter, Write};
+use std::time::Duration;
 use std::{
     fmt::Display,
     mem,
@@ -427,6 +429,7 @@ pub struct AcpThread {
     entries: Vec<AgentThreadEntry>,
     title: SharedString,
     project: Entity<Project>,
+    action_log: Entity<ActionLog>,
     send_task: Option<Task<()>>,
     connection: Arc<acp::AgentConnection>,
     child_status: Option<Task<Result<()>>>,
@@ -528,7 +531,10 @@ impl AcpThread {
                 }
             });
 
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
             Self {
+                action_log,
                 entries: Default::default(),
                 title: "ACP Thread".into(),
                 project,
@@ -538,6 +544,14 @@ impl AcpThread {
                 _io_task: io_task,
             }
         })
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     #[cfg(test)]
@@ -564,7 +578,10 @@ impl AcpThread {
             }
         });
 
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
         Self {
+            action_log,
             entries: Default::default(),
             title: "ACP Thread".into(),
             project,
@@ -688,27 +705,26 @@ impl AcpThread {
     ) -> acp::ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
         let id = acp::ToolCallId(self.entries.len() as u64);
-
-        self.push_entry(
-            AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                label: cx.new(|cx| {
-                    Markdown::new(
-                        tool_call.label.into(),
-                        Some(language_registry.clone()),
-                        None,
-                        cx,
-                    )
-                }),
-                icon: acp_icon_to_ui_icon(tool_call.icon),
-                content: tool_call
-                    .content
-                    .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
-                locations: tool_call.locations,
-                status,
+        let call = ToolCall {
+            id,
+            label: cx.new(|cx| {
+                Markdown::new(
+                    tool_call.label.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
             }),
-            cx,
-        );
+            icon: acp_icon_to_ui_icon(tool_call.icon),
+            content: tool_call
+                .content
+                .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
+            locations: tool_call.locations,
+            status,
+        };
+
+        Self::sync_tool_call_actions(&self.action_log, &call, cx);
+        self.push_entry(AgentThreadEntry::ToolCall(call), cx);
 
         id
     }
@@ -742,6 +758,79 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
+    fn sync_tool_call_actions(
+        action_log: &Entity<ActionLog>,
+        call: &ToolCall,
+        cx: &mut Context<Self>,
+    ) {
+        if call.locations.is_empty() {
+            return;
+        }
+        let locations = call.locations.clone();
+        let applied_diff = if let ToolCall {
+            status:
+                ToolCallStatus::Allowed {
+                    status: acp::ToolCallStatus::Finished,
+                    ..
+                },
+            content: Some(ToolCallContent::Diff { diff }),
+            ..
+        } = &call
+        {
+            Some((diff.old_buffer.clone(), diff.new_buffer.clone()))
+        } else {
+            None
+        };
+
+        action_log.update(cx, |action_log, cx| {
+            let buffers = action_log.project().update(cx, |project, cx| {
+                locations
+                    .into_iter()
+                    .filter_map(|location| {
+                        let path = project.project_path_for_absolute_path(&location.path, cx)?;
+                        let open = project.open_buffer(path, cx);
+                        Some(async move { (open.await, location.line) })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            cx.spawn(async move |action_log, cx| {
+                let buffers = futures::future::join_all(buffers).await;
+                // todo! figure out when to call buffer_edited
+                cx.background_executor().timer(Duration::from_secs(5)).await;
+                action_log
+                    .update(cx, |action_log, cx| {
+                        for (buffer, line) in buffers {
+                            let Some(buffer) = buffer.log_err() else {
+                                continue;
+                            };
+                            let position = if let Some(line) = line {
+                                let snapshot = buffer.read(cx).snapshot();
+                                let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
+                                buffer.read(cx).snapshot().anchor_before(point)
+                            } else {
+                                Anchor::MIN
+                            };
+                            let location = AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            };
+                            if let Some(diff) = applied_diff.clone() {
+                                let old_snapshot = diff.0.read(cx).snapshot();
+                                action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
+                            } else {
+                                action_log.buffer_read(buffer, cx);
+                            }
+                            action_log.project().update(cx, |project, cx| {
+                                project.set_agent_location(Some(location), cx);
+                            });
+                        }
+                    })
+                    .log_err();
+            })
+            .detach();
+        })
+    }
+
     pub fn update_tool_call(
         &mut self,
         id: acp::ToolCallId,
@@ -750,6 +839,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let language_registry = self.project.read(cx).languages().clone();
+        let action_log = self.action_log.clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
         call.content = new_content
@@ -770,15 +860,10 @@ impl AcpThread {
             }
         }
 
+        Self::sync_tool_call_actions(&action_log, &call, cx);
+
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
-    }
-
-    pub fn tool_call_at(&self, ix: usize) -> Option<&ToolCall> {
-        match self.entries.get(ix) {
-            Some(AgentThreadEntry::ToolCall(call)) => Some(call),
-            _ => None,
-        }
     }
 
     fn tool_call_mut(&mut self, id: acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {

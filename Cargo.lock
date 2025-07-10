@@ -9,6 +9,7 @@ dependencies = [
  "agent_servers",
  "agentic-coding-protocol",
  "anyhow",
+ "assistant_tool",
  "async-pipe",
  "buffer_diff",
  "editor",

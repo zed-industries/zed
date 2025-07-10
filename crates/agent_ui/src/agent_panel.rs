@@ -904,8 +904,6 @@ impl AgentPanel {
                     window,
                     cx,
                 );
-
-                AgentDiff::set_active_thread(&workspace, thread_view, window, cx);
             })
             .log_err();
 

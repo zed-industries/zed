@@ -2,13 +2,13 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use clock;
 use collections::BTreeMap;
-use futures::{FutureExt, StreamExt, channel::mpsc, stream::FuturesUnordered};
+use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
-use util::{RangeExt, ResultExt as _, TryFutureExt};
+use util::{RangeExt, ResultExt as _};
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {

@@ -1,5 +1,5 @@
-use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, acp::AcpThreadView};
-use acp::AcpThreadEvent;
+use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
+use acp::{AcpThread, AcpThreadEvent};
 use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
@@ -53,7 +53,7 @@ pub struct AgentDiffPane {
 #[derive(PartialEq, Eq, Clone)]
 pub enum AgentDiffThread {
     Native(Entity<Thread>),
-    AcpThread(Entity<AcpThreadView>),
+    AcpThread(Entity<AcpThread>),
 }
 
 impl AgentDiffThread {
@@ -73,10 +73,7 @@ impl AgentDiffThread {
     fn summary(&self, cx: &App) -> ThreadSummary {
         match self {
             AgentDiffThread::Native(thread) => thread.read(cx).summary().clone(),
-            AgentDiffThread::AcpThread(thread) => match thread.read(cx).thread() {
-                Some(thread) => ThreadSummary::Ready(thread.read(cx).title()),
-                None => ThreadSummary::Pending,
-            },
+            AgentDiffThread::AcpThread(thread) => ThreadSummary::Ready(thread.read(cx).title()),
         }
     }
 
@@ -84,9 +81,7 @@ impl AgentDiffThread {
         match self {
             AgentDiffThread::Native(thread) => thread.read(cx).is_generating(),
             AgentDiffThread::AcpThread(thread) => {
-                thread.read(cx).thread().map_or(false, |thread| {
-                    thread.read(cx).status() == acp::ThreadStatus::Generating
-                })
+                thread.read(cx).status() == acp::ThreadStatus::Generating
             }
         }
     }
@@ -115,8 +110,8 @@ impl From<Entity<Thread>> for AgentDiffThread {
     }
 }
 
-impl From<Entity<AcpThreadView>> for AgentDiffThread {
-    fn from(entity: Entity<AcpThreadView>) -> Self {
+impl From<Entity<AcpThread>> for AgentDiffThread {
+    fn from(entity: Entity<AcpThread>) -> Self {
         AgentDiffThread::AcpThread(entity)
     }
 }
@@ -124,7 +119,7 @@ impl From<Entity<AcpThreadView>> for AgentDiffThread {
 #[derive(PartialEq, Eq, Clone)]
 pub enum WeakAgentDiffThread {
     Native(WeakEntity<Thread>),
-    AcpThread(WeakEntity<AcpThreadView>),
+    AcpThread(WeakEntity<AcpThread>),
 }
 
 impl WeakAgentDiffThread {
@@ -142,8 +137,8 @@ impl From<WeakEntity<Thread>> for WeakAgentDiffThread {
     }
 }
 
-impl From<WeakEntity<AcpThreadView>> for WeakAgentDiffThread {
-    fn from(entity: WeakEntity<AcpThreadView>) -> Self {
+impl From<WeakEntity<AcpThread>> for WeakAgentDiffThread {
+    fn from(entity: WeakEntity<AcpThread>) -> Self {
         WeakAgentDiffThread::AcpThread(entity)
     }
 }
@@ -1299,7 +1294,7 @@ pub enum EditorState {
 
 struct WorkspaceThread {
     thread: WeakAgentDiffThread,
-    _thread_subscriptions: (Subscription, Option<Subscription>),
+    _thread_subscriptions: (Subscription, Subscription),
     singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
     _settings_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
@@ -1349,25 +1344,18 @@ impl AgentDiff {
         });
 
         let thread_subscription = match &thread {
-            AgentDiffThread::Native(thread) => Some(cx.subscribe_in(&thread, window, {
+            AgentDiffThread::Native(thread) => cx.subscribe_in(&thread, window, {
                 let workspace = workspace.clone();
                 move |this, _thread, event, window, cx| {
                     this.handle_native_thread_event(&workspace, event, window, cx)
                 }
-            })),
-            AgentDiffThread::AcpThread(thread) => {
-                let thread = thread.read(cx).thread().cloned();
-
-                match thread {
-                    None => None,
-                    Some(thread) => Some(cx.subscribe_in(&thread, window, {
-                        let workspace = workspace.clone();
-                        move |this, _thread, event, window, cx| {
-                            this.handle_acp_thread_event(&workspace, event, window, cx)
-                        }
-                    })),
+            }),
+            AgentDiffThread::AcpThread(thread) => cx.subscribe_in(&thread, window, {
+                let workspace = workspace.clone();
+                move |this, _thread, event, window, cx| {
+                    this.handle_acp_thread_event(&workspace, event, window, cx)
                 }
-            }
+            }),
         };
 
         if let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) {
