@@ -678,7 +678,13 @@ impl RunningState {
         let session_id = session.read(cx).session_id();
         let weak_state = cx.weak_entity();
         let stack_frame_list = cx.new(|cx| {
-            StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
+            StackFrameList::new(
+                workspace.clone(),
+                session.clone(),
+                weak_state.clone(),
+                window,
+                cx,
+            )
         });
 
         let debug_terminal =
@@ -689,6 +695,7 @@ impl RunningState {
                 session.clone(),
                 stack_frame_list.clone(),
                 memory_view.clone(),
+                weak_state.clone(),
                 window,
                 cx,
             )
@@ -1425,7 +1432,14 @@ impl RunningState {
         &self.module_list
     }
 
-    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(
+        &mut self,
+        item: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_pane_item(item, window, cx);
+
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -1437,9 +1451,10 @@ impl RunningState {
                     .map(|view| (view, pane))
             })
             .unwrap();
+
         pane.update(cx, |this, cx| {
             this.activate_item(variable_list_position, true, true, window, cx);
-        })
+        });
     }
 
     #[cfg(test)]

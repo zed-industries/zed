@@ -1,4 +1,7 @@
-use crate::session::running::memory_view::MemoryView;
+use crate::{
+    debugger_panel::DebugPanel,
+    session::running::{RunningState, memory_view::MemoryView},
+};
 
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{
@@ -9,7 +12,8 @@ use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
     FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
-    TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent, Watcher};
@@ -193,6 +197,7 @@ pub struct VariableList {
     edited_path: Option<(EntryPath, Entity<Editor>)>,
     disabled: bool,
     memory_view: Entity<MemoryView>,
+    weak_running: WeakEntity<RunningState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -201,6 +206,7 @@ impl VariableList {
         session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
         memory_view: Entity<MemoryView>,
+        weak_running: WeakEntity<RunningState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -240,6 +246,7 @@ impl VariableList {
             edited_path: None,
             entries: Default::default(),
             entry_states: Default::default(),
+            weak_running,
             memory_view,
         }
     }
@@ -569,7 +576,12 @@ impl VariableList {
         }
     }
 
-    fn jump_to_variable_memory(&mut self, _: &GoToMemory, _: &mut Window, cx: &mut Context<Self>) {
+    fn jump_to_variable_memory(
+        &mut self,
+        _: &GoToMemory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         _ = maybe!({
             let selection = self.selection.as_ref()?;
             let entry = self.entries.iter().find(|entry| &entry.path == selection)?;
@@ -577,6 +589,17 @@ impl VariableList {
 
             self.memory_view.update(cx, |this, cx| {
                 this.go_to_memory_reference(memory_reference, cx);
+            });
+            let weak_panel = self.weak_running.clone();
+
+            window.defer(cx, move |window, cx| {
+                weak_panel.update(cx, |this, cx| {
+                    this.activate_item(
+                        crate::persistence::DebuggerPaneItem::MemoryView,
+                        window,
+                        cx,
+                    );
+                });
             });
             Some(())
         });
