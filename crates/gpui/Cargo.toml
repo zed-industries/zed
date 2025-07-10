@@ -50,6 +50,7 @@ wayland = [
     "filedescriptor",
     "xkbcommon",
     "open",
+    "scap?/wayland",
 ]
 x11 = [
     "blade-graphics",
@@ -66,6 +67,7 @@ x11 = [
     "x11-clipboard",
     "filedescriptor",
     "open",
+    "scap?/x11",
 ]
 screen-capture = [
     "scap",
