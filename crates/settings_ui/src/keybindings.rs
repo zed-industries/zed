@@ -624,7 +624,7 @@ impl KeymapEditor {
         };
         let Ok(fs) = self
             .workspace
-            .read_with(cx, |workspace, cx| workspace.app_state().fs.clone())
+            .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
         else {
             return;
         };

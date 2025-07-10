@@ -2,9 +2,8 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError,
-    KEYSTROKE_PARSE_EXPECTED_MESSAGE, KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex,
-    Keystroke, NoAction, SharedString,
+    Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, Keystroke, NoAction, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
