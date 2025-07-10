@@ -10,15 +10,6 @@ use thiserror::Error;
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
 fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration> {
-    // Try "Retry-After" header (seconds)
-    if let Some(retry_after) = headers.get("Retry-After") {
-        if let Ok(s) = retry_after.to_str() {
-            if let Ok(secs) = s.parse::<u64>() {
-                return Some(std::time::Duration::from_secs(secs));
-            }
-        }
-    }
-    // Try "X-RateLimit-Reset" header (epoch ms)
     if let Some(reset) = headers.get("X-RateLimit-Reset") {
         if let Ok(s) = reset.to_str() {
             if let Ok(epoch_ms) = s.parse::<u64>() {
