@@ -14097,7 +14097,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=08f0a01417505cc0990b9931a37e5120db92e0d0#08f0a01417505cc0990b9931a37e5120db92e0d0"
+source = "git+https://github.com/zed-industries/scap?rev=28dd306ff2e3374404936dec778fc1e975b8dd12#28dd306ff2e3374404936dec778fc1e975b8dd12"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -19693,7 +19693,9 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
+ "windows 0.61.1",
  "windows-core 0.61.0",
+ "windows-future",
  "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
