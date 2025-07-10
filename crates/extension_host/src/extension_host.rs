@@ -877,9 +877,6 @@ impl ExtensionStore {
                 },
             )
             .await?;
-
-            // todo(windows)
-            // Stop the server here.
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
 
             fs.remove_dir(
