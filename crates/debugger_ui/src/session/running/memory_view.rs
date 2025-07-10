@@ -327,6 +327,10 @@ impl MemoryView {
         self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
         cx.notify();
     }
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.view_state.selection = None;
+        cx.notify();
+    }
 }
 
 #[derive(Clone)]
@@ -491,6 +495,7 @@ impl Render for MemoryView {
         let this = cx.weak_entity();
         v_flex()
             .id("Memory-view")
+            .on_action(cx.listener(Self::cancel))
             .p_1()
             .size_full()
             .track_focus(&self.focus_handle)
