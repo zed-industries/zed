@@ -770,13 +770,10 @@ impl AgentPanel {
     }
 
     fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        // Preserve chat box text when using creating new thread from summary'
-        let preserved_text = if action.from_thread_id.is_some() {
-            self.active_message_editor()
-                .map(|editor| editor.read(cx).get_text(cx).trim().to_string())
-        } else {
-            None
-        };
+        // Preserve chat box text when using creating new thread
+        let preserved_text = self
+            .active_message_editor()
+            .map(|editor| editor.read(cx).get_text(cx).trim().to_string());
 
         let thread = self
             .thread_store
