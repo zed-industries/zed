@@ -2,8 +2,9 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, ScrollWheelEvent,
-    Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, list, point, uniform_list,
+    AppContext, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, MouseMoveEvent,
+    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, list, point,
+    uniform_list,
 };
 use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
@@ -336,33 +337,7 @@ fn render_single_memory_view_line(
     cx: &mut App,
 ) -> AnyElement {
     let ix = ix as u64;
-    let Ok(view_state) = weak.update(cx, |this, _| {
-        let start = this.view_state.base_row;
-
-        let row_count = this.view_state.row_count();
-
-        debug_assert!(row_count > 1);
-        if ix == row_count - 1
-            && (this.scroll_state.is_dragging()
-                || this
-                    .view_state
-                    .selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.is_dragging()))
-        {
-            // this.view_state.schedule_scroll_down();
-        } else if ix == 0
-            && (this.scroll_state.is_dragging()
-                || this
-                    .view_state
-                    .selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.is_dragging()))
-        {
-            //this.view_state.schedule_scroll_up();
-        }
-        this.view_state.clone()
-    }) else {
+    let Ok(view_state) = weak.update(cx, |this, _| this.view_state.clone()) else {
         return div().into_any();
     };
     let base_address = (view_state.base_row + ix) * view_state.line_width.width as u64;
@@ -528,6 +503,36 @@ impl Render for MemoryView {
             .child(
                 v_flex()
                     .size_full()
+                    .on_mouse_move(cx.listener(|this, evt: &MouseMoveEvent, window, cx| {
+                        if !evt.dragging() {
+                            return;
+                        }
+                        if !this.scroll_state.is_dragging()
+                            && !this
+                                .view_state
+                                .selection
+                                .as_ref()
+                                .is_some_and(|selection| selection.is_dragging())
+                        {
+                            return;
+                        }
+                        let row_count = this.view_state.row_count();
+
+                        debug_assert!(row_count > 1);
+                        if false {
+                            //ix == row_count - 1 {
+                            this.view_state.schedule_scroll_down();
+                        } else if false
+                            && (this.scroll_state.is_dragging()
+                                || this
+                                    .view_state
+                                    .selection
+                                    .as_ref()
+                                    .is_some_and(|selection| selection.is_dragging()))
+                        {
+                            this.view_state.schedule_scroll_up();
+                        }
+                    }))
                     .child(self.render_memory(cx).size_full())
                     .children(self.render_vertical_scrollbar(cx))
                     .child(
