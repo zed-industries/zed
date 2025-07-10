@@ -47,6 +47,10 @@ impl ActionLog {
         self.edited_since_project_diagnostics_check
     }
 
+    pub fn latest_snapshot(&self, buffer: &Entity<Buffer>) -> Option<text::BufferSnapshot> {
+        Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
+    }
+
     fn track_buffer_internal(
         &mut self,
         buffer: Entity<Buffer>,

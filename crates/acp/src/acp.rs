@@ -4,16 +4,19 @@ use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
-use editor::{Bias, MultiBuffer, PathKey};
+use editor::{MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
-use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point};
+use language::{
+    Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
+    text_diff,
+};
 use markdown::Markdown;
 use project::{AgentLocation, Project};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
-use std::time::Duration;
 use std::{
     fmt::Display,
     mem,
@@ -430,6 +433,7 @@ pub struct AcpThread {
     title: SharedString,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
+    shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
     connection: Arc<acp::AgentConnection>,
     child_status: Option<Task<Result<()>>>,
@@ -535,6 +539,7 @@ impl AcpThread {
 
             Self {
                 action_log,
+                shared_buffers: Default::default(),
                 entries: Default::default(),
                 title: "ACP Thread".into(),
                 project,
@@ -582,6 +587,7 @@ impl AcpThread {
 
         Self {
             action_log,
+            shared_buffers: Default::default(),
             entries: Default::default(),
             title: "ACP Thread".into(),
             project,
@@ -723,7 +729,6 @@ impl AcpThread {
             status,
         };
 
-        Self::sync_tool_call_actions(&self.action_log, &call, cx);
         self.push_entry(AgentThreadEntry::ToolCall(call), cx);
 
         id
@@ -758,77 +763,6 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
-    fn sync_tool_call_actions(
-        action_log: &Entity<ActionLog>,
-        call: &ToolCall,
-        cx: &mut Context<Self>,
-    ) {
-        if call.locations.is_empty() {
-            return;
-        }
-        let locations = call.locations.clone();
-        let applied_diff = if let ToolCall {
-            status:
-                ToolCallStatus::Allowed {
-                    status: acp::ToolCallStatus::Finished,
-                    ..
-                },
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        } = &call
-        {
-            Some((diff.old_buffer.clone(), diff.new_buffer.clone()))
-        } else {
-            None
-        };
-
-        action_log.update(cx, |action_log, cx| {
-            let buffers = action_log.project().update(cx, |project, cx| {
-                locations
-                    .into_iter()
-                    .filter_map(|location| {
-                        let path = project.project_path_for_absolute_path(&location.path, cx)?;
-                        let open = project.open_buffer(path, cx);
-                        Some(async move { (open.await, location.line) })
-                    })
-                    .collect::<Vec<_>>()
-            });
-            cx.spawn(async move |action_log, cx| {
-                let buffers = futures::future::join_all(buffers).await;
-                for (buffer, line) in buffers {
-                    let buffer = buffer?;
-                    cx.background_executor().timer(Duration::from_secs(3)).await;
-                    action_log.update(cx, |action_log, cx| {
-                        let position = if let Some(line) = line {
-                            let snapshot = buffer.read(cx).snapshot();
-                            let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
-                            buffer.read(cx).snapshot().anchor_before(point)
-                        } else {
-                            Anchor::MIN
-                        };
-                        let location = AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        };
-                        if let Some(diff) = applied_diff.clone() {
-                            let old_snapshot = diff.0.read(cx).snapshot();
-                            action_log.buffer_edited_with_old_buffer(buffer, &old_snapshot, cx);
-                        } else {
-                            action_log.buffer_read(buffer, cx);
-                        }
-
-                        action_log.project().update(cx, |project, cx| {
-                            project.set_agent_location(Some(location), cx);
-                        });
-                    })?
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        })
-    }
-
     pub fn update_tool_call(
         &mut self,
         id: acp::ToolCallId,
@@ -837,7 +771,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let language_registry = self.project.read(cx).languages().clone();
-        let action_log = self.action_log.clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
         call.content = new_content
@@ -857,8 +790,6 @@ impl AcpThread {
                 call.status = ToolCallStatus::Allowed { status: new_status };
             }
         }
-
-        Self::sync_tool_call_actions(&action_log, &call, cx);
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
@@ -1001,6 +932,116 @@ impl AcpThread {
         }
     }
 
+    pub fn read_text_file(
+        &self,
+        request: acp::ReadTextFileParams,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String>> {
+        let project = self.project.clone();
+        let action_log = self.action_log.clone();
+        cx.spawn(async move |this, cx| {
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&request.path, cx)
+                    .context("invalid path")?;
+                anyhow::Ok(project.open_buffer(path, cx))
+            });
+            let buffer = load??.await?;
+
+            action_log.update(cx, |action_log, cx| {
+                dbg!("reading...", buffer.read(cx).text());
+                action_log.buffer_read(buffer.clone(), cx);
+            })?;
+            project.update(cx, |project, cx| {
+                let position = buffer
+                    .read(cx)
+                    .snapshot()
+                    .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position,
+                    }),
+                    cx,
+                );
+            })?;
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            this.update(cx, |this, _| {
+                let text = snapshot.text();
+                this.shared_buffers.insert(buffer.clone(), snapshot);
+                text
+            })
+        })
+    }
+
+    pub fn write_text_file(
+        &self,
+        path: PathBuf,
+        content: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let project = self.project.clone();
+        let action_log = self.action_log.clone();
+        cx.spawn(async move |this, cx| {
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .context("invalid path")?;
+                anyhow::Ok(project.open_buffer(path, cx))
+            });
+            let buffer = load??.await?;
+            let snapshot = this.update(cx, |this, cx| {
+                this.shared_buffers
+                    .get(&buffer)
+                    .cloned()
+                    .unwrap_or_else(|| buffer.read(cx).snapshot())
+            })?;
+            let edits = cx
+                .background_executor()
+                .spawn(async move {
+                    let old_text = snapshot.text();
+                    text_diff(old_text.as_str(), &content)
+                        .into_iter()
+                        .map(|(range, replacement)| {
+                            (
+                                snapshot.anchor_after(range.start)
+                                    ..snapshot.anchor_before(range.end),
+                                replacement,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            cx.update(|cx| {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: edits
+                                .last()
+                                .map(|(range, _)| range.end)
+                                .unwrap_or(Anchor::MIN),
+                        }),
+                        cx,
+                    );
+                });
+
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_read(buffer.clone(), cx);
+                });
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_edited(buffer.clone(), cx);
+                });
+            })?;
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .await
+        })
+    }
+
     pub fn child_status(&mut self) -> Option<Task<Result<()>>> {
         self.child_status.take()
     }
@@ -1084,6 +1125,32 @@ impl acp::Client for AcpClientDelegate {
         .context("Failed to update thread")??;
 
         Ok(())
+    }
+
+    async fn read_text_file(
+        &self,
+        request: acp::ReadTextFileParams,
+    ) -> Result<acp::ReadTextFileResponse> {
+        let content = self
+            .cx
+            .update(|cx| {
+                self.thread
+                    .update(cx, |thread, cx| thread.read_text_file(request, cx))
+            })?
+            .context("Failed to update thread")?
+            .await?;
+        Ok(acp::ReadTextFileResponse { content })
+    }
+
+    async fn write_text_file(&self, request: acp::WriteTextFileParams) -> Result<()> {
+        self.cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.write_text_file(request.path, request.content, cx)
+                })
+            })?
+            .context("Failed to update thread")?
+            .await
     }
 }
 
@@ -1186,6 +1253,80 @@ mod tests {
 
             "#}
         );
+    }
+
+    #[gpui::test]
+    async fn test_edits_concurrently_to_user(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (thread, fake_server) = fake_acp_thread(project.clone(), cx);
+        let (worktree, pathbuf) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(&PathBuf::from("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), pathbuf), cx)
+            })
+            .await
+            .unwrap();
+
+        let (read_file_tx, read_file_rx) = oneshot::channel::<()>();
+        let read_file_tx = Rc::new(RefCell::new(Some(read_file_tx)));
+
+        fake_server.update(cx, |fake_server, _| {
+            fake_server.on_user_message(move |_, server, mut cx| {
+                let read_file_tx = read_file_tx.clone();
+                async move {
+                    let content = server
+                        .update(&mut cx, |server, _| {
+                            server.send_to_zed(acp::ReadTextFileParams {
+                                path: PathBuf::from("/tmp/foo"),
+                                line: None,
+                                limit: None,
+                            })
+                        })?
+                        .await
+                        .unwrap();
+                    assert_eq!(content.content, "one\ntwo\nthree\n");
+                    read_file_tx.take().unwrap().send(()).unwrap();
+                    server
+                        .update(&mut cx, |server, _| {
+                            server.send_to_zed(acp::WriteTextFileParams {
+                                path: PathBuf::from("/tmp/foo"),
+                                content: "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                            })
+                        })?
+                        .await
+                        .unwrap();
+                    Ok(())
+                }
+            })
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.send_raw("Extend the count in /tmp/foo", cx)
+        });
+        read_file_rx.await.ok();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "zero\n".to_string())], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "zero\none\ntwo\nthree\nfour\nfive\n"
+        );
+        assert_eq!(
+            String::from_utf8(fs.read_file_sync("/tmp/foo").unwrap()).unwrap(),
+            "zero\none\ntwo\nthree\nfour\nfive\n"
+        );
+        request.await.unwrap();
     }
 
     #[gpui::test]
