@@ -38,7 +38,6 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub vercel: VercelSettings,
-
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
     pub mistral: MistralSettings,
@@ -58,7 +57,6 @@ pub struct AllLanguageModelSettingsContent {
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub vercel: Option<VercelSettingsContent>,
-
     pub mistral: Option<MistralSettingsContent>,
 }
 
