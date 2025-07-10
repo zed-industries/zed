@@ -813,7 +813,14 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("Editor Saved", None, cx);
+        // Add meta data tracking # of auto saves
+        if options.autosave {
+            // TODO: Figure out if I need to do more to report the event
+            self.report_editor_event("Editor Autosaved", None, cx);
+        } else {
+            self.report_editor_event("Editor Saved", None, cx);
+        }
+
         let buffers = self.buffer().clone().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
