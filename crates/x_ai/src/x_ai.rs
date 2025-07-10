@@ -18,6 +18,8 @@ pub enum Model {
     Grok3Fast,
     #[serde(rename = "grok-3-mini-fast-latest")]
     Grok3MiniFast,
+    #[serde(rename = "grok-4-latest")]
+    Grok4,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -52,6 +54,7 @@ impl Model {
             Self::Grok3Mini => "grok-3-mini",
             Self::Grok3Fast => "grok-3-fast",
             Self::Grok3MiniFast => "grok-3-mini-fast",
+            Self::Grok4 => "grok-4",
             Self::Custom { name, .. } => name,
         }
     }
@@ -63,6 +66,7 @@ impl Model {
             Self::Grok3Mini => "Grok 3 Mini",
             Self::Grok3Fast => "Grok 3 Fast",
             Self::Grok3MiniFast => "Grok 3 Mini Fast",
+            Self::Grok4 => "Grok 4",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -72,6 +76,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
+            Self::Grok4 => 256_000,
             Self::Grok2Vision => 8_192,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -80,6 +85,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
+            Self::Grok4 => Some(64_000),
             Self::Grok2Vision => Some(4_096),
             Self::Custom {
                 max_output_tokens, ..
@@ -93,7 +99,8 @@ impl Model {
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
-            | Self::Grok3MiniFast => true,
+            | Self::Grok3MiniFast
+            | Self::Grok4 => true,
             Model::Custom { .. } => false,
         }
     }
@@ -104,7 +111,8 @@ impl Model {
             | Self::Grok3
             | Self::Grok3Mini
             | Self::Grok3Fast
-            | Self::Grok3MiniFast => true,
+            | Self::Grok3MiniFast
+            | Self::Grok4 => true,
             Model::Custom { .. } => false,
         }
     }
