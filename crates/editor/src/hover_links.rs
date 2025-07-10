@@ -7,7 +7,7 @@ use crate::{
     scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
-use language::{Bias, ToOffset};
+use language::{Bias, ToOffset, point_from_lsp};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
@@ -448,7 +448,7 @@ pub fn update_inlay_link_and_hover_points(
                                             .next_back()
                                             .unwrap_or("unknown")
                                             .to_string();
-                                        let loading_text = format!(
+                                        let _loading_text = format!(
                                             "{}\n\nLoading documentation from {}...",
                                             part.value.trim(),
                                             filename
@@ -461,7 +461,7 @@ pub fn update_inlay_link_and_hover_points(
                                             editor,
                                             InlayHover {
                                                 tooltip: HoverBlock {
-                                                    text: loading_text.clone(),
+                                                    text: "Loading documentation...".to_string(),
                                                     kind: HoverBlockKind::PlainText,
                                                 },
                                                 range: highlight.clone(),
@@ -471,145 +471,223 @@ pub fn update_inlay_link_and_hover_points(
                                         );
                                         hover_updated = true;
 
-                                        // Now perform the "Go to Definition" flow to get hover documentation
-                                        if let Some(project) = editor.project.clone() {
-                                            let highlight = highlight.clone();
-                                            let hint_value = part.value.clone();
-                                            let location_uri = location.uri.clone();
+                                        // Prepare data needed for the async task
+                                        let project = editor.project.clone().unwrap();
+                                        let hint_value = part.value.clone();
+                                        let location_uri = location.uri.as_str().to_string();
+                                        let highlight = highlight.clone();
+                                        let filename = filename.clone();
 
-                                            cx.spawn_in(window, async move |editor, cx| {
-                                                async move {
-                                                    eprintln!("Starting async documentation fetch for {}", hint_value);
+                                        // Spawn async task to fetch documentation
+                                        cx.spawn_in(window, async move |editor, cx| {
+                                            eprintln!("Starting async documentation fetch for {}", hint_value);
 
-                                                    // Small delay to show the loading message first
-                                                    cx.background_executor()
-                                                        .timer(std::time::Duration::from_millis(50))
-                                                        .await;
+                                            // Small delay to show the loading message first
+                                            cx.background_executor()
+                                                .timer(std::time::Duration::from_millis(50))
+                                                .await;
 
-                                                    // Convert LSP URL to file path
-                                                    eprintln!("Converting LSP URI to file path: {}", location_uri);
-                                                    let file_path = location.uri.to_file_path()
-                                                        .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
-                                                    eprintln!("File path: {:?}", file_path);
+                                            // Convert LSP URL to file path
+                                            eprintln!("Converting LSP URI to file path: {}", location_uri);
+                                            let file_path = location.uri.to_file_path()
+                                                .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
+                                            eprintln!("File path: {:?}", file_path);
 
-                                                    // Open the definition file
-                                                    eprintln!("Opening definition file via project.open_local_buffer");
-                                                    let definition_buffer = project
-                                                        .update(cx, |project, cx| {
-                                                            project.open_local_buffer(file_path, cx)
-                                                        })?
-                                                        .await?;
-                                                    eprintln!("Successfully opened definition buffer");
+                                            // Open the definition file
+                                            eprintln!("Opening definition file via project.open_local_buffer");
+                                            let definition_buffer = project
+                                                .update(cx, |project, cx| {
+                                                    project.open_local_buffer(file_path, cx)
+                                                })?
+                                                .await?;
 
-                                                    // Extract documentation directly from the source
-                                                    let documentation = definition_buffer.update(cx, |buffer, _| {
-                                                        let line_number = location.range.start.line as usize;
-                                                        eprintln!("Looking for documentation at line {}", line_number);
+                                            // Register the buffer with language servers
+                                            eprintln!("Registering buffer with language servers");
+                                            let _lsp_handle = project.update(cx, |project, cx| {
+                                                project.register_buffer_with_language_servers(&definition_buffer, cx)
+                                            })?;
+                                            eprintln!("Successfully opened and registered definition buffer with LSP");
 
-                                                        // Get the text of the buffer
-                                                        let text = buffer.text();
-                                                        let lines: Vec<&str> = text.lines().collect();
+                                            // Give LSP a moment to process the didOpen notification
+                                            cx.background_executor()
+                                                .timer(std::time::Duration::from_millis(100))
+                                                .await;
 
-                                                        // Look backwards from the definition line to find doc comments
-                                                        let mut doc_lines = Vec::new();
-                                                        let mut current_line = line_number.saturating_sub(1);
+                                            // Try to get hover documentation from LSP
+                                            let hover_position = location.range.start;
+                                            eprintln!("Requesting hover at position {:?}", hover_position);
 
-                                                        // Skip any attributes like #[derive(...)]
-                                                        while current_line > 0 && lines.get(current_line).map_or(false, |line| {
-                                                            let trimmed = line.trim();
-                                                            trimmed.starts_with("#[") || trimmed.is_empty()
-                                                        }) {
-                                                            current_line = current_line.saturating_sub(1);
-                                                        }
+                                            // Convert LSP position to a point
+                                            let hover_point = definition_buffer.update(cx, |buffer, _| {
+                                                let point_utf16 = point_from_lsp(hover_position);
+                                                let snapshot = buffer.snapshot();
+                                                let point = snapshot.clip_point_utf16(point_utf16, Bias::Left);
+                                                snapshot.anchor_after(point)
+                                            })?;
 
-                                                        // Collect doc comments
-                                                        while current_line > 0 {
-                                                            if let Some(line) = lines.get(current_line) {
-                                                                let trimmed = line.trim();
-                                                                if trimmed.starts_with("///") {
-                                                                    // Remove the /// and any leading space
-                                                                    let doc_text = trimmed.strip_prefix("///").unwrap_or("")
-                                                                        .strip_prefix(" ").unwrap_or_else(|| trimmed.strip_prefix("///").unwrap_or(""));
-                                                                    doc_lines.push(doc_text.to_string());
-                                                                } else if !trimmed.is_empty() {
-                                                                    // Stop at the first non-doc, non-empty line
-                                                                    break;
-                                                                }
+                                            let hover_response = project
+                                                .update(cx, |project, cx| {
+                                                    project.hover(&definition_buffer, hover_point, cx)
+                                                })?
+                                                .await;
+
+                                            eprintln!("Hover response: {} hovers", hover_response.len());
+
+                                            if !hover_response.is_empty() {
+                                                // Get the first hover response
+                                                let hover = &hover_response[0];
+                                                if !hover.contents.is_empty() {
+                                                    eprintln!("Got {} hover blocks from LSP!", hover.contents.len());
+
+                                                    // Format the hover blocks as markdown
+                                                    let mut formatted_docs = String::new();
+
+                                                    // Add the type signature first
+                                                    formatted_docs.push_str(&format!("```rust\n{}\n```\n\n", hint_value.trim()));
+
+                                                    // Add all the hover content
+                                                    for block in &hover.contents {
+                                                        match &block.kind {
+                                                            HoverBlockKind::Markdown => {
+                                                                formatted_docs.push_str(&block.text);
+                                                                formatted_docs.push_str("\n\n");
                                                             }
-                                                            current_line = current_line.saturating_sub(1);
+                                                            HoverBlockKind::Code { language } => {
+                                                                formatted_docs.push_str(&format!("```{}\n{}\n```\n\n", language, block.text));
+                                                            }
+                                                            HoverBlockKind::PlainText => {
+                                                                formatted_docs.push_str(&block.text);
+                                                                formatted_docs.push_str("\n\n");
+                                                            }
                                                         }
-
-                                                        // Reverse to get correct order
-                                                        doc_lines.reverse();
-
-                                                        // Also get the actual definition line
-                                                        let definition = lines.get(line_number)
-                                                            .map(|s| s.trim().to_string())
-                                                            .unwrap_or_else(|| hint_value.clone());
-
-                                                        eprintln!("Found {} doc lines", doc_lines.len());
-
-                                                        if doc_lines.is_empty() {
-                                                            None
-                                                        } else {
-                                                            let docs = doc_lines.join("\n");
-                                                            eprintln!("Extracted docs: {}", docs.chars().take(100).collect::<String>());
-                                                            Some((definition, docs))
-                                                        }
-                                                    })?;
-
-                                                    if let Some((definition, docs)) = documentation {
-                                                        eprintln!("Got documentation from source!");
-
-                                                        // Format as markdown with the definition as a code block
-                                                        let formatted_docs = format!("```rust\n{}\n```\n\n{}", definition, docs);
-
-                                                        editor.update_in(cx, |editor, window, cx| {
-                                                            hover_popover::hover_at_inlay(
-                                                                editor,
-                                                                InlayHover {
-                                                                    tooltip: HoverBlock {
-                                                                        text: formatted_docs,
-                                                                        kind: HoverBlockKind::Markdown,
-                                                                    },
-                                                                    range: highlight,
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }).log_err();
-                                                    } else {
-                                                        eprintln!("No documentation found in source, falling back to location info");
-                                                        // Fallback to showing just the location info
-                                                        let fallback_text = format!(
-                                                            "{}\n\nDefined in {} at line {}",
-                                                            hint_value.trim(),
-                                                            filename,
-                                                            location.range.start.line + 1
-                                                        );
-                                                        editor.update_in(cx, |editor, window, cx| {
-                                                            hover_popover::hover_at_inlay(
-                                                                editor,
-                                                                InlayHover {
-                                                                    tooltip: HoverBlock {
-                                                                        text: fallback_text,
-                                                                        kind: HoverBlockKind::PlainText,
-                                                                    },
-                                                                    range: highlight,
-                                                                },
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }).log_err();
                                                     }
 
-                                                    eprintln!("Documentation fetch complete");
-                                                    anyhow::Ok(())
+                                                    editor.update_in(cx, |editor, window, cx| {
+                                                        hover_popover::hover_at_inlay(
+                                                            editor,
+                                                            InlayHover {
+                                                                tooltip: HoverBlock {
+                                                                    text: formatted_docs.trim().to_string(),
+                                                                    kind: HoverBlockKind::Markdown,
+                                                                },
+                                                                range: highlight,
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }).log_err();
+
+                                                    return Ok(());
                                                 }
-                                                .log_err()
-                                                .await
-                                            }).detach();
-                                        }
+                                            }
+
+                                            eprintln!("No hover documentation from LSP, falling back to parsing source");
+
+                                            // Fallback: Extract documentation directly from the source
+                                            let documentation = definition_buffer.update(cx, |buffer, _| {
+                                                let line_number = location.range.start.line as usize;
+                                                eprintln!("Looking for documentation at line {}", line_number);
+
+                                                // Get the text of the buffer
+                                                let text = buffer.text();
+                                                let lines: Vec<&str> = text.lines().collect();
+
+                                                // Look backwards from the definition line to find doc comments
+                                                let mut doc_lines = Vec::new();
+                                                let mut current_line = line_number.saturating_sub(1);
+
+                                                // Skip any attributes like #[derive(...)]
+                                                while current_line > 0 && lines.get(current_line).map_or(false, |line| {
+                                                    let trimmed = line.trim();
+                                                    trimmed.starts_with("#[") || trimmed.is_empty()
+                                                }) {
+                                                    current_line = current_line.saturating_sub(1);
+                                                }
+
+                                                // Collect doc comments
+                                                while current_line > 0 {
+                                                    if let Some(line) = lines.get(current_line) {
+                                                        let trimmed = line.trim();
+                                                        if trimmed.starts_with("///") {
+                                                            // Remove the /// and any leading space
+                                                            let doc_text = trimmed.strip_prefix("///").unwrap_or("")
+                                                                .strip_prefix(" ").unwrap_or_else(|| trimmed.strip_prefix("///").unwrap_or(""));
+                                                            doc_lines.push(doc_text.to_string());
+                                                        } else if !trimmed.is_empty() {
+                                                            // Stop at the first non-doc, non-empty line
+                                                            break;
+                                                        }
+                                                    }
+                                                    current_line = current_line.saturating_sub(1);
+                                                }
+
+                                                // Reverse to get correct order
+                                                doc_lines.reverse();
+
+                                                // Also get the actual definition line
+                                                let definition = lines.get(line_number)
+                                                    .map(|s| s.trim().to_string())
+                                                    .unwrap_or_else(|| hint_value.clone());
+
+                                                eprintln!("Found {} doc lines", doc_lines.len());
+
+                                                if doc_lines.is_empty() {
+                                                    None
+                                                } else {
+                                                    let docs = doc_lines.join("\n");
+                                                    eprintln!("Extracted docs: {}", docs.chars().take(100).collect::<String>());
+                                                    Some((definition, docs))
+                                                }
+                                            })?;
+
+                                            if let Some((definition, docs)) = documentation {
+                                                eprintln!("Got documentation from source!");
+
+                                                // Format as markdown with the definition as a code block
+                                                let formatted_docs = format!("```rust\n{}\n```\n\n{}", definition, docs);
+
+                                                editor.update_in(cx, |editor, window, cx| {
+                                                    hover_popover::hover_at_inlay(
+                                                        editor,
+                                                        InlayHover {
+                                                            tooltip: HoverBlock {
+                                                                text: formatted_docs,
+                                                                kind: HoverBlockKind::Markdown,
+                                                            },
+                                                            range: highlight,
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }).log_err();
+                                            } else {
+                                                eprintln!("No documentation found in source, falling back to location info");
+                                                // Fallback to showing just the location info
+                                                let fallback_text = format!(
+                                                    "{}\n\nDefined in {} at line {}",
+                                                    hint_value.trim(),
+                                                    filename,
+                                                    location.range.start.line + 1
+                                                );
+                                                editor.update_in(cx, |editor, window, cx| {
+                                                    hover_popover::hover_at_inlay(
+                                                        editor,
+                                                        InlayHover {
+                                                            tooltip: HoverBlock {
+                                                                text: fallback_text,
+                                                                kind: HoverBlockKind::PlainText,
+                                                            },
+                                                            range: highlight,
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }).log_err();
+                                            }
+
+                                            eprintln!("Documentation fetch complete");
+                                            anyhow::Ok(())
+                                        }).detach();
                                     }
 
                                     if let Some((language_server_id, location)) = &part.location {
