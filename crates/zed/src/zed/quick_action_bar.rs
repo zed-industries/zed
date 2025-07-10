@@ -409,12 +409,10 @@ impl Render for QuickActionBar {
                                 );
 
                                 if supports_inline_diagnostics {
-                                    menu = menu.toggleable_entry(
-                                        "Inline Diagnostics",
-                                        inline_diagnostics_enabled,
-                                        IconPosition::Start,
-                                        Some(ToggleInlineDiagnostics.boxed_clone()),
-                                        {
+                                    let mut inline_diagnostics_item = ContextMenuEntry::new("Inline Diagnostics")
+                                        .toggleable(IconPosition::Start, diagnostics_enabled && inline_diagnostics_enabled)
+                                        .action(ToggleInlineDiagnostics.boxed_clone())
+                                        .handler({
                                             let editor = editor.clone();
                                             move |window, cx| {
                                                 editor
@@ -427,8 +425,11 @@ impl Render for QuickActionBar {
                                                     })
                                                     .ok();
                                             }
-                                        },
-                                    );
+                                        });
+                                    if !diagnostics_enabled {
+                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
+                                    }
+                                    menu = menu.item(inline_diagnostics_item)
                                 }
 
                                 menu = menu.separator();
