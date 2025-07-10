@@ -44,7 +44,7 @@ On Linux, `alt-tab` is often used by the window manager for switching windows, s
 
 {#action editor::AcceptPartialEditPrediction} ({#kb editor::AcceptPartialEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
 
-See the [Configuring GitHub Copilot](#github-copilot) and [Configuring Supermaven](#supermaven) sections below for configuration of other providers. Only text insertions at the current cursor are supported for these providers, whereas the Zeta model provides multiple predictions including deletions.
+See the [Configuring GitHub Copilot](#github-copilot), [Configuring Supermaven](#supermaven), and [Configuring Ollama](#ollama) sections below for configuration of other providers. Only text insertions at the current cursor are supported for these providers, whereas the Zeta model provides multiple predictions including deletions.
 
 ## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
@@ -285,6 +285,64 @@ To use Supermaven as your provider, set this within `settings.json`:
 ```
 
 You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
+
+## Configuring Ollama {#ollama}
+
+To use Ollama as your edit prediction provider, set this within `settings.json`:
+
+```json
+{
+  "features": {
+    "edit_prediction_provider": "ollama"
+  }
+}
+```
+
+### Setup
+
+1. Download and install Ollama from [ollama.com/download](https://ollama.com/download)
+2. Pull a completion-capable model, for example:
+
+   ```sh
+   ollama pull qwen2.5-coder:3b
+   ```
+
+3. Ensure Ollama is running:
+
+   ```sh
+   ollama serve
+   ```
+
+4. Configure the model in your language model settings
+
+Ollama edit predictions use the first available model from your language model configuration in your `settings.json`:
+
+```json
+{
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "available_models": [
+        {
+          "name": "qwen2.5-coder:3b",
+          "display_name": "Qwen 2.5 Coder 3B",
+          "max_tokens": 8192
+        }
+      ]
+    }
+  }
+}
+```
+
+Language models configured here will be listed in the Edit Prediction UI menu, which allows you to switch between them. It changes the order of the models in the settings file behind the scenes.
+
+### Authentication
+
+Ollama itself doesn't require an API key, but when running it remotely it's a good idea and common practice to setup a proxy server in front of it that does. When sending edit prediction requests to it, Zed will forward the API key as an authentication header so the proxy can authenticate against it:
+
+```bash
+export OLLAMA_API_KEY=your_api_key_here
+```
 
 ## See also
 

@@ -392,6 +392,10 @@ If the model is tagged with `thinking` in the Ollama catalog, set this option an
 The `supports_images` option enables the model's vision capabilities, allowing it to process images included in the conversation context.
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in Zed.
 
+#### Ollama for Edit Predictions
+
+In addition to using Ollama for chat and assistance, you can also configure Ollama as an [edit prediction provider](./edit-prediction.md#ollama) for inline code completions. This allows you to use your Ollama models, locally or remotely hosted, for real-time code suggestions as you type.
+
 ### OpenAI {#openai}
 
 > ✅ Supports tool use
