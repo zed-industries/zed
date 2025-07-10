@@ -815,7 +815,6 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         // Add meta data tracking # of auto saves
         if options.autosave {
-            // TODO: Figure out if I need to do more to report the event
             self.report_editor_event("Editor Autosaved", None, cx);
         } else {
             self.report_editor_event("Editor Saved", None, cx);
