@@ -1576,7 +1576,7 @@ impl GitPanel {
             // Repository serializes all git operations, so we can just send a commit immediately
             cx.spawn_in(window, async move |this, cx| {
                 let askpass_delegate = this.update_in(cx, |this, window, cx| {
-                    this.askpass_delegate(format!("git commit"), window, cx)
+                    this.askpass_delegate("git commit", window, cx)
                 })?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
                     repo.commit(message.into(), None, options, askpass_delegate, cx)
@@ -1602,7 +1602,7 @@ impl GitPanel {
             cx.spawn_in(window, async move |this, cx| {
                 stage_task.await?;
                 let askpass_delegate = this.update_in(cx, |this, window, cx| {
-                    this.askpass_delegate(format!("git commit"), window, cx)
+                    this.askpass_delegate("git commit".to_string(), window, cx)
                 })?;
                 let commit_task = active_repository.update(cx, |repo, cx| {
                     repo.commit(message.into(), None, options, askpass_delegate, cx)

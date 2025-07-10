@@ -8,7 +8,6 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use unindent::Unindent as _;
 use util::ResultExt as _;
 
 #[derive(PartialEq, Eq)]
@@ -88,6 +87,7 @@ impl AskPassSession {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
+        #[cfg(not(target_os = "windows"))]
         let gpg_script_path = temp_dir.path().join(GPG_SCRIPT_NAME);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = UnixListener::bind(&askpass_socket).context("creating askpass socket")?;
@@ -152,11 +152,14 @@ impl AskPassSession {
             askpass_script_path.display()
         );
 
-        let gpg_script = generate_gpg_script();
-        fs::write(&gpg_script_path, gpg_script)
-            .await
-            .with_context(|| format!("creating gpg wrapper script at {gpg_script_path:?}"))?;
-        make_file_executable(&gpg_script_path).await?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            let gpg_script = generate_gpg_script();
+            fs::write(&gpg_script_path, gpg_script)
+                .await
+                .with_context(|| format!("creating gpg wrapper script at {gpg_script_path:?}"))?;
+            make_file_executable(&gpg_script_path).await?;
+        }
 
         Ok(Self {
             #[cfg(not(target_os = "windows"))]
@@ -195,7 +198,7 @@ impl AskPassSession {
         // TODO implement wrapping GPG on Windows. This is more difficult than on Unix
         // because we can't use --passphrase-fd with a nonstandard FD, and both --passphrase
         // and --passphrase-file are insecure.
-        None
+        None::<std::path::PathBuf>
     }
 
     // This will run the askpass task forever, resolving as many authentication requests as needed.
@@ -305,6 +308,8 @@ fn generate_askpass_script(zed_path: &std::path::Path, askpass_socket: &std::pat
 #[inline]
 #[cfg(not(target_os = "windows"))]
 fn generate_gpg_script() -> String {
+    use unindent::Unindent as _;
+
     r#"
         #!/bin/sh
         set -eu
