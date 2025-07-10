@@ -1741,6 +1741,7 @@ impl Session {
             size
         })
     }
+
     pub fn read_memory(
         &mut self,
         range: RangeInclusive<u64>,
@@ -1776,6 +1777,7 @@ impl Session {
 
             return;
         };
+        let size = next_request.size;
         self.fetch(
             ReadMemory {
                 memory_reference: format!("0x{:X}", next_request.address),
@@ -1793,6 +1795,8 @@ impl Session {
                     // Note that this function is recursive only conceptually;
                     // since it kicks off a new request with callback, we don't need to worry about stack overflow.
                     this.memory_read_fetch_page_recursive(builder, cx);
+                } else {
+                    builder.unknown(size);
                 }
             },
             cx,
