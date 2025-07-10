@@ -338,52 +338,6 @@ impl Render for QuickActionBar {
                                 );
                             }
 
-                            if supports_diagnostics {
-                                menu = menu.toggleable_entry(
-                                    "Diagnostics",
-                                    diagnostics_enabled,
-                                    IconPosition::Start,
-                                    Some(ToggleDiagnostics.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_diagnostics(
-                                                        &ToggleDiagnostics,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-
-                                if supports_inline_diagnostics {
-                                    menu = menu.toggleable_entry(
-                                        "Inline Diagnostics",
-                                        inline_diagnostics_enabled,
-                                        IconPosition::Start,
-                                        Some(ToggleInlineDiagnostics.boxed_clone()),
-                                        {
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.toggle_inline_diagnostics(
-                                                            &ToggleInlineDiagnostics,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    );
-                                }
-                            }
-
                             if supports_minimap {
                                 menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
                                     let editor = editor.clone();
@@ -431,6 +385,54 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.separator();
+
+                            if supports_diagnostics {
+                                menu = menu.toggleable_entry(
+                                    "Diagnostics",
+                                    diagnostics_enabled,
+                                    IconPosition::Start,
+                                    Some(ToggleDiagnostics.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_diagnostics(
+                                                        &ToggleDiagnostics,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+
+                                if supports_inline_diagnostics {
+                                    menu = menu.toggleable_entry(
+                                        "Inline Diagnostics",
+                                        inline_diagnostics_enabled,
+                                        IconPosition::Start,
+                                        Some(ToggleInlineDiagnostics.boxed_clone()),
+                                        {
+                                            let editor = editor.clone();
+                                            move |window, cx| {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_inline_diagnostics(
+                                                            &ToggleInlineDiagnostics,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        },
+                                    );
+                                }
+
+                                menu = menu.separator();
+                            }
 
                             menu = menu.toggleable_entry(
                                 "Line Numbers",
