@@ -11,6 +11,7 @@ use extension::{
     ExtensionLanguageServerProxy, ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
+use futures::future::join_all;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
@@ -230,18 +231,27 @@ impl HeadlessExtensionStore {
             .unwrap_or_default();
         self.proxy.remove_languages(&languages_to_remove, &[]);
 
-        for (language_server_name, language) in self
+        let servers_to_remove = self
             .loaded_language_servers
             .remove(extension_id)
-            .unwrap_or_default()
-        {
-            self.proxy
-                .remove_language_server(&language, &language_server_name);
-        }
-
+            .unwrap_or_default();
+        let proxy = self.proxy.clone();
         let path = self.extension_dir.join(&extension_id.to_string());
         let fs = self.fs.clone();
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |_, cx| {
+            let mut removal_tasks = Vec::with_capacity(servers_to_remove.len());
+            cx.update(|cx| {
+                for (language_server_name, language) in servers_to_remove {
+                    removal_tasks.push(proxy.remove_language_server(
+                        &language,
+                        &language_server_name,
+                        cx,
+                    ));
+                }
+            })
+            .ok();
+            let _ = join_all(removal_tasks).await;
+
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -250,6 +260,7 @@ impl HeadlessExtensionStore {
                 },
             )
             .await
+            .with_context(|| format!("Removing directory {path:?}"))
         })
     }
 

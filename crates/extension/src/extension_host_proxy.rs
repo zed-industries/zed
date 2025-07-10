@@ -286,7 +286,8 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
         &self,
         language: &LanguageName,
         language_server_id: &LanguageServerName,
-    );
+        cx: &mut App,
+    ) -> Task<Result<()>>;
 
     fn update_language_server_status(
         &self,
@@ -313,12 +314,13 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
         &self,
         language: &LanguageName,
         language_server_id: &LanguageServerName,
-    ) {
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         let Some(proxy) = self.language_server_proxy.read().clone() else {
-            return;
+            return Task::ready(Ok(()));
         };
 
-        proxy.remove_language_server(language, language_server_id)
+        proxy.remove_language_server(language, language_server_id, cx)
     }
 
     fn update_language_server_status(

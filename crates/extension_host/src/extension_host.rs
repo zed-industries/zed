@@ -20,6 +20,7 @@ use extension::{
     ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
+use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
@@ -860,8 +861,8 @@ impl ExtensionStore {
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
-        cx.spawn(async move |this, cx| {
-            let _finish = cx.on_drop(&this, {
+        cx.spawn(async move |extension_store, cx| {
+            let _finish = cx.on_drop(&extension_store, {
                 let extension_id = extension_id.clone();
                 move |this, cx| {
                     this.outstanding_operations.remove(extension_id.as_ref());
@@ -876,11 +877,12 @@ impl ExtensionStore {
                     ignore_if_not_exists: true,
                 },
             )
-            .await?;
+            .await
+            .with_context(|| format!("Removing extension dir {extension_dir:?}"))?;
 
-            // todo(windows)
-            // Stop the server here.
-            this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            extension_store
+                .update(cx, |extension_store, cx| extension_store.reload(None, cx))?
+                .await;
 
             fs.remove_dir(
                 &work_dir,
@@ -889,9 +891,10 @@ impl ExtensionStore {
                     ignore_if_not_exists: true,
                 },
             )
-            .await?;
+            .await
+            .with_context(|| format!("Removing extension work dir {work_dir:?}"))?;
 
-            this.update(cx, |_, cx| {
+            extension_store.update(cx, |_, cx| {
                 cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx) {
                     if let Some(manifest) = extension_manifest {
@@ -1143,6 +1146,7 @@ impl ExtensionStore {
             })
             .collect::<Vec<_>>();
         let mut grammars_to_remove = Vec::new();
+        let mut server_removal_tasks = Vec::with_capacity(extensions_to_unload.len());
         for extension_id in &extensions_to_unload {
             let Some(extension) = old_index.extensions.get(extension_id) else {
                 continue;
@@ -1150,8 +1154,11 @@ impl ExtensionStore {
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
                 for language in config.languages() {
-                    self.proxy
-                        .remove_language_server(&language, language_server_name);
+                    server_removal_tasks.push(self.proxy.remove_language_server(
+                        &language,
+                        language_server_name,
+                        cx,
+                    ));
                 }
             }
 
@@ -1268,14 +1275,15 @@ impl ExtensionStore {
             cx.background_spawn({
                 let fs = fs.clone();
                 async move {
-                    for theme_path in themes_to_add.into_iter() {
+                    let _ = join_all(server_removal_tasks).await;
+                    for theme_path in themes_to_add {
                         proxy
                             .load_user_theme(theme_path, fs.clone())
                             .await
                             .log_err();
                     }
 
-                    for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
+                    for (icon_theme_path, icons_root_path) in icon_themes_to_add {
                         proxy
                             .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
                             .await

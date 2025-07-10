@@ -742,7 +742,6 @@ impl WasmExtension {
     {
         let (return_tx, return_rx) = oneshot::channel();
         self.tx
-            .clone()
             .unbounded_send(Box::new(move |extension, store| {
                 async {
                     let result = f(extension, store).await;

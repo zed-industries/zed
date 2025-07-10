@@ -6,19 +6,23 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use fs::Fs;
-use futures::{Future, FutureExt};
-use gpui::AsyncApp;
+use futures::{Future, FutureExt, future::join_all};
+use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
     BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
     LspAdapter, LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
+use lsp::{
+    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
+    LanguageServerSelector,
+};
 use serde::Serialize;
 use serde_json::Value;
 use util::{ResultExt, fs::make_file_executable, maybe};
+use workspace::AppState;
 
 use crate::LanguageServerRegistryProxy;
 
@@ -71,10 +75,41 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn remove_language_server(
         &self,
         language: &LanguageName,
-        language_server_id: &LanguageServerName,
-    ) {
+        language_server_name: &LanguageServerName,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         self.language_registry
-            .remove_lsp_adapter(language, language_server_id);
+            .remove_lsp_adapter(language, language_server_name);
+        let mut tasks = Vec::new();
+        if let Some(app_state) = AppState::try_global(cx).and_then(|state| state.upgrade()) {
+            app_state.workspace_store.update(cx, |workspace_store, cx| {
+                for workspace in workspace_store.workspaces() {
+                    workspace
+                        .update(cx, |workspace, _, cx| {
+                            let lsp_store = workspace.project().read(cx).lsp_store().clone();
+                            lsp_store.update(cx, |lsp_store, cx| {
+                                let stop_task = lsp_store.stop_language_servers_for_buffers(
+                                    Vec::new(),
+                                    HashSet::from_iter([LanguageServerSelector::Name(
+                                        language_server_name.clone(),
+                                    )]),
+                                    cx,
+                                );
+                                tasks.push(stop_task);
+                            });
+                        })
+                        .ok();
+                }
+            })
+        }
+
+        cx.background_spawn(async move {
+            let results = join_all(tasks).await;
+            for result in results {
+                result?;
+            }
+            Ok(())
+        })
     }
 
     fn update_language_server_status(
