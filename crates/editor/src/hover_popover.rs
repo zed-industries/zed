@@ -132,10 +132,6 @@ pub fn hover_at_inlay(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    eprintln!(
-        "hover_at_inlay called - inlay_id: {:?}, range: {:?}",
-        inlay_hover.range.inlay, inlay_hover.range.range
-    );
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if editor.pending_rename.is_some() {
             return;
@@ -163,18 +159,12 @@ pub fn hover_at_inlay(
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
-        eprintln!(
-            "hover_at_inlay: Creating task with {}ms delay",
-            hover_popover_delay
-        );
 
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
-                eprintln!("hover_at_inlay task: Starting delay");
                 cx.background_executor()
                     .timer(Duration::from_millis(hover_popover_delay))
                     .await;
-                eprintln!("hover_at_inlay task: Delay complete");
                 this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
@@ -207,7 +197,6 @@ pub fn hover_at_inlay(
                 };
 
                 this.update(cx, |this, cx| {
-                    eprintln!("hover_at_inlay task: Setting hover popover and calling notify");
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
@@ -220,7 +209,6 @@ pub fn hover_at_inlay(
         });
 
         editor.hover_state.info_task = Some(task);
-        eprintln!("hover_at_inlay: Task stored");
     }
 }
 
