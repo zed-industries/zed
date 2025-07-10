@@ -8614,29 +8614,6 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    self.editor.update(cx, |editor, cx| {
-                        let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
-
-                        let autoscrolled = if autoscroll_horizontally {
-                            editor.autoscroll_horizontally(
-                                start_row,
-                                editor_content_width,
-                                scroll_width,
-                                em_advance,
-                                &line_layouts,
-                                window,
-                                cx,
-                            )
-                        } else {
-                            false
-                        };
-
-                        if clamped || autoscrolled {
-                            snapshot = editor.snapshot(window, cx);
-                            scroll_position = snapshot.scroll_position();
-                        }
-                    });
-
                     let line_elements = self.prepaint_lines(
                         start_row,
                         &mut line_layouts,
