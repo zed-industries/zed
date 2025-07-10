@@ -635,12 +635,14 @@ impl KeymapFile {
             let target_action_value = target
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
-            let Some(index) = find_binding(&keymap, &target, &target_action_value) else {
+            let Some((index, keystrokes_str)) =
+                find_binding(&keymap, &target, &target_action_value)
+            else {
                 anyhow::bail!("Failed to find keybinding to remove");
             };
             let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
                 &keymap_contents,
-                &["bindings", &target.keystrokes_unparsed()],
+                &["bindings", keystrokes_str],
                 None,
                 None,
                 index,
@@ -659,7 +661,9 @@ impl KeymapFile {
                 .action_value()
                 .context("Failed to generate source action JSON value")?;
 
-            if let Some(index) = find_binding(&keymap, &target, &target_action_value) {
+            if let Some((index, keystrokes_str)) =
+                find_binding(&keymap, &target, &target_action_value)
+            {
                 if target.context == source.context {
                     // if we are only changing the keybinding (common case)
                     // not the context, etc. Then just update the binding in place
@@ -667,7 +671,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             Some(&source_action_value),
                             Some(&source.keystrokes_unparsed()),
                             index,
@@ -689,7 +693,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             Some(&source_action_value),
                             Some(&source.keystrokes_unparsed()),
                             index,
@@ -719,7 +723,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             None,
                             None,
                             index,
@@ -766,13 +770,12 @@ impl KeymapFile {
         }
         return Ok(keymap_contents);
 
-        fn find_binding<'a>(
-            keymap: &KeymapFile,
+        fn find_binding<'a, 'b>(
+            keymap: &'b KeymapFile,
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
-        ) -> Option<usize> {
-            let mut found_index = None;
-            'sections: for (index, section) in keymap.sections().enumerate() {
+        ) -> Option<(usize, &'b str)> {
+            for (index, section) in keymap.sections().enumerate() {
                 if section.context != target.context.unwrap_or("") {
                     continue;
                 }
@@ -782,8 +785,8 @@ impl KeymapFile {
                 let Some(bindings) = &section.bindings else {
                     continue;
                 };
-                for (keystrokes, action) in bindings {
-                    let Ok(keystrokes) = keystrokes
+                for (keystrokes_str, action) in bindings {
+                    let Ok(keystrokes) = keystrokes_str
                         .split_whitespace()
                         .map(Keystroke::parse)
                         .collect::<Result<Vec<_>, _>>()
@@ -801,11 +804,10 @@ impl KeymapFile {
                     if &action.0 != target_action_value {
                         continue;
                     }
-                    found_index = Some(index);
-                    break 'sections;
+                    return Some((index, &keystrokes_str));
                 }
             }
-            found_index
+            None
         }
     }
 }
