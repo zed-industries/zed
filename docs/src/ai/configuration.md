@@ -214,7 +214,6 @@ You can also modify the `api_url` to use a custom endpoint if needed.
 
 You can use GitHub Copilot Chat with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
-
 1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
 2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
 
