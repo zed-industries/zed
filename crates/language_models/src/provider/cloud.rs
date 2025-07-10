@@ -127,6 +127,7 @@ pub struct State {
     _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
+    _plan_updated_subscription: Subscription,
 }
 
 impl State {
@@ -138,6 +139,22 @@ impl State {
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
         let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
+
+        let plan_updated_subscription =
+            cx.subscribe(&user_store, move |this, _, event, cx| match event {
+                client::user::Event::PlanUpdated => {
+                    let client = this.client.clone();
+                    let llm_api_token = this.llm_api_token.clone();
+                    cx.spawn(async move |this, cx| {
+                        let response = Self::fetch_models(client, llm_api_token, use_cloud).await?;
+                        this.update(cx, |this, cx| {
+                            this.update_models(response, cx);
+                        })
+                    })
+                    .detach_and_log_err(cx);
+                }
+                _ => {}
+            });
 
         Self {
             client: client.clone(),
@@ -166,46 +183,9 @@ impl State {
                     }
 
                     let response = Self::fetch_models(client, llm_api_token, use_cloud).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            let mut models = Vec::new();
-
-                            for model in response.models {
-                                models.push(Arc::new(model.clone()));
-
-                                // Right now we represent thinking variants of models as separate models on the client,
-                                // so we need to insert variants for any model that supports thinking.
-                                if model.supports_thinking {
-                                    models.push(Arc::new(zed_llm_client::LanguageModel {
-                                        id: zed_llm_client::LanguageModelId(
-                                            format!("{}-thinking", model.id).into(),
-                                        ),
-                                        display_name: format!("{} Thinking", model.display_name),
-                                        ..model
-                                    }));
-                                }
-                            }
-
-                            this.default_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_model)
-                                .cloned();
-                            this.default_fast_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_fast_model)
-                                .cloned();
-                            this.recommended_models = response
-                                .recommended_models
-                                .iter()
-                                .filter_map(|id| models.iter().find(|model| &model.id == id))
-                                .cloned()
-                                .collect();
-                            this.models = models;
-                            cx.notify();
-                        })
-                    })??;
-
-                    anyhow::Ok(())
+                    this.update(cx, |this, cx| {
+                        this.update_models(response, cx);
+                    })
                 })
                 .await
                 .context("failed to fetch Zed models")
@@ -226,6 +206,7 @@ impl State {
                     .detach_and_log_err(cx);
                 },
             ),
+            _plan_updated_subscription: plan_updated_subscription,
         }
     }
 
@@ -262,6 +243,41 @@ impl State {
                 cx.notify()
             })
         }));
+    }
+
+    fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
+        let mut models = Vec::new();
+
+        for model in response.models {
+            models.push(Arc::new(model.clone()));
+
+            // Right now we represent thinking variants of models as separate models on the client,
+            // so we need to insert variants for any model that supports thinking.
+            if model.supports_thinking {
+                models.push(Arc::new(zed_llm_client::LanguageModel {
+                    id: zed_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
+                    display_name: format!("{} Thinking", model.display_name),
+                    ..model
+                }));
+            }
+        }
+
+        self.default_model = models
+            .iter()
+            .find(|model| model.id == response.default_model)
+            .cloned();
+        self.default_fast_model = models
+            .iter()
+            .find(|model| model.id == response.default_fast_model)
+            .cloned();
+        self.recommended_models = response
+            .recommended_models
+            .iter()
+            .filter_map(|id| models.iter().find(|model| &model.id == id))
+            .cloned()
+            .collect();
+        self.models = models;
+        cx.notify();
     }
 
     async fn fetch_models(
