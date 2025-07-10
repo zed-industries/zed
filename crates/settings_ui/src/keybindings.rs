@@ -17,6 +17,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use project::Project;
+use schemars::JsonSchema as _;
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
@@ -397,7 +398,9 @@ impl KeymapEditor {
                 action_name: action_name.into(),
                 action_input,
                 action_docs,
-                action_schema: action_schema.get(action_name).cloned(),
+                action_schema: action_schema.get(action_name).map(|action_schema| {
+                    root_schema_from_action_schema(action_schema, &mut generator)
+                }),
                 context: Some(context),
                 source,
             });
@@ -414,7 +417,9 @@ impl KeymapEditor {
                 action_name: action_name.into(),
                 action_input: None,
                 action_docs: action_documentation.get(action_name).copied(),
-                action_schema: action_schema.get(action_name).cloned(),
+                action_schema: action_schema.get(action_name).map(|action_schema| {
+                    root_schema_from_action_schema(action_schema, &mut generator)
+                }),
                 context: None,
                 source: None,
             });
@@ -1053,9 +1058,10 @@ impl KeybindingEditorModal {
             editor
         });
 
-        if let Some(_schema) = editing_keybind.action_schema.clone() {
+        if let Some(schema) = editing_keybind.action_schema.clone() {
             let project = project.downgrade();
             let fs = fs.clone();
+            let file_name = file_name_for_action_input(&editing_keybind.action_name);
             let action_input = editing_keybind
                 .action_input
                 .as_ref()
@@ -1063,7 +1069,7 @@ impl KeybindingEditorModal {
             cx.spawn_in(window, async move |this, cx| {
                 // todo! fix when modal is dropped, buffer and temp_dir are dropped before worktree, resulting in worktree scan errors
                 // being printed due to the non existant worktree
-                let (buffer, temp_dir) = create_temp_buffer_for_action_input(project.clone(), fs, cx)
+                let (buffer, temp_dir) = create_temp_buffer_for_action_input(file_name.clone(), project.clone(), fs, cx)
                     .await
                     .context("Failed to create temporary buffer for action input. Auto-complete will not work")
                     .log_err()
@@ -1091,6 +1097,34 @@ impl KeybindingEditorModal {
                             ).log_err()
 
                 }}).detach();
+
+                cx.spawn({
+                    let project = project.clone();
+                    let buffer = buffer.downgrade();
+
+
+                    async move |cx| {
+                        cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
+                        let Some(project) = project.upgrade() else {
+                            return;
+                        };
+                        let Some(buffer) = buffer.upgrade() else {
+                            return;
+                        };
+                        let uri = "lol://some.uri".into();
+                        let schema_associations = vec![
+                            project::lsp_store::json_language_server_ext::SchemaAssociation {
+                                uri,
+                                file_match: vec![file_name],
+                                folder_uri: None,
+                                schema: Some(schema.to_value()),
+                            }
+                        ];
+                        cx.update(|_, cx| {
+                            project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer, &schema_associations, cx);
+                        }).ok();
+                    }
+                }).detach();
 
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer =
@@ -1344,12 +1378,19 @@ impl Render for KeybindingEditorModal {
     }
 }
 
+fn file_name_for_action_input(action_name: &SharedString) -> String {
+    let mut file_name = action_name.as_ref().replace("::", "_");
+    file_name.push_str(".json");
+    file_name
+}
+
 async fn create_temp_buffer_for_action_input(
+    file_name: String,
     project: WeakEntity<Project>,
     fs: Arc<dyn Fs>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<(Entity<language::Buffer>, tempfile::TempDir)> {
-    let (temp_file_path, temp_dir) = create_temp_file_for_action_input(fs)
+    let (temp_file_path, temp_dir) = create_temp_file_for_action_input(file_name.clone(), fs)
         .await
         .context("Failed to create backing file")?;
 
@@ -1363,6 +1404,7 @@ async fn create_temp_buffer_for_action_input(
 }
 
 async fn create_temp_file_for_action_input(
+    file_name: String,
     fs: Arc<dyn Fs>,
 ) -> anyhow::Result<(PathBuf, tempfile::TempDir)> {
     let temp_dir = paths::temp_dir();
@@ -1370,7 +1412,7 @@ async fn create_temp_file_for_action_input(
         .tempdir_in(temp_dir)
         .context("Failed to create temporary directory")?;
 
-    let path = sub_temp_dir.path().join("todo.json");
+    let path = sub_temp_dir.path().join(file_name);
     fs.create_file(
         &path,
         fs::CreateOptions {
@@ -1564,6 +1606,28 @@ async fn save_keybinding_update(
         .await
         .context("Failed to write keymap file")?;
     Ok(())
+}
+
+fn root_schema_from_action_schema(
+    action_schema: &schemars::Schema,
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    let meta_schema = generator
+        .settings()
+        .meta_schema
+        .as_ref()
+        .expect("meta_schema should be present in schemars settings")
+        .to_string();
+    let defs = generator.definitions();
+    let mut schema = schemars::json_schema!({
+        "$schema": meta_schema,
+        "allowTrailingCommas": true,
+        "$defs": defs,
+    });
+    schema
+        .ensure_object()
+        .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
+    schema
 }
 
 struct KeystrokeInput {

@@ -216,7 +216,7 @@ impl JsonLspAdapter {
                     paths::local_debug_file_relative_path()
                 ],
                 "schema": debug_schema,
-            },
+            }
         ]);
 
         #[cfg(debug_assertions)]

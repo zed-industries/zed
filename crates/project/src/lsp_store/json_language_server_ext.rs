@@ -1,14 +1,11 @@
 use ::serde::{Deserialize, Serialize};
 use gpui::{App, Entity, WeakEntity};
 use language::Buffer;
-use lsp::LanguageServer;
+use language::{File as _, LocalFile as _};
+use lsp::{DidCloseTextDocumentParams, DidOpenTextDocumentParams, LanguageServer};
 use util::ResultExt as _;
 
 use crate::{LspStore, Project};
-
-pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
-    let name = language_server.name();
-}
 
 // https://github.com/microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#schema-associations-notification
 struct SchemaAssociationsNotification {}
@@ -57,17 +54,93 @@ pub fn send_schema_associations_notification(
 ) {
     let lsp_store = project.read(cx).lsp_store();
     lsp_store.update(cx, |lsp_store, cx| {
-        let Some(local) = lsp_store.as_local() else {
+        let Some(local) = lsp_store.as_local_mut() else {
             return;
         };
         buffer.update(cx, |buffer, cx| {
-            for (adapter, server) in local.language_servers_for_buffer(buffer, cx) {
-                if !adapter.adapter.is_primary_zed_json_schema_adapter() {
+            for (adapter, server) in local
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(a, b)| (a.clone(), b.clone()))
+                .collect::<Vec<_>>()
+            {
+                if dbg!(!adapter.adapter.is_primary_zed_json_schema_adapter()) {
                     continue;
                 }
+
                 server
                     .notify::<SchemaAssociationsNotification>(schema_associations)
                     .log_err(); // todo! don't ignore error
+
+                let file = match worktree::File::from_dyn(buffer.file()) {
+                    Some(file) => file,
+                    None => continue,
+                };
+                let language = match buffer.language() {
+                    Some(language) => language,
+                    None => continue,
+                };
+                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+
+                let versions = local
+                    .buffer_snapshots
+                    .entry(buffer.remote_id())
+                    .or_default()
+                    .entry(server.server_id())
+                    // .and_modify(|_| {
+                    //     assert!(
+                    //         false,
+                    //         "There should not be an existing snapshot for a newly inserted buffer"
+                    //     )
+                    // })
+                    .or_insert_with(|| {
+                        vec![crate::lsp_store::LspBufferSnapshot {
+                            version: 0,
+                            snapshot: buffer.text_snapshot(),
+                        }]
+                    });
+
+                let snapshot = versions.last().unwrap();
+                let version = snapshot.version;
+                let initial_snapshot = &snapshot.snapshot;
+
+                // if file.worktree.read(cx).id() != key.0
+                //     || !self
+                //         .languages
+                //         .lsp_adapters(&language.name())
+                //         .iter()
+                //         .any(|a| a.name == key.1)
+                // {
+                //     continue;
+                // }
+
+                // didOpen
+                let file = match file.as_local() {
+                    Some(file) => file,
+                    None => continue,
+                };
+                let Some(_) = server
+                    .notify::<lsp::notification::DidCloseTextDocument>(
+                        &DidCloseTextDocumentParams {
+                            text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
+                        },
+                    )
+                    .log_err()
+                else {
+                    continue;
+                };
+
+                let initial_text = buffer.text();
+
+                server
+                    .notify::<lsp::notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+                        text_document: lsp::TextDocumentItem::new(
+                            uri,
+                            adapter.language_id(&language.name()),
+                            version,
+                            initial_text,
+                        ),
+                    })
+                    .log_err();
             }
         })
     })
