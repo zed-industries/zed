@@ -404,8 +404,10 @@ impl TerminalBuilder {
                 title_override,
             }),
         };
-        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
+
+        #[cfg(windows)]
+        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
 
         let pty_options = {
             let alac_shell = shell_params.map(|params| {
@@ -503,7 +505,6 @@ impl TerminalBuilder {
             matches: Vec::new(),
             selection_head: None,
             pty_info,
-            shell_program,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
@@ -515,6 +516,8 @@ impl TerminalBuilder {
             python_venv_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
+            #[cfg(windows)]
+            shell_program,
         };
 
         Ok(TerminalBuilder {
@@ -664,7 +667,6 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
-    shell_program: Option<String>,
     title_override: Option<SharedString>,
     pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
@@ -676,6 +678,8 @@ pub struct Terminal {
     is_ssh_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
+    #[cfg(windows)]
+    shell_program: Option<String>,
 }
 
 pub struct TaskState {
