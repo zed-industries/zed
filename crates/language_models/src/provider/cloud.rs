@@ -127,7 +127,6 @@ pub struct State {
     _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
-    _plan_updated_subscription: Subscription,
 }
 
 impl State {
@@ -139,22 +138,6 @@ impl State {
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
         let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
-
-        let plan_updated_subscription =
-            cx.subscribe(&user_store, move |this, _, event, cx| match event {
-                client::user::Event::PlanUpdated => {
-                    let client = this.client.clone();
-                    let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(async move |this, cx| {
-                        let response = Self::fetch_models(client, llm_api_token, use_cloud).await?;
-                        this.update(cx, |this, cx| {
-                            this.update_models(response, cx);
-                        })
-                    })
-                    .detach_and_log_err(cx);
-                }
-                _ => {}
-            });
 
         Self {
             client: client.clone(),
@@ -196,17 +179,19 @@ impl State {
             }),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
-                |this, _listener, _event, cx| {
+                move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(async move |_this, _cx| {
+                    cx.spawn(async move |this, cx| {
                         llm_api_token.refresh(&client).await?;
-                        anyhow::Ok(())
+                        let response = Self::fetch_models(client, llm_api_token, use_cloud).await?;
+                        this.update(cx, |this, cx| {
+                            this.update_models(response, cx);
+                        })
                     })
                     .detach_and_log_err(cx);
                 },
             ),
-            _plan_updated_subscription: plan_updated_subscription,
         }
     }
 
