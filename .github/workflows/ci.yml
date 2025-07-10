@@ -52,9 +52,10 @@ jobs:
           fi
           # Specify anything which should skip full CI in this regex:
           # - docs/
+          # - script/update_top_ranking_issues/
           # - .github/ISSUE_TEMPLATE/
           # - .github/workflows/  (except .github/workflows/ci.yml)
-          SKIP_REGEX='^(docs/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
+          SKIP_REGEX='^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
           if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -vP "$SKIP_REGEX") ]]; then
             echo "run_tests=true" >> $GITHUB_OUTPUT
           else
