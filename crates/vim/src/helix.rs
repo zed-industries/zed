@@ -368,40 +368,40 @@ mod test {
         cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
     }
 
-    // #[gpui::test]
-    // async fn test_delete(cx: &mut gpui::TestAppContext) {
-    //     let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-    //     // test delete a selection
-    //     cx.set_state(
-    //         indoc! {"
-    //         The qu«ick ˇ»brown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        // test delete a selection
+        cx.set_state(
+            indoc! {"
+            The qu«ick ˇ»brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     cx.simulate_keystrokes("d");
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quˇbrown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        cx.assert_state(
+            indoc! {"
+            The quˇbrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     // test deleting a single character
-    //     cx.simulate_keystrokes("d");
+        // test deleting a single character
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quˇrown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
-    // }
+        cx.assert_state(
+            indoc! {"
+            The quˇrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
 
     // #[gpui::test]
     // async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {

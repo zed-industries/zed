@@ -718,24 +718,34 @@ impl ExtensionsPage {
                                 }
 
                                 parent.child(
-                                    h_flex().gap_2().children(
+                                    h_flex().gap_1().children(
                                         extension
                                             .manifest
                                             .provides
                                             .iter()
-                                            .map(|provides| {
-                                                div()
-                                                    .bg(cx.theme().colors().element_background)
-                                                    .px_0p5()
-                                                    .border_1()
-                                                    .border_color(cx.theme().colors().border)
-                                                    .rounded_sm()
-                                                    .child(
-                                                        Label::new(extension_provides_label(
-                                                            *provides,
-                                                        ))
-                                                        .size(LabelSize::XSmall),
-                                                    )
+                                            .filter_map(|provides| {
+                                                match provides {
+                                                    ExtensionProvides::SlashCommands
+                                                    | ExtensionProvides::IndexedDocsProviders => {
+                                                        return None;
+                                                    }
+                                                    _ => {}
+                                                }
+
+                                                Some(
+                                                    div()
+                                                        .px_1()
+                                                        .border_1()
+                                                        .rounded_sm()
+                                                        .border_color(cx.theme().colors().border)
+                                                        .bg(cx.theme().colors().element_background)
+                                                        .child(
+                                                            Label::new(extension_provides_label(
+                                                                *provides,
+                                                            ))
+                                                            .size(LabelSize::XSmall),
+                                                        ),
+                                                )
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
@@ -744,8 +754,7 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
-                            .justify_between()
+                            .gap_1()
                             .children(buttons.upgrade)
                             .children(buttons.configure)
                             .child(buttons.install_or_uninstall),
@@ -1452,23 +1461,30 @@ impl Render for ExtensionsPage {
                                 this.change_provides_filter(None, cx);
                             })),
                     )
-                    .children(ExtensionProvides::iter().map(|provides| {
+                    .children(ExtensionProvides::iter().filter_map(|provides| {
+                        match provides {
+                            ExtensionProvides::SlashCommands
+                            | ExtensionProvides::IndexedDocsProviders => return None,
+                            _ => {}
+                        }
+
                         let label = extension_provides_label(provides);
-                        Button::new(
-                            SharedString::from(format!("filter-category-{}", label)),
-                            label,
+                        let button_id = SharedString::from(format!("filter-category-{}", label));
+
+                        Some(
+                            Button::new(button_id, label)
+                                .style(if self.provides_filter == Some(provides) {
+                                    ButtonStyle::Filled
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .toggle_state(self.provides_filter == Some(provides))
+                                .on_click({
+                                    cx.listener(move |this, _event, _, cx| {
+                                        this.change_provides_filter(Some(provides), cx);
+                                    })
+                                }),
                         )
-                        .style(if self.provides_filter == Some(provides) {
-                            ButtonStyle::Filled
-                        } else {
-                            ButtonStyle::Subtle
-                        })
-                        .toggle_state(self.provides_filter == Some(provides))
-                        .on_click({
-                            cx.listener(move |this, _event, _, cx| {
-                                this.change_provides_filter(Some(provides), cx);
-                            })
-                        })
                     })),
             )
             .child(self.render_feature_upsells(cx))

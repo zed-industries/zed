@@ -1,0 +1,27 @@
+[package]
+name = "agent_servers"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/agent_servers.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+paths.workspace = true
+project.workspace = true
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+util.workspace = true
+which.workspace = true
+workspace-hack.workspace = true

@@ -143,6 +143,8 @@ impl ToolCard for WebSearchToolCard {
         _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let icon = IconName::ToolWeb;
+
         let header = match self.response.as_ref() {
             Some(Ok(response)) => {
                 let text: SharedString = if response.results.len() == 1 {
@@ -150,13 +152,12 @@ impl ToolCard for WebSearchToolCard {
                 } else {
                     format!("{} results", response.results.len()).into()
                 };
-                ToolCallCardHeader::new(IconName::Globe, "Searched the Web")
-                    .with_secondary_text(text)
+                ToolCallCardHeader::new(icon, "Searched the Web").with_secondary_text(text)
             }
             Some(Err(error)) => {
-                ToolCallCardHeader::new(IconName::Globe, "Web Search").with_error(error.to_string())
+                ToolCallCardHeader::new(icon, "Web Search").with_error(error.to_string())
             }
-            None => ToolCallCardHeader::new(IconName::Globe, "Searching the Web").loading(),
+            None => ToolCallCardHeader::new(icon, "Searching the Web").loading(),
         };
 
         let content = self.response.as_ref().and_then(|response| match response {

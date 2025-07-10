@@ -200,8 +200,8 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
-        // execute the script using /bin/bash
-        let restart_process = Command::new("/bin/bash")
+        let restart_process = Command::new("/usr/bin/env")
+            .arg("bash")
             .arg("-c")
             .arg(script)
             .process_group(0)

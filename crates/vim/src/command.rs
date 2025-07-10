@@ -28,8 +28,8 @@ use std::{
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::notifications::DetachAndPromptErr;
 use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
+use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
@@ -177,6 +177,13 @@ struct VimSave {
 /// Deletes the specified marks from the editor.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
+struct VimSplit {
+    pub vertical: bool,
+    pub filename: String,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
 enum DeleteMarks {
     Marks(String),
     AllLocal,
@@ -321,6 +328,33 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
             }
         });
+    });
+
+    Vim::action(editor, cx, |vim, action: &VimSplit, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                return;
+            };
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: Arc::from(Path::new(&action.filename)),
+            };
+
+            let direction = if action.vertical {
+                SplitDirection::vertical(cx)
+            } else {
+                SplitDirection::horizontal(cx)
+            };
+
+            workspace
+                .split_path_preview(project_path, false, Some(direction), window, cx)
+                .detach_and_log_err(cx);
+        })
     });
 
     Vim::action(editor, cx, |vim, action: &DeleteMarks, window, cx| {
@@ -998,8 +1032,24 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: false,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: true,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
         VimCommand::new(
             ("bd", "elete"),
             workspace::CloseActiveItem {
@@ -1688,7 +1738,7 @@ impl ShellExec {
                     id: TaskId("vim".to_string()),
                     full_label: command.clone(),
                     label: command.clone(),
-                    command: command.clone(),
+                    command: Some(command.clone()),
                     args: Vec::new(),
                     command_label: command.clone(),
                     cwd,

@@ -90,7 +90,7 @@ fn task_type_to_adapter_name(task_type: &str) -> String {
         "pwa-node" | "node" | "node-terminal" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge"
         | "msedge" | "pwa-msedge" => "JavaScript",
         "go" => "Delve",
-        "php" => "PHP",
+        "php" => "Xdebug",
         "cppdbg" | "lldb" => "CodeLLDB",
         "debugpy" => "Debugpy",
         "rdbg" => "rdbg",
