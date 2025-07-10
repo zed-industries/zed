@@ -340,7 +340,7 @@ impl TypeScriptContextProvider {
 
 async fn detect_package_manager(
     worktree_root: PathBuf,
-    fs: &dyn Fs,
+    fs: Arc<dyn Fs>,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
     if let Some(package_json_data) = package_json_data {
@@ -445,7 +445,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 let package_json_data = task.await.log_err();
                 vars.insert(
                     TYPESCRIPT_RUNNER_VARIABLE,
-                    detect_package_manager(worktree_root, fs.as_ref(), package_json_data.clone())
+                    detect_package_manager(worktree_root, fs, package_json_data.clone())
                         .await
                         .to_owned(),
                 );
@@ -822,22 +822,18 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        fs: &dyn Fs,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
-        let worktree_root = delegate.worktree_root_path().to_path_buf();
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
-        let package_manager = detect_package_manager(worktree_root, fs, None).await;
-
         let mut default_workspace_configuration = json!({
             "validate": "on",
-            "packageManager": package_manager,
             "rulesCustomizations": [],
             "run": "onType",
             "nodePath": null,
