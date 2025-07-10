@@ -168,6 +168,7 @@ pub struct ToolCall {
     pub icon: IconName,
     pub content: Option<ToolCallContent>,
     pub status: ToolCallStatus,
+    pub locations: Vec<acp::ToolCallLocation>,
 }
 
 impl ToolCall {
@@ -328,6 +329,8 @@ impl ToolCallContent {
 pub struct Diff {
     pub multibuffer: Entity<MultiBuffer>,
     pub path: PathBuf,
+    pub new_buffer: Entity<Buffer>,
+    pub old_buffer: Entity<Buffer>,
     _task: Task<Result<()>>,
 }
 
@@ -362,6 +365,7 @@ impl Diff {
         let task = cx.spawn({
             let multibuffer = multibuffer.clone();
             let path = path.clone();
+            let new_buffer = new_buffer.clone();
             async move |cx| {
                 diff_task.await?;
 
@@ -401,6 +405,8 @@ impl Diff {
         Self {
             multibuffer,
             path,
+            new_buffer,
+            old_buffer,
             _task: task,
         }
     }
@@ -644,47 +650,40 @@ impl AcpThread {
 
     pub fn request_tool_call(
         &mut self,
-        label: String,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
-        confirmation: acp::ToolCallConfirmation,
+        tool_call: acp::RequestToolCallConfirmationParams,
         cx: &mut Context<Self>,
     ) -> ToolCallRequest {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
             confirmation: ToolCallConfirmation::from_acp(
-                confirmation,
+                tool_call.confirmation,
                 self.project.read(cx).languages().clone(),
                 cx,
             ),
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(label, status, icon, content, cx);
+        let id = self.insert_tool_call(tool_call.tool_call, status, cx);
         ToolCallRequest { id, outcome: rx }
     }
 
     pub fn push_tool_call(
         &mut self,
-        label: String,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
+        request: acp::PushToolCallParams,
         cx: &mut Context<Self>,
     ) -> acp::ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
         };
 
-        self.insert_tool_call(label, status, icon, content, cx)
+        self.insert_tool_call(request, status, cx)
     }
 
     fn insert_tool_call(
         &mut self,
-        label: String,
+        tool_call: acp::PushToolCallParams,
         status: ToolCallStatus,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
     ) -> acp::ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
@@ -694,11 +693,18 @@ impl AcpThread {
             AgentThreadEntry::ToolCall(ToolCall {
                 id,
                 label: cx.new(|cx| {
-                    Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
+                    Markdown::new(
+                        tool_call.label.into(),
+                        Some(language_registry.clone()),
+                        None,
+                        cx,
+                    )
                 }),
-                icon: acp_icon_to_ui_icon(icon),
-                content: content
+                icon: acp_icon_to_ui_icon(tool_call.icon),
+                content: tool_call
+                    .content
                     .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
+                locations: tool_call.locations,
                 status,
             }),
             cx,
@@ -766,6 +772,13 @@ impl AcpThread {
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
+    }
+
+    pub fn tool_call_at(&self, ix: usize) -> Option<&ToolCall> {
+        match self.entries.get(ix) {
+            Some(AgentThreadEntry::ToolCall(call)) => Some(call),
+            _ => None,
+        }
     }
 
     fn tool_call_mut(&mut self, id: acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
@@ -951,15 +964,8 @@ impl acp::Client for AcpClientDelegate {
         let cx = &mut self.cx.clone();
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
-                self.thread.update(cx, |thread, cx| {
-                    thread.request_tool_call(
-                        request.label,
-                        request.icon,
-                        request.content,
-                        request.confirmation,
-                        cx,
-                    )
-                })
+                self.thread
+                    .update(cx, |thread, cx| thread.request_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
@@ -976,9 +982,8 @@ impl acp::Client for AcpClientDelegate {
         let cx = &mut self.cx.clone();
         let id = cx
             .update(|cx| {
-                self.thread.update(cx, |thread, cx| {
-                    thread.push_tool_call(request.label, request.icon, request.content, cx)
-                })
+                self.thread
+                    .update(cx, |thread, cx| thread.push_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
@@ -1124,6 +1129,7 @@ mod tests {
                                 label: "Fetch".to_string(),
                                 icon: acp::Icon::Globe,
                                 content: None,
+                                locations: vec![],
                             })
                         })?
                         .await

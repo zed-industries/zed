@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
+use assistant_tool::ActionLog;
 use collections::{HashMap, HashSet};
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
@@ -22,12 +23,14 @@ use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::Project;
+use project::{AgentLocation, Project};
+use rope::Point;
 use settings::Settings as _;
+use text::{Anchor, Bias};
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
 
 use ::acp::{
@@ -36,6 +39,7 @@ use ::acp::{
     ToolCallId, ToolCallStatus,
 };
 
+use crate::Follow;
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
 
@@ -45,6 +49,7 @@ pub struct AcpThreadView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
+    action_log: Entity<ActionLog>,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     message_editor: Entity<Editor>,
     mention_set: Arc<Mutex<MentionSet>>,
@@ -134,6 +139,7 @@ impl AcpThreadView {
                 }
             }),
         );
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
             workspace,
@@ -141,6 +147,7 @@ impl AcpThreadView {
             thread_state: Self::initial_state(project, window, cx),
             message_editor,
             mention_set,
+            action_log,
             diff_editors: Default::default(),
             list_state: list_state,
             last_error: None,
@@ -281,7 +288,6 @@ impl AcpThreadView {
 
         let mut ix = 0;
         let mut chunks: Vec<acp::UserMessageChunk> = Vec::new();
-
         let project = self.project.clone();
         self.message_editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -464,16 +470,82 @@ impl AcpThreadView {
         let count = self.list_state.item_count();
         match event {
             AcpThreadEvent::NewEntry => {
-                self.sync_thread_entry_view(thread.read(cx).entries().len() - 1, window, cx);
+                let index = thread.read(cx).entries().len() - 1;
+                self.sync_thread_entry_view(index, window, cx);
+                Self::sync_thread_to_action_log(&self.action_log, thread, index, cx);
                 self.list_state.splice(count..count, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
                 let index = *index;
                 self.sync_thread_entry_view(index, window, cx);
+                Self::sync_thread_to_action_log(&self.action_log, thread, index, cx);
                 self.list_state.splice(index..index + 1, 1);
             }
         }
         cx.notify();
+    }
+
+    fn sync_thread_to_action_log(
+        action_log: &Entity<ActionLog>,
+        thread: &Entity<AcpThread>,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(call) = thread.read(cx).tool_call_at(index) else {
+            return;
+        };
+        if call.locations.is_empty() {
+            return;
+        }
+        let locations = call.locations.clone();
+        let diff = if let Some(ToolCallContent::Diff { diff }) = &call.content {
+            Some((diff.old_buffer.clone(), diff.new_buffer.clone()))
+        } else {
+            None
+        };
+        action_log.update(cx, |action_log, cx| {
+            let buffers = action_log.project().update(cx, |project, cx| {
+                locations
+                    .into_iter()
+                    .filter_map(|location| {
+                        let path = project.project_path_for_absolute_path(&location.path, cx)?;
+                        let open = project.open_buffer(path, cx);
+                        Some(async move { (open.await, location.line) })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            cx.spawn(async move |action_log, cx| {
+                let buffers = futures::future::join_all(buffers).await;
+                action_log.update(cx, |action_log, cx| {
+                    for (buffer, line) in buffers {
+                        let Some(buffer) = buffer.log_err() else {
+                            continue;
+                        };
+                        let position = if let Some(line) = line {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let point = snapshot.clip_point(Point::new(line, 0), Bias::Right);
+                            buffer.read(cx).snapshot().anchor_before(point)
+                        } else {
+                            Anchor::MIN
+                        };
+                        let location = AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        };
+                        // todo! actually show diff...
+                        if let Some(diff) = diff.clone() {
+                            action_log.buffer_edited(buffer, cx);
+                        } else {
+                            action_log.buffer_read(buffer, cx);
+                        }
+                        action_log.project().update(cx, |project, cx| {
+                            project.set_agent_location(Some(location), cx);
+                        });
+                    }
+                })
+            })
+            .detach();
+        })
     }
 
     fn sync_thread_entry_view(
@@ -1559,6 +1631,76 @@ impl AcpThreadView {
         .into_any()
     }
 
+    fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.thread().map_or(true, |thread| {
+            thread.read(cx).status() == ThreadStatus::Idle
+        }) {
+            let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
+            IconButton::new("send-message", IconName::Send)
+                .icon_color(Color::Accent)
+                .style(ButtonStyle::Filled)
+                .disabled(self.thread().is_none() || is_editor_empty)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.chat(&Chat, window, cx);
+                }))
+                .when(!is_editor_empty, |button| {
+                    button.tooltip(move |window, cx| Tooltip::for_action("Send", &Chat, window, cx))
+                })
+                .when(is_editor_empty, |button| {
+                    button.tooltip(Tooltip::text("Type a message to submit"))
+                })
+                .into_any_element()
+        } else {
+            IconButton::new("stop-generation", IconName::StopFilled)
+                .icon_color(Color::Error)
+                .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action("Stop Generation", &editor::actions::Cancel, window, cx)
+                })
+                .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
+                .into_any_element()
+        }
+    }
+
+    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let following = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or(false);
+
+        IconButton::new("follow-agent", IconName::Crosshair)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(following)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
+            .tooltip(move |window, cx| {
+                if following {
+                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                } else {
+                    Tooltip::with_meta(
+                        "Follow Agent",
+                        Some(&Follow),
+                        "Track the agent's location as it reads and edits files.",
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        if following {
+                            workspace.unfollow(CollaboratorId::Agent, window, cx);
+                        } else {
+                            workspace.follow(CollaboratorId::Agent, window, cx);
+                        }
+                    })
+                    .ok();
+            }))
+    }
+
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         let workspace = self.workspace.clone();
         MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
@@ -1674,8 +1816,6 @@ impl Focusable for AcpThreadView {
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = self.message_editor.read(cx).text(cx);
-        let is_editor_empty = text.is_empty();
-        let focus_handle = self.message_editor.focus_handle(cx);
 
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
             .icon_size(IconSize::XSmall)
@@ -1782,47 +1922,12 @@ impl Render for AcpThreadView {
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .child(self.render_message_editor(cx))
-                    .child({
-                        let thread = self.thread();
-
-                        h_flex().justify_end().child(
-                            if thread.map_or(true, |thread| {
-                                thread.read(cx).status() == ThreadStatus::Idle
-                            }) {
-                                IconButton::new("send-message", IconName::Send)
-                                    .icon_color(Color::Accent)
-                                    .style(ButtonStyle::Filled)
-                                    .disabled(thread.is_none() || is_editor_empty)
-                                    .on_click({
-                                        let focus_handle = focus_handle.clone();
-                                        move |_event, window, cx| {
-                                            focus_handle.dispatch_action(&Chat, window, cx);
-                                        }
-                                    })
-                                    .when(!is_editor_empty, |button| {
-                                        button.tooltip(move |window, cx| {
-                                            Tooltip::for_action("Send", &Chat, window, cx)
-                                        })
-                                    })
-                                    .when(is_editor_empty, |button| {
-                                        button.tooltip(Tooltip::text("Type a message to submit"))
-                                    })
-                            } else {
-                                IconButton::new("stop-generation", IconName::StopFilled)
-                                    .icon_color(Color::Error)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::for_action(
-                                            "Stop Generation",
-                                            &editor::actions::Cancel,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
-                            },
-                        )
-                    }),
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(self.render_follow_toggle(cx))
+                            .child(self.render_send_button(cx)),
+                    ),
             )
     }
 }
