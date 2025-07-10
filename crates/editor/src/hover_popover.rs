@@ -1,6 +1,6 @@
 use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, Hover,
+    EditorSnapshot, GlobalDiagnosticRenderer, HighlightStyle, Hover,
     display_map::{InlayOffset, ToDisplayPoint, invisibles::is_invisible},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
@@ -193,7 +193,17 @@ pub fn hover_at_inlay(
                 };
 
                 this.update(cx, |this, cx| {
-                    // TODO: no background highlights happen for inlays currently
+                    // Highlight the inlay using background highlighting
+                    let highlight_range = inlay_hover.range.clone();
+                    this.highlight_inlays::<HoverState>(
+                        vec![highlight_range],
+                        HighlightStyle {
+                            background_color: Some(cx.theme().colors().element_hover),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
                 })?;
