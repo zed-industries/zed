@@ -38,8 +38,8 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelImage, LanguageModelProviderTosView, LanguageModelRegistry,
-    Role,
+    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelProviderTosView,
+    LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -3063,7 +3063,7 @@ fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenStat
         .default_model()?
         .model;
     let token_count = context.read(cx).token_count()?;
-    let max_token_count = model.max_token_count();
+    let max_token_count = model.max_token_count_for_mode(context.read(cx).completion_mode().into());
     let token_state = if max_token_count.saturating_sub(token_count) == 0 {
         TokenState::NoTokensLeft {
             max_token_count,

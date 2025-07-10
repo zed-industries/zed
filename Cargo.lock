@@ -3,6 +3,33 @@
 version = 4
 
 [[package]]
+name = "acp"
+version = "0.1.0"
+dependencies = [
+ "agent_servers",
+ "agentic-coding-protocol",
+ "anyhow",
+ "async-pipe",
+ "buffer_diff",
+ "editor",
+ "env_logger 0.11.8",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "markdown",
+ "project",
+ "serde_json",
+ "settings",
+ "smol",
+ "tempfile",
+ "ui",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
@@ -108,6 +135,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_servers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "paths",
+ "project",
+ "schemars",
+ "serde",
+ "settings",
+ "util",
+ "which 6.0.3",
+ "workspace-hack",
+]
+
+[[package]]
 name = "agent_settings"
 version = "0.1.0"
 dependencies = [
@@ -130,8 +175,11 @@ dependencies = [
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
+ "acp",
  "agent",
+ "agent_servers",
  "agent_settings",
+ "agentic-coding-protocol",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",
@@ -191,6 +239,7 @@ dependencies = [
  "settings",
  "smol",
  "streaming_diff",
+ "task",
  "telemetry",
  "telemetry_events",
  "terminal",
@@ -210,6 +259,22 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+]
+
+[[package]]
+name = "agentic-coding-protocol"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b962eee17ee3924870d9b9d28cc8b6dcb5421e4d4e81cd864226374a122ceed1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures 0.3.31",
+ "log",
+ "parking_lot",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -538,6 +603,8 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "net",
+ "parking_lot",
  "smol",
  "tempfile",
  "util",
@@ -4324,6 +4391,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "log",
@@ -4344,6 +4412,7 @@ dependencies = [
  "tasks_ui",
  "telemetry",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter",
  "tree-sitter-go",
@@ -5185,6 +5254,16 @@ checksum = "886b70328cba8871bfc025858e1de4be16b1d5088f2ba50b57816f4210672615"
 dependencies = [
  "errno 0.2.8",
  "libc",
+]
+
+[[package]]
+name = "explorer_command_injector"
+version = "0.1.0"
+dependencies = [
+ "windows 0.61.1",
+ "windows-core 0.61.0",
+ "windows-registry 0.5.1",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8951,6 +9030,7 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -10230,6 +10310,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11333,14 +11425,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "perplexity"
-version = "0.1.0"
-dependencies = [
- "serde",
- "zed_extension_api 0.6.0",
-]
 
 [[package]]
 name = "pest"
@@ -12533,6 +12617,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -13196,6 +13281,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
@@ -14057,6 +14143,7 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
@@ -17035,6 +17122,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18280,6 +18373,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -18357,7 +18451,6 @@ dependencies = [
  "language",
  "picker",
  "project",
- "schemars",
  "serde",
  "settings",
  "telemetry",
@@ -19552,6 +19645,7 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
+ "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
@@ -19945,10 +20039,11 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.195.0"
+version = "0.196.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_servers",
  "agent_settings",
  "agent_ui",
  "anyhow",
@@ -20143,9 +20238,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c740e29260b8797ad252c202ea09a255b3cbc13f30faaf92fb6b2490336106e0"
+checksum = "6607f74dee2a18a9ce0f091844944a0e59881359ab62e0768fb0618f55d4c1dc"
 dependencies = [
  "anyhow",
  "serde",

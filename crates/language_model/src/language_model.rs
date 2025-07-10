@@ -26,7 +26,7 @@ use std::time::Duration;
 use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::CompletionRequestStatus;
+use zed_llm_client::{CompletionMode, CompletionRequestStatus};
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -462,6 +462,10 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
+    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` is `false` this returns `None`)
+    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
+        None
+    }
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }
@@ -556,6 +560,18 @@ pub trait LanguageModel: Send + Sync {
         unimplemented!()
     }
 }
+
+pub trait LanguageModelExt: LanguageModel {
+    fn max_token_count_for_mode(&self, mode: CompletionMode) -> u64 {
+        match mode {
+            CompletionMode::Normal => self.max_token_count(),
+            CompletionMode::Max => self
+                .max_token_count_in_burn_mode()
+                .unwrap_or_else(|| self.max_token_count()),
+        }
+    }
+}
+impl LanguageModelExt for dyn LanguageModel {}
 
 pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn name() -> String;

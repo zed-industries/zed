@@ -23,7 +23,8 @@ use gpui::{
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, point, px, size, transparent_white, uniform_list,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -55,8 +56,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
-    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, ScrollableHandle,
+    Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -185,6 +186,7 @@ struct EntryDetails {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct StickyDetails {
     sticky_index: usize,
+    is_last: bool,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -3325,7 +3327,13 @@ impl ProjectPanel {
         range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<ProjectPanel>,
-        mut callback: impl FnMut(&Entry, &HashSet<Arc<Path>>, &mut Window, &mut Context<ProjectPanel>),
+        mut callback: impl FnMut(
+            &Entry,
+            usize,
+            &HashSet<Arc<Path>>,
+            &mut Window,
+            &mut Context<ProjectPanel>,
+        ),
     ) {
         let mut ix = 0;
         for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
@@ -3346,8 +3354,10 @@ impl ProjectPanel {
                     .map(|e| (e.path.clone()))
                     .collect()
             });
-            for entry in visible_worktree_entries[entry_range].iter() {
-                callback(&entry, entries, window, cx);
+            let base_index = ix + entry_range.start;
+            for (i, entry) in visible_worktree_entries[entry_range].iter().enumerate() {
+                let global_index = base_index + i;
+                callback(&entry, global_index, entries, window, cx);
             }
             ix = end_ix;
         }
@@ -3928,8 +3938,32 @@ impl ProjectPanel {
             }
         };
 
+        let show_sticky_shadow = details.sticky.as_ref().map_or(false, |item| {
+            if item.is_last {
+                let is_scrollable = self.scroll_handle.is_scrollable();
+                let is_scrolled = self.scroll_handle.offset().y < px(0.);
+                is_scrollable && is_scrolled
+            } else {
+                false
+            }
+        });
+        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
+        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
+        let sticky_shadow = div()
+            .absolute()
+            .left_0()
+            .bottom_neg_1p5()
+            .h_1p5()
+            .w_full()
+            .bg(linear_gradient(
+                0.,
+                linear_color_stop(shadow_color_top, 1.),
+                linear_color_stop(shadow_color_bottom, 0.),
+            ));
+
         div()
             .id(entry_id.to_proto() as usize)
+            .relative()
             .group(GROUP_NAME)
             .cursor_pointer()
             .rounded_none()
@@ -3938,6 +3972,7 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
+            .when(show_sticky_shadow, |this| this.child(sticky_shadow))
             .when(!is_sticky, |this| {
                 this
                 .when(is_highlighted && folded_directory_drag_target.is_none(), |this| this.border_color(transparent_white()).bg(item_colors.drag_over))
@@ -4141,6 +4176,16 @@ impl ProjectPanel {
                         }
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
+                        if is_sticky {
+                            if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
+                                let strategy = sticky_index
+                                    .map(ScrollStrategy::ToPosition)
+                                    .unwrap_or(ScrollStrategy::Top);
+                                this.scroll_handle.scroll_to_item(index, strategy);
+                                cx.notify();
+                                return;
+                            }
+                        }
                         if event.modifiers().alt {
                             this.toggle_expand_all(entry_id, window, cx);
                         } else {
@@ -4152,16 +4197,6 @@ impl ProjectPanel {
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                    }
-
-                    if is_sticky {
-                        if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                            let strategy = sticky_index
-                                .map(ScrollStrategy::ToPosition)
-                                .unwrap_or(ScrollStrategy::Top);
-                            this.scroll_handle.scroll_to_item(index, strategy);
-                            cx.notify();
-                        }
                     }
                 }),
             )
@@ -4809,54 +4844,6 @@ impl ProjectPanel {
         None
     }
 
-    fn candidate_entries_in_range_for_sticky(
-        &self,
-        range: Range<usize>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Vec<StickyProjectPanelCandidate> {
-        let mut result = Vec::new();
-        let mut current_offset = 0;
-
-        for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
-            let worktree_len = visible_worktree_entries.len();
-            let worktree_end_offset = current_offset + worktree_len;
-
-            if current_offset >= range.end {
-                break;
-            }
-
-            if worktree_end_offset > range.start {
-                let local_start = range.start.saturating_sub(current_offset);
-                let local_end = range.end.saturating_sub(current_offset).min(worktree_len);
-
-                let paths = entries_paths.get_or_init(|| {
-                    visible_worktree_entries
-                        .iter()
-                        .map(|e| e.path.clone())
-                        .collect()
-                });
-
-                let entries_from_this_worktree = visible_worktree_entries[local_start..local_end]
-                    .iter()
-                    .enumerate()
-                    .map(|(i, entry)| {
-                        let (depth, _) = Self::calculate_depth_and_difference(&entry.entry, paths);
-                        StickyProjectPanelCandidate {
-                            index: current_offset + local_start + i,
-                            depth,
-                        }
-                    });
-
-                result.extend(entries_from_this_worktree);
-            }
-
-            current_offset = worktree_end_offset;
-        }
-
-        result
-    }
-
     fn render_sticky_entries(
         &self,
         child: StickyProjectPanelCandidate,
@@ -4907,6 +4894,10 @@ impl ProjectPanel {
             break 'outer;
         }
 
+        if sticky_parents.is_empty() {
+            return SmallVec::new();
+        }
+
         sticky_parents.reverse();
 
         let git_status_enabled = ProjectPanelSettings::get_global(cx).git_status;
@@ -4921,6 +4912,8 @@ impl ProjectPanel {
             Default::default()
         };
 
+        // already checked if non empty above
+        let last_item_index = sticky_parents.len() - 1;
         sticky_parents
             .iter()
             .enumerate()
@@ -4931,6 +4924,7 @@ impl ProjectPanel {
                     .unwrap_or_default();
                 let sticky_details = Some(StickyDetails {
                     sticky_index: index,
+                    is_last: index == last_item_index,
                 });
                 let details = self.details_for_entry(
                     entry,
@@ -5171,65 +5165,53 @@ impl Render for ProjectPanel {
                             items
                         })
                     })
-                    .when(show_sticky_scroll, |list| {
-                        list.with_top_slot(ui::sticky_items(
-                            cx.entity().clone(),
-                            |this, range, window, cx| {
-                                this.candidate_entries_in_range_for_sticky(range, window, cx)
-                            },
-                            |this, marker_entry, window, cx| {
-                                this.render_sticky_entries(marker_entry, window, cx)
-                            },
-                        ))
-                    })
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
-                            ui::indent_guides(
-                                cx.entity().clone(),
-                                px(indent_size),
-                                IndentGuideColors::panel(cx),
-                                |this, range, window, cx| {
-                                    let mut items =
-                                        SmallVec::with_capacity(range.end - range.start);
-                                    this.iter_visible_entries(
-                                        range,
-                                        window,
-                                        cx,
-                                        |entry, entries, _, _| {
-                                            let (depth, _) = Self::calculate_depth_and_difference(
-                                                entry, entries,
-                                            );
-                                            items.push(depth);
-                                        },
-                                    );
-                                    items
-                                },
-                            )
-                            .on_click(cx.listener(
-                                |this, active_indent_guide: &IndentGuideLayout, window, cx| {
-                                    if window.modifiers().secondary() {
-                                        let ix = active_indent_guide.offset.y;
-                                        let Some((target_entry, worktree)) = maybe!({
-                                            let (worktree_id, entry) = this.entry_at_index(ix)?;
-                                            let worktree = this
-                                                .project
-                                                .read(cx)
-                                                .worktree_for_id(worktree_id, cx)?;
-                                            let target_entry = worktree
-                                                .read(cx)
-                                                .entry_for_path(&entry.path.parent()?)?;
-                                            Some((target_entry, worktree))
-                                        }) else {
-                                            return;
-                                        };
+                            ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
+                                .with_compute_indents_fn(
+                                    cx.entity().clone(),
+                                    |this, range, window, cx| {
+                                        let mut items =
+                                            SmallVec::with_capacity(range.end - range.start);
+                                        this.iter_visible_entries(
+                                            range,
+                                            window,
+                                            cx,
+                                            |entry, _, entries, _, _| {
+                                                let (depth, _) =
+                                                    Self::calculate_depth_and_difference(
+                                                        entry, entries,
+                                                    );
+                                                items.push(depth);
+                                            },
+                                        );
+                                        items
+                                    },
+                                )
+                                .on_click(cx.listener(
+                                    |this, active_indent_guide: &IndentGuideLayout, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            let ix = active_indent_guide.offset.y;
+                                            let Some((target_entry, worktree)) = maybe!({
+                                                let (worktree_id, entry) =
+                                                    this.entry_at_index(ix)?;
+                                                let worktree = this
+                                                    .project
+                                                    .read(cx)
+                                                    .worktree_for_id(worktree_id, cx)?;
+                                                let target_entry = worktree
+                                                    .read(cx)
+                                                    .entry_for_path(&entry.path.parent()?)?;
+                                                Some((target_entry, worktree))
+                                            }) else {
+                                                return;
+                                            };
 
-                                        this.collapse_entry(target_entry.clone(), worktree, cx);
-                                    }
-                                },
-                            ))
-                            .with_render_fn(
-                                cx.entity().clone(),
-                                move |this, params, _, cx| {
+                                            this.collapse_entry(target_entry.clone(), worktree, cx);
+                                        }
+                                    },
+                                ))
+                                .with_render_fn(cx.entity().clone(), move |this, params, _, cx| {
                                     const LEFT_OFFSET: Pixels = px(14.);
                                     const PADDING_Y: Pixels = px(4.);
                                     const HITBOX_OVERDRAW: Pixels = px(3.);
@@ -5277,9 +5259,65 @@ impl Render for ProjectPanel {
                                             }
                                         })
                                         .collect()
-                                },
-                            ),
+                                }),
                         )
+                    })
+                    .when(show_sticky_scroll, |list| {
+                        let sticky_items = ui::sticky_items(
+                            cx.entity().clone(),
+                            |this, range, window, cx| {
+                                let mut items = SmallVec::with_capacity(range.end - range.start);
+                                this.iter_visible_entries(
+                                    range,
+                                    window,
+                                    cx,
+                                    |entry, index, entries, _, _| {
+                                        let (depth, _) =
+                                            Self::calculate_depth_and_difference(entry, entries);
+                                        let candidate =
+                                            StickyProjectPanelCandidate { index, depth };
+                                        items.push(candidate);
+                                    },
+                                );
+                                items
+                            },
+                            |this, marker_entry, window, cx| {
+                                this.render_sticky_entries(marker_entry, window, cx)
+                            },
+                        );
+                        list.with_decoration(if show_indent_guides {
+                            sticky_items.with_decoration(
+                                ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
+                                    .with_render_fn(cx.entity().clone(), move |_, params, _, _| {
+                                        const LEFT_OFFSET: Pixels = px(14.);
+
+                                        let indent_size = params.indent_size;
+                                        let item_height = params.item_height;
+
+                                        params
+                                            .indent_guides
+                                            .into_iter()
+                                            .map(|layout| {
+                                                let bounds = Bounds::new(
+                                                    point(
+                                                        layout.offset.x * indent_size + LEFT_OFFSET,
+                                                        layout.offset.y * item_height,
+                                                    ),
+                                                    size(px(1.), layout.length * item_height),
+                                                );
+                                                ui::RenderedIndentGuide {
+                                                    bounds,
+                                                    layout,
+                                                    is_active: false,
+                                                    hitbox: None,
+                                                }
+                                            })
+                                            .collect()
+                                    }),
+                            )
+                        } else {
+                            sticky_items
+                        })
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)

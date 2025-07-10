@@ -13,14 +13,14 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
-test-support = [
-    "gpui/test-support",
-    "language/test-support",
-]
+test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
+acp.workspace = true
 agent.workspace = true
+agentic-coding-protocol.workspace = true
 agent_settings.workspace = true
+agent_servers.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true
 assistant_slash_command.workspace = true
@@ -76,6 +76,7 @@ serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
+task.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
