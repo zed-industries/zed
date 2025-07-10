@@ -23,7 +23,10 @@ use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
     SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
 };
-use workspace::{Item, ModalView, SerializableItem, Workspace, register_serializable_item};
+use workspace::{
+    Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
+    register_serializable_item,
+};
 
 use crate::{
     SettingsUiFeatureFlag,
@@ -49,6 +52,8 @@ actions!(
         EditBinding,
         /// Creates a new key binding for the selected action.
         CreateBinding,
+        /// Deletes the selected key binding.
+        DeleteBinding,
         /// Copies the action name to clipboard.
         CopyAction,
         /// Copies the context predicate to clipboard.
@@ -613,6 +618,21 @@ impl KeymapEditor {
         self.open_edit_keybinding_modal(true, window, cx);
     }
 
+    fn delete_binding(&mut self, _: &DeleteBinding, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(to_remove) = self.selected_binding().cloned() else {
+            return;
+        };
+        let Ok(fs) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+        else {
+            return;
+        };
+        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+        cx.spawn(async move |_, _| remove_keybinding(to_remove, &fs, tab_size).await)
+            .detach_and_notify_err(window, cx);
+    }
+
     fn copy_context_to_clipboard(
         &mut self,
         _: &CopyContext,
@@ -740,6 +760,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
+            .on_action(cx.listener(Self::delete_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .size_full()
@@ -1458,6 +1479,47 @@ async fn save_keybinding_update(
     Ok(())
 }
 
+async fn remove_keybinding(
+    existing: ProcessedKeybinding,
+    fs: &Arc<dyn Fs>,
+    tab_size: usize,
+) -> anyhow::Result<()> {
+    let Some(ui_key_binding) = existing.ui_key_binding else {
+        anyhow::bail!("Cannot remove a keybinding that does not exist");
+    };
+    let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
+        .await
+        .context("Failed to load keymap file")?;
+
+    let operation = settings::KeybindUpdateOperation::Remove {
+        target: settings::KeybindUpdateTarget {
+            context: existing
+                .context
+                .as_ref()
+                .and_then(KeybindContextString::local_str),
+            keystrokes: &ui_key_binding.keystrokes,
+            action_name: &existing.action_name,
+            use_key_equivalents: false,
+            input: existing
+                .action_input
+                .as_ref()
+                .map(|input| input.text.as_ref()),
+        },
+        target_keybind_source: existing
+            .source
+            .map(|(source, _name)| source)
+            .unwrap_or(KeybindSource::User),
+    };
+
+    let updated_keymap_contents =
+        settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
+            .context("Failed to update keybinding")?;
+    fs.atomic_write(paths::keymap_file().clone(), updated_keymap_contents)
+        .await
+        .context("Failed to write keymap file")?;
+    Ok(())
+}
+
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
@@ -1667,16 +1729,25 @@ fn build_keybind_context_menu(
             .and_then(KeybindContextString::local)
             .is_none();
 
-        let selected_binding_is_unbound = selected_binding.ui_key_binding.is_none();
+        let selected_binding_is_unbound_action = selected_binding.ui_key_binding.is_none();
 
-        menu.action_disabled_when(selected_binding_is_unbound, "Edit", Box::new(EditBinding))
-            .action("Create", Box::new(CreateBinding))
-            .action("Copy action", Box::new(CopyAction))
-            .action_disabled_when(
-                selected_binding_has_no_context,
-                "Copy Context",
-                Box::new(CopyContext),
-            )
+        menu.action_disabled_when(
+            selected_binding_is_unbound_action,
+            "Edit",
+            Box::new(EditBinding),
+        )
+        .action("Create", Box::new(CreateBinding))
+        .action_disabled_when(
+            selected_binding_is_unbound_action,
+            "Delete",
+            Box::new(DeleteBinding),
+        )
+        .action("Copy action", Box::new(CopyAction))
+        .action_disabled_when(
+            selected_binding_has_no_context,
+            "Copy Context",
+            Box::new(CopyContext),
+        )
     })
 }
 
