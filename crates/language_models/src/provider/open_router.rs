@@ -184,7 +184,9 @@ impl State {
         let api_url = settings.api_url.clone();
 
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url).await?;
+            let models = list_models(http_client.as_ref(), &api_url)
+                .await
+                .map_err(|e| anyhow::anyhow!("OpenRouter error: {:?}", e))?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;

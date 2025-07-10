@@ -432,70 +432,6 @@ pub struct ModelArchitecture {
     pub input_modalities: Vec<String>,
 }
 
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-) -> Result<Response> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let mut request_body = request;
-    request_body.stream = false;
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response: Response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct OpenRouterResponse {
-            error: OpenRouterError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenRouterError {
-            message: String,
-            #[serde(default)]
-            code: String,
-        }
-
-        match serde_json::from_str::<OpenRouterResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => {
-                let error_message = if !response.error.code.is_empty() {
-                    format!("{}: {}", response.error.code, response.error.message)
-                } else {
-                    response.error.message
-                };
-
-                Err(anyhow!(
-                    "Failed to connect to OpenRouter API: {}",
-                    error_message
-                ))
-            }
-            _ => Err(anyhow!(
-                "Failed to connect to OpenRouter API: {} {}",
-                response.status(),
-                body,
-            )),
-        }
-    }
-}
-
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -553,6 +489,8 @@ pub async fn stream_completion(
             })
             .boxed())
     } else {
+        let code = ApiErrorCode::from_status(response.status().as_u16());
+
         let mut body = String::new();
         response
             .body_mut()
@@ -560,7 +498,15 @@ pub async fn stream_completion(
             .await
             .map_err(OpenRouterError::ReadResponse)?;
 
-        let code = ApiErrorCode::from_status(response.status().as_u16());
+        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
+            Ok(OpenRouterErrorResponse { error }) => error,
+            Err(_) => OpenRouterErrorBody {
+                code: response.status().as_u16(),
+                message: body,
+                metadata: None,
+            },
+        };
+
         match code {
             ApiErrorCode::RateLimitError => {
                 let retry_after = extract_retry_after(response.headers());
@@ -573,9 +519,9 @@ pub async fn stream_completion(
                 Err(OpenRouterError::ServerOverloaded { retry_after })
             }
             _ => Err(OpenRouterError::ApiError(ApiError {
-                code,
-                message: body,
-                metadata: None,
+                code: code,
+                message: error_response.message,
+                metadata: error_response.metadata,
             })),
         }
     }
@@ -654,6 +600,23 @@ pub async fn list_models(
         Ok(models)
     } else {
         let code = ApiErrorCode::from_status(response.status().as_u16());
+
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(OpenRouterError::ReadResponse)?;
+
+        let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
+            Ok(OpenRouterErrorResponse { error }) => error,
+            Err(_) => OpenRouterErrorBody {
+                code: response.status().as_u16(),
+                message: body,
+                metadata: None,
+            },
+        };
+
         match code {
             ApiErrorCode::RateLimitError => {
                 let retry_after = extract_retry_after(response.headers());
@@ -666,47 +629,52 @@ pub async fn list_models(
                 Err(OpenRouterError::ServerOverloaded { retry_after })
             }
             _ => Err(OpenRouterError::ApiError(ApiError {
-                code,
-                message: body,
-                metadata: None,
+                code: code,
+                message: error_response.message,
+                metadata: error_response.metadata,
             })),
         }
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum OpenRouterError {
     /// Failed to serialize the HTTP request body to JSON
-    #[error("Failed to serialize request")]
-    SerializeRequest(#[source] serde_json::Error),
+    SerializeRequest(serde_json::Error),
 
     /// Failed to construct the HTTP request body
-    #[error("Failed to build request body")]
-    BuildRequestBody(#[source] http::Error),
+    BuildRequestBody(http::Error),
 
     /// Failed to send the HTTP request
-    #[error("Failed to send HTTP request")]
-    HttpSend(#[source] anyhow::Error),
+    HttpSend(anyhow::Error),
 
     /// Failed to deserialize the response from JSON
-    #[error("Failed to deserialize response")]
-    DeserializeResponse(#[source] serde_json::Error),
+    DeserializeResponse(serde_json::Error),
 
     /// Failed to read from response stream
-    #[error("Failed to read response")]
-    ReadResponse(#[source] io::Error),
+    ReadResponse(io::Error),
 
     /// Rate limit exceeded
-    #[error("Rate limit exceeded, retry after {retry_after:?}")]
     RateLimit { retry_after: Duration },
 
     /// Server overloaded
-    #[error("Server overloaded")]
     ServerOverloaded { retry_after: Option<Duration> },
 
     /// API returned an error response
-    #[error(transparent)]
-    ApiError(#[from] ApiError),
+    ApiError(ApiError),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenRouterErrorBody {
+    pub code: u16,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenRouterErrorResponse {
+    pub error: OpenRouterErrorBody,
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
