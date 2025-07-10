@@ -54,13 +54,19 @@ pub struct WasmHost {
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
+}
+
+impl Drop for WasmExtension {
+    fn drop(&mut self) {
+        self.tx.close_channel();
+    }
 }
 
 #[async_trait]

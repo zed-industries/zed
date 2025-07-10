@@ -1152,7 +1152,7 @@ impl ExtensionStore {
                 continue;
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
-            for (language_server_name, config) in extension.manifest.language_servers.iter() {
+            for (language_server_name, config) in &extension.manifest.language_servers {
                 for language in config.languages() {
                     server_removal_tasks.push(self.proxy.remove_language_server(
                         &language,
@@ -1162,14 +1162,21 @@ impl ExtensionStore {
                 }
             }
 
-            for (server_id, _) in extension.manifest.context_servers.iter() {
+            for (server_id, _) in &extension.manifest.context_servers {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
             }
-            for (adapter, _) in extension.manifest.debug_adapters.iter() {
+            for (adapter, _) in &extension.manifest.debug_adapters {
                 self.proxy.unregister_debug_adapter(adapter.clone());
             }
-            for (locator, _) in extension.manifest.debug_locators.iter() {
+            for (locator, _) in &extension.manifest.debug_locators {
                 self.proxy.unregister_debug_locator(locator.clone());
+            }
+            for (command_name, _) in &extension.manifest.slash_commands {
+                self.proxy.unregister_slash_command(command_name.clone());
+            }
+            for (provider_id, _) in &extension.manifest.indexed_docs_providers {
+                self.proxy
+                    .unregister_indexed_docs_provider(provider_id.clone());
             }
         }
 
