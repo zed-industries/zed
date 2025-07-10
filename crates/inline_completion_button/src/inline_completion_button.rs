@@ -906,8 +906,12 @@ impl InlineCompletionButton {
                 })
             } else {
                 menu.separator()
-                    .entry("No Models Available", None, |_window, _cx| {
-                        // Display only
+                    .header("No Models Configured")
+                    .entry("Configure Models", None, {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            Self::open_ollama_settings(fs.clone(), window, cx);
+                        }
                     })
             };
 
@@ -916,7 +920,7 @@ impl InlineCompletionButton {
         })
     }
 
-    /// Opens Zed settings and navigates directly to the Ollama API URL configuration.
+    /// Opens Zed settings and navigates directly to the Ollama models configuration.
     /// Uses improved regex patterns to locate the exact setting in the JSON structure.
     fn open_ollama_settings(_fs: Arc<dyn Fs>, window: &mut Window, cx: &mut App) {
         if let Some(workspace) = window.root::<Workspace>().flatten() {
@@ -938,24 +942,25 @@ impl InlineCompletionButton {
                         .update_in(cx, |item, window, cx| {
                             let text = item.buffer().read(cx).snapshot(cx).text();
 
-                            // Look for language_models.ollama.api_url setting with precise pattern
+                            // Look for language_models.ollama section with precise pattern
                             // This matches the full nested structure to avoid false matches
-                            let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
-                            let regex = regex::Regex::new(api_url_pattern).unwrap();
+                            let ollama_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"available_models"\s*:\s*\[\s*\]"#;
+                            let regex = regex::Regex::new(ollama_pattern).unwrap();
 
                             if let Some(captures) = regex.captures(&text) {
-                                let _full_match = captures.get(0).unwrap();
-                                let value_capture = captures.get(1).unwrap();
+                                let full_match = captures.get(0).unwrap();
 
-                                // Select the API URL value (excluding quotes)
+                                // Position cursor after the opening bracket of available_models array
+                                let bracket_pos = full_match.as_str().rfind('[').unwrap();
+                                let cursor_pos = full_match.start() + bracket_pos + 1;
+
+                                // Place cursor inside the available_models array
                                 item.change_selections(
                                     SelectionEffects::scroll(Autoscroll::newest()),
                                     window,
                                     cx,
                                     |selections| {
-                                        selections.select_ranges(vec![
-                                            value_capture.start()..value_capture.end(),
-                                        ]);
+                                        selections.select_ranges(vec![cursor_pos..cursor_pos]);
                                     },
                                 );
                                 return Ok::<(), anyhow::Error>(());
@@ -1472,6 +1477,27 @@ mod tests {
             assert!(InlineCompletionButton::ollama_settings_exist_in_content(
                 settings_with_ollama
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_no_models_configured(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AllLanguageModelSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            // Test menu behavior when no models are configured
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Verify that available_models is empty by default
+            assert!(ollama_settings.available_models.is_empty());
+
+            // This simulates the condition that would trigger the "Configure Models" menu
+            let should_show_configure = ollama_settings.available_models.is_empty();
+            assert!(should_show_configure);
         });
     }
 

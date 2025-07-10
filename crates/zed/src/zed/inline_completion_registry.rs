@@ -333,24 +333,27 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            let api_url = settings.api_url.clone();
 
-            // Use first available model or default to a FIM-capable model
-            // NOTE: codellama:7b and deepseek-coder:latest do NOT support FIM
-            // Use qwen2.5-coder:3b or starcoder2:latest instead
-            let model = settings
-                .available_models
-                .first()
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| "qwen2.5-coder:3b".to_string());
+            // Only create provider if models are configured
+            // Note: Only FIM-capable models work with inline completion:
+            // ✓ Supported: qwen2.5-coder:*, starcoder2:*, codeqwen:*
+            // ✗ Not supported: codellama:*, deepseek-coder:*, llama3:*
+            if let Some(first_model) = settings.available_models.first() {
+                let api_url = settings.api_url.clone();
+                let model = first_model.name.clone();
 
-            // Get API key from environment variable only (credentials would require async handling)
-            let api_key = std::env::var("OLLAMA_API_KEY").ok();
+                // Get API key from environment variable only (credentials would require async handling)
+                let api_key = std::env::var("OLLAMA_API_KEY").ok();
 
-            let provider = cx.new(|_| {
-                OllamaCompletionProvider::new(client.http_client(), api_url, model, api_key)
-            });
-            editor.set_edit_prediction_provider(Some(provider), window, cx);
+                let provider = cx.new(|_| {
+                    OllamaCompletionProvider::new(client.http_client(), api_url, model, api_key)
+                });
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            } else {
+                // No models configured - don't create a provider
+                // User will see "Configure Models" option in the completion menu
+                editor.set_edit_prediction_provider::<OllamaCompletionProvider>(None, window, cx);
+            }
         }
     }
 }
