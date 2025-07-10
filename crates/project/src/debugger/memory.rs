@@ -121,7 +121,7 @@ impl Memory {
     }
 
     pub(super) fn build_page(&self, page_address: PageAddress) -> Option<MemoryPageBuilder> {
-        if self.pages.get(&page_address).is_some() {
+        if self.pages.contains_key(&page_address) {
             // We already know the state of this page.
             None
         } else {
@@ -138,7 +138,7 @@ impl Memory {
         let pages = self
             .pages
             .range(pages)
-            .map(|(address, page)| (address.clone(), page.clone()))
+            .map(|(address, page)| (*address, page.clone()))
             .collect::<Vec<_>>();
         MemoryIterator::new(range, pages.into_iter())
     }
@@ -226,7 +226,7 @@ impl MemoryPageBuilder {
 }
 
 fn page_contents_into_iter(data: Arc<MappedPageContents>) -> Box<dyn Iterator<Item = MemoryCell>> {
-    let mut data_range = (0..data.0.len()).into_iter();
+    let mut data_range = 0..data.0.len();
     let iter = std::iter::from_fn(move || {
         let data = &data;
         let data_ref = data.clone();
@@ -248,7 +248,7 @@ fn page_contents_into_iter(data: Arc<MappedPageContents>) -> Box<dyn Iterator<It
             }
         })
     })
-    .flat_map(|f| f);
+    .flatten();
 
     Box::new(iter)
 }
