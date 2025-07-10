@@ -785,9 +785,6 @@ jobs:
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel.ps1
 
-      - name: Install trusted signing
-        uses: ./.github/actions/install_trusted_signing
-
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1

@@ -276,9 +276,6 @@ jobs:
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
 
-      - name: Install trusted signing
-        uses: ./.github/actions/install_trusted_signing
-
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
