@@ -1395,6 +1395,24 @@ impl KeybindingEditorModal {
         }
     }
 
+    fn validate_action_input(&self, cx: &App) -> anyhow::Result<Option<String>> {
+        let input = self
+            .input_editor
+            .as_ref()
+            .map(|editor| editor.read(cx).text(cx));
+
+        let value = input
+            .as_ref()
+            .map(|input| {
+                serde_json::from_str(input).context("Failed to parse action input as JSON")
+            })
+            .transpose()?;
+
+        cx.build_action(&self.editing_keybind.action_name, value)
+            .context("Failed to validate action input")?;
+        Ok(input)
+    }
+
     fn save(&mut self, cx: &mut Context<Self>) {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
@@ -1421,6 +1439,14 @@ impl KeybindingEditorModal {
             self.set_error(InputError::error(err.to_string()), cx);
             return;
         }
+
+        let new_input = match self.validate_action_input(cx) {
+            Err(input_err) => {
+                self.set_error(InputError::error(input_err.to_string()), cx);
+                return;
+            }
+            Ok(input) => input,
+        };
 
         let action_mapping: ActionMapping = (
             ui::text_for_keystrokes(&new_keystrokes, cx).into(),
@@ -1478,6 +1504,7 @@ impl KeybindingEditorModal {
                 existing_keybind,
                 &new_keystrokes,
                 new_context.as_deref(),
+                new_input.as_deref(),
                 &fs,
                 tab_size,
             )
@@ -1708,6 +1735,7 @@ async fn save_keybinding_update(
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
     new_context: Option<&str>,
+    new_input: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
 ) -> anyhow::Result<()> {
@@ -1715,17 +1743,16 @@ async fn save_keybinding_update(
         .await
         .context("Failed to load keymap file")?;
 
-    let input = existing
-        .action_input
-        .as_ref()
-        .map(|input| input.text.as_ref());
-
     let operation = if !create {
         let existing_keystrokes = existing.keystrokes().unwrap_or_default();
         let existing_context = existing
             .context
             .as_ref()
             .and_then(KeybindContextString::local_str);
+        let existing_input = existing
+            .action_input
+            .as_ref()
+            .map(|input| input.text.as_ref());
 
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
@@ -1733,7 +1760,7 @@ async fn save_keybinding_update(
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input,
+                input: existing_input,
             },
             target_keybind_source: existing
                 .source
@@ -1745,7 +1772,7 @@ async fn save_keybinding_update(
                 keystrokes: new_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input,
+                input: new_input,
             },
         }
     } else {
@@ -1754,7 +1781,7 @@ async fn save_keybinding_update(
             keystrokes: new_keystrokes,
             action_name: &existing.action_name,
             use_key_equivalents: false,
-            input,
+            input: new_input,
         })
     };
     let updated_keymap_contents =
