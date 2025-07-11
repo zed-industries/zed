@@ -655,12 +655,6 @@ impl KeymapEditor {
         self.context_menu.is_some()
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.context_menu_deployed() {
-            self.dismiss_context_menu(window, cx);
-        }
-    }
-
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected) = self.selected_index {
             let selected = selected + 1;
@@ -936,7 +930,6 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
-            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
