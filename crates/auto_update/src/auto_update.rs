@@ -923,7 +923,11 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
     );
     let running_app_path = std::env::current_exe()?;
     println!("==> Running app path: {:?}", running_app_path);
-    Ok(running_app_path)
+    let helper_path = running_app_path
+        .parent()
+        .context("No parent dir for Zed.exe")?
+        .join("tools\\auto_update_helper.exe");
+    Ok(helper_path)
 }
 
 pub fn check_pending_installation() {
@@ -941,7 +945,10 @@ pub fn check_pending_installation() {
             .parent()
             .map(|p| p.join("tools\\auto_update_helper.exe"))
     {
-        let _ = std::process::Command::new(helper).spawn();
+        let mut command = std::process::Command::new(helper);
+        command.arg("--launch");
+        command.arg("false");
+        let _ = command.spawn();
     }
 }
 

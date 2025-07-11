@@ -395,11 +395,7 @@ impl App {
         platform.on_quit(Box::new({
             let cx = app.clone();
             move || {
-                let mut lock = cx.borrow_mut();
-                if let Some(mut on_quit) = lock.on_quit.take() {
-                    on_quit();
-                }
-                lock.shutdown();
+                cx.borrow_mut().shutdown();
             }
         }));
 
@@ -430,6 +426,9 @@ impl App {
         }
 
         self.quitting = false;
+        if let Some(mut on_quit) = self.on_quit.take() {
+            on_quit();
+        }
     }
 
     /// Get the id of the current keyboard layout
@@ -1779,6 +1778,11 @@ impl App {
     /// These colors can be accessed through `cx.default_colors()`.
     pub fn init_colors(&mut self) {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
+    }
+
+    /// TODO:
+    pub fn unset_on_quit(&mut self) {
+        self.on_quit.take();
     }
 }
 

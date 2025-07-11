@@ -8,7 +8,7 @@ mod updater;
 #[cfg(target_os = "windows")]
 #[derive(clap::Parser, Debug)]
 struct Args {
-    #[clap(long, default_value = "false")]
+    #[clap(long, default_value = "true")]
     launch: bool,
 }
 
