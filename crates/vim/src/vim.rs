@@ -1046,15 +1046,14 @@ impl Vim {
                 }
 
                 s.move_with(|map, selection| {
-                    if (last_mode == Mode::HelixNormal || last_mode.is_visual())
-                        && !mode.is_visual()
-                    {
+                    if mode == Mode::HelixNormal || (last_mode.is_visual() && !mode.is_visual()) {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
                         }
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
+                        log::info!("Moving one character to the right");
                         selection.end = movement::right(map, selection.start);
                     }
                 });
