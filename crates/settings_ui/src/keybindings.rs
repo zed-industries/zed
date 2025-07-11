@@ -10,9 +10,10 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, KeyContext, Keystroke, ModifiersChangedEvent, MouseButton,
-    Point, ScrollStrategy, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
+    Action, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Global, KeyContext, KeyDownEvent, Keystroke,
+    ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, StyledText, Subscription,
+    WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -1818,7 +1819,8 @@ struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
     highlight_on_focus: bool,
-    focus_handle: FocusHandle,
+    outer_focus_handle: FocusHandle,
+    inner_focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
 }
@@ -1829,16 +1831,18 @@ impl KeystrokeInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let outer_focus_handle = cx.focus_handle();
+        let inner_focus_handle = cx.focus_handle();
         let _focus_subscriptions = [
-            cx.on_focus_in(&focus_handle, window, Self::on_focus_in),
-            cx.on_focus_out(&focus_handle, window, Self::on_focus_out),
+            cx.on_focus_in(&inner_focus_handle, window, Self::on_inner_focus_in),
+            cx.on_focus_out(&inner_focus_handle, window, Self::on_inner_focus_out),
         ];
         Self {
             keystrokes: Vec::new(),
             placeholder_keystrokes,
             highlight_on_focus: true,
-            focus_handle,
+            inner_focus_handle,
+            outer_focus_handle,
             intercept_subscription: None,
             _focus_subscriptions,
         }
@@ -1905,7 +1909,7 @@ impl KeystrokeInput {
         cx.notify();
     }
 
-    fn on_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.intercept_subscription.is_none() {
             let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
                 this.handle_keystroke(&event.keystroke, cx);
@@ -1914,7 +1918,7 @@ impl KeystrokeInput {
         }
     }
 
-    fn on_focus_out(
+    fn on_inner_focus_out(
         &mut self,
         _event: gpui::FocusOutEvent,
         _window: &mut Window,
@@ -1963,26 +1967,18 @@ impl EventEmitter<()> for KeystrokeInput {}
 
 impl Focusable for KeystrokeInput {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+        self.outer_focus_handle.clone()
     }
 }
 
 impl Render for KeystrokeInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        let is_focused = self.focus_handle.is_focused(window);
+        let is_inner_focused = self.inner_focus_handle.is_focused(window);
 
         return h_flex()
-            .id("keybinding_input")
-            .track_focus(&self.focus_handle)
-            .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-            .on_key_up(cx.listener(Self::on_key_up))
-            .when(self.highlight_on_focus, |this| {
-                this.focus(|mut style| {
-                    style.border_color = Some(colors.border_focused);
-                    style
-                })
-            })
+            .id("keystroke-input")
+            .track_focus(&self.outer_focus_handle)
             .py_2()
             .px_3()
             .gap_2()
@@ -1993,10 +1989,31 @@ impl Render for KeystrokeInput {
             .rounded_md()
             .overflow_hidden()
             .bg(colors.editor_background)
-            .border_1()
+            .border_2()
             .border_color(colors.border_variant)
+            .focus(|mut s| {
+                s.border_color = Some(colors.border_focused);
+                s
+            })
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                // TODO: replace with action
+                if !event.keystroke.modifiers.modified() && event.keystroke.key == "enter" {
+                    window.focus(&this.inner_focus_handle);
+                    cx.notify();
+                }
+            }))
             .child(
                 h_flex()
+                    .id("keystroke-input-inner")
+                    .track_focus(&self.inner_focus_handle)
+                    .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
+                    .on_key_up(cx.listener(Self::on_key_up))
+                    .when(self.highlight_on_focus, |this| {
+                        this.focus(|mut style| {
+                            style.border_color = Some(colors.border_focused);
+                            style
+                        })
+                    })
                     .w_full()
                     .min_w_0()
                     .justify_center()
@@ -2011,7 +2028,7 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("backspace-btn", IconName::Delete)
                             .tooltip(Tooltip::text("Delete Keystroke"))
-                            .when(!is_focused, |this| this.icon_color(Color::Muted))
+                            .when(!is_inner_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.pop();
                                 cx.emit(());
@@ -2021,7 +2038,7 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("clear-btn", IconName::Eraser)
                             .tooltip(Tooltip::text("Clear Keystrokes"))
-                            .when(!is_focused, |this| this.icon_color(Color::Muted))
+                            .when(!is_inner_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.clear();
                                 cx.emit(());
