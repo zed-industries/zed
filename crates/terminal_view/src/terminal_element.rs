@@ -501,10 +501,12 @@ impl TerminalElement {
     /// expand this list if we run into more similar cases, but the goal
     /// is to be conservative here.
     fn is_decorative_character(ch: char) -> bool {
-        matches!(ch as u32,
-            0x2500..=0x257F | // Box Drawing
-            0x2580..=0x259F | // Block Elements
-            0x25A0..=0x25D7   // Geometric Shapes (block/box-like subset)
+        matches!(
+            ch as u32,
+            // 0x2500..=0x257F Box Drawing
+            // 0x2580..=0x259F Block Elements
+            // 0x25A0..=0x25D7 Geometric Shapes (block/box-like subset)
+            0x2500..=0x25D7
         )
     }
 
