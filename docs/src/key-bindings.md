@@ -144,7 +144,7 @@ Otherwise, read on...
 
 #### macOS
 
-On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII; macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further and it can always match key-presses against either the ASCII layout, or the real layout regardless of modifiers, and regardless of the `use_key_equivalents` setting. For example in Thai, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q` or `ctrl-ๆ`
+On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII; macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further and it can always match key-presses against the ASCII layout if any modifier is held down. For example on a Thai layout, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q`.
 
 On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.) it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity, `option-2` produces `@`. To ensure that all the builtin keyboard shortcuts can still be typed on these keyboards we move key-bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running `dev: Open Key Context View` from the command palette.
 
@@ -163,7 +163,7 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 
 ### Linux
 
-Since v0.196.0 on Linux if the key that you type doesn't produce an ASCII character then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts.
+Since v0.196.0 on Linux if the key that you type doesn't produce an ASCII character then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts. For example, on a Russian keyboard typing `ctrl-ф` will match bindings assigned to `ctrl-a`.
 
 We do not yet move shortcuts around to ensure that all the builtin shortcuts can be typed on every layout; so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much wanted!
 
