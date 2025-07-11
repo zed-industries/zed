@@ -2,7 +2,7 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
+    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, ScrollStrategy,
     ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, bounds,
     point, size, uniform_list,
 };
@@ -257,6 +257,10 @@ impl MemoryView {
                     start_address: as_address,
                     end_address: as_address + access_size - 1,
                 }));
+                let line_ix = (as_address & 0xfff) / this.view_state.line_width.width as u64;
+                this.scroll_handle
+                    .scroll_to_item(line_ix as usize, ScrollStrategy::Center);
+
                 cx.notify();
             })
             .ok();
