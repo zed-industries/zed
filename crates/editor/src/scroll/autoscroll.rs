@@ -131,7 +131,7 @@ impl Editor {
             scroll_position.y = max_scroll_top;
         }
 
-        let mut editor_was_scrolled = if original_y != scroll_position.y {
+        let editor_was_scrolled = if original_y != scroll_position.y {
             self.set_scroll_position(scroll_position, window, cx)
         } else {
             WasScrolled(false)
@@ -216,7 +216,7 @@ impl Editor {
             target_bottom = target_top + 1.;
         }
 
-        match strategy {
+        let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 let target_top = (target_top - margin).max(0.0);
@@ -229,47 +229,42 @@ impl Editor {
 
                 if needs_scroll_up && !needs_scroll_down {
                     scroll_position.y = target_top;
-                    editor_was_scrolled =
-                        self.set_scroll_position_internal(scroll_position, local, true, window, cx);
-                }
-                if !needs_scroll_up && needs_scroll_down {
+                } else if !needs_scroll_up && needs_scroll_down {
                     scroll_position.y = target_bottom - visible_lines;
-                    editor_was_scrolled =
-                        self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                }
+
+                if needs_scroll_up ^ needs_scroll_down {
+                    self.set_scroll_position_internal(scroll_position, local, true, window, cx)
+                } else {
+                    WasScrolled(false)
                 }
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Focused => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 scroll_position.y = (target_top - margin).max(0.0);
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Top => {
                 scroll_position.y = (target_top).max(0.0);
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Bottom => {
                 scroll_position.y = (target_bottom - visible_lines).max(0.0);
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::BottomRelative(lines) => {
                 scroll_position.y = target_bottom + lines as f32;
-                editor_was_scrolled =
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
-        }
+        };
 
         self.scroll_manager.last_autoscroll = Some((
             self.scroll_manager.anchor.offset,
@@ -278,7 +273,8 @@ impl Editor {
             strategy,
         ));
 
-        (NeedsHorizontalAutoscroll(true), editor_was_scrolled)
+        let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
+        (NeedsHorizontalAutoscroll(true), was_scrolled)
     }
 
     pub(crate) fn autoscroll_horizontally(
