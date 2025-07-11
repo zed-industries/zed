@@ -921,6 +921,9 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
         "failed to start installer: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // We return the path to the update helper program, because it will
+    // perform the final steps of the update process, copying the new binary,
+    // deleting the old one, and launching the new binary.
     let helper_path = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
