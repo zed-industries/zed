@@ -1924,6 +1924,11 @@ impl KeystrokeInput {
     }
 
     fn keystrokes(&self) -> &[Keystroke] {
+        if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+            && self.keystrokes.is_empty()
+        {
+            return placeholders;
+        }
         if self
             .keystrokes
             .last()
@@ -1932,6 +1937,25 @@ impl KeystrokeInput {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
         return &self.keystrokes;
+    }
+
+    fn render_keystrokes(&self) -> impl Iterator<Item = Div> {
+        let (keystrokes, color) = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+            && self.keystrokes.is_empty()
+        {
+            (placeholders, Color::Placeholder)
+        } else {
+            (&self.keystrokes, Color::Default)
+        };
+        keystrokes.iter().map(move |keystroke| {
+            h_flex().children(ui::render_keystroke(
+                keystroke,
+                Some(color),
+                Some(rems(0.875).into()),
+                ui::PlatformStyle::platform(),
+                false,
+            ))
+        })
     }
 }
 
@@ -1978,27 +2002,7 @@ impl Render for KeystrokeInput {
                     .justify_center()
                     .flex_wrap()
                     .gap(ui::DynamicSpacing::Base04.rems(cx))
-                    .children(
-                        {
-                            if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
-                                && self.keystrokes.is_empty()
-                            {
-                                &placeholders
-                            } else {
-                                &self.keystrokes
-                            }
-                        }
-                        .iter()
-                        .map(|keystroke| {
-                            h_flex().children(ui::render_keystroke(
-                                keystroke,
-                                None,
-                                Some(rems(0.875).into()),
-                                ui::PlatformStyle::platform(),
-                                false,
-                            ))
-                        }),
-                    ),
+                    .children(self.render_keystrokes()),
             )
             .child(
                 h_flex()
