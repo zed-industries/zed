@@ -952,7 +952,6 @@ impl AcpThread {
             let buffer = load??.await?;
 
             action_log.update(cx, |action_log, cx| {
-                dbg!("reading...", buffer.read(cx).text());
                 action_log.buffer_read(buffer.clone(), cx);
             })?;
             project.update(cx, |project, cx| {

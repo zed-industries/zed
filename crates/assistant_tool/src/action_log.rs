@@ -738,7 +738,7 @@ impl ActionLog {
     }
 
     pub fn reject_all_edits(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let futures = self.changed_buffers(cx).into_iter().map(|(buffer, _)| {
+        let futures = self.changed_buffers(cx).into_keys().map(|buffer| {
             let reject = self.reject_edits_in_ranges(buffer, vec![Anchor::MIN..Anchor::MAX], cx);
 
             async move {
