@@ -632,6 +632,11 @@ impl KeymapEditor {
                     Box::new(EditBinding),
                 )
                 .action("Create", Box::new(CreateBinding))
+                .action_disabled_when(
+                    selected_binding_is_unbound,
+                    "Delete",
+                    Box::new(DeleteBinding),
+                )
                 .action("Copy action", Box::new(CopyAction))
                 .action_disabled_when(
                     selected_binding_has_no_context,
