@@ -9,6 +9,7 @@ dependencies = [
  "agent_servers",
  "agentic-coding-protocol",
  "anyhow",
+ "assistant_tool",
  "async-pipe",
  "buffer_diff",
  "editor",
@@ -263,9 +264,9 @@ dependencies = [
 
 [[package]]
 name = "agentic-coding-protocol"
-version = "0.0.6"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1ac0351749af7bf53c65042ef69fefb9351aa8b7efa0a813d6281377605c37d"
+checksum = "a75f520bcc049ebe40c8c99427aa61b48ad78a01bcc96a13b350b903dcfb9438"
 dependencies = [
  "anyhow",
  "chrono",

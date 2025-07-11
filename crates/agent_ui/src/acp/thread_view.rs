@@ -1,33 +1,37 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use agentic_coding_protocol::{self as acp};
+use assistant_tool::ActionLog;
+use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
-    EditorStyle, MinimapVisibility, MultiBuffer,
+    EditorStyle, MinimapVisibility, MultiBuffer, PathKey,
 };
 use file_icons::FileIcons;
 use futures::channel::oneshot;
 use gpui::{
-    Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId, Focusable,
-    Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement, Subscription, TextStyle,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, div, list, percentage,
-    prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement,
+    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Window, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
+    pulsating_between,
 };
-use gpui::{FocusHandle, Task};
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
 use settings::Settings as _;
+use text::Anchor;
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
 
 use ::acp::{
@@ -38,6 +42,8 @@ use ::acp::{
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
+use crate::agent_diff::AgentDiff;
+use crate::{AgentDiffPane, Follow, KeepAll, OpenAgentDiff, RejectAll};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -53,6 +59,7 @@ pub struct AcpThreadView {
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
+    edits_expanded: bool,
     message_history: MessageHistory<acp::SendUserMessageParams>,
 }
 
@@ -62,7 +69,7 @@ enum ThreadState {
     },
     Ready {
         thread: Entity<AcpThread>,
-        _subscription: Subscription,
+        _subscription: [Subscription; 2],
     },
     LoadError(LoadError),
     Unauthenticated {
@@ -136,9 +143,9 @@ impl AcpThreadView {
         );
 
         Self {
-            workspace,
+            workspace: workspace.clone(),
             project: project.clone(),
-            thread_state: Self::initial_state(project, window, cx),
+            thread_state: Self::initial_state(workspace, project, window, cx),
             message_editor,
             mention_set,
             diff_editors: Default::default(),
@@ -147,11 +154,13 @@ impl AcpThreadView {
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            edits_expanded: false,
             message_history: MessageHistory::new(),
         }
     }
 
     fn initial_state(
+        workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -219,15 +228,23 @@ impl AcpThreadView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(()) => {
-                        let subscription =
+                        let thread_subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
+
+                        let action_log = thread.read(cx).action_log().clone();
+                        let action_log_subscription =
+                            cx.observe(&action_log, |_, _, cx| cx.notify());
+
                         this.list_state
                             .splice(0..0, thread.read(cx).entries().len());
 
+                        AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
+
                         this.thread_state = ThreadState::Ready {
                             thread,
-                            _subscription: subscription,
+                            _subscription: [thread_subscription, action_log_subscription],
                         };
+
                         cx.notify();
                     }
                     Err(err) => {
@@ -250,7 +267,7 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn thread(&self) -> Option<&Entity<AcpThread>> {
+    pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } | ThreadState::Unauthenticated { thread } => {
                 Some(thread)
@@ -281,7 +298,6 @@ impl AcpThreadView {
 
         let mut ix = 0;
         let mut chunks: Vec<acp::UserMessageChunk> = Vec::new();
-
         let project = self.project.clone();
         self.message_editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -377,6 +393,33 @@ impl AcpThreadView {
         );
     }
 
+    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
+        }
+    }
+
+    fn open_edited_buffer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let Some(diff) =
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
+        else {
+            return;
+        };
+
+        diff.update(cx, |diff, cx| {
+            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+        })
+    }
+
     fn set_draft_message(
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
@@ -464,7 +507,8 @@ impl AcpThreadView {
         let count = self.list_state.item_count();
         match event {
             AcpThreadEvent::NewEntry => {
-                self.sync_thread_entry_view(thread.read(cx).entries().len() - 1, window, cx);
+                let index = thread.read(cx).entries().len() - 1;
+                self.sync_thread_entry_view(index, window, cx);
                 self.list_state.splice(count..count, 1);
             }
             AcpThreadEvent::EntryUpdated(index) => {
@@ -537,15 +581,7 @@ impl AcpThreadView {
 
     fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        if let AgentThreadEntry::ToolCall(ToolCall {
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        }) = &entry
-        {
-            Some(diff.multibuffer.clone())
-        } else {
-            None
-        }
+        entry.diff().map(|diff| diff.multibuffer.clone())
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -566,7 +602,8 @@ impl AcpThreadView {
                             Markdown::new(format!("Error: {err}").into(), None, None, cx)
                         }))
                     } else {
-                        this.thread_state = Self::initial_state(project.clone(), window, cx)
+                        this.thread_state =
+                            Self::initial_state(this.workspace.clone(), project.clone(), window, cx)
                     }
                     this.auth_task.take()
                 })
@@ -1529,6 +1566,357 @@ impl AcpThreadView {
         container.into_any()
     }
 
+    fn render_edits_bar(
+        &self,
+        thread_entity: &Entity<AcpThread>,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let thread = thread_entity.read(cx);
+        let action_log = thread.action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+
+        if changed_buffers.is_empty() {
+            return None;
+        }
+
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let active_color = cx.theme().colors().element_selected;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
+        let pending_edits = thread.has_pending_edit_tool_calls();
+        let expanded = self.edits_expanded;
+
+        v_flex()
+            .mt_1()
+            .mx_2()
+            .bg(bg_edit_files_disclosure)
+            .border_1()
+            .border_b_0()
+            .border_color(cx.theme().colors().border)
+            .rounded_t_md()
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::black().opacity(0.15),
+                offset: point(px(1.), px(-1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            }])
+            .child(self.render_edits_bar_summary(
+                action_log,
+                &changed_buffers,
+                expanded,
+                pending_edits,
+                window,
+                cx,
+            ))
+            .when(expanded, |parent| {
+                parent.child(self.render_edits_bar_files(
+                    action_log,
+                    &changed_buffers,
+                    pending_edits,
+                    cx,
+                ))
+            })
+            .into_any()
+            .into()
+    }
+
+    fn render_edits_bar_summary(
+        &self,
+        action_log: &Entity<ActionLog>,
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        expanded: bool,
+        pending_edits: bool,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
+
+        let focus_handle = self.focus_handle(cx);
+
+        h_flex()
+            .p_1()
+            .justify_between()
+            .when(expanded, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id("edits-container")
+                    .cursor_pointer()
+                    .w_full()
+                    .gap_1()
+                    .child(Disclosure::new("edits-disclosure", expanded))
+                    .map(|this| {
+                        if pending_edits {
+                            this.child(
+                                Label::new(format!(
+                                    "Editing {} {}…",
+                                    changed_buffers.len(),
+                                    if changed_buffers.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ))
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                                .with_animation(
+                                    "edit-label",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.3, 0.7)),
+                                    |label, delta| label.alpha(delta),
+                                ),
+                            )
+                        } else {
+                            this.child(
+                                Label::new("Edits")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                            .child(
+                                Label::new(format!(
+                                    "{} {}",
+                                    changed_buffers.len(),
+                                    if changed_buffers.len() == 1 {
+                                        "file"
+                                    } else {
+                                        "files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.edits_expanded = !this.edits_expanded;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        IconButton::new("review-changes", IconName::ListTodo)
+                            .icon_size(IconSize::Small)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Review Changes",
+                                        &OpenAgentDiff,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.dispatch_action(OpenAgentDiff.boxed_clone(), cx);
+                            })),
+                    )
+                    .child(Divider::vertical().color(DividerColor::Border))
+                    .child(
+                        Button::new("reject-all-changes", "Reject All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &RejectAll,
+                                    &focus_handle.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click({
+                                let action_log = action_log.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    action_log.update(cx, |action_log, cx| {
+                                        action_log.reject_all_edits(cx).detach();
+                                    })
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new("keep-all-changes", "Keep All")
+                            .label_size(LabelSize::Small)
+                            .disabled(pending_edits)
+                            .when(pending_edits, |this| {
+                                this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
+                            })
+                            .key_binding(
+                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click({
+                                let action_log = action_log.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    action_log.update(cx, |action_log, cx| {
+                                        action_log.keep_all_edits(cx);
+                                    })
+                                })
+                            }),
+                    ),
+            )
+    }
+
+    fn render_edits_bar_files(
+        &self,
+        action_log: &Entity<ActionLog>,
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        pending_edits: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let editor_bg_color = cx.theme().colors().editor_background;
+
+        v_flex().children(changed_buffers.into_iter().enumerate().flat_map(
+            |(index, (buffer, _diff))| {
+                let file = buffer.read(cx).file()?;
+                let path = file.path();
+
+                let file_path = path.parent().and_then(|parent| {
+                    let parent_str = parent.to_string_lossy();
+
+                    if parent_str.is_empty() {
+                        None
+                    } else {
+                        Some(
+                            Label::new(format!("/{}{}", parent_str, std::path::MAIN_SEPARATOR_STR))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
+                        )
+                    }
+                });
+
+                let file_name = path.file_name().map(|name| {
+                    Label::new(name.to_string_lossy().to_string())
+                        .size(LabelSize::XSmall)
+                        .buffer_font(cx)
+                });
+
+                let file_icon = FileIcons::get_icon(&path, cx)
+                    .map(Icon::from_path)
+                    .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+                    .unwrap_or_else(|| {
+                        Icon::new(IconName::File)
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
+                    });
+
+                let overlay_gradient = linear_gradient(
+                    90.,
+                    linear_color_stop(editor_bg_color, 1.),
+                    linear_color_stop(editor_bg_color.opacity(0.2), 0.),
+                );
+
+                let element = h_flex()
+                    .group("edited-code")
+                    .id(("file-container", index))
+                    .relative()
+                    .py_1()
+                    .pl_2()
+                    .pr_1()
+                    .gap_2()
+                    .justify_between()
+                    .bg(editor_bg_color)
+                    .when(index < changed_buffers.len() - 1, |parent| {
+                        parent.border_color(cx.theme().colors().border).border_b_1()
+                    })
+                    .child(
+                        h_flex()
+                            .id(("file-name", index))
+                            .pr_8()
+                            .gap_1p5()
+                            .max_w_full()
+                            .overflow_x_scroll()
+                            .child(file_icon)
+                            .child(h_flex().gap_0p5().children(file_name).children(file_path))
+                            .on_click({
+                                let buffer = buffer.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.open_edited_buffer(&buffer, window, cx);
+                                })
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .visible_on_hover("edited-code")
+                            .child(
+                                Button::new("review", "Review")
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.open_edited_buffer(&buffer, window, cx);
+                                        })
+                                    }),
+                            )
+                            .child(Divider::vertical().color(DividerColor::BorderVariant))
+                            .child(
+                                Button::new("reject-file", "Reject")
+                                    .label_size(LabelSize::Small)
+                                    .disabled(pending_edits)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        let action_log = action_log.clone();
+                                        move |_, _, cx| {
+                                            action_log.update(cx, |action_log, cx| {
+                                                action_log
+                                                    .reject_edits_in_ranges(
+                                                        buffer.clone(),
+                                                        vec![Anchor::MIN..Anchor::MAX],
+                                                        cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                            })
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new("keep-file", "Keep")
+                                    .label_size(LabelSize::Small)
+                                    .disabled(pending_edits)
+                                    .on_click({
+                                        let buffer = buffer.clone();
+                                        let action_log = action_log.clone();
+                                        move |_, _, cx| {
+                                            action_log.update(cx, |action_log, cx| {
+                                                action_log.keep_edits_in_range(
+                                                    buffer.clone(),
+                                                    Anchor::MIN..Anchor::MAX,
+                                                    cx,
+                                                );
+                                            })
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("gradient-overlay")
+                            .absolute()
+                            .h_full()
+                            .w_12()
+                            .top_0()
+                            .bottom_0()
+                            .right(px(152.))
+                            .bg(overlay_gradient),
+                    );
+
+                Some(element)
+            },
+        ))
+    }
+
     fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let settings = ThemeSettings::get_global(cx);
         let font_size = TextSize::Small
@@ -1557,6 +1945,76 @@ impl AcpThreadView {
             },
         )
         .into_any()
+    }
+
+    fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.thread().map_or(true, |thread| {
+            thread.read(cx).status() == ThreadStatus::Idle
+        }) {
+            let is_editor_empty = self.message_editor.read(cx).is_empty(cx);
+            IconButton::new("send-message", IconName::Send)
+                .icon_color(Color::Accent)
+                .style(ButtonStyle::Filled)
+                .disabled(self.thread().is_none() || is_editor_empty)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.chat(&Chat, window, cx);
+                }))
+                .when(!is_editor_empty, |button| {
+                    button.tooltip(move |window, cx| Tooltip::for_action("Send", &Chat, window, cx))
+                })
+                .when(is_editor_empty, |button| {
+                    button.tooltip(Tooltip::text("Type a message to submit"))
+                })
+                .into_any_element()
+        } else {
+            IconButton::new("stop-generation", IconName::StopFilled)
+                .icon_color(Color::Error)
+                .style(ButtonStyle::Tinted(ui::TintColor::Error))
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action("Stop Generation", &editor::actions::Cancel, window, cx)
+                })
+                .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
+                .into_any_element()
+        }
+    }
+
+    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let following = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or(false);
+
+        IconButton::new("follow-agent", IconName::Crosshair)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(following)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
+            .tooltip(move |window, cx| {
+                if following {
+                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                } else {
+                    Tooltip::with_meta(
+                        "Follow Agent",
+                        Some(&Follow),
+                        "Track the agent's location as it reads and edits files.",
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        if following {
+                            workspace.unfollow(CollaboratorId::Agent, window, cx);
+                        } else {
+                            workspace.follow(CollaboratorId::Agent, window, cx);
+                        }
+                    })
+                    .ok();
+            }))
     }
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
@@ -1673,10 +2131,6 @@ impl Focusable for AcpThreadView {
 
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let text = self.message_editor.read(cx).text(cx);
-        let is_editor_empty = text.is_empty();
-        let focus_handle = self.message_editor.focus_handle(cx);
-
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
@@ -1702,6 +2156,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
+            .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { .. } => v_flex()
                     .p_2()
@@ -1755,6 +2210,7 @@ impl Render for AcpThreadView {
                                 .child(LoadingLabel::new("").size(LabelSize::Small))
                                 .into(),
                         })
+                        .children(self.render_edits_bar(&thread, window, cx))
                     } else {
                         this.child(self.render_empty_state(false, cx))
                     }
@@ -1782,47 +2238,12 @@ impl Render for AcpThreadView {
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .child(self.render_message_editor(cx))
-                    .child({
-                        let thread = self.thread();
-
-                        h_flex().justify_end().child(
-                            if thread.map_or(true, |thread| {
-                                thread.read(cx).status() == ThreadStatus::Idle
-                            }) {
-                                IconButton::new("send-message", IconName::Send)
-                                    .icon_color(Color::Accent)
-                                    .style(ButtonStyle::Filled)
-                                    .disabled(thread.is_none() || is_editor_empty)
-                                    .on_click({
-                                        let focus_handle = focus_handle.clone();
-                                        move |_event, window, cx| {
-                                            focus_handle.dispatch_action(&Chat, window, cx);
-                                        }
-                                    })
-                                    .when(!is_editor_empty, |button| {
-                                        button.tooltip(move |window, cx| {
-                                            Tooltip::for_action("Send", &Chat, window, cx)
-                                        })
-                                    })
-                                    .when(is_editor_empty, |button| {
-                                        button.tooltip(Tooltip::text("Type a message to submit"))
-                                    })
-                            } else {
-                                IconButton::new("stop-generation", IconName::StopFilled)
-                                    .icon_color(Color::Error)
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Error))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::for_action(
-                                            "Stop Generation",
-                                            &editor::actions::Cancel,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
-                            },
-                        )
-                    }),
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(self.render_follow_toggle(cx))
+                            .child(self.render_send_button(cx)),
+                    ),
             )
     }
 }

@@ -371,7 +371,8 @@
     "bindings": {
       "enter": "agent::Chat",
       "up": "agent::PreviousHistoryMessage",
-      "down": "agent::NextHistoryMessage"
+      "down": "agent::NextHistoryMessage",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {

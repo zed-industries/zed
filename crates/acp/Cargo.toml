@@ -20,6 +20,7 @@ gemini = []
 agent_servers.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
+assistant_tool.workspace = true
 buffer_diff.workspace = true
 editor.workspace = true
 futures.workspace = true
