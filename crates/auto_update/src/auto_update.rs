@@ -921,9 +921,7 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
         "failed to start installer: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let running_app_path = std::env::current_exe()?;
-    println!("==> Running app path: {:?}", running_app_path);
-    let helper_path = running_app_path
+    let helper_path = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
         .join("tools\\auto_update_helper.exe");
