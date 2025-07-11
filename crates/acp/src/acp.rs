@@ -176,6 +176,14 @@ impl AgentThreadEntry {
             None
         }
     }
+
+    pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
+        if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
+            Some(locations)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
