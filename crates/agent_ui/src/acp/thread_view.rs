@@ -581,15 +581,7 @@ impl AcpThreadView {
 
     fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        if let AgentThreadEntry::ToolCall(ToolCall {
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        }) = &entry
-        {
-            Some(diff.multibuffer.clone())
-        } else {
-            None
-        }
+        entry.diff().map(|diff| diff.multibuffer.clone())
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1576,11 +1568,12 @@ impl AcpThreadView {
 
     fn render_edits_bar(
         &self,
-        thread: &Entity<AcpThread>,
+        thread_entity: &Entity<AcpThread>,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let action_log = thread.read(cx).action_log();
+        let thread = thread_entity.read(cx);
+        let action_log = thread.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         if changed_buffers.is_empty() {
@@ -1591,8 +1584,7 @@ impl AcpThreadView {
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
-        // todo!
-        let pending_edits = false;
+        let pending_edits = thread.has_pending_edit_tool_calls();
         let expanded = self.edits_expanded;
 
         v_flex()

@@ -489,24 +489,6 @@ impl ActionLog {
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
     }
 
-    // todo! merge these ^v
-
-    pub fn buffer_edited_with_old_buffer(
-        &mut self,
-        buffer: Entity<Buffer>,
-        old_buffer: &language::TextBufferSnapshot,
-        cx: &mut Context<Self>,
-    ) {
-        self.edited_since_project_diagnostics_check = true;
-
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
-        if let TrackedBufferStatus::Deleted = tracked_buffer.status {
-            tracked_buffer.status = TrackedBufferStatus::Modified;
-        }
-        tracked_buffer.diff_base = old_buffer.as_rope().clone();
-        tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
-    }
-
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
@@ -973,7 +955,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{env, path::Path};
+    use std::env;
     use util::{RandomCharIter, path};
 
     #[ctor::ctor]
@@ -1151,53 +1133,6 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
-    }
-
-    #[gpui::test]
-    async fn test_with_old_buffer(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), json!({"file": "a\nb\nc"}))
-            .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let file_path = project
-            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        let old_buffer = cx.update(|cx| cx.new(|cx| Buffer::local("a\nb\nc", cx)));
-        let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-
-        fs.write(Path::new(path!("/dir/file")), "a\nc".as_bytes())
-            .await
-            .unwrap();
-
-        cx.run_until_parked();
-        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "a\nc");
-
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| {
-                log.buffer_edited_with_old_buffer(buffer.clone(), &old_buffer_snapshot, cx)
-            });
-        });
-
-        cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(1, 0)..Point::new(1, 0),
-                    diff_status: DiffHunkStatusKind::Deleted,
-                    old_text: "b\n".into()
-                }]
-            )]
-        );
     }
 
     #[gpui::test(iterations = 10)]

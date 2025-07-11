@@ -164,6 +164,18 @@ impl AgentThreadEntry {
             Self::ToolCall(too_call) => too_call.to_markdown(cx),
         }
     }
+
+    pub fn diff(&self) -> Option<&Diff> {
+        if let AgentThreadEntry::ToolCall(ToolCall {
+            content: Some(ToolCallContent::Diff { diff }),
+            ..
+        }) = self
+        {
+            Some(&diff)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -616,6 +628,26 @@ impl AcpThread {
         } else {
             ThreadStatus::Idle
         }
+    }
+
+    pub fn has_pending_edit_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status:
+                        ToolCallStatus::Allowed {
+                            status: acp::ToolCallStatus::Running,
+                            ..
+                        },
+                    content: Some(ToolCallContent::Diff { .. }),
+                    ..
+                }) => return true,
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
     }
 
     pub fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
