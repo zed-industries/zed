@@ -77,6 +77,8 @@ pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
 /// terminology is both archaic and unclear.
 pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
+const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
+
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
     refresh_state: Option<RefreshState>,
@@ -424,12 +426,7 @@ impl X11Client {
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
-        let scale_factor = resource_database
-            .get_value("Xft.dpi", "Xft.dpi")
-            .ok()
-            .flatten()
-            .map(|dpi: f32| dpi / 96.0)
-            .unwrap_or(1.0);
+        let scale_factor = get_scale_factor(&xcb_connection, &resource_database, x_root_index);
         let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
             .context("Failed to initialize cursor theme handler")?
             .reply()
@@ -2271,4 +2268,192 @@ fn create_invisible_cursor(
 
     xcb_flush(connection);
     Ok(cursor)
+}
+
+enum DpiMode {
+    Randr,
+    Scale(f32),
+    NotSet,
+}
+
+fn get_scale_factor(
+    connection: &XCBConnection,
+    resource_database: &Database,
+    screen_index: usize,
+) -> f32 {
+    let env_dpi = std::env::var(GPUI_X11_SCALE_FACTOR_ENV)
+        .ok()
+        .map(|var| {
+            if var.to_lowercase() == "randr" {
+                DpiMode::Randr
+            } else if let Ok(scale) = var.parse::<f32>() {
+                if valid_scale_factor(scale) {
+                    DpiMode::Scale(scale)
+                } else {
+                    panic!(
+                        "`{}` must be a positive normal number or `randr`. Got `{}`",
+                        GPUI_X11_SCALE_FACTOR_ENV, var
+                    );
+                }
+            } else if var.is_empty() {
+                DpiMode::NotSet
+            } else {
+                panic!(
+                    "`{}` must be a positive number or `randr`. Got `{}`",
+                    GPUI_X11_SCALE_FACTOR_ENV, var
+                );
+            }
+        })
+        .unwrap_or(DpiMode::NotSet);
+
+    match env_dpi {
+        DpiMode::Scale(scale) => {
+            log::info!(
+                "Using scale factor from {}: {}",
+                GPUI_X11_SCALE_FACTOR_ENV,
+                scale
+            );
+            return scale;
+        }
+        DpiMode::Randr => {
+            if let Some(scale) = get_randr_scale_factor(connection, screen_index) {
+                log::info!(
+                    "Using RandR scale factor from {}=randr: {}",
+                    GPUI_X11_SCALE_FACTOR_ENV,
+                    scale
+                );
+                return scale;
+            }
+            log::warn!("Failed to calculate RandR scale factor, falling back to default");
+            return 1.0;
+        }
+        DpiMode::NotSet => {}
+    }
+
+    // TODO: Use scale factor from XSettings here
+
+    if let Some(dpi) = resource_database
+        .get_value("Xft.dpi", "Xft.dpi")
+        .ok()
+        .flatten()
+    {
+        let scale = dpi / 96.0; // base dpi
+        log::info!("Using scale factor from Xft.dpi: {}", scale);
+        return scale;
+    }
+
+    if let Some(scale) = get_randr_scale_factor(connection, screen_index) {
+        log::info!("Using RandR scale factor: {}", scale);
+        return scale;
+    }
+
+    log::info!("Using default scale factor: 1.0");
+    1.0
+}
+
+fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
+    let root = connection.setup().roots.get(screen_index)?.root;
+
+    let resources_cookie = connection.randr_get_screen_resources_current(root).ok()?;
+    let primary_cookie = connection.randr_get_output_primary(root).ok()?;
+
+    let screen_resources = resources_cookie.reply().ok()?;
+    let primary_output = primary_cookie.reply().ok()?.output;
+
+    let mut crtc_cookies = Vec::with_capacity(screen_resources.crtcs.len());
+    for &crtc in &screen_resources.crtcs {
+        if let Ok(cookie) = connection.randr_get_crtc_info(crtc, CURRENT_TIME) {
+            crtc_cookies.push((crtc, cookie));
+        }
+    }
+
+    let mut crtc_infos: HashMap<randr::Crtc, randr::GetCrtcInfoReply> = HashMap::new();
+    let mut valid_outputs: HashSet<randr::Output> = HashSet::new();
+    for (crtc, cookie) in crtc_cookies {
+        if let Ok(reply) = cookie.reply() {
+            if reply.width > 0 && reply.height > 0 && !reply.outputs.is_empty() {
+                crtc_infos.insert(crtc, reply.clone());
+                valid_outputs.extend(&reply.outputs);
+            }
+        }
+    }
+
+    if valid_outputs.is_empty() {
+        return None;
+    }
+
+    let mut output_cookies = Vec::with_capacity(valid_outputs.len());
+    for &output in &valid_outputs {
+        if let Ok(cookie) = connection.randr_get_output_info(output, CURRENT_TIME) {
+            output_cookies.push((output, cookie));
+        }
+    }
+    let mut output_infos: HashMap<randr::Output, randr::GetOutputInfoReply> = HashMap::new();
+    for (output, cookie) in output_cookies {
+        if let Ok(reply) = cookie.reply() {
+            output_infos.insert(output, reply);
+        }
+    }
+
+    let mut fallback_scale: Option<f32> = None;
+    for (&crtc, crtc_info) in &crtc_infos {
+        for &output in &crtc_info.outputs {
+            if let Some(output_info) = output_infos.get(&output) {
+                if output_info.connection != randr::Connection::CONNECTED {
+                    continue;
+                }
+
+                if output_info.mm_width == 0 || output_info.mm_height == 0 {
+                    continue;
+                }
+
+                let scale_factor = get_dpi_factor(
+                    (crtc_info.width as u32, crtc_info.height as u32),
+                    (output_info.mm_width as u64, output_info.mm_height as u64),
+                );
+
+                if output == primary_output {
+                    return Some(scale_factor);
+                } else if fallback_scale.is_none() {
+                    fallback_scale = Some(scale_factor);
+                }
+            }
+        }
+    }
+
+    fallback_scale
+}
+
+fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64, u64)) -> f32 {
+    let ppmm = ((width_px as f64 * height_px as f64) / (width_mm as f64 * height_mm as f64)).sqrt(); // pixels per mm
+
+    const MM_PER_INCH: f64 = 25.4;
+    const BASE_DPI: f64 = 96.0;
+    const QUANTIZE_STEP: f64 = 12.0; // e.g. 1.25 = 15/12, 1.5 = 18/12, 1.75 = 21/12, 2.0 = 24/12
+    const MIN_SCALE: f64 = 1.0;
+    const MAX_SCALE: f64 = 20.0;
+
+    let dpi_factor =
+        ((ppmm * (QUANTIZE_STEP * MM_PER_INCH / BASE_DPI)).round() / QUANTIZE_STEP).max(MIN_SCALE);
+
+    let validated_factor = if dpi_factor <= MAX_SCALE {
+        dpi_factor
+    } else {
+        MIN_SCALE
+    };
+
+    if valid_scale_factor(validated_factor as f32) {
+        validated_factor as f32
+    } else {
+        log::warn!(
+            "Calculated DPI factor {} is invalid, using 1.0",
+            validated_factor
+        );
+        1.0
+    }
+}
+
+#[inline]
+fn valid_scale_factor(scale_factor: f32) -> bool {
+    scale_factor.is_sign_positive() && scale_factor.is_normal()
 }
