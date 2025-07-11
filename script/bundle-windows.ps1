@@ -56,6 +56,10 @@ function PrepareForBundle {
     New-Item -Path "$innoDir\tools" -ItemType Directory -Force
 }
 
+function GenerateLicenses {
+    . $PSScriptRoot/generate-licenses.ps1 "$innoDir\licenses.md"
+}
+
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
     # Build zed.exe, cli.exe and auto_update_helper.exe
@@ -238,6 +242,7 @@ $innoDir = "$env:ZED_WORKSPACE\inno"
 
 CheckEnvironmentVariables
 PrepareForBundle
+GenerateLicenses
 BuildZedAndItsFriends
 MakeAppx
 SignZedAndItsFriends
