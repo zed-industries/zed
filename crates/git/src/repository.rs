@@ -1215,15 +1215,15 @@ impl GitRepository for RealGitRepository {
                 Some(AskPassSession::new(&executor, ask_pass).await?)
             };
 
-            // if let Some(program) = ask_pass
-            //     .as_ref()
-            //     .and_then(|ask_pass| ask_pass.gpg_script_path())
-            // {
-            //     command.arg("-c").arg(format!(
-            //         "gpg.program={}",
-            //         program.as_ref().to_string_lossy()
-            //     ));
-            // }
+            if let Some(program) = ask_pass
+                .as_ref()
+                .and_then(|ask_pass| ask_pass.gpg_script_path())
+            {
+                command.arg("-c").arg(format!(
+                    "gpg.program={}",
+                    program.as_ref().to_string_lossy()
+                ));
+            }
 
             command
                 .args(["commit", "-m"])

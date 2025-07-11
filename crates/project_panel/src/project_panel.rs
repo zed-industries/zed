@@ -4301,7 +4301,7 @@ impl ProjectPanel {
                                         .collect::<Vec<_>>();
 
                                     let components_len = components.len();
-                                    // FIXME this can underflow
+                                    // TODO this can underflow
                                     let active_index = components_len
                                         - 1
                                         - folded_ancestors.current_ancestor_depth;
