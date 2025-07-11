@@ -470,32 +470,25 @@ pub fn update_inlay_link_and_hover_points(
 
                                             cx.spawn_in(window, async move |editor, cx| {
                                                 async move {
-                                                    eprintln!("Starting async documentation fetch for {}", hint_value);
-
                                                     // Small delay to show the loading message first
                                                     cx.background_executor()
                                                         .timer(std::time::Duration::from_millis(50))
                                                         .await;
 
                                                     // Convert LSP URL to file path
-                                                    eprintln!("Converting LSP URI to file path: {}", location_uri);
                                                     let file_path = location.uri.to_file_path()
                                                         .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
-                                                    eprintln!("File path: {:?}", file_path);
 
                                                     // Open the definition file
-                                                    eprintln!("Opening definition file via project.open_local_buffer");
                                                     let definition_buffer = project
                                                         .update(cx, |project, cx| {
                                                             project.open_local_buffer(file_path, cx)
                                                         })?
                                                         .await?;
-                                                    eprintln!("Successfully opened definition buffer");
 
                                                     // Extract documentation directly from the source
                                                     let documentation = definition_buffer.update(cx, |buffer, _| {
                                                         let line_number = location.range.start.line as usize;
-                                                        eprintln!("Looking for documentation at line {}", line_number);
 
                                                         // Get the text of the buffer
                                                         let text = buffer.text();
@@ -538,20 +531,15 @@ pub fn update_inlay_link_and_hover_points(
                                                             .map(|s| s.trim().to_string())
                                                             .unwrap_or_else(|| hint_value.clone());
 
-                                                        eprintln!("Found {} doc lines", doc_lines.len());
-
                                                         if doc_lines.is_empty() {
                                                             None
                                                         } else {
                                                             let docs = doc_lines.join("\n");
-                                                            eprintln!("Extracted docs: {}", docs.chars().take(100).collect::<String>());
                                                             Some((definition, docs))
                                                         }
                                                     })?;
 
                                                     if let Some((definition, docs)) = documentation {
-                                                        eprintln!("Got documentation from source!");
-
                                                         // Format as markdown with the definition as a code block
                                                         let formatted_docs = format!("```rust\n{}\n```\n\n{}", definition, docs);
 
@@ -570,7 +558,6 @@ pub fn update_inlay_link_and_hover_points(
                                                             );
                                                         }).log_err();
                                                     } else {
-                                                        eprintln!("No documentation found in source, falling back to location info");
                                                         // Fallback to showing just the location info
                                                         let fallback_text = format!(
                                                             "{}\n\nDefined in {} at line {}",
@@ -594,7 +581,6 @@ pub fn update_inlay_link_and_hover_points(
                                                         }).log_err();
                                                     }
 
-                                                    eprintln!("Documentation fetch complete");
                                                     anyhow::Ok(())
                                                 }
                                                 .log_err()
