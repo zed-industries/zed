@@ -2387,7 +2387,7 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
     fallback_scale
 }
 
-fn legacy_get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
+fn legacy_get_randr_scale_factor(connection: &XCBConnection, root: u32) -> Option<f32> {
     let primary_cookie = connection.randr_get_output_primary(root).ok()?;
     let primary_reply = primary_cookie.reply().ok()?;
     let primary_output = primary_reply.output;
