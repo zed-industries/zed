@@ -1053,7 +1053,6 @@ impl Vim {
                         }
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
-                        log::info!("Moving one character to the right");
                         selection.end = movement::right(map, selection.start);
                     }
                 });
