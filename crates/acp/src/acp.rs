@@ -1133,7 +1133,7 @@ impl acp::Client for AcpClientDelegate {
     async fn read_text_file(
         &self,
         request: acp::ReadTextFileParams,
-    ) -> Result<acp::ReadTextFileResponse> {
+    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
         let content = self
             .cx
             .update(|cx| {
@@ -1145,7 +1145,7 @@ impl acp::Client for AcpClientDelegate {
         Ok(acp::ReadTextFileResponse { content })
     }
 
-    async fn write_text_file(&self, request: acp::WriteTextFileParams) -> Result<()> {
+    async fn write_text_file(&self, request: acp::WriteTextFileParams) -> Result<(), acp::Error> {
         self.cx
             .update(|cx| {
                 self.thread.update(cx, |thread, cx| {
@@ -1153,7 +1153,9 @@ impl acp::Client for AcpClientDelegate {
                 })
             })?
             .context("Failed to update thread")?
-            .await
+            .await?;
+
+        Ok(())
     }
 }
 
