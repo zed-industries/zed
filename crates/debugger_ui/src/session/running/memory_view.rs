@@ -295,7 +295,7 @@ impl MemoryView {
         let scroll_handle = self.scroll_state.scroll_handle();
         let viewport = scroll_handle.viewport();
         let (top_area, bottom_area) = {
-            let size = size(viewport.size.width, viewport.size.height / 3.);
+            let size = size(viewport.size.width, viewport.size.height / 10.);
             (
                 bounds(viewport.origin, size),
                 bounds(
