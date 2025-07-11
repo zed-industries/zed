@@ -23,7 +23,7 @@ use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
 use project::{
-    DiagnosticSummary, Project, ProjectPath,
+    DiagnosticSummary, Project, ProjectItem, ProjectPath,
     lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
     project_settings::{DiagnosticSeverity, ProjectSettings},
 };
@@ -473,6 +473,12 @@ impl ProjectDiagnosticsEditor {
         cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
+    fn toggle_path_matcher_enabled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.path_matcher_enabled = !self.path_matcher_enabled;
+        self.diagnostics.clear();
+        self.update_all_diagnostics(false, window, cx);
+    }
+
     fn toggle_diagnostics_refresh(
         &mut self,
         _: &ToggleDiagnosticsRefresh,
@@ -634,8 +640,11 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
+        let path_matcher_enabled = self.path_matcher_enabled;
+        let path_matcher = self.path_matcher.clone();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
+        let buffer_path = buffer.read(cx).project_path(cx);
         let max_severity = if self.include_warnings {
             lsp::DiagnosticSeverity::WARNING
         } else {
@@ -649,6 +658,7 @@ impl ProjectDiagnosticsEditor {
                     false,
                 )
                 .collect::<Vec<_>>();
+
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
                     this.diagnostics_are_unchanged(existing, &diagnostics, &buffer_snapshot)
@@ -712,6 +722,7 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+
                 let i = excerpt_ranges
                     .binary_search_by(|probe| {
                         probe
@@ -742,6 +753,14 @@ impl ProjectDiagnosticsEditor {
                     })
                 }
                 let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
+                    // TODO: Instead of doing the check here, just avoid pushing to `excertp_ranges`.
+                    if path_matcher_enabled
+                        && let Some(project_path) = buffer_path.clone()
+                        && !path_matcher.is_match(project_path.path.clone())
+                    {
+                        excerpt_ranges = vec![];
+                    }
+
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -783,9 +802,20 @@ impl ProjectDiagnosticsEditor {
                                 priority: 1,
                             }
                         });
+
                 let block_ids = this.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
-                        display_map.insert_blocks(editor_blocks, cx)
+                        // Prevent blocks from being inserted if the path
+                        // matcher filter is enabled and the buffer's path does
+                        // not match the path matcher.
+                        if path_matcher_enabled
+                            && let Some(project_path) = buffer_path.clone()
+                            && !path_matcher.is_match(project_path.path.clone())
+                        {
+                            vec![]
+                        } else {
+                            display_map.insert_blocks(editor_blocks, cx)
+                        }
                     })
                 });
 

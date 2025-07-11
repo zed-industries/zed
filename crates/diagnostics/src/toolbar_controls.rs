@@ -13,6 +13,8 @@ pub struct ToolbarControls {
 impl Render for ToolbarControls {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut include_warnings = false;
+        let mut path_matcher_enabled = false;
+        let mut path_matcher_empty = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
         let cargo_diagnostics_sources = Arc::new(self.diagnostics().map_or(Vec::new(), |editor| {
@@ -23,6 +25,8 @@ impl Render for ToolbarControls {
         if let Some(editor) = self.diagnostics() {
             let diagnostics = editor.read(cx);
             include_warnings = diagnostics.include_warnings;
+            path_matcher_enabled = diagnostics.path_matcher_enabled;
+            path_matcher_empty = diagnostics.path_matcher.sources().is_empty();
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
             is_updating = if fetch_cargo_diagnostics {
                 diagnostics.cargo_diagnostics_fetch.fetch_task.is_some()
@@ -37,7 +41,7 @@ impl Render for ToolbarControls {
             };
         }
 
-        let tooltip = if include_warnings {
+        let warning_tooltip = if include_warnings {
             "Exclude Warnings"
         } else {
             "Include Warnings"
@@ -47,6 +51,16 @@ impl Render for ToolbarControls {
             Color::Warning
         } else {
             Color::Muted
+        };
+
+        let filter_tooltip = match path_matcher_enabled {
+            true => "All Files",
+            false => "Active File Only",
+        };
+
+        let filter_color = match path_matcher_enabled {
+            true => Color::Info,
+            false => Color::Muted,
         };
 
         h_flex()
@@ -106,11 +120,25 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text(tooltip))
+                    .tooltip(Tooltip::text(warning_tooltip))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {
                                 editor.toggle_warnings(&Default::default(), window, cx);
+                            });
+                        }
+                    })),
+            )
+            .child(
+                IconButton::new("toggle-path-matcher", IconName::Filter)
+                    .disabled(path_matcher_empty)
+                    .icon_color(filter_color)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(Tooltip::text(filter_tooltip))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some(editor) = this.diagnostics() {
+                            editor.update(cx, |editor, cx| {
+                                editor.toggle_path_matcher_enabled(window, cx);
                             });
                         }
                     })),
