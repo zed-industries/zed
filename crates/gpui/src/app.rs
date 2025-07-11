@@ -1791,6 +1791,7 @@ impl App {
     ///
     /// This function clears any exit updater that was set using [`Application::register_exit_updater`].
     /// After calling this function, no update operations will be performed when the application exits.
+    #[cfg(target_os = "windows")]
     pub fn remove_exit_updater(&mut self) {
         self.exit_updater.take();
     }
