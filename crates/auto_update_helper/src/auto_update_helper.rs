@@ -6,8 +6,18 @@ mod dialog;
 mod updater;
 
 #[cfg(target_os = "windows")]
+#[derive(clap::Parser, Debug)]
+struct Args {
+    #[clap(long, default_value = "false")]
+    launch: bool,
+}
+
+#[cfg(target_os = "windows")]
 fn main() {
-    if let Err(e) = windows_impl::run() {
+    use clap::Parser;
+
+    let args = Args::parse();
+    if let Err(e) = windows_impl::run(args) {
         log::error!("Error: Zed update failed, {:?}", e);
         windows_impl::show_error(format!("Error: {:?}", e));
     }
@@ -19,6 +29,8 @@ fn main() {}
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use std::path::Path;
+
+    use crate::Args;
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
@@ -37,7 +49,7 @@ mod windows_impl {
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
-    pub(crate) fn run() -> Result<()> {
+    pub(crate) fn run(args: Args) -> Result<()> {
         let helper_dir = std::env::current_exe()?
             .parent()
             .context("No parent directory")?
@@ -49,10 +61,11 @@ mod windows_impl {
             .to_path_buf();
 
         log::info!("======= Starting Zed update =======");
+        log::info!("Args: {:?}", args);
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
         std::thread::spawn(move || {
-            let result = perform_update(app_dir.as_path(), Some(hwnd));
+            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
             tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
