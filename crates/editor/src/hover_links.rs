@@ -7,7 +7,7 @@ use crate::{
     scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
-use language::{Bias, ToOffset, point_from_lsp};
+use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
 use project::{
