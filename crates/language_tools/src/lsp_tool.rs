@@ -119,6 +119,7 @@ impl LanguageServerState {
             return menu;
         };
 
+        let mut first_button_encountered = false;
         for (i, item) in self.items.iter().enumerate() {
             if let LspItem::ToggleServersButton { restart } = item {
                 let label = if *restart {
@@ -183,7 +184,11 @@ impl LanguageServerState {
                             .ok();
                     }
                 });
-                menu = menu.separator().item(button);
+                if !first_button_encountered {
+                    menu = menu.separator();
+                    first_button_encountered = true;
+                }
+                menu = menu.item(button);
                 continue;
             };
 
@@ -706,6 +711,7 @@ impl LspTool {
             new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
             if !new_lsp_items.is_empty() {
                 if can_stop_all {
+                    new_lsp_items.push(LspItem::ToggleServersButton { restart: true });
                     new_lsp_items.push(LspItem::ToggleServersButton { restart: false });
                 } else if can_restart_all {
                     new_lsp_items.push(LspItem::ToggleServersButton { restart: true });
