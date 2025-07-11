@@ -656,6 +656,12 @@ pub enum ResolveState {
     Resolving,
 }
 
+impl ResolveState {
+    pub fn is_resolved(&self) -> bool {
+        self == &Self::Resolved
+    }
+}
+
 impl InlayHint {
     pub fn text(&self) -> String {
         match &self.label {
