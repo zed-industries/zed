@@ -1088,7 +1088,7 @@ impl Render for KeymapEditor {
                                             div()
                                                 .id(("keymap context", index))
                                                 .child(context.clone())
-                                                .when(is_local, |this| {
+                                                .when(is_local && !context_menu_deployed, |this| {
                                                     this.tooltip(Tooltip::element({
                                                         move |_, _| {
                                                             context.clone().into_any_element()
