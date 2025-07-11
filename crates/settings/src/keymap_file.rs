@@ -623,49 +623,55 @@ impl KeymapFile {
         // We don't want to modify the file if it's invalid.
         let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
 
+        if let KeybindUpdateOperation::Remove {
+            target,
+            target_keybind_source,
+        } = operation
+        {
+            if target_keybind_source != KeybindSource::User {
+                anyhow::bail!("Cannot remove non-user created keybinding. Not implemented yet");
+            }
+            let target_action_value = target
+                .action_value()
+                .context("Failed to generate target action JSON value")?;
+            let Some((index, keystrokes_str)) =
+                find_binding(&keymap, &target, &target_action_value)
+            else {
+                anyhow::bail!("Failed to find keybinding to remove");
+            };
+            let is_only_binding = keymap.0[index]
+                .bindings
+                .as_ref()
+                .map_or(true, |bindings| bindings.len() == 1);
+            let key_path: &[&str] = if is_only_binding {
+                &[]
+            } else {
+                &["bindings", keystrokes_str]
+            };
+            let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                &keymap_contents,
+                key_path,
+                None,
+                None,
+                index,
+                tab_size,
+            )
+            .context("Failed to remove keybinding")?;
+            keymap_contents.replace_range(replace_range, &replace_value);
+            return Ok(keymap_contents);
+        }
+
         if let KeybindUpdateOperation::Replace { source, target, .. } = operation {
-            let mut found_index = None;
             let target_action_value = target
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
             let source_action_value = source
                 .action_value()
                 .context("Failed to generate source action JSON value")?;
-            'sections: for (index, section) in keymap.sections().enumerate() {
-                if section.context != target.context.unwrap_or("") {
-                    continue;
-                }
-                if section.use_key_equivalents != target.use_key_equivalents {
-                    continue;
-                }
-                let Some(bindings) = &section.bindings else {
-                    continue;
-                };
-                for (keystrokes, action) in bindings {
-                    let Ok(keystrokes) = keystrokes
-                        .split_whitespace()
-                        .map(Keystroke::parse)
-                        .collect::<Result<Vec<_>, _>>()
-                    else {
-                        continue;
-                    };
-                    if keystrokes.len() != target.keystrokes.len()
-                        || !keystrokes
-                            .iter()
-                            .zip(target.keystrokes)
-                            .all(|(a, b)| a.should_match(b))
-                    {
-                        continue;
-                    }
-                    if action.0 != target_action_value {
-                        continue;
-                    }
-                    found_index = Some(index);
-                    break 'sections;
-                }
-            }
 
-            if let Some(index) = found_index {
+            if let Some((index, keystrokes_str)) =
+                find_binding(&keymap, &target, &target_action_value)
+            {
                 if target.context == source.context {
                     // if we are only changing the keybinding (common case)
                     // not the context, etc. Then just update the binding in place
@@ -673,7 +679,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             Some(&source_action_value),
                             Some(&source.keystrokes_unparsed()),
                             index,
@@ -695,7 +701,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             Some(&source_action_value),
                             Some(&source.keystrokes_unparsed()),
                             index,
@@ -725,7 +731,7 @@ impl KeymapFile {
                     let (replace_range, replace_value) =
                         replace_top_level_array_value_in_json_text(
                             &keymap_contents,
-                            &["bindings", &target.keystrokes_unparsed()],
+                            &["bindings", keystrokes_str],
                             None,
                             None,
                             index,
@@ -771,6 +777,46 @@ impl KeymapFile {
             keymap_contents.replace_range(replace_range, &replace_value);
         }
         return Ok(keymap_contents);
+
+        fn find_binding<'a, 'b>(
+            keymap: &'b KeymapFile,
+            target: &KeybindUpdateTarget<'a>,
+            target_action_value: &Value,
+        ) -> Option<(usize, &'b str)> {
+            for (index, section) in keymap.sections().enumerate() {
+                if section.context != target.context.unwrap_or("") {
+                    continue;
+                }
+                if section.use_key_equivalents != target.use_key_equivalents {
+                    continue;
+                }
+                let Some(bindings) = &section.bindings else {
+                    continue;
+                };
+                for (keystrokes_str, action) in bindings {
+                    let Ok(keystrokes) = keystrokes_str
+                        .split_whitespace()
+                        .map(Keystroke::parse)
+                        .collect::<Result<Vec<_>, _>>()
+                    else {
+                        continue;
+                    };
+                    if keystrokes.len() != target.keystrokes.len()
+                        || !keystrokes
+                            .iter()
+                            .zip(target.keystrokes)
+                            .all(|(a, b)| a.should_match(b))
+                    {
+                        continue;
+                    }
+                    if &action.0 != target_action_value {
+                        continue;
+                    }
+                    return Some((index, &keystrokes_str));
+                }
+            }
+            None
+        }
     }
 }
 
@@ -783,6 +829,10 @@ pub enum KeybindUpdateOperation<'a> {
         target_keybind_source: KeybindSource,
     },
     Add(KeybindUpdateTarget<'a>),
+    Remove {
+        target: KeybindUpdateTarget<'a>,
+        target_keybind_source: KeybindSource,
+    },
 }
 
 pub struct KeybindUpdateTarget<'a> {
@@ -1297,6 +1347,119 @@ mod tests {
                         "c": "foo::baz",
                     }
                 }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": "foo::bar",
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    use_key_equivalents: false,
+                    input: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": ["foo::bar", true],
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    use_key_equivalents: false,
+                    input: Some("true"),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "b": "foo::baz",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": ["foo::bar", true],
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    use_key_equivalents: false,
+                    input: Some("true"),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "b": "foo::baz",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
             ]"#
             .unindent(),
         );
