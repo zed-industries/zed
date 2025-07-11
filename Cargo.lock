@@ -9134,6 +9134,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "indoc",
  "language",
  "log",
  "lsp",

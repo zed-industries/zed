@@ -44,6 +44,7 @@ dap.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+indoc.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true

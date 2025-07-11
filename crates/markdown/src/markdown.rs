@@ -1534,12 +1534,26 @@ impl MarkdownElementBuilder {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
         });
-        self.pending_line.text.push_str(text);
+        if text.starts_with("type a =") {
+            self.pending_line.text.push_str(&text["type a =".len()..]);
+        } else {
+            self.pending_line.text.push_str(text);
+        }
         self.current_source_index = source_range.end;
 
         if let Some(Some(language)) = self.code_block_stack.last() {
+            dbg!(&language);
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            for (mut range, highlight_id) in
+                language.highlight_text(&Rope::from(text), 0..text.len())
+            {
+                if text.starts_with("type a =") {
+                    if range.start < "type a =".len() || range.end < "type a =".len() {
+                        continue;
+                    }
+                    range.start -= "type a =".len();
+                    range.end -= "type a =".len();
+                };
                 if range.start > offset {
                     self.pending_line
                         .runs

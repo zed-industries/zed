@@ -275,6 +275,13 @@ fn show_hover(
             return None;
         }
     }
+    let languages = editor
+        .project
+        .as_ref()
+        .unwrap()
+        .read(cx)
+        .languages()
+        .clone();
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
     let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
@@ -340,7 +347,7 @@ fn show_hover(
                     renderer
                         .as_ref()
                         .and_then(|renderer| {
-                            renderer.render_hover(group, point_range, buffer_id, cx)
+                            renderer.render_hover(group, point_range, buffer_id, languages, cx)
                         })
                         .context("no rendered diagnostic")
                 })??;

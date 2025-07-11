@@ -111,8 +111,9 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, LanguageRegistry,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -402,6 +403,7 @@ pub trait DiagnosticRenderer {
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
+        languages: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>>;
 
@@ -410,6 +412,7 @@ pub trait DiagnosticRenderer {
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
+        languages: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Option<Entity<markdown::Markdown>>;
 
@@ -16574,13 +16577,20 @@ impl Editor {
         let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
             return;
         };
+        let languages = self.project.as_ref().unwrap().read(cx).languages().clone();
 
         let diagnostic_group = buffer
             .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
             .collect::<Vec<_>>();
 
-        let blocks =
-            renderer.render_group(diagnostic_group, buffer_id, snapshot, cx.weak_entity(), cx);
+        let blocks = renderer.render_group(
+            diagnostic_group,
+            buffer_id,
+            snapshot,
+            cx.weak_entity(),
+            languages,
+            cx,
+        );
 
         let blocks = self.display_map.update(cx, |display_map, cx| {
             display_map.insert_blocks(blocks, cx).into_iter().collect()

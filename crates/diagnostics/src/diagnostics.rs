@@ -508,6 +508,15 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        let languages = self
+            .editor
+            .read(cx)
+            .project
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .languages()
+            .clone();
         let was_empty = self.multibuffer.read(cx).is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
@@ -559,6 +568,7 @@ impl ProjectDiagnosticsEditor {
                         group,
                         buffer_snapshot.remote_id(),
                         Some(this.clone()),
+                        languages.clone(),
                         cx,
                     )
                 })?;

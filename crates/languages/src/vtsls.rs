@@ -283,26 +283,35 @@ impl LspAdapter for VtslsLspAdapter {
 
     fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         use regex::{Captures, Regex};
+        dbg!(&message);
 
         // Helper functions for formatting
         let format_type_block = |prefix: &str, content: &str| -> String {
             if prefix.is_empty() {
                 if content.len() > 50 || content.contains('\n') || content.contains('`') {
-                    format!("\n```typescript\n{}\n```\n", content)
+                    format!("\n```typescript\ntype a ={}\n```\n", dbg!(content))
                 } else {
-                    format!("`{}`", content)
+                    format!("`{}`", dbg!(content))
                 }
             } else {
-                format!("{} `{}`", prefix, content)
+                if content.len() > 50 || content.contains('\n') || content.contains('`') {
+                    format!(
+                        "{}\n```typescript\ntype a ={}\n```\n",
+                        prefix,
+                        dbg!(content)
+                    )
+                } else {
+                    format!("{} `{}`", prefix, dbg!(content))
+                }
             }
         };
 
         let format_typescript_block =
-            |content: &str| -> String { format!("\n\n```typescript\n{}\n```\n", content) };
+            |content: &str| -> String { format!("\n\n```typescript\n{}\n```\n", dbg!(content)) };
 
-        let format_simple_type_block = |content: &str| -> String { format!("`{}`", content) };
+        let format_simple_type_block = |content: &str| -> String { format!("`{}`", dbg!(content)) };
 
-        let unstyle_code_block = |content: &str| -> String { format!("`{}`", content) };
+        let unstyle_code_block = |content: &str| -> String { format!("`{}`", dbg!(content)) };
 
         let mut result = message.to_string();
 
@@ -396,9 +405,11 @@ impl LspAdapter for VtslsLspAdapter {
             .to_string();
 
         // Format types
+        dbg!(&result);
         let re = Regex::new(r#"(?i)(type|type alias|interface|module|file|file name|class|method's|subtype of constraint) ['"](.*?)['"]"#).unwrap();
         result = re
             .replace_all(&result, |caps: &Captures| {
+                dbg!(&caps);
                 format_type_block(&caps[1], &caps[2])
             })
             .to_string();
@@ -468,4 +479,26 @@ async fn get_cached_ts_server_binary(
     })
     .await
     .log_err()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use indoc::indoc;
+
+    #[test]
+    fn test_diagnostic_message_to_markdown() {
+        let message = "Property 'user' is missing in type '{ person: { username: string; email: string; }; }' but required in type '{ user: { name: string; email: `${string}@${string}.${string}`; age: number; }; }'.";
+        let expected = indoc! { "
+            Property `user` is missing in type `{ person: { username: string; email: string; }; }` but required in type
+
+            ```typescript
+            { user: { name: string; email: `${string}@${string}.${string}`; age: number; }; }
+            ```
+        "};
+        let result = VtslsLspAdapter::new(NodeRuntime::unavailable())
+            .diagnostic_message_to_markdown(message)
+            .unwrap();
+        pretty_assertions::assert_eq!(result, expected.to_string());
+    }
 }
