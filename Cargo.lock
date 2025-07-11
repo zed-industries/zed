@@ -19,14 +19,17 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "log",
  "markdown",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "smol",
  "tempfile",
  "ui",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 

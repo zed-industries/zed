@@ -26,6 +26,7 @@ use std::{
 };
 use ui::{App, IconName};
 use util::ResultExt;
+mod claude;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
@@ -429,25 +430,6 @@ impl Diff {
     }
 }
 
-trait AgentConnection {
-    /// Send a request to the agent and wait for a response.
-    fn request(
-        &self,
-        method: &'static str,
-        params: acp::AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>>;
-}
-
-impl AgentConnection for acp::AgentConnection {
-    fn request(
-        &self,
-        method: &'static str,
-        params: acp::AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
-        self.request_raw(method, params).boxed_local()
-    }
-}
-
 pub struct AcpThread {
     entries: Vec<AgentThreadEntry>,
     title: SharedString,
@@ -455,7 +437,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<Result<()>>>,
-    connection: Arc<dyn AgentConnection>,
+    connection: Arc<dyn acp::AgentConnection>,
     child_status: Option<Task<Result<()>>>,
     _io_task: Task<()>,
 }
@@ -506,54 +488,57 @@ impl AcpThread {
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
-        let command = match server.command(&project, cx).await {
-            Ok(command) => command,
-            Err(e) => return Err(anyhow!(LoadError::Other(format!("{e}").into()))),
-        };
+        // let command = match server.command(&project, cx).await {
+        //     Ok(command) => command,
+        //     Err(e) => return Err(anyhow!(LoadError::Other(format!("{e}").into()))),
+        // };
 
-        let mut child = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()?;
+        // let mut child = util::command::new_smol_command(&command.path)
+        //     .args(command.args.iter())
+        //     .current_dir(root_dir)
+        //     .stdin(std::process::Stdio::piped())
+        //     .stdout(std::process::Stdio::piped())
+        //     .stderr(std::process::Stdio::inherit())
+        //     .kill_on_drop(true)
+        //     .spawn()?;
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+        // let stdin = child.stdin.take().unwrap();
+        // let stdout = child.stdout.take().unwrap();
 
         cx.new(|cx| {
             let foreground_executor = cx.foreground_executor().clone();
 
-            let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-                AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-                stdin,
-                stdout,
-                move |fut| foreground_executor.spawn(fut).detach(),
-            );
+            let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
+            let connection = claude::ClaudeAgentConnection::new(delegate, root_dir, cx).unwrap();
 
-            let io_task = cx.background_spawn(async move {
-                io_fut.await.log_err();
-            });
+            // let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
+            //     AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+            //     stdin,
+            //     stdout,
+            //     move |fut| foreground_executor.spawn(fut).detach(),
+            // );
 
-            let child_status = cx.background_spawn(async move {
-                match child.status().await {
-                    Err(e) => Err(anyhow!(e)),
-                    Ok(result) if result.success() => Ok(()),
-                    Ok(result) => {
-                        if let Some(version) = server.version(&command).await.log_err()
-                            && !version.supported
-                        {
-                            Err(anyhow!(LoadError::Unsupported {
-                                current_version: version.current_version
-                            }))
-                        } else {
-                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-                        }
-                    }
-                }
-            });
+            // let io_task = cx.background_spawn(async move {
+            //     io_fut.await.log_err();
+            // });
+
+            // let child_status = cx.background_spawn(async move {
+            //     match child.status().await {
+            //         Err(e) => Err(anyhow!(e)),
+            //         Ok(result) if result.success() => Ok(()),
+            //         Ok(result) => {
+            //             if let Some(version) = server.version(&command).await.log_err()
+            //                 && !version.supported
+            //             {
+            //                 Err(anyhow!(LoadError::Unsupported {
+            //                     current_version: version.current_version
+            //                 }))
+            //             } else {
+            //                 Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
+            //             }
+            //         }
+            //     }
+            // });
 
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -565,8 +550,8 @@ impl AcpThread {
                 project,
                 send_task: None,
                 connection: Arc::new(connection),
-                child_status: Some(child_status),
-                _io_task: io_task,
+                child_status: None,
+                _io_task: Task::ready(()),
             }
         })
     }
@@ -606,7 +591,7 @@ impl AcpThread {
     ) -> Self {
         let foreground_executor = cx.foreground_executor().clone();
 
-        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
+        let (connection, io_fut) = acp::AcpAgentConnection::connect_to_agent(
             AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
             stdin,
             stdout,
@@ -1085,6 +1070,7 @@ impl AcpThread {
     }
 }
 
+#[derive(Clone)]
 struct AcpClientDelegate {
     thread: WeakEntity<AcpThread>,
     cx: AsyncApp,
@@ -1809,7 +1795,8 @@ mod tests {
     }
 
     pub struct FakeAcpServer {
-        connection: acp::ClientConnection,
+        connection: acp::AcpClientConnection,
+
         _io_task: Task<()>,
         on_user_message: Option<
             Rc<
@@ -1866,7 +1853,7 @@ mod tests {
             };
             let foreground_executor = cx.foreground_executor().clone();
 
-            let (connection, io_fut) = acp::ClientConnection::connect_to_client(
+            let (connection, io_fut) = acp::AcpClientConnection::connect_to_client(
                 agent.clone(),
                 stdout,
                 stdin,
