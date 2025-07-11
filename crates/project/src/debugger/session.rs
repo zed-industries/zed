@@ -26,10 +26,9 @@ use dap::{
     messages::{Events, Message},
 };
 use dap::{
-    DataBreakpointInfoArguments, ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent,
-    OutputEventCategory, RunInTerminalRequestArguments, StackFramePresentationHint,
-    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
-    VariablePresentationHint,
+    ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
+    RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
