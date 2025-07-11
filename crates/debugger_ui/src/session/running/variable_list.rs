@@ -582,10 +582,16 @@ impl VariableList {
         _ = maybe!({
             let selection = self.selection.as_ref()?;
             let entry = self.entries.iter().find(|entry| &entry.path == selection)?;
-            let memory_reference = entry.entry.as_variable()?.memory_reference.as_deref()?;
+            let var = entry.entry.as_variable()?;
+            let memory_reference = var.memory_reference.as_deref()?;
 
             self.memory_view.update(cx, |this, cx| {
-                this.go_to_memory_reference(memory_reference, cx);
+                this.go_to_memory_reference(
+                    memory_reference,
+                    var.evaluate_name.as_deref(),
+                    self.selected_stack_frame_id,
+                    cx,
+                );
             });
             let weak_panel = self.weak_running.clone();
 

@@ -239,14 +239,24 @@ impl MemoryView {
             Self::editor_style(&self.query_editor, cx),
         )
     }
-    pub fn go_to_memory_reference(&mut self, memory_reference: &str, cx: &mut Context<Self>) {
+    pub(super) fn go_to_memory_reference(
+        &mut self,
+        memory_reference: &str,
+        evaluate_name: Option<&str>,
+        stack_frame_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         use parse_int::parse;
         let Ok(as_address) = parse::<u64>(&memory_reference) else {
             return;
         };
-        let access_size = self
-            .session
-            .update(cx, |this, cx| this.data_access_size(as_address, cx));
+        let access_size = evaluate_name
+            .map(|typ| {
+                self.session.update(cx, |this, cx| {
+                    this.data_access_size(stack_frame_id, typ, cx)
+                })
+            })
+            .unwrap_or_else(|| Task::ready(None));
         cx.spawn(async move |this, cx| {
             let access_size = access_size.await.unwrap_or(1);
             this.update(cx, |this, cx| {
