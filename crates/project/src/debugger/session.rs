@@ -1648,6 +1648,10 @@ impl Session {
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
         self.invalidate_command_type::<ReadMemory>();
+        let executor = self.as_running().map(|running| running.executor.clone());
+        if let Some(executor) = executor {
+            self.memory.clear(&executor);
+        }
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
@@ -2421,6 +2425,8 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
+                    this.invalidate_command_type::<ReadMemory>();
+                    this.memory.clear(cx.background_executor());
                     this.refresh_watchers(stack_frame_id, cx);
                     cx.emit(SessionEvent::Variables);
                     Some(response)
@@ -2460,6 +2466,8 @@ impl Session {
         cx.spawn(async move |this, cx| {
             let response = request.await;
             this.update(cx, |this, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
                 match response {
                     Ok(response) => {
                         let event = dap::OutputEvent {

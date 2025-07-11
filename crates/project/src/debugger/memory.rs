@@ -14,6 +14,7 @@
 
 use std::{collections::BTreeMap, ops::RangeInclusive, sync::Arc};
 
+use gpui::BackgroundExecutor;
 use smallvec::SmallVec;
 
 const PAGE_SIZE: u64 = 4096;
@@ -141,6 +142,13 @@ impl Memory {
             .map(|(address, page)| (*address, page.clone()))
             .collect::<Vec<_>>();
         MemoryIterator::new(range, pages.into_iter())
+    }
+
+    pub(crate) fn clear(&mut self, background_executor: &BackgroundExecutor) {
+        let mut memory = std::mem::take(&mut self.pages);
+        background_executor.spawn(async move {
+            drop(memory);
+        });
     }
 }
 
