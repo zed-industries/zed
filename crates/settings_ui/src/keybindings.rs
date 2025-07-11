@@ -1015,12 +1015,24 @@ impl Render for KeymapEditor {
                                             }
                                         }
                                     };
-                                    let context = binding
-                                        .context
-                                        .clone()
-                                        .map_or(gpui::Empty.into_any_element(), |context| {
-                                            context.into_any_element()
-                                        });
+                                    let context = binding.context.clone().map_or(
+                                        gpui::Empty.into_any_element(),
+                                        |context| {
+                                            let is_local = context.local().is_some();
+
+                                            div()
+                                                .id(("keymap context", index))
+                                                .child(context.clone())
+                                                .when(is_local, |this| {
+                                                    this.tooltip(Tooltip::element({
+                                                        move |_, _| {
+                                                            context.clone().into_any_element()
+                                                        }
+                                                    }))
+                                                })
+                                                .into_any_element()
+                                        },
+                                    );
                                     let source = binding
                                         .source
                                         .clone()
