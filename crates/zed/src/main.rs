@@ -341,7 +341,7 @@ pub fn main() {
         }
     });
     #[cfg(target_os = "windows")]
-    app.on_quit(|| {
+    app.register_exit_updater(|| {
         // Check if there is a pending installer
         // If there is, run the installer and exit
         auto_update::check_pending_installation();

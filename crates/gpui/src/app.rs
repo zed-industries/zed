@@ -207,12 +207,15 @@ impl Application {
         self
     }
 
-    /// TODO:
-    pub fn on_quit<F>(&self, mut callback: F) -> &Self
+    /// Register a callback to perform application updates before the process exits.
+    /// This is specifically designed for executing update operations that need to
+    /// happen after all windows are closed but before the process terminates.
+    #[cfg(target_os = "windows")]
+    pub fn register_exit_updater<F>(&self, mut callback: F) -> &Self
     where
         F: 'static + FnMut(),
     {
-        self.0.borrow_mut().on_quit = Some(Box::new(move || {
+        self.0.borrow_mut().exit_updater = Some(Box::new(move || {
             callback();
         }));
         self
@@ -302,7 +305,8 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     quitting: bool,
-    on_quit: Option<Box<dyn FnMut()>>,
+    #[cfg(target_os = "windows")]
+    exit_updater: Option<Box<dyn FnMut()>>,
 }
 
 impl App {
@@ -370,7 +374,8 @@ impl App {
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
-                on_quit: None,
+                #[cfg(target_os = "windows")]
+                exit_updater: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -426,8 +431,10 @@ impl App {
         }
 
         self.quitting = false;
-        if let Some(mut on_quit) = self.on_quit.take() {
-            on_quit();
+
+        #[cfg(target_os = "windows")]
+        if let Some(mut exit_updater) = self.exit_updater.take() {
+            exit_updater();
         }
     }
 
@@ -1782,7 +1789,7 @@ impl App {
 
     /// TODO:
     pub fn unset_on_quit(&mut self) {
-        self.on_quit.take();
+        self.exit_updater.take();
     }
 }
 
