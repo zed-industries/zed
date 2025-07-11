@@ -127,7 +127,7 @@ impl BatchedTextRun {
         cx: &mut App,
     ) {
         let pos = Point::new(
-            (origin.x + self.start_point.column as f32 * dimensions.cell_width).floor(),
+            origin.x + self.start_point.column as f32 * dimensions.cell_width,
             origin.y + self.start_point.line as f32 * dimensions.line_height,
         );
 
