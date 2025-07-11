@@ -2,7 +2,7 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Edges, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
+    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
     ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, bounds,
     point, size, uniform_list,
 };
@@ -11,7 +11,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
-    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Pixels,
+    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
     PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
     Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
@@ -529,7 +529,6 @@ impl Render for MemoryView {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let this = cx.weak_entity();
         v_flex()
             .id("Memory-view")
             .on_action(cx.listener(Self::cancel))
