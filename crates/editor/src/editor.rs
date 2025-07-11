@@ -2343,7 +2343,10 @@ impl Editor {
             editor.update_lsp_data(false, None, window, cx);
         }
 
-        editor.report_editor_event("Editor Opened", None, cx);
+        if editor.mode.is_full() {
+            editor.report_editor_event("Editor Opened", None, cx);
+        }
+
         editor
     }
 
@@ -19674,8 +19677,9 @@ impl Editor {
                                     Anchor::in_buffer(excerpt_id, buffer_id, hint.position),
                                     hint.text(),
                                 );
-
-                                new_inlays.push(inlay);
+                                if !inlay.text.chars().contains(&'\n') {
+                                    new_inlays.push(inlay);
+                                }
                             });
                     }
 

@@ -783,8 +783,12 @@ impl KeymapFile {
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
         ) -> Option<(usize, &'b str)> {
+            let target_context_parsed =
+                KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
             for (index, section) in keymap.sections().enumerate() {
-                if section.context != target.context.unwrap_or("") {
+                let section_context_parsed =
+                    KeyBindingContextPredicate::parse(&section.context).ok();
+                if section_context_parsed != target_context_parsed {
                     continue;
                 }
                 if section.use_key_equivalents != target.use_key_equivalents {
@@ -835,6 +839,7 @@ pub enum KeybindUpdateOperation<'a> {
     },
 }
 
+#[derive(Debug)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
     pub keystrokes: &'a [Keystroke],

@@ -925,10 +925,43 @@ impl AcpThreadView {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(self.render_markdown(
-                                tool_call.label.clone(),
-                                default_markdown_style(needs_confirmation, window, cx),
-                            )),
+                            .child(if tool_call.locations.len() == 1 {
+                                let name = tool_call.locations[0]
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .display()
+                                    .to_string();
+
+                                h_flex()
+                                    .id(("open-tool-call-location", entry_ix))
+                                    .child(name)
+                                    .w_full()
+                                    .max_w_full()
+                                    .pr_1()
+                                    .gap_0p5()
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .opacity(0.8)
+                                    .hover(|label| {
+                                        label.opacity(1.).bg(cx
+                                            .theme()
+                                            .colors()
+                                            .element_hover
+                                            .opacity(0.5))
+                                    })
+                                    .tooltip(Tooltip::text("Jump to File"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_tool_call_location(entry_ix, 0, window, cx);
+                                    }))
+                                    .into_any_element()
+                            } else {
+                                self.render_markdown(
+                                    tool_call.label.clone(),
+                                    default_markdown_style(needs_confirmation, window, cx),
+                                )
+                                .into_any()
+                            }),
                     )
                     .child(
                         h_flex()
@@ -988,15 +1021,19 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::Markdown { markdown } => self
-                .render_markdown(markdown.clone(), default_markdown_style(false, window, cx))
-                .into_any_element(),
+            ToolCallContent::Markdown { markdown } => {
+                div()
+                    .p_2()
+                    .child(self.render_markdown(
+                        markdown.clone(),
+                        default_markdown_style(false, window, cx),
+                    ))
+                    .into_any_element()
+            }
             ToolCallContent::Diff {
-                diff: Diff {
-                    path, multibuffer, ..
-                },
+                diff: Diff { multibuffer, .. },
                 ..
-            } => self.render_diff_editor(multibuffer, path),
+            } => self.render_diff_editor(multibuffer),
         }
     }
 
@@ -1416,10 +1453,9 @@ impl AcpThreadView {
         }
     }
 
-    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>, path: &Path) -> AnyElement {
+    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>) -> AnyElement {
         v_flex()
             .h_full()
-            .child(path.to_string_lossy().to_string())
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
@@ -2074,6 +2110,64 @@ impl AcpThreadView {
         } else {
             cx.open_url(&url);
         }
+    }
+
+    fn open_tool_call_location(
+        &self,
+        entry_ix: usize,
+        location_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let location = self
+            .thread()?
+            .read(cx)
+            .entries()
+            .get(entry_ix)?
+            .locations()?
+            .get(location_ix)?;
+
+        let project_path = self
+            .project
+            .read(cx)
+            .find_project_path(&location.path, cx)?;
+
+        let open_task = self
+            .workspace
+            .update(cx, |worskpace, cx| {
+                worskpace.open_path(project_path, None, true, window, cx)
+            })
+            .log_err()?;
+
+        window
+            .spawn(cx, async move |cx| {
+                let item = open_task.await?;
+
+                let Some(active_editor) = item.downcast::<Editor>() else {
+                    return anyhow::Ok(());
+                };
+
+                active_editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let first_hunk = editor
+                        .diff_hunks_in_ranges(
+                            &[editor::Anchor::min()..editor::Anchor::max()],
+                            &snapshot,
+                        )
+                        .next();
+                    if let Some(first_hunk) = first_hunk {
+                        let first_hunk_start = first_hunk.multi_buffer_range().start;
+                        editor.change_selections(Default::default(), window, cx, |selections| {
+                            selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                        })
+                    }
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+        None
     }
 
     pub fn open_thread_as_markdown(
