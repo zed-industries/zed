@@ -280,6 +280,174 @@ impl LspAdapter for VtslsLspAdapter {
             ("TSX".into(), "typescriptreact".into()),
         ])
     }
+
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        use regex::{Captures, Regex};
+
+        // Helper functions for formatting
+        let format_type_block = |prefix: &str, content: &str| -> String {
+            if prefix.is_empty() {
+                if content.len() > 50 || content.contains('\n') || content.contains('`') {
+                    format!("\n```typescript\n{}\n```\n", content)
+                } else {
+                    format!("`{}`", content)
+                }
+            } else {
+                format!("{} `{}`", prefix, content)
+            }
+        };
+
+        let format_typescript_block =
+            |content: &str| -> String { format!("\n\n```typescript\n{}\n```\n", content) };
+
+        let format_simple_type_block = |content: &str| -> String { format!("`{}`", content) };
+
+        let unstyle_code_block = |content: &str| -> String { format!("`{}`", content) };
+
+        let mut result = message.to_string();
+
+        // Format 'key' with "value"
+        let re = Regex::new(r#"(\w+)(\s+)'(.+?)'(\s+)with(\s+)"(.+?)""#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!(
+                    "{}{}`{}`{} with `\"{}\"`",
+                    &caps[1], &caps[2], &caps[3], &caps[4], &caps[6]
+                )
+            })
+            .to_string();
+
+        // Format "key"
+        let re = Regex::new(r#"(\s)'"(.*?)"'(\s|:|.|$)"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{}`\"{}\"`{}", &caps[1], &caps[2], &caps[3])
+            })
+            .to_string();
+
+        // Format declare module snippet
+        let re = Regex::new(r#"['"](declare module )['"](.*)['""];['"']"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format_typescript_block(&format!("{} \"{}\"", &caps[1], &caps[2]))
+            })
+            .to_string();
+
+        // Format missing props error
+        let re = Regex::new(r#"(is missing the following properties from type\s?)'(.*)': ([^:]+)"#)
+            .unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                let props: Vec<&str> = caps[3].split(", ").filter(|s| !s.is_empty()).collect();
+                let props_html = props
+                    .iter()
+                    .map(|prop| format!("<li>{}</li>", prop))
+                    .collect::<Vec<_>>()
+                    .join("");
+                format!("{}`{}`: <ul>{}</ul>", &caps[1], &caps[2], props_html)
+            })
+            .to_string();
+
+        // Format type pairs
+        let re = Regex::new(r#"(?i)(types) ['"](.*?)['"] and ['"](.*?)['"][.]?"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{} `{}` and `{}`", &caps[1], &caps[2], &caps[3])
+            })
+            .to_string();
+
+        // Format type annotation options
+        let re = Regex::new(r#"(?i)type annotation must be ['"](.*?)['"] or ['"](.*?)['"][.]?"#)
+            .unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("type annotation must be `{}` or `{}`", &caps[1], &caps[2])
+            })
+            .to_string();
+
+        // Format overload
+        let re = Regex::new(r#"(?i)(Overload \d of \d), ['"](.*?)['"], "#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{}, `{}`, ", &caps[1], &caps[2])
+            })
+            .to_string();
+
+        // Format simple strings
+        let re = Regex::new(r#"^['"]"[^"]*"['"]$"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| format_typescript_block(&caps[0]))
+            .to_string();
+
+        // Replace module 'x' by module "x" for ts error #2307
+        let re = Regex::new(r#"(?i)(module )'([^"]*?)'"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{}\"{}\"", &caps[1], &caps[2])
+            })
+            .to_string();
+
+        // Format string types
+        let re = Regex::new(r#"(?i)(module|file|file name|imported via) ['""](.*?)['""]"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format_type_block(&caps[1], &format!("\"{}\"", &caps[2]))
+            })
+            .to_string();
+
+        // Format types
+        let re = Regex::new(r#"(?i)(type|type alias|interface|module|file|file name|class|method's|subtype of constraint) ['"](.*?)['"]"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format_type_block(&caps[1], &caps[2])
+            })
+            .to_string();
+
+        // Format reversed types
+        let re = Regex::new(r#"(?i)(.*)['"]([^>]*)['"] (type|interface|return type|file|module|is (not )?assignable)"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{}`{}` {}", &caps[1], &caps[2], &caps[3])
+            })
+            .to_string();
+
+        // Format simple types that didn't captured before
+        let re = Regex::new(
+            r#"['"]((void|null|undefined|any|boolean|string|number|bigint|symbol)(\[\])?)['"']"#,
+        )
+        .unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format_simple_type_block(&caps[1])
+            })
+            .to_string();
+
+        // Format some typescript keywords
+        let re = Regex::new(r#"['"](import|export|require|in|continue|break|let|false|true|const|new|throw|await|for await|[0-9]+)( ?.*?)['"]"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format_typescript_block(&format!("{}{}", &caps[1], &caps[2]))
+            })
+            .to_string();
+
+        // Format return values
+        let re = Regex::new(r#"(?i)(return|operator) ['"](.*?)['"']"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{} {}", &caps[1], format_typescript_block(&caps[2]))
+            })
+            .to_string();
+
+        // Format regular code blocks
+        let re = Regex::new(r#"(\W|^)'([^'"]*?)'(\W|$)"#).unwrap();
+        result = re
+            .replace_all(&result, |caps: &Captures| {
+                format!("{}{}{}", &caps[1], unstyle_code_block(&caps[2]), &caps[3])
+            })
+            .to_string();
+
+        Some(result)
+    }
 }
 
 async fn get_cached_ts_server_binary(

@@ -54,6 +54,7 @@ impl sqlez::bindable::Bind for SerializedAxis {
     }
 }
 
+// > https://zed.dev/cla
 impl sqlez::bindable::Column for SerializedAxis {
     fn column(
         statement: &mut sqlez::statement::Statement,

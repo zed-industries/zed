@@ -262,6 +262,7 @@ impl LspAdapter for RustLspAdapter {
         _: LanguageServerId,
         _: Option<&'_ Buffer>,
     ) {
+        // https://zed.dev/cla
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 

@@ -8,9 +8,10 @@ use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
-    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    Buffer, ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
@@ -605,6 +606,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         }
     }
 
+    // >>> https://zed.dev/cla <<<
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -747,6 +749,15 @@ impl LspAdapter for TypeScriptLspAdapter {
             ("JavaScript".into(), "javascript".into()),
             ("TSX".into(), "typescriptreact".into()),
         ])
+    }
+
+    fn process_diagnostics(
+        &self,
+        d: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
+        dbg!("called with ", d);
     }
 }
 
