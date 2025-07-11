@@ -585,10 +585,20 @@ impl VariableList {
             let var = entry.entry.as_variable()?;
             let memory_reference = var.memory_reference.as_deref()?;
 
+            let sizeof_expr = if var.type_.as_ref().is_some_and(|t| {
+                t.chars()
+                    .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+            }) {
+                var.type_.as_deref()
+            } else {
+                var.evaluate_name
+                    .as_deref()
+                    .map(|name| name.strip_prefix("/nat ").unwrap_or_else(|| name))
+            };
             self.memory_view.update(cx, |this, cx| {
                 this.go_to_memory_reference(
                     memory_reference,
-                    var.evaluate_name.as_deref(),
+                    sizeof_expr,
                     self.selected_stack_frame_id,
                     cx,
                 );
