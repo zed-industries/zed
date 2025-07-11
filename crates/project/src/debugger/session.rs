@@ -1647,6 +1647,7 @@ impl Session {
         self.invalidate_command_type::<ModulesCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
+        self.invalidate_command_type::<ReadMemory>();
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
