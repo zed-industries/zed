@@ -21,6 +21,7 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
+mod deno_virtual_documents;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;

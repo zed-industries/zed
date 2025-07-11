@@ -911,3 +911,13 @@ message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
     uint64 server_id = 2;
 }
+
+message DenoVirtualTextDocument {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    string uri = 3;
+}
+
+message DenoVirtualTextDocumentResponse {
+    string content = 1;
+}

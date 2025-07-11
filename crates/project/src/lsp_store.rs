@@ -1,4 +1,5 @@
 pub mod clangd_ext;
+pub mod deno_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
@@ -145,6 +146,7 @@ pub struct LocalLspStore {
     languages: Arc<LanguageRegistry>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), BTreeSet<LanguageServerId>>,
     yarn: Entity<YarnPathStore>,
+    deno_virtual_documents: Entity<crate::deno_virtual_documents::DenoVirtualDocumentStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -944,6 +946,7 @@ impl LocalLspStore {
                 }
             })
             .detach();
+
         language_server
             .on_notification::<lsp::notification::ShowMessage, _>({
                 let this = this.clone();
@@ -3682,6 +3685,9 @@ impl LspStore {
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<deno_ext::FetchVirtualTextDocument>,
+        );
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3734,6 +3740,8 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
+        let deno_virtual_documents =
+            crate::deno_virtual_documents::DenoVirtualDocumentStore::new(fs.clone(), cx);
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -3781,6 +3789,7 @@ impl LspStore {
                 prettier_store,
                 environment,
                 http_client,
+                deno_virtual_documents,
                 fs,
                 yarn,
                 next_diagnostic_group_id: Default::default(),
@@ -7376,6 +7385,16 @@ impl LspStore {
 
             let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
             for (adapter, server, delegate) in servers {
+                // TODO
+                // For some reason, the Deno LSP cannot respond properly to textDocument/definition requests once it has received a workspace/didChangeConfiguration notification.
+                // This issue does not occur with external packages (e.g. deno:/https/jsr.io/%40fresh/core/2.0.0-alpha.37/src/plugins/fs_routes/mod.ts), but it does happen with built-in packages (e.g. deno:/asset/lib.deno.console.d.ts).
+                // As a result, the “Go to Definition” feature fails for something like console.log after sending workspace/didChangeConfiguration.
+                // So far, we haven’t been able to create a minimal, standalone reproducible example that clearly demonstrates this is a bug in the Deno LSP.
+                // For now, we’re simply skipping workspace/didChangeConfiguration entirely, though this is probably not the best approach.
+                if adapter.name().0.contains("deno") {
+                    continue;
+                }
+
                 let settings = LocalLspStore::workspace_configuration_for_adapter(
                     adapter,
                     fs.as_ref(),
@@ -7798,9 +7817,23 @@ impl LspStore {
         language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        cx.spawn(async move |lsp_store, cx| {
-            // Escape percent-encoded string.
+        let original_url = abs_path.clone();
+
+        cx.spawn(async move |lsp_store, mut cx| {
             let current_scheme = abs_path.scheme().to_owned();
+
+            // Handle Deno virtual documents (deno:/https/... format)
+            if current_scheme == "deno" {
+                return deno_ext::open_deno_virtual_document(
+                    lsp_store,
+                    original_url,
+                    language_server_id,
+                    language_server_name,
+                    &mut cx,
+                )
+                .await;
+            }
+
             let _ = abs_path.set_scheme("file");
 
             let abs_path = abs_path
