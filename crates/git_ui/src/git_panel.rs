@@ -30,10 +30,9 @@ use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles
 use gpui::{
     Action, Animation, AnimationExt as _, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
-    Transformation, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, percentage,
-    uniform_list,
+    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, MouseDownEvent, Point,
+    PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
+    WeakEntity, actions, anchored, deferred, percentage, uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -323,7 +322,6 @@ pub struct GitPanel {
     pub(crate) commit_editor: Entity<Editor>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
-    current_modifiers: Modifiers,
     add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
@@ -355,6 +353,7 @@ pub struct GitPanel {
     show_placeholders: bool,
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
+    last_staged_path: Option<RepoPath>,
     _settings_subscription: Subscription,
 }
 
@@ -497,7 +496,6 @@ impl GitPanel {
                 commit_editor,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
-                current_modifiers: window.modifiers(),
                 add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
@@ -529,6 +527,7 @@ impl GitPanel {
                 entry_count: 0,
                 horizontal_scrollbar,
                 vertical_scrollbar,
+                last_staged_path: None,
                 _settings_subscription,
             };
 
@@ -733,16 +732,6 @@ impl GitPanel {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
-    }
-
-    fn handle_modifiers_changed(
-        &mut self,
-        event: &ModifiersChangedEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.current_modifiers = event.modifiers;
-        cx.notify();
     }
 
     fn scroll_to_selected_entry(&mut self, cx: &mut Context<Self>) {
@@ -2457,6 +2446,13 @@ impl GitPanel {
     }
 
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
+        let last_staged_path = self.last_staged_path.take();
+        let last_staged_path_prev_index = last_staged_path
+            .as_ref()
+            .and_then(|path| self.entry_by_path(path, cx));
+
+        // FIXME check if we changed repos
+
         self.entries.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
@@ -2473,7 +2469,7 @@ impl GitPanel {
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
-        let mut last_staged = None;
+        let mut single_staged_entry = None;
         let mut staged_count = 0;
         let mut max_width_item: Option<(RepoPath, usize)> = None;
 
@@ -2511,7 +2507,7 @@ impl GitPanel {
 
             if staging.has_staged() {
                 staged_count += 1;
-                last_staged = Some(entry.clone());
+                single_staged_entry = Some(entry.clone());
             }
 
             let width_estimate = Self::item_width_estimate(
@@ -2542,27 +2538,27 @@ impl GitPanel {
 
         let mut pending_staged_count = 0;
         let mut last_pending_staged = None;
-        let mut pending_status_for_last_staged = None;
+        let mut pending_status_for_single_staged = None;
         for pending in self.pending.iter() {
             if pending.target_status == TargetStatus::Staged {
                 pending_staged_count += pending.entries.len();
                 last_pending_staged = pending.entries.iter().next().cloned();
             }
-            if let Some(last_staged) = &last_staged {
+            if let Some(single_staged) = &single_staged_entry {
                 if pending
                     .entries
                     .iter()
-                    .any(|entry| entry.repo_path == last_staged.repo_path)
+                    .any(|entry| entry.repo_path == single_staged.repo_path)
                 {
-                    pending_status_for_last_staged = Some(pending.target_status);
+                    pending_status_for_single_staged = Some(pending.target_status);
                 }
             }
         }
 
         if conflict_entries.len() == 0 && staged_count == 1 && pending_staged_count == 0 {
-            match pending_status_for_last_staged {
+            match pending_status_for_single_staged {
                 Some(TargetStatus::Staged) | None => {
-                    self.single_staged_entry = last_staged;
+                    self.single_staged_entry = single_staged_entry;
                 }
                 _ => {}
             }
@@ -2615,6 +2611,18 @@ impl GitPanel {
         }
 
         self.update_counts(repo);
+
+        let last_staged_path_new_index = last_staged_path
+            .as_ref()
+            .and_then(|path| self.entry_by_path(path, cx));
+        if last_staged_path_new_index == last_staged_path_prev_index
+            && let Some(index) = last_staged_path_new_index
+            && let Some(entry) = self.entries.get(index)
+            && let Some(entry) = entry.status_entry()
+            && self.entry_staging(entry) == StageStatus::Staged
+        {
+            self.last_staged_path = last_staged_path;
+        }
 
         self.select_first_entry_if_none(cx);
 
@@ -4008,8 +4016,6 @@ impl GitPanel {
         let marked = self.marked_entries.contains(&ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry.status;
-        let modifiers = self.current_modifiers;
-        let shift_held = modifiers.shift;
 
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
@@ -4145,46 +4151,60 @@ impl GitPanel {
                             .disabled(!has_write_access)
                             .fill()
                             .elevation(ElevationIndex::Surface)
-                            .on_click({
+                            .on_click_ext({
                                 let entry = entry.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    if !has_write_access {
-                                        return;
-                                    }
-                                    this.toggle_staged_for_entry(
-                                        &GitListEntry::GitStatusEntry(entry.clone()),
-                                        window,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                })
+                                let this = cx.weak_entity();
+                                move |_, click, window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        if !has_write_access {
+                                            return;
+                                        }
+                                        if click.modifiers().shift
+                                            && let Some(last_staged_path) =
+                                                this.last_staged_path.clone()
+                                        {
+                                            let Some(mut start_ix) =
+                                                this.entry_by_path(&last_staged_path, cx)
+                                            else {
+                                                return;
+                                            };
+                                            let Some(mut end_ix) =
+                                                this.entry_by_path(&entry.repo_path, cx)
+                                            else {
+                                                return;
+                                            };
+                                            if end_ix < start_ix {
+                                                std::mem::swap(&mut start_ix, &mut end_ix);
+                                            }
+                                            let entries = this.entries[start_ix..=end_ix]
+                                                .iter()
+                                                .filter_map(|entry| entry.status_entry().cloned())
+                                                .collect::<Vec<_>>();
+                                            this.change_file_stage(true, entries, cx);
+                                        } else {
+                                            this.last_staged_path.take();
+                                            if !entry.staging.is_fully_staged() {
+                                                this.last_staged_path =
+                                                    Some(entry.repo_path.clone());
+                                            }
+                                            this.toggle_staged_for_entry(
+                                                &GitListEntry::GitStatusEntry(entry.clone()),
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                        cx.stop_propagation();
+                                    })
+                                    .ok();
+                                }
                             })
                             .tooltip(move |window, cx| {
                                 let is_staged = entry_staging.is_fully_staged();
 
                                 let action = if is_staged { "Unstage" } else { "Stage" };
-                                let tooltip_name = if shift_held {
-                                    format!("{} section", action)
-                                } else {
-                                    action.to_string()
-                                };
+                                let tooltip_name = action.to_string();
 
-                                let meta = if shift_held {
-                                    format!(
-                                        "Release shift to {} single entry",
-                                        action.to_lowercase()
-                                    )
-                                } else {
-                                    format!("Shift click to {} section", action.to_lowercase())
-                                };
-
-                                Tooltip::with_meta(
-                                    tooltip_name,
-                                    Some(&ToggleStaged),
-                                    meta,
-                                    window,
-                                    cx,
-                                )
+                                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
                             }),
                     ),
             )
@@ -4287,7 +4307,6 @@ impl Render for GitPanel {
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
-            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
                     .on_action(cx.listener(GitPanel::commit))
