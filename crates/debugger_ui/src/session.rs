@@ -11,7 +11,7 @@ use project::worktree_store::WorktreeStore;
 use rpc::proto;
 use running::RunningState;
 use std::{cell::OnceCell, sync::OnceLock};
-use ui::{Indicator, Tooltip, prelude::*};
+use ui::{Indicator, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
@@ -158,7 +158,6 @@ impl DebugSession {
 
         h_flex()
             .id("session-label")
-            .tooltip(Tooltip::text(format!("Session {}", self.session_id(cx).0,)))
             .ml(depth * px(16.0))
             .gap_2()
             .when_some(icon, |this, indicator| this.child(indicator))
