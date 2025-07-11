@@ -22,6 +22,7 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     running_state: Entity<RunningState>,
     label: OnceLock<SharedString>,
+    compact: bool,
     stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
@@ -57,6 +58,7 @@ impl DebugSession {
                 cx,
             )
         });
+        let compact = session.read(cx).compact();
 
         cx.new(|cx| Self {
             _subscriptions: [cx.subscribe(&running_state, |_, _, _, cx| {
@@ -65,6 +67,7 @@ impl DebugSession {
             remote_id: None,
             running_state,
             label: OnceLock::new(),
+            compact,
             stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,

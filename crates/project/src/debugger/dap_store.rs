@@ -389,6 +389,7 @@ impl DapStore {
         adapter: DebugAdapterName,
         task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
         let session_id = SessionId(util::post_inc(&mut self.next_session_id));
@@ -406,6 +407,7 @@ impl DapStore {
             label,
             adapter,
             task_context,
+            compact,
             cx,
         );
 

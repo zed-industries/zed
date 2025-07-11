@@ -679,6 +679,7 @@ pub struct Session {
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
+    compact: bool,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -795,6 +796,7 @@ impl Session {
         label: SharedString,
         adapter: DebugAdapterName,
         task_context: TaskContext,
+        compact: bool,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -848,6 +850,7 @@ impl Session {
                 label,
                 adapter,
                 task_context,
+                compact,
             };
 
             this
@@ -2480,5 +2483,9 @@ impl Session {
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.thread_states.thread_state(thread_id)
+    }
+
+    pub fn compact(&self) -> bool {
+        self.compact
     }
 }

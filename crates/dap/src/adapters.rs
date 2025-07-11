@@ -378,6 +378,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
         None
     }
+
+    fn compact_child_session(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

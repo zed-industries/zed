@@ -534,6 +534,10 @@ impl DebugAdapter for JsDebugAdapter {
             .filter(|name| !name.is_empty())?;
         Some(label.to_owned())
     }
+
+    fn compact_child_session(&self) -> bool {
+        true
+    }
 }
 
 fn normalize_task_type(task_type: &mut Value) {

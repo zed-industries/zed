@@ -191,6 +191,7 @@ impl DebugPanel {
                 DebugAdapterName(scenario.adapter.clone()),
                 task_context.clone(),
                 None,
+                false,
                 cx,
             )
         });
@@ -379,7 +380,7 @@ impl DebugPanel {
             task.await.log_err();
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(label, adapter, task_context, None, cx);
+                let session = dap_store.new_session(label, adapter, task_context, None, false, cx);
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
@@ -425,6 +426,10 @@ impl DebugPanel {
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let label = self.label_for_child_session(&parent_session, request, cx);
         let adapter = parent_session.read(cx).adapter().clone();
+        let compact = DapRegistry::global(cx)
+            .adapter(&adapter)
+            .is_some_and(|adapter| adapter.compact_child_session())
+            && parent_session.read(cx).parent_id(cx).is_none();
         let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
             log::error!("Attempted to start a child-session without a binary");
             return;
@@ -438,6 +443,7 @@ impl DebugPanel {
                     adapter,
                     task_context,
                     Some(parent_session.clone()),
+                    compact,
                     cx,
                 );
 
