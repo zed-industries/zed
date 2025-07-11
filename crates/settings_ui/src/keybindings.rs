@@ -193,7 +193,13 @@ impl ConflictState {
         key_bindings
             .iter()
             .enumerate()
-            .filter(|(_, binding)| !binding.keystroke_text.is_empty())
+            .filter(|(_, binding)| {
+                !binding.keystroke_text.is_empty()
+                    && binding
+                        .source
+                        .as_ref()
+                        .is_some_and(|source| matches!(source.0, KeybindSource::User))
+            })
             .for_each(|(index, binding)| {
                 action_keybind_mapping
                     .entry(binding.get_action_mapping())
