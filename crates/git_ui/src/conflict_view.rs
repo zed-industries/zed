@@ -11,7 +11,7 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _};
 use std::{ops::Range, sync::Arc};
-use ui::{ActiveTheme, Element as _, Styled, StyledTypography as _, Window, prelude::*};
+use ui::{ActiveTheme, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 
 pub(crate) struct ConflictAddon {
