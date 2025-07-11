@@ -2,16 +2,16 @@ use std::{sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
-    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, point,
-    uniform_list,
+    AppContext, Edges, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
+    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, bounds,
+    point, size, uniform_list,
 };
 use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
-    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
+    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Pixels,
     PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
     Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
@@ -154,7 +154,8 @@ impl MemoryView {
             div()
                 .occlude()
                 .id("memory-view-vertical-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
+                .on_mouse_move(cx.listener(|this, evt, _, cx| {
+                    this.handle_drag(evt);
                     cx.notify();
                     cx.stop_propagation()
                 }))
@@ -183,6 +184,7 @@ impl MemoryView {
                 .children(Scrollbar::vertical(self.scroll_state.clone())),
         )
     }
+
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
         let weak = cx.weak_entity();
         let session = self.session.clone();
@@ -260,6 +262,42 @@ impl MemoryView {
             .ok();
         })
         .detach();
+    }
+
+    fn handle_drag(&mut self, evt: &MouseMoveEvent) {
+        if !evt.dragging() {
+            return;
+        }
+        if !self.scroll_state.is_dragging()
+            && !self
+                .view_state
+                .selection
+                .as_ref()
+                .is_some_and(|selection| selection.is_dragging())
+        {
+            return;
+        }
+        let row_count = self.view_state.row_count();
+        debug_assert!(row_count > 1);
+        let scroll_handle = self.scroll_state.scroll_handle();
+        let viewport = scroll_handle.viewport();
+        let (top_area, bottom_area) = {
+            let size = size(viewport.size.width, viewport.size.height / 3.);
+            (
+                bounds(viewport.origin, size),
+                bounds(
+                    point(viewport.origin.x, viewport.origin.y + size.height * 2.),
+                    size,
+                ),
+            )
+        };
+
+        if bottom_area.contains(&evt.position) {
+            //ix == row_count - 1 {
+            self.view_state.schedule_scroll_down();
+        } else if top_area.contains(&evt.position) {
+            self.view_state.schedule_scroll_up();
+        }
     }
 
     fn editor_style(editor: &Entity<Editor>, cx: &Context<Self>) -> EditorStyle {
@@ -537,88 +575,10 @@ impl Render for MemoryView {
                 v_flex()
                     .size_full()
                     .on_mouse_move(cx.listener(|this, evt: &MouseMoveEvent, _, _| {
-                        if !evt.dragging() {
-                            return;
-                        }
-                        if !this.scroll_state.is_dragging()
-                            && !this
-                                .view_state
-                                .selection
-                                .as_ref()
-                                .is_some_and(|selection| selection.is_dragging())
-                        {
-                            return;
-                        }
-                        let row_count = this.view_state.row_count();
-
-                        debug_assert!(row_count > 1);
-                        if false {
-                            //ix == row_count - 1 {
-                            this.view_state.schedule_scroll_down();
-                        } else if !true
-                            && (this.scroll_state.is_dragging()
-                                || this
-                                    .view_state
-                                    .selection
-                                    .as_ref()
-                                    .is_some_and(|selection| selection.is_dragging()))
-                        {
-                            this.view_state.schedule_scroll_up();
-                        }
+                        this.handle_drag(evt);
                     }))
                     .child(self.render_memory(cx).size_full())
-                    .children(self.render_vertical_scrollbar(cx))
-                    .child(
-                        div()
-                            .absolute()
-                            .id("memory-view-top-scroll-area")
-                            .h_1_6()
-                            .w_full()
-                            .opacity(0.5)
-                            .top_0()
-                            .right_1()
-                            .left_1()
-                            .on_mouse_move({
-                                let this = this.clone();
-                                move |_, _, cx| {
-                                    _ = this.update(cx, |this, _| {
-                                        if this
-                                            .view_state
-                                            .selection
-                                            .as_ref()
-                                            .is_some_and(|selection| selection.is_dragging())
-                                        {
-                                            // this.scroll_handle..scroll_by(px(-100.));
-                                        }
-                                    });
-                                    // style
-                                }
-                            }),
-                    )
-                    .child(
-                        div()
-                            .id("memory-view-bottom-scroll-area")
-                            .absolute()
-                            .h_1_6()
-                            .w_full()
-                            .opacity(0.5)
-                            .bottom_0()
-                            .right_1()
-                            .left_1()
-                            .on_mouse_move(move |_, _, cx| {
-                                _ = this.update(cx, |this, _| {
-                                    if this
-                                        .view_state
-                                        .selection
-                                        .as_ref()
-                                        .is_some_and(|selection| selection.is_dragging())
-                                    {
-                                        // this.list_state.scroll_by(px(100.));
-                                    }
-                                });
-                                // style
-                            }),
-                    ),
+                    .children(self.render_vertical_scrollbar(cx)),
             )
     }
 }
