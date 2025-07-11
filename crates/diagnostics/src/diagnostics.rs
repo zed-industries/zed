@@ -40,6 +40,7 @@ use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
+use util::paths::PathMatcher;
 use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
@@ -82,7 +83,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     include_warnings: bool,
     /// When provided, this determines whether only diagnostics for this file
     /// should be shown.
-    path_filter: Option<ProjectPath>,
+    path_matcher: Option<PathMatcher>,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     diagnostic_summary_update: Task<()>,
@@ -167,7 +168,7 @@ impl ProjectDiagnosticsEditor {
 
     fn new(
         include_warnings: bool,
-        path_filter: Option<ProjectPath>,
+        path_matcher: Option<PathMatcher>,
         project_handle: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -186,7 +187,7 @@ impl ProjectDiagnosticsEditor {
                     language_server_id,
                     path,
                 } => {
-                    if let Some(path_filter) = &this.path_filter && *path_filter != *path {
+                    if let Some(path_matcher) = &this.path_matcher && !path_matcher.is_match(path.path.clone()) {
                         log::debug!("diagnostics ignored for server {language_server_id}, path {path:?}. path filter mismatch");
                         return;
                     };
@@ -288,7 +289,7 @@ impl ProjectDiagnosticsEditor {
             diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
-            path_filter,
+            path_matcher,
             workspace,
             multibuffer: excerpts,
             focus_handle,
@@ -391,15 +392,15 @@ impl ProjectDiagnosticsEditor {
             .map_or(None, |editor| editor.project_path(cx));
 
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            // TODO: If the project's diagnostics editor is already open, update the
-            // `active_path` field and enable the `filter_path` option.
-            dbg!(&existing.read(cx).path_filter);
+            // TODO: If the project's diagnostics editor is already open, ensure
+            // that we start filtering by the active file again.
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
 
-            existing.update(cx, |diagnostics, _cx| {
-                diagnostics.set_path_filter(path);
+            existing.update(cx, |diagnostics, cx| {
+                diagnostics.set_path_filter(path.clone());
+                diagnostics.update_all_diagnostics(false, window, cx);
             });
 
             workspace.activate_item(&existing, true, !is_active, window, cx);
@@ -411,10 +412,21 @@ impl ProjectDiagnosticsEditor {
                 None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
             };
 
+            let path_matcher = match path {
+                Some(project_path) => {
+                    if let Some(path_str) = project_path.path.to_str() {
+                        PathMatcher::new([path_str]).ok()
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            };
+
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     include_warnings,
-                    path,
+                    path_matcher,
                     workspace.project().clone(),
                     workspace_handle,
                     window,
@@ -538,32 +550,28 @@ impl ProjectDiagnosticsEditor {
     /// Enqueue an update of all excerpts. Updates all paths that either
     /// currently have diagnostics or are currently present in this view.
     fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let path_filter = self.path_filter.clone();
-
         self.project.update(cx, |project, cx| {
-            let paths = if let Some(path_filter) = path_filter {
-                BTreeSet::from([path_filter])
-            } else {
-                let mut project_paths = project
-                    .diagnostic_summaries(false, cx)
-                    .map(|(project_path, _, _)| project_path)
-                    .collect::<BTreeSet<_>>();
+            let mut project_paths = project
+                .diagnostic_summaries(false, cx)
+                .map(|(project_path, _, _)| project_path)
+                .filter(|project_path| match self.path_matcher.clone() {
+                    Some(path_matcher) => path_matcher.is_match(project_path.path.clone()),
+                    None => true,
+                })
+                .collect::<BTreeSet<_>>();
 
-                self.multibuffer.update(cx, |multibuffer, cx| {
-                    for buffer in multibuffer.all_buffers() {
-                        if let Some(file) = buffer.read(cx).file() {
-                            project_paths.insert(ProjectPath {
-                                path: file.path().clone(),
-                                worktree_id: file.worktree_id(cx),
-                            });
-                        }
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                for buffer in multibuffer.all_buffers() {
+                    if let Some(file) = buffer.read(cx).file() {
+                        project_paths.insert(ProjectPath {
+                            path: file.path().clone(),
+                            worktree_id: file.worktree_id(cx),
+                        });
                     }
-                });
+                }
+            });
 
-                project_paths
-            };
-
-            self.paths_to_update = paths;
+            self.paths_to_update = project_paths;
         });
 
         self.update_stale_excerpts(window, cx);
@@ -774,7 +782,15 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn set_path_filter(&mut self, path_filter: Option<ProjectPath>) {
-        self.path_filter = path_filter;
+        let path_matcher = match path_filter {
+            Some(project_path) => match project_path.path.to_str() {
+                Some(path) => PathMatcher::new([path]).ok(),
+                None => None,
+            },
+            None => None,
+        };
+
+        self.path_matcher = path_matcher;
     }
 
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
@@ -916,7 +932,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
-                self.path_filter.clone(),
+                self.path_matcher.clone(),
                 self.project.clone(),
                 self.workspace.clone(),
                 window,
