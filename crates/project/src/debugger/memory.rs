@@ -145,7 +145,7 @@ impl Memory {
     }
 
     pub(crate) fn clear(&mut self, background_executor: &BackgroundExecutor) {
-        let mut memory = std::mem::take(&mut self.pages);
+        let memory = std::mem::take(&mut self.pages);
         background_executor
             .spawn(async move {
                 drop(memory);
