@@ -2354,11 +2354,39 @@ fn get_scale_factor(
 fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
     let root = connection.setup().roots.get(screen_index)?.root;
 
-    let resources_cookie = connection.randr_get_screen_resources_current(root).ok()?;
     let primary_cookie = connection.randr_get_output_primary(root).ok()?;
+    let primary_reply = primary_cookie.reply().ok()?;
+    let primary_output = primary_reply.output;
 
+    let primary_output_cookie = connection
+        .randr_get_output_info(primary_output, x11rb::CURRENT_TIME)
+        .ok()?;
+    let primary_output_info = primary_output_cookie.reply().ok()?;
+
+    if primary_output_info.connection == randr::Connection::CONNECTED
+        && primary_output_info.mm_width > 0
+        && primary_output_info.mm_height > 0
+        && primary_output_info.crtc != randr::Crtc::NONE
+    {
+        let crtc_cookie = connection
+            .randr_get_crtc_info(primary_output_info.crtc, x11rb::CURRENT_TIME)
+            .ok()?;
+        let crtc_info = crtc_cookie.reply().ok()?;
+
+        if crtc_info.width > 0 && crtc_info.height > 0 {
+            let scale_factor = get_dpi_factor(
+                (crtc_info.width as u32, crtc_info.height as u32),
+                (
+                    primary_output_info.mm_width as u64,
+                    primary_output_info.mm_height as u64,
+                ),
+            );
+            return Some(scale_factor);
+        }
+    }
+
+    let resources_cookie = connection.randr_get_screen_resources_current(root).ok()?;
     let screen_resources = resources_cookie.reply().ok()?;
-    let primary_output = primary_cookie.reply().ok()?.output;
 
     let mut crtc_cookies = Vec::with_capacity(screen_resources.crtcs.len());
     for &crtc in &screen_resources.crtcs {
@@ -2396,7 +2424,7 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
     }
 
     let mut fallback_scale: Option<f32> = None;
-    for (&crtc, crtc_info) in &crtc_infos {
+    for crtc_info in crtc_infos.values() {
         for &output in &crtc_info.outputs {
             if let Some(output_info) = output_infos.get(&output) {
                 if output_info.connection != randr::Connection::CONNECTED {
@@ -2412,9 +2440,8 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
                     (output_info.mm_width as u64, output_info.mm_height as u64),
                 );
 
-                if output == primary_output {
-                    return Some(scale_factor);
-                } else if fallback_scale.is_none() {
+                // skip primary since we already checked it
+                if output != primary_output && fallback_scale.is_none() {
                     fallback_scale = Some(scale_factor);
                 }
             }
