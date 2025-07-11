@@ -896,8 +896,6 @@ impl Render for KeymapEditor {
                             .child(self.filter_editor.clone()),
                     )
                     .child(
-                        // TODO: Ask Mikyala if there's a way to get have items be aligned by horizontally
-                        // without embedding a h_flex in another h_flex
                         h_flex()
                             .when(self.keybinding_conflict_state.any_conflicts(), |this| {
                                 this.child(
