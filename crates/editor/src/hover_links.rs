@@ -303,13 +303,12 @@ pub fn update_inlay_link_and_hover_points(
     let hovered_offset = snapshot.display_point_to_inlay_offset(clipped_point, Bias::Left);
 
     let mut go_to_definition_updated = false;
-    let mut hover_updated = false;
 
     // Get all visible inlay hints
     let visible_hints = editor.visible_inlay_hints(cx);
 
     // Find if we're hovering over an inlay hint
-    if let Some(hovered_inlay) = visible_hints.into_iter().find(|inlay| {
+    let found_inlay = visible_hints.into_iter().find(|inlay| {
         // Only process hint inlays
         if !matches!(inlay.id, InlayId::Hint(_)) {
             return false;
@@ -320,7 +319,9 @@ pub fn update_inlay_link_and_hover_points(
         let inlay_end = InlayOffset(inlay_start.0 + inlay.text.len());
 
         hovered_offset >= inlay_start && hovered_offset < inlay_end
-    }) {
+    });
+
+    if let Some(hovered_inlay) = found_inlay {
         let inlay_hint_cache = editor.inlay_hint_cache();
         let excerpt_id = hovered_inlay.position.excerpt_id;
 
@@ -386,18 +387,20 @@ pub fn update_inlay_link_and_hover_points(
                                     window,
                                     cx,
                                 );
-                                hover_updated = true;
                             }
                         }
                         project::InlayHintLabel::LabelParts(label_parts) => {
-                            // VS Code shows hover for the meaningful part regardless of where you hover
-                            // Find the first part with actual hover information (tooltip or location)
-                            let _hint_start =
+                            // Find which specific part is being hovered
+                            let hint_start =
                                 snapshot.anchor_to_inlay_offset(hovered_inlay.position);
-                            let mut part_offset = 0;
 
-                            for part in label_parts {
-                                let part_len = part.value.chars().count();
+                            if let Some((part, part_range)) = hover_popover::find_hovered_hint_part(
+                                label_parts,
+                                hint_start,
+                                hovered_offset,
+                            ) {
+                                let part_offset = (part_range.start - hint_start).0;
+                                let part_len = (part_range.end - part_range.start).0;
 
                                 if part.tooltip.is_some() || part.location.is_some() {
                                     // Found the meaningful part - show hover for it
@@ -433,7 +436,6 @@ pub fn update_inlay_link_and_hover_points(
                                             window,
                                             cx,
                                         );
-                                        hover_updated = true;
                                     } else if let Some((_language_server_id, location)) =
                                         part.location.clone()
                                     {
@@ -458,9 +460,8 @@ pub fn update_inlay_link_and_hover_points(
                                             window,
                                             cx,
                                         );
-                                        hover_updated = true;
-
                                         // Now perform the "Go to Definition" flow to get hover documentation
+                                        // Prepare data needed for the async task
                                         if let Some(project) = editor.project.clone() {
                                             let highlight = highlight.clone();
                                             let hint_value = part.value.clone();
@@ -673,26 +674,27 @@ pub fn update_inlay_link_and_hover_points(
                                             );
                                         }
                                     }
-
-                                    // Found and processed the meaningful part
-                                    break;
                                 }
-
-                                part_offset += part_len;
                             }
                         }
                     };
                 }
             }
         }
+    } else {
+        // No inlay is being hovered, hide any existing inlay hover
+        if editor
+            .hover_state
+            .info_popovers
+            .iter()
+            .any(|popover| matches!(popover.symbol_range, RangeInEditor::Inlay(_)))
+        {
+            hover_popover::hide_hover(editor, cx);
+        }
     }
 
     if !go_to_definition_updated {
         editor.hide_hovered_link(cx)
-    }
-    if !hover_updated {
-        hover_popover::hover_at(editor, None, window, cx);
-        editor.clear_background_highlights::<HoverState>(cx);
     }
 }
 
