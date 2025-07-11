@@ -1847,3 +1847,23 @@ impl LocalDapCommand for dap::DataBreakpointInfoArguments {
         Ok(message)
     }
 }
+
+impl LocalDapCommand for dap::WriteMemoryArguments {
+    type Response = dap::WriteMemoryResponse;
+    type DapRequest = dap::requests::WriteMemory;
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_write_memory_request
+            .unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}

@@ -15,6 +15,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
+use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -28,7 +29,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint, WriteMemoryArguments,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
@@ -1747,6 +1748,25 @@ impl Session {
         })
     }
 
+    pub fn write_memory(&mut self, address: u64, data: &[u8], cx: &mut Context<Self>) {
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        self.request(
+            WriteMemoryArguments {
+                memory_reference: address.to_string(),
+                data,
+                allow_partial: None,
+                offset: None,
+            },
+            |this, response, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
+                this.invalidate_command_type::<VariablesCommand>();
+                response.ok()
+            },
+            cx,
+        )
+        .detach();
+    }
     pub fn read_memory(
         &mut self,
         range: RangeInclusive<u64>,
@@ -1762,6 +1782,7 @@ impl Session {
         }
         self.memory.memory_range(range)
     }
+
     fn read_single_page_memory(&mut self, page_start: PageAddress, cx: &mut Context<Self>) {
         _ = maybe!({
             let builder = self.memory.build_page(page_start)?;

@@ -1,4 +1,4 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{ops::RangeInclusive, sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -42,12 +42,16 @@ struct Drag {
 
 impl Drag {
     fn contains(&self, address: u64) -> bool {
-        let range = if self.start_address < self.end_address {
+        let range = self.memory_range();
+        range.contains(&address)
+    }
+
+    fn memory_range(&self) -> RangeInclusive<u64> {
+        if self.start_address < self.end_address {
             self.start_address..=self.end_address
         } else {
             self.end_address..=self.start_address
-        };
-        range.contains(&address)
+        }
     }
 }
 #[derive(Clone, Debug)]
@@ -386,6 +390,15 @@ impl MemoryView {
     }
 
     fn change_address(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
+            self.session.update(cx, |this, cx| {
+                let range = drag.memory_range();
+                let memory = vec![0xcc_u8; (range.end() - range.start()) as usize + 1];
+                this.write_memory(*range.start(), &memory, cx);
+            });
+            cx.notify();
+            return;
+        }
         use parse_int::parse;
         let text = self.query_editor.read(cx).text(cx);
 
@@ -395,6 +408,7 @@ impl MemoryView {
         self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
         cx.notify();
     }
+
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.view_state.selection = None;
         cx.notify();
