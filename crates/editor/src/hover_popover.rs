@@ -193,12 +193,6 @@ pub fn hover_at_inlay(
                 };
 
                 this.update(cx, |this, cx| {
-                    // Check if we should still show this hover (haven't moved to different location)
-                    if this.hover_state.info_task.is_none() {
-                        // Task was cancelled, don't show the hover
-                        return;
-                    }
-
                     // Highlight the inlay using background highlighting
                     let highlight_range = inlay_hover.range.clone();
                     this.highlight_inlays::<HoverState>(
@@ -562,19 +556,16 @@ fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -
         .info_popovers
         .iter()
         .any(|InfoPopover { symbol_range, .. }| {
-            match symbol_range {
-                RangeInEditor::Text(range) => {
+            symbol_range
+                .as_text_range()
+                .map(|range| {
                     let hover_range = range.to_offset(&snapshot.buffer_snapshot);
                     let offset = anchor.to_offset(&snapshot.buffer_snapshot);
                     // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
                     // use an inclusive range here to check if we should dismiss the popover
                     (hover_range.start..=hover_range.end).contains(&offset)
-                }
-                RangeInEditor::Inlay(_) => {
-                    // If we have an inlay hover and we're checking a text position, they're not the same
-                    false
-                }
-            }
+                })
+                .unwrap_or(false)
         })
 }
 
