@@ -89,6 +89,8 @@ impl zed::Extension for MyExtension {
 zed::register_extension!(MyExtension);
 ```
 
+> `stdout`/`stderr` is forwarded directly to the Zed process. In order to see `println!`/`dbg!` output from your extension, you can start Zed in your terminal with a `--foreground` flag.
+
 ## Forking and cloning the repo
 
 1. Fork the repo
@@ -117,6 +119,8 @@ In your PR, do the following:
 git submodule add https://github.com/your-username/foobar-zed.git extensions/foobar
 git add extensions/foobar
 ```
+
+> All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
 
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 

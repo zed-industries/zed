@@ -1218,13 +1218,16 @@ or
 
 ### Drag And Drop Selection
 
-- Description: Whether to allow drag and drop text selection in buffer.
+- Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
 - Setting: `drag_and_drop_selection`
-- Default: `true`
+- Default:
 
-**Options**
-
-`boolean` values
+```json
+"drag_and_drop_selection": {
+  "enabled": true,
+  "delay": 300
+}
+```
 
 ## Editor Toolbar
 
@@ -1944,17 +1947,17 @@ Example:
 
 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
 
-```jsonc
+```json
 {
-  "multi_cursor_modifier": "alt",
+  "multi_cursor_modifier": "alt"
 }
 ```
 
 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
 
-```jsonc
+```json
 {
-  "multi_cursor_modifier": "cmd_or_ctrl", // alias: "cmd", "ctrl"
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
 
@@ -2212,7 +2215,7 @@ The following URI schemes are supported:
 
 `http` will be used when no scheme is specified.
 
-By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`.
+By default no proxy will be used, or Zed will attempt to retrieve proxy settings from environment variables, such as `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, `all_proxy`, `ALL_PROXY`, `no_proxy` and `NO_PROXY`.
 
 For example, to set an `http` proxy, add the following to your settings:
 
@@ -2229,6 +2232,8 @@ Or to set a `socks5` proxy:
   "proxy": "socks5h://localhost:10808"
 }
 ```
+
+If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
 
 ## Preview tabs
 
@@ -2562,6 +2567,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
+    "keep_selection_on_copy": false,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -2682,6 +2688,26 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Keep Selection On Copy
+
+- Description: Whether or not to keep the selection in the terminal after copying text.
+- Setting: `keep_selection_on_copy`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json
+{
+  "terminal": {
+    "keep_selection_on_copy": true
   }
 }
 ```

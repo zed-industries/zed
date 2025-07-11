@@ -53,6 +53,18 @@ pub struct Model {
     pub max_tokens: u64,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
+    #[serde(default)]
+    pub mode: ModelMode,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -63,6 +75,7 @@ impl Model {
             Some(2000000),
             Some(true),
             Some(false),
+            Some(ModelMode::Default),
         )
     }
 
@@ -76,6 +89,7 @@ impl Model {
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
+        mode: Option<ModelMode>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -83,6 +97,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
             supports_images,
+            mode: mode.unwrap_or(ModelMode::Default),
         }
     }
 
@@ -127,6 +142,8 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Reasoning>,
     pub usage: RequestUsage,
 }
 
@@ -158,6 +175,18 @@ pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Reasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -299,6 +328,7 @@ pub struct FunctionContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
@@ -591,6 +621,16 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                         .map(|arch| arch.input_modalities.contains(&"image".to_string()))
                         .unwrap_or(false),
                 ),
+                mode: if entry
+                    .supported_parameters
+                    .contains(&"reasoning".to_string())
+                {
+                    ModelMode::Thinking {
+                        budget_tokens: Some(4_096),
+                    }
+                } else {
+                    ModelMode::Default
+                },
             })
             .collect();
 

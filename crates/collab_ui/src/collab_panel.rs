@@ -44,15 +44,25 @@ use workspace::{
 actions!(
     collab_panel,
     [
+        /// Toggles focus on the collaboration panel.
         ToggleFocus,
+        /// Removes the selected channel or contact.
         Remove,
+        /// Opens the context menu for the selected item.
         Secondary,
+        /// Collapses the selected channel in the tree view.
         CollapseSelectedChannel,
+        /// Expands the selected channel in the tree view.
         ExpandSelectedChannel,
+        /// Starts moving a channel to a new location.
         StartMoveChannel,
+        /// Moves the selected item to the current location.
         MoveSelected,
+        /// Inserts a space character in the filter input.
         InsertSpace,
+        /// Moves the selected channel up in the list.
         MoveChannelUp,
+        /// Moves the selected channel down in the list.
         MoveChannelDown,
     ]
 );
@@ -1645,6 +1655,10 @@ impl CollabPanel {
             self.channel_name_editor.update(cx, |editor, cx| {
                 editor.insert(" ", window, cx);
             });
+        } else if self.filter_editor.focus_handle(cx).is_focused(window) {
+            self.filter_editor.update(cx, |editor, cx| {
+                editor.insert(" ", window, cx);
+            });
         }
     }
 
@@ -2045,7 +2059,9 @@ impl CollabPanel {
         dispatch_context.add("CollabPanel");
         dispatch_context.add("menu");
 
-        let identifier = if self.channel_name_editor.focus_handle(cx).is_focused(window) {
+        let identifier = if self.channel_name_editor.focus_handle(cx).is_focused(window)
+            || self.filter_editor.focus_handle(cx).is_focused(window)
+        {
             "editing"
         } else {
             "not_editing"
@@ -3031,7 +3047,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
             .on_action(cx.listener(CollabPanel::move_channel_up))
             .on_action(cx.listener(CollabPanel::move_channel_down))
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .size_full()
             .child(if self.user_store.read(cx).current_user().is_none() {
                 self.render_signed_out(cx)

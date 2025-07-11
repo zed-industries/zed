@@ -4,9 +4,8 @@ use editor::{
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
-    scroll::Autoscroll,
 };
-use gpui::{Context, Window, action_with_deprecated_aliases, actions, impl_actions, px};
+use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -177,197 +176,241 @@ enum IndentType {
     Same,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the next word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the next word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the previous word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the previous word.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the next subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the next subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the previous subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the previous subword.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves cursor up by the specified number of lines.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves cursor down by the specified number of lines.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the first non-whitespace character on the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the end of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the start of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Moves to the middle of the current line.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct MiddleOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Finds the next unmatched bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Finds the previous unmatched bracket or delimiter.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct UnmatchedBackward {
     #[serde(default)]
     char: char,
 }
 
-impl_actions!(
-    vim,
-    [
-        StartOfLine,
-        MiddleOfLine,
-        EndOfLine,
-        FirstNonWhitespace,
-        Down,
-        Up,
-        NextWordStart,
-        NextWordEnd,
-        PreviousWordStart,
-        PreviousWordEnd,
-        NextSubwordStart,
-        NextSubwordEnd,
-        PreviousSubwordStart,
-        PreviousSubwordEnd,
-        UnmatchedForward,
-        UnmatchedBackward
-    ]
-);
-
 actions!(
     vim,
     [
+        /// Moves cursor left one character.
         Left,
-        Backspace,
+        /// Moves cursor left one character, wrapping to previous line.
+        #[action(deprecated_aliases = ["vim::Backspace"])]
+        WrappingLeft,
+        /// Moves cursor right one character.
         Right,
-        Space,
+        /// Moves cursor right one character, wrapping to next line.
+        #[action(deprecated_aliases = ["vim::Space"])]
+        WrappingRight,
+        /// Selects the current line.
         CurrentLine,
+        /// Moves to the start of the next sentence.
         SentenceForward,
+        /// Moves to the start of the previous sentence.
         SentenceBackward,
+        /// Moves to the start of the paragraph.
         StartOfParagraph,
+        /// Moves to the end of the paragraph.
         EndOfParagraph,
+        /// Moves to the start of the document.
         StartOfDocument,
+        /// Moves to the end of the document.
         EndOfDocument,
+        /// Moves to the matching bracket or delimiter.
         Matching,
+        /// Goes to a percentage position in the file.
         GoToPercentage,
+        /// Moves to the start of the next line.
         NextLineStart,
+        /// Moves to the start of the previous line.
         PreviousLineStart,
+        /// Moves to the start of a line downward.
         StartOfLineDownward,
+        /// Moves to the end of a line downward.
         EndOfLineDownward,
+        /// Goes to a specific column number.
         GoToColumn,
+        /// Repeats the last character find.
         RepeatFind,
+        /// Repeats the last character find in reverse.
         RepeatFindReversed,
+        /// Moves to the top of the window.
         WindowTop,
+        /// Moves to the middle of the window.
         WindowMiddle,
+        /// Moves to the bottom of the window.
         WindowBottom,
+        /// Moves to the start of the next section.
         NextSectionStart,
+        /// Moves to the end of the next section.
         NextSectionEnd,
+        /// Moves to the start of the previous section.
         PreviousSectionStart,
+        /// Moves to the end of the previous section.
         PreviousSectionEnd,
+        /// Moves to the start of the next method.
         NextMethodStart,
+        /// Moves to the end of the next method.
         NextMethodEnd,
+        /// Moves to the start of the previous method.
         PreviousMethodStart,
+        /// Moves to the end of the previous method.
         PreviousMethodEnd,
+        /// Moves to the next comment.
         NextComment,
+        /// Moves to the previous comment.
         PreviousComment,
+        /// Moves to the previous line with lesser indentation.
         PreviousLesserIndent,
+        /// Moves to the previous line with greater indentation.
         PreviousGreaterIndent,
+        /// Moves to the previous line with the same indentation.
         PreviousSameIndent,
+        /// Moves to the next line with lesser indentation.
         NextLesserIndent,
+        /// Moves to the next line with greater indentation.
         NextGreaterIndent,
+        /// Moves to the next line with the same indentation.
         NextSameIndent,
     ]
 );
-
-action_with_deprecated_aliases!(vim, WrappingLeft, ["vim::Backspace"]);
-action_with_deprecated_aliases!(vim, WrappingRight, ["vim::Space"]);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingLeft, window, cx| {
-        vim.motion(Motion::WrappingLeft, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
         vim.motion(Motion::WrappingLeft, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Down, window, cx| {
@@ -392,10 +435,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(Motion::Right, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &WrappingRight, window, cx| {
-        vim.motion(Motion::WrappingRight, window, cx)
-    });
-    // Deprecated.
-    Vim::action(editor, cx, |vim, _: &Space, window, cx| {
         vim.motion(Motion::WrappingRight, window, cx)
     });
     Vim::action(
@@ -641,7 +680,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
                         self.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
@@ -780,6 +819,73 @@ impl Motion {
         match self {
             Motion::WrappingLeft | Motion::WrappingRight => true,
             _ => false,
+        }
+    }
+
+    pub(crate) fn push_to_jump_list(&self) -> bool {
+        use Motion::*;
+        match self {
+            CurrentLine
+            | Down { .. }
+            | EndOfLine { .. }
+            | EndOfLineDownward
+            | FindBackward { .. }
+            | FindForward { .. }
+            | FirstNonWhitespace { .. }
+            | GoToColumn
+            | Left
+            | MiddleOfLine { .. }
+            | NextLineStart
+            | NextSubwordEnd { .. }
+            | NextSubwordStart { .. }
+            | NextWordEnd { .. }
+            | NextWordStart { .. }
+            | PreviousLineStart
+            | PreviousSubwordEnd { .. }
+            | PreviousSubwordStart { .. }
+            | PreviousWordEnd { .. }
+            | PreviousWordStart { .. }
+            | RepeatFind { .. }
+            | RepeatFindReversed { .. }
+            | Right
+            | StartOfLine { .. }
+            | StartOfLineDownward
+            | Up { .. }
+            | WrappingLeft
+            | WrappingRight => false,
+            EndOfDocument
+            | EndOfParagraph
+            | GoToPercentage
+            | Jump { .. }
+            | Matching
+            | NextComment
+            | NextGreaterIndent
+            | NextLesserIndent
+            | NextMethodEnd
+            | NextMethodStart
+            | NextSameIndent
+            | NextSectionEnd
+            | NextSectionStart
+            | PreviousComment
+            | PreviousGreaterIndent
+            | PreviousLesserIndent
+            | PreviousMethodEnd
+            | PreviousMethodStart
+            | PreviousSameIndent
+            | PreviousSectionEnd
+            | PreviousSectionStart
+            | SentenceBackward
+            | SentenceForward
+            | Sneak { .. }
+            | SneakBackward { .. }
+            | StartOfDocument
+            | StartOfParagraph
+            | UnmatchedBackward { .. }
+            | UnmatchedForward { .. }
+            | WindowBottom
+            | WindowMiddle
+            | WindowTop
+            | ZedSearchResult { .. } => true,
         }
     }
 

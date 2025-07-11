@@ -164,7 +164,7 @@ fn init_panic_hook() {
             }),
             app_version: format!("remote-server-{version}"),
             app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.display_name().into(),
+            release_channel: release_channel.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),

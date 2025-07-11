@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, Decorations, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
+    AnyElement, Context, Decorations, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
 use smallvec::SmallVec;
 use std::mem;
@@ -37,6 +37,18 @@ impl PlatformTitleBar {
         px(32.)
     }
 
+    pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            if window.is_window_active() && !self.should_move {
+                cx.theme().colors().title_bar_background
+            } else {
+                cx.theme().colors().title_bar_inactive_background
+            }
+        } else {
+            cx.theme().colors().title_bar_background
+        }
+    }
+
     pub fn set_children<T>(&mut self, children: T)
     where
         T: IntoIterator<Item = AnyElement>,
@@ -50,15 +62,7 @@ impl Render for PlatformTitleBar {
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
         let height = Self::height(window);
-        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            if window.is_window_active() && !self.should_move {
-                cx.theme().colors().title_bar_background
-            } else {
-                cx.theme().colors().title_bar_inactive_background
-            }
-        } else {
-            cx.theme().colors().title_bar_background
-        };
+        let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 

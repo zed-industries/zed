@@ -299,15 +299,17 @@ impl From<extension::DebugScenario> for DebugScenario {
     }
 }
 
-impl From<SpawnInTerminal> for ResolvedTask {
-    fn from(value: SpawnInTerminal) -> Self {
-        Self {
+impl TryFrom<SpawnInTerminal> for ResolvedTask {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SpawnInTerminal) -> Result<Self, Self::Error> {
+        Ok(Self {
             label: value.label,
-            command: value.command,
+            command: value.command.context("missing command")?,
             args: value.args,
             env: value.env.into_iter().collect(),
             cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
-        }
+        })
     }
 }
 
@@ -945,10 +947,14 @@ impl ExtensionImports for WasmState {
                                     .get(key.as_str())
                             })
                             .cloned()
-                            .context("Failed to get context server configuration")?;
+                            .unwrap_or_else(|| {
+                                project::project_settings::ContextServerSettings::default_extension(
+                                )
+                            });
 
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
+                                enabled: _,
                                 command,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
@@ -959,6 +965,7 @@ impl ExtensionImports for WasmState {
                                 settings: None,
                             })?),
                             project::project_settings::ContextServerSettings::Extension {
+                                enabled: _,
                                 settings,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: None,

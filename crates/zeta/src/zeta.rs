@@ -8,15 +8,16 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
+use feature_flags::{FeatureFlagAppExt as _, ZedCloudFeatureFlag};
 pub use init::*;
-use inline_completion::{DataCollectionState, EditPredictionUsage};
+use inline_completion::DataCollectionState;
 use license_detection::LICENSE_FILES_TO_CHECK;
 pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
-use client::{Client, UserStore};
+use client::{Client, EditPredictionUsage, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
@@ -48,7 +49,7 @@ use std::{
 };
 use telemetry_events::InlineCompletionRating;
 use thiserror::Error;
-use util::{ResultExt, maybe};
+use util::ResultExt;
 use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
@@ -72,7 +73,13 @@ const MAX_EVENT_TOKENS: usize = 500;
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-actions!(edit_prediction, [ClearHistory]);
+actions!(
+    edit_prediction,
+    [
+        /// Clears the edit prediction history.
+        ClearHistory
+    ]
+);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -188,7 +195,6 @@ pub struct Zeta {
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    last_usage: Option<EditPredictionUsage>,
     /// Whether the terms of service have been accepted.
     tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
@@ -234,25 +240,7 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.last_usage.or_else(|| {
-            let user_store = self.user_store.read(cx);
-            maybe!({
-                let amount = user_store.edit_predictions_usage_amount()?;
-                let limit = user_store.edit_predictions_usage_limit()?.variant?;
-
-                Some(EditPredictionUsage {
-                    amount: amount as i32,
-                    limit: match limit {
-                        proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
-                        }
-                        proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
-                        }
-                    },
-                })
-            })
-        })
+        self.user_store.read(cx).edit_prediction_usage()
     }
 
     fn new(
@@ -287,7 +275,6 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
-            last_usage: None,
             tos_accepted: user_store
                 .read(cx)
                 .current_user_has_accepted_terms()
@@ -404,6 +391,7 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
 
         let buffer = buffer.clone();
 
@@ -494,6 +482,7 @@ impl Zeta {
                 llm_token,
                 app_version,
                 body,
+                use_cloud,
             })
             .await;
             let (response, usage) = match response {
@@ -533,8 +522,10 @@ impl Zeta {
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
-                this.update(cx, |this, _cx| {
-                    this.last_usage = Some(usage);
+                this.update(cx, |this, cx| {
+                    this.user_store.update(cx, |user_store, cx| {
+                        user_store.update_edit_prediction_usage(usage, cx);
+                    });
                 })
                 .ok();
             }
@@ -757,6 +748,7 @@ and then another
                 llm_token,
                 app_version,
                 body,
+                use_cloud,
                 ..
             } = params;
 
@@ -772,7 +764,7 @@ and then another
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/v2", &[])?
+                                .build_zed_llm_url("/predict_edits/v2", &[], use_cloud)?
                                 .as_ref(),
                         )
                     };
@@ -832,6 +824,7 @@ and then another
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
         cx.spawn(async move |this, cx| {
             let http_client = client.http_client();
             let mut response = llm_token_retry(&llm_token, &client, |token| {
@@ -842,7 +835,7 @@ and then another
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/accept", &[])?
+                                .build_zed_llm_url("/predict_edits/accept", &[], use_cloud)?
                                 .as_ref(),
                         )
                     };
@@ -874,8 +867,9 @@ and then another
             if response.status().is_success() {
                 if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {
                     this.update(cx, |this, cx| {
-                        this.last_usage = Some(usage);
-                        cx.notify();
+                        this.user_store.update(cx, |user_store, cx| {
+                            user_store.update_edit_prediction_usage(usage, cx);
+                        });
                     })?;
                 }
 
@@ -1137,6 +1131,7 @@ struct PerformPredictEditsParams {
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,
     pub body: PredictEditsBody,
+    pub use_cloud: bool,
 }
 
 #[derive(Error, Debug)]

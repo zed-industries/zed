@@ -36,7 +36,6 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -48,6 +47,10 @@ pub struct ProjectSettings {
     /// Default: null
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
+
+    /// Common language server settings.
+    #[serde(default)]
+    pub global_lsp_settings: GlobalLspSettings,
 
     /// Configuration for Debugger-related features
     #[serde(default)]
@@ -82,24 +85,64 @@ pub struct ProjectSettings {
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
     pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettings {
     Custom {
-        /// The command to run this context server.
-        ///
-        /// This will override the command set by an extension.
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+
+        #[serde(flatten)]
         command: ContextServerCommand,
     },
     Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
         /// The settings for this context server specified by the extension.
         ///
         /// Consult the documentation for the context server to see what settings
         /// are supported.
         settings: serde_json::Value,
     },
+}
+
+/// Common language server settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalLspSettings {
+    /// Whether to show the LSP servers button in the status bar.
+    ///
+    /// Default: `true`
+    #[serde(default = "default_true")]
+    pub button: bool,
+}
+
+impl ContextServerSettings {
+    pub fn default_extension() -> Self {
+        Self::Extension {
+            enabled: true,
+            settings: serde_json::json!({}),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        match self {
+            ContextServerSettings::Custom { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -236,6 +279,14 @@ impl Default for InlineDiagnosticsSettings {
             padding: default_inline_diagnostics_padding(),
             min_column: 0,
             max_severity: None,
+        }
+    }
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: default_true(),
         }
     }
 }
@@ -478,6 +529,7 @@ impl Settings for ProjectSettings {
                     Some((
                         k.clone().into(),
                         ContextServerSettings::Custom {
+                            enabled: true,
                             command: serde_json::from_value::<VsCodeContextServerCommand>(
                                 v.clone(),
                             )
@@ -501,6 +553,7 @@ pub enum SettingsObserverMode {
 pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
+    LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -512,6 +565,7 @@ pub struct SettingsObserver {
     project_id: u64,
     task_store: Entity<TaskStore>,
     _global_task_config_watcher: Task<()>,
+    _global_debug_config_watcher: Task<()>,
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -544,6 +598,11 @@ impl SettingsObserver {
                 paths::tasks_file().clone(),
                 cx,
             ),
+            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
+                fs.clone(),
+                paths::debug_scenarios_file().clone(),
+                cx,
+            ),
         }
     }
 
@@ -562,6 +621,11 @@ impl SettingsObserver {
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
                 fs.clone(),
                 paths::tasks_file().clone(),
+                cx,
+            ),
+            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
+                fs.clone(),
+                paths::debug_scenarios_file().clone(),
                 cx,
             ),
         }
@@ -989,6 +1053,61 @@ impl SettingsObserver {
                                 message: err.to_string(),
                             },
                         ))),
+                    })
+                    .ok();
+            }
+        })
+    }
+    fn subscribe_to_global_debug_scenarios_changes(
+        fs: Arc<dyn Fs>,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let mut user_tasks_file_rx =
+            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let weak_entry = cx.weak_entity();
+        cx.spawn(async move |settings_observer, cx| {
+            let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
+                settings_observer.task_store.clone()
+            }) else {
+                return;
+            };
+            if let Some(user_tasks_content) = user_tasks_content {
+                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                    task_store
+                        .update_user_debug_scenarios(
+                            TaskSettingsLocation::Global(&file_path),
+                            Some(&user_tasks_content),
+                            cx,
+                        )
+                        .log_err();
+                }) else {
+                    return;
+                };
+            }
+            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                    task_store.update_user_debug_scenarios(
+                        TaskSettingsLocation::Global(&file_path),
+                        Some(&user_tasks_content),
+                        cx,
+                    )
+                }) else {
+                    break;
+                };
+
+                weak_entry
+                    .update(cx, |_, cx| match result {
+                        Ok(()) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
+                            file_path.clone(),
+                        ))),
+                        Err(err) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(
+                            Err(InvalidSettingsError::Tasks {
+                                path: file_path.clone(),
+                                message: err.to_string(),
+                            }),
+                        )),
                     })
                     .ok();
             }
