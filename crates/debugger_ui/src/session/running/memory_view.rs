@@ -400,7 +400,11 @@ impl MemoryView {
                 self.is_writing_memory = true;
                 self.query_editor.focus_handle(cx).focus(window);
             } else if self.query_editor.focus_handle(cx).is_focused(window) {
-                let text = self.query_editor.read(cx).text(cx);
+                let mut text = self.query_editor.read(cx).text(cx);
+                if text.chars().any(|c| !c.is_ascii_hexdigit()) {
+                    // Interpret this text as a string and oh-so-conveniently convert it.
+                    text = text.bytes().map(|byte| format!("{:02x}", byte)).collect();
+                }
                 self.session.update(cx, |this, cx| {
                     let range = drag.memory_range();
 
