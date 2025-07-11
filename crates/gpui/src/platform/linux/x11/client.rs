@@ -2354,6 +2354,40 @@ fn get_scale_factor(
 fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
     let root = connection.setup().roots.get(screen_index)?.root;
 
+    let version_cookie = connection.randr_query_version(1, 6).ok()?;
+    let version_reply = version_cookie.reply().ok()?;
+    if version_reply.major_version < 1
+        || (version_reply.major_version == 1 && version_reply.minor_version < 5)
+    {
+        return legacy_get_randr_scale_factor(connection, root); // for randr <1.5
+    }
+
+    let monitors_cookie = connection.randr_get_monitors(root, true).ok()?; // true for active only
+    let monitors_reply = monitors_cookie.reply().ok()?;
+
+    let mut fallback_scale: Option<f32> = None;
+    for monitor in monitors_reply.monitors {
+        if monitor.width_in_millimeters == 0 || monitor.height_in_millimeters == 0 {
+            continue;
+        }
+        let scale_factor = get_dpi_factor(
+            (monitor.width as u32, monitor.height as u32),
+            (
+                monitor.width_in_millimeters as u64,
+                monitor.height_in_millimeters as u64,
+            ),
+        );
+        if monitor.primary {
+            return Some(scale_factor);
+        } else if fallback_scale.is_none() {
+            fallback_scale = Some(scale_factor);
+        }
+    }
+
+    fallback_scale
+}
+
+fn legacy_get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
     let primary_cookie = connection.randr_get_output_primary(root).ok()?;
     let primary_reply = primary_cookie.reply().ok()?;
     let primary_output = primary_reply.output;
@@ -2363,10 +2397,11 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
         .ok()?;
     let primary_output_info = primary_output_cookie.reply().ok()?;
 
+    // try primary
     if primary_output_info.connection == randr::Connection::CONNECTED
         && primary_output_info.mm_width > 0
         && primary_output_info.mm_height > 0
-        && primary_output_info.crtc != randr::Crtc::NONE
+        && primary_output_info.crtc != 0
     {
         let crtc_cookie = connection
             .randr_get_crtc_info(primary_output_info.crtc, x11rb::CURRENT_TIME)
@@ -2385,6 +2420,7 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
         }
     }
 
+    // fallback: full scan
     let resources_cookie = connection.randr_get_screen_resources_current(root).ok()?;
     let screen_resources = resources_cookie.reply().ok()?;
 
@@ -2440,7 +2476,6 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
                     (output_info.mm_width as u64, output_info.mm_height as u64),
                 );
 
-                // skip primary since we already checked it
                 if output != primary_output && fallback_scale.is_none() {
                     fallback_scale = Some(scale_factor);
                 }
