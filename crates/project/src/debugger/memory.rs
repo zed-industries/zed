@@ -20,7 +20,7 @@ const PAGE_SIZE: u64 = 4096;
 
 /// Represents the contents of a single page. We special-case unmapped pages to be allocation-free,
 /// since they're going to make up the majority of the memory in a program space (even though the user might not even get to see them - ever).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum PageContents {
     /// Whole page is unreadable.
     Unmapped,
@@ -36,7 +36,7 @@ impl PageContents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum PageChunk {
     Mapped(Arc<[u8]>),
     Unmapped(u64),
@@ -65,7 +65,7 @@ impl MappedPageContents {
 /// with optimizing fetching of the memory and not with the underlying bits and pieces
 /// of the memory of a debuggee.
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(super) struct MappedPageContents(
     /// Most of the time there should be only one chunk (either mapped or unmapped),
     /// but we do leave the possibility open of having multiple regions of memory in a single page.
@@ -73,7 +73,7 @@ pub(super) struct MappedPageContents(
 );
 
 type MemoryAddress = u64;
-#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
 pub(super) struct PageAddress(u64);
 
@@ -274,13 +274,25 @@ impl MemoryIterator {
         }
     }
     fn fetch_next_page(&mut self) -> bool {
-        if let Some((address, chunk)) = self.pages.next() {
-            let contents = match chunk {
+        if let Some((mut address, chunk)) = self.pages.next() {
+            let mut contents = match chunk {
                 PageContents::Unmapped => None,
                 PageContents::Mapped(mapped_page_contents) => {
                     Some(page_contents_into_iter(mapped_page_contents))
                 }
             };
+
+            if address.0 < self.start {
+                // Skip ahead till our iterator is at the start of the range
+
+                //address: 20, start: 25
+                //
+                let to_skip = self.start - address.0;
+                address.0 += to_skip;
+                if let Some(contents) = &mut contents {
+                    contents.nth(to_skip as usize - 1);
+                }
+            }
             self.current_known_page = contents.map(|contents| (address, contents));
             true
         } else {
@@ -330,16 +342,31 @@ mod tests {
         assert_eq!(actual.len(), expected.len());
         assert_eq!(actual, expected);
     }
+
     #[test]
     fn iterate_over_partially_mapped_memory() {
-        let empty_iterator = MemoryIterator::new(
+        let it = MemoryIterator::new(
             0..=127,
             vec![(PageAddress(5), PageContents::mapped(vec![1]))].into_iter(),
         );
-        let actual = empty_iterator.collect::<Vec<_>>();
+        let actual = it.collect::<Vec<_>>();
         let expected = std::iter::repeat_n(MemoryCell(None), 5)
             .chain(std::iter::once(MemoryCell(Some(1))))
             .chain(std::iter::repeat_n(MemoryCell(None), 122))
+            .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn reads_from_the_middle_of_a_page() {
+        let partial_iter = MemoryIterator::new(
+            20..=30,
+            vec![(PageAddress(0), PageContents::mapped((0..255).collect()))].into_iter(),
+        );
+        let actual = partial_iter.collect::<Vec<_>>();
+        let expected = (20..=30)
+            .map(|val| MemoryCell(Some(val)))
             .collect::<Vec<_>>();
         assert_eq!(actual.len(), expected.len());
         assert_eq!(actual, expected);
