@@ -109,11 +109,26 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         let child = if warning_count + self.summary.error_count == 0 {
-            let label = if self.summary.warning_count == 0 {
-                SharedString::new_static("No problems in workspace")
-            } else {
-                SharedString::new_static("No errors in workspace")
+            let files_str = match self.path_matcher.clone() {
+                None => None,
+                Some(path_matcher) if path_matcher.sources().is_empty() => None,
+                Some(path_matcher) => Some(
+                    path_matcher
+                        .sources()
+                        .iter()
+                        .map(|path| path.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                ),
             };
+
+            let label = match (self.summary.warning_count, files_str) {
+                (0, None) => SharedString::new_static("No problems in workspace"),
+                (_, None) => SharedString::new_static("No errors in workspace"),
+                (0, Some(files_str)) => SharedString::from(format!("No problems in {files_str}")),
+                (_, Some(files_str)) => SharedString::from(format!("No errors in {files_str}")),
+            };
+
             v_flex()
                 .key_context("EmptyPane")
                 .size_full()
