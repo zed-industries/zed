@@ -924,26 +924,23 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
     Ok(std::env::current_exe()?)
 }
 
-pub fn check_pending_installation() -> bool {
+pub fn check_pending_installation() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
     else {
-        return false;
+        return;
     };
 
     // The installer will create a flag file after it finishes updating
     let flag_file = installer_path.join("versions.txt");
-    if flag_file.exists() {
-        if let Some(helper) = installer_path
+    if flag_file.exists()
+        && let Some(helper) = installer_path
             .parent()
             .map(|p| p.join("tools\\auto_update_helper.exe"))
-        {
-            let _ = std::process::Command::new(helper).spawn();
-            return true;
-        }
+    {
+        let _ = std::process::Command::new(helper).spawn();
     }
-    false
 }
 
 #[cfg(test)]
