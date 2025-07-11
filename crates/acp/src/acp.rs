@@ -1292,7 +1292,6 @@ mod tests {
     }
 
     #[gpui::test]
-    #[cfg(not(windows))]
     async fn test_edits_concurrently_to_user(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1303,7 +1302,7 @@ mod tests {
         let (thread, fake_server) = fake_acp_thread(project.clone(), cx);
         let (worktree, pathbuf) = project
             .update(cx, |project, cx| {
-                project.find_or_create_worktree(&PathBuf::from("/tmp/foo"), true, cx)
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
             })
             .await
             .unwrap();
@@ -1324,7 +1323,7 @@ mod tests {
                     let content = server
                         .update(&mut cx, |server, _| {
                             server.send_to_zed(acp::ReadTextFileParams {
-                                path: PathBuf::from("/tmp/foo"),
+                                path: path!("/tmp/foo").into(),
                                 line: None,
                                 limit: None,
                             })
@@ -1336,7 +1335,7 @@ mod tests {
                     server
                         .update(&mut cx, |server, _| {
                             server.send_to_zed(acp::WriteTextFileParams {
-                                path: PathBuf::from("/tmp/foo"),
+                                path: path!("/tmp/foo").into(),
                                 content: "one\ntwo\nthree\nfour\nfive\n".to_string(),
                             })
                         })?
@@ -1360,7 +1359,7 @@ mod tests {
             "zero\none\ntwo\nthree\nfour\nfive\n"
         );
         assert_eq!(
-            String::from_utf8(fs.read_file_sync("/tmp/foo").unwrap()).unwrap(),
+            String::from_utf8(fs.read_file_sync(path!("/tmp/foo")).unwrap()).unwrap(),
             "zero\none\ntwo\nthree\nfour\nfive\n"
         );
         request.await.unwrap();
