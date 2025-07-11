@@ -57,7 +57,10 @@ function PrepareForBundle {
 }
 
 function GenerateLicenses {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     . $PSScriptRoot/generate-licenses.ps1 "$innoDir\licenses.md"
+    $ErrorActionPreference = $oldErrorActionPreference
 }
 
 function BuildZedAndItsFriends {
