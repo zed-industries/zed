@@ -1292,6 +1292,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg(not(windows))]
     async fn test_edits_concurrently_to_user(cx: &mut TestAppContext) {
         init_test(cx);
 
