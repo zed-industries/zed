@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -62,7 +63,7 @@ pub struct AcpThreadView {
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
-    message_history: MessageHistory<acp::SendUserMessageParams>,
+    message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
 }
 
 enum ThreadState {
@@ -83,6 +84,7 @@ impl AcpThreadView {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -130,7 +132,7 @@ impl AcpThreadView {
         let message_editor_subscription = cx.subscribe(&message_editor, |this, _, event, _| {
             if let editor::EditorEvent::BufferEdited = &event {
                 if !this.message_set_from_history {
-                    this.message_history.reset_position();
+                    this.message_history.borrow_mut().reset_position();
                 }
                 this.message_set_from_history = false;
             }
@@ -170,7 +172,7 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             edits_expanded: false,
-            message_history: MessageHistory::new(),
+            message_history,
         }
     }
 
@@ -373,7 +375,7 @@ impl AcpThreadView {
             editor.remove_creases(mention_set.lock().drain(), cx)
         });
 
-        self.message_history.push(message);
+        self.message_history.borrow_mut().push(message);
     }
 
     fn previous_history_message(
@@ -386,7 +388,7 @@ impl AcpThreadView {
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.prev(),
+            self.message_history.borrow_mut().prev(),
             window,
             cx,
         );
@@ -402,7 +404,7 @@ impl AcpThreadView {
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.next(),
+            self.message_history.borrow_mut().next(),
             window,
             cx,
         );
