@@ -80,12 +80,9 @@ pub(crate) struct ProjectDiagnosticsEditor {
     multibuffer: Entity<MultiBuffer>,
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
-    /// Whether to filter the diagnostics by only the active path.
-    filter_path: bool,
-    /// The currently active path in the project's diagnostics. Together with
-    /// `filter_path`, this determines whether only diagnostics for this file
+    /// When provided, this determines whether only diagnostics for this file
     /// should be shown.
-    active_path: Option<ProjectPath>,
+    path_filter: Option<ProjectPath>,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     diagnostic_summary_update: Task<()>,
@@ -170,8 +167,7 @@ impl ProjectDiagnosticsEditor {
 
     fn new(
         include_warnings: bool,
-        filter_path: bool,
-        active_path: Option<ProjectPath>,
+        path_filter: Option<ProjectPath>,
         project_handle: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -190,6 +186,11 @@ impl ProjectDiagnosticsEditor {
                     language_server_id,
                     path,
                 } => {
+                    if let Some(path_filter) = &this.path_filter && *path_filter != *path {
+                        log::debug!("diagnostics ignored for server {language_server_id}, path {path:?}. path filter mismatch");
+                        return;
+                    };
+
                     this.paths_to_update.insert(path.clone());
                     let project = project.clone();
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
@@ -287,8 +288,7 @@ impl ProjectDiagnosticsEditor {
             diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
-            filter_path,
-            active_path,
+            path_filter,
             workspace,
             multibuffer: excerpts,
             focus_handle,
@@ -367,7 +367,6 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     include_warnings,
-                    false,
                     None,
                     workspace.project().clone(),
                     workspace_handle,
@@ -394,14 +393,13 @@ impl ProjectDiagnosticsEditor {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             // TODO: If the project's diagnostics editor is already open, update the
             // `active_path` field and enable the `filter_path` option.
-            dbg!(&existing.read(cx).active_path);
+            dbg!(&existing.read(cx).path_filter);
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
 
             existing.update(cx, |diagnostics, _cx| {
-                diagnostics.set_active_path(path);
-                diagnostics.set_filter_path(true);
+                diagnostics.set_path_filter(path);
             });
 
             workspace.activate_item(&existing, true, !is_active, window, cx);
@@ -416,10 +414,6 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     include_warnings,
-                    // TODO: Should these two be provided in the `new` function?
-                    // Or should we simply have `set_active_path` and
-                    // `set_filter_path` methods? Is there any downside to that?
-                    true,
                     path,
                     workspace.project().clone(),
                     workspace_handle,
@@ -544,29 +538,34 @@ impl ProjectDiagnosticsEditor {
     /// Enqueue an update of all excerpts. Updates all paths that either
     /// currently have diagnostics or are currently present in this view.
     fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path_filter = self.path_filter.clone();
+
         self.project.update(cx, |project, cx| {
-            let mut paths = project
-                .diagnostic_summaries(false, cx)
-                .map(|(project_path, _, _)| project_path)
-                .filter(
-                    |project_path| match (self.filter_path, self.active_path.clone()) {
-                        (true, Some(active_path)) => *project_path.path == *active_path.path,
-                        _ => true,
-                    },
-                )
-                .collect::<BTreeSet<_>>();
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                for buffer in multibuffer.all_buffers() {
-                    if let Some(file) = buffer.read(cx).file() {
-                        paths.insert(ProjectPath {
-                            path: file.path().clone(),
-                            worktree_id: file.worktree_id(cx),
-                        });
+            let paths = if let Some(path_filter) = path_filter {
+                BTreeSet::from([path_filter])
+            } else {
+                let mut project_paths = project
+                    .diagnostic_summaries(false, cx)
+                    .map(|(project_path, _, _)| project_path)
+                    .collect::<BTreeSet<_>>();
+
+                self.multibuffer.update(cx, |multibuffer, cx| {
+                    for buffer in multibuffer.all_buffers() {
+                        if let Some(file) = buffer.read(cx).file() {
+                            project_paths.insert(ProjectPath {
+                                path: file.path().clone(),
+                                worktree_id: file.worktree_id(cx),
+                            });
+                        }
                     }
-                }
-            });
+                });
+
+                project_paths
+            };
+
             self.paths_to_update = paths;
         });
+
         self.update_stale_excerpts(window, cx);
     }
 
@@ -774,12 +773,8 @@ impl ProjectDiagnosticsEditor {
         })
     }
 
-    fn set_active_path(&mut self, active_path: Option<ProjectPath>) {
-        self.active_path = active_path;
-    }
-
-    fn set_filter_path(&mut self, filter_path: bool) {
-        self.filter_path = filter_path;
+    fn set_path_filter(&mut self, path_filter: Option<ProjectPath>) {
+        self.path_filter = path_filter;
     }
 
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
@@ -921,8 +916,7 @@ impl Item for ProjectDiagnosticsEditor {
         Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
-                self.filter_path,
-                self.active_path.clone(),
+                self.path_filter.clone(),
                 self.project.clone(),
                 self.workspace.clone(),
                 window,
