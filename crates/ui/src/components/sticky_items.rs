@@ -290,14 +290,8 @@ where
             AvailableSpace::Definite(item_height),
         );
 
-        for (ix, element) in rest_elements.iter_mut().enumerate() {
-            let sticky_origin =
-                bounds.origin - point(px(0.), scroll_offset.y) + point(px(0.), item_height * ix);
-
-            element.layout_as_root(element_available_space, window, cx);
-            element.prepaint_at(sticky_origin, window, cx);
-        }
-
+        // order of prepaint is important here
+        // mouse events checks hitboxes in reverse insertion order
         if let Some(ref mut drifting_element) = drifting_element {
             let sticky_origin = bounds.origin - point(px(0.), scroll_offset.y)
                 + point(
@@ -307,6 +301,14 @@ where
 
             drifting_element.layout_as_root(element_available_space, window, cx);
             drifting_element.prepaint_at(sticky_origin, window, cx);
+        }
+
+        for (ix, element) in rest_elements.iter_mut().enumerate() {
+            let sticky_origin =
+                bounds.origin - point(px(0.), scroll_offset.y) + point(px(0.), item_height * ix);
+
+            element.layout_as_root(element_available_space, window, cx);
+            element.prepaint_at(sticky_origin, window, cx);
         }
 
         StickyItemsElement {
