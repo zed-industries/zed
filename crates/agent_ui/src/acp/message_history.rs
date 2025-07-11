@@ -16,6 +16,10 @@ impl<T> MessageHistory<T> {
         self.items.push(message);
     }
 
+    pub fn reset_position(&mut self) {
+        self.current.take();
+    }
+
     pub fn prev(&mut self) -> Option<&T> {
         if self.items.is_empty() {
             return None;

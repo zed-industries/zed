@@ -53,6 +53,8 @@ pub struct AcpThreadView {
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     message_editor: Entity<Editor>,
+    message_set_from_history: bool,
+    _message_editor_subscription: Subscription,
     mention_set: Arc<Mutex<MentionSet>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
@@ -125,6 +127,17 @@ impl AcpThreadView {
             editor
         });
 
+        let message_editor_subscription = cx.subscribe(&message_editor, |this, _, event, _| {
+            if let editor::EditorEvent::BufferEdited = &event {
+                if !this.message_set_from_history {
+                    this.message_history.reset_position();
+                }
+                this.message_set_from_history = false;
+            }
+        });
+
+        let mention_set = mention_set.clone();
+
         let list_state = ListState::new(
             0,
             gpui::ListAlignment::Bottom,
@@ -147,6 +160,8 @@ impl AcpThreadView {
             project: project.clone(),
             thread_state: Self::initial_state(workspace, project, window, cx),
             message_editor,
+            message_set_from_history: false,
+            _message_editor_subscription: message_editor_subscription,
             mention_set,
             diff_editors: Default::default(),
             list_state: list_state,
@@ -367,7 +382,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::set_draft_message(
+        self.message_set_from_history = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
@@ -383,7 +398,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::set_draft_message(
+        self.message_set_from_history = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
@@ -393,33 +408,6 @@ impl AcpThreadView {
         );
     }
 
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
-        }
-    }
-
-    fn open_edited_buffer(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(thread) = self.thread() else {
-            return;
-        };
-
-        let Some(diff) =
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
-        else {
-            return;
-        };
-
-        diff.update(cx, |diff, cx| {
-            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
-        })
-    }
-
     fn set_draft_message(
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
@@ -427,15 +415,11 @@ impl AcpThreadView {
         message: Option<&acp::SendUserMessageParams>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         cx.notify();
 
         let Some(message) = message else {
-            message_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                editor.remove_creases(mention_set.lock().drain(), cx)
-            });
-            return;
+            return false;
         };
 
         let mut text = String::new();
@@ -495,6 +479,35 @@ impl AcpThreadView {
                 mention_set.lock().insert(crease_id, project_path);
             }
         }
+
+        true
+    }
+
+    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
+        }
+    }
+
+    fn open_edited_buffer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let Some(diff) =
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
+        else {
+            return;
+        };
+
+        diff.update(cx, |diff, cx| {
+            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+        })
     }
 
     fn handle_thread_event(
