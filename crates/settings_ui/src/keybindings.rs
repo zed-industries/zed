@@ -283,7 +283,7 @@ impl KeymapEditor {
         let table_interaction_state = TableInteractionState::new(window, cx);
 
         let keystroke_editor = cx.new(|cx| {
-            let mut keystroke_editor = KeystrokeInput::new(window, cx);
+            let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
             keystroke_editor.highlight_on_focus = false;
             keystroke_editor
         });
@@ -632,6 +632,11 @@ impl KeymapEditor {
                     Box::new(EditBinding),
                 )
                 .action("Create", Box::new(CreateBinding))
+                .action_disabled_when(
+                    selected_binding_is_unbound,
+                    "Delete",
+                    Box::new(DeleteBinding),
+                )
                 .action("Copy action", Box::new(CopyAction))
                 .action_disabled_when(
                     selected_binding_has_no_context,
@@ -1298,7 +1303,16 @@ impl KeybindingEditorModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(|cx| KeystrokeInput::new(window, cx));
+        let keybind_editor = cx.new(|cx| {
+            KeystrokeInput::new(
+                editing_keybind
+                    .ui_key_binding
+                    .as_ref()
+                    .map(|keybinding| keybinding.keystrokes.clone()),
+                window,
+                cx,
+            )
+        });
 
         let context_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1802,6 +1816,7 @@ async fn remove_keybinding(
 
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
+    placeholder_keystrokes: Option<Vec<Keystroke>>,
     highlight_on_focus: bool,
     focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
@@ -1809,7 +1824,11 @@ struct KeystrokeInput {
 }
 
 impl KeystrokeInput {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        placeholder_keystrokes: Option<Vec<Keystroke>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let _focus_subscriptions = [
             cx.on_focus_in(&focus_handle, window, Self::on_focus_in),
@@ -1817,6 +1836,7 @@ impl KeystrokeInput {
         ];
         Self {
             keystrokes: Vec::new(),
+            placeholder_keystrokes,
             highlight_on_focus: true,
             focus_handle,
             intercept_subscription: None,
@@ -1904,6 +1924,11 @@ impl KeystrokeInput {
     }
 
     fn keystrokes(&self) -> &[Keystroke] {
+        if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+            && self.keystrokes.is_empty()
+        {
+            return placeholders;
+        }
         if self
             .keystrokes
             .last()
@@ -1912,6 +1937,25 @@ impl KeystrokeInput {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
         return &self.keystrokes;
+    }
+
+    fn render_keystrokes(&self) -> impl Iterator<Item = Div> {
+        let (keystrokes, color) = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+            && self.keystrokes.is_empty()
+        {
+            (placeholders, Color::Placeholder)
+        } else {
+            (&self.keystrokes, Color::Default)
+        };
+        keystrokes.iter().map(move |keystroke| {
+            h_flex().children(ui::render_keystroke(
+                keystroke,
+                Some(color),
+                Some(rems(0.875).into()),
+                ui::PlatformStyle::platform(),
+                false,
+            ))
+        })
     }
 }
 
@@ -1958,15 +2002,7 @@ impl Render for KeystrokeInput {
                     .justify_center()
                     .flex_wrap()
                     .gap(ui::DynamicSpacing::Base04.rems(cx))
-                    .children(self.keystrokes.iter().map(|keystroke| {
-                        h_flex().children(ui::render_keystroke(
-                            keystroke,
-                            None,
-                            Some(rems(0.875).into()),
-                            ui::PlatformStyle::platform(),
-                            false,
-                        ))
-                    })),
+                    .children(self.render_keystrokes()),
             )
             .child(
                 h_flex()
