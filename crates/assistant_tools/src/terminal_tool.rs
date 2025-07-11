@@ -2,12 +2,13 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
-    WeakEntity, Window,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
+    TextStyleRefinement, Transformation, WeakEntity, Window, percentage,
 };
 use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -89,7 +90,7 @@ impl Tool for TerminalTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Terminal
+        IconName::ToolTerminal
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -247,6 +248,7 @@ impl Tool for TerminalTool {
                 command_markdown.clone(),
                 working_dir.clone(),
                 cx.entity_id(),
+                cx,
             )
         });
 
@@ -441,7 +443,10 @@ impl TerminalToolCard {
         input_command: Entity<Markdown>,
         working_dir: Option<PathBuf>,
         entity_id: EntityId,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let expand_terminal_card =
+            agent_settings::AgentSettings::get_global(cx).expand_terminal_card;
         Self {
             input_command,
             working_dir,
@@ -453,7 +458,7 @@ impl TerminalToolCard {
             finished_with_empty_output: false,
             original_content_len: 0,
             content_line_count: 0,
-            preview_expanded: true,
+            preview_expanded: expand_terminal_card,
             start_instant: Instant::now(),
             elapsed_time: None,
         }
@@ -518,6 +523,46 @@ impl ToolCard for TerminalToolCard {
                             .color(Color::Muted),
                     ),
             )
+            .when(!self.command_finished, |header| {
+                header.child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+            })
+            .when(tool_failed || command_failed, |header| {
+                header.child(
+                    div()
+                        .id(("terminal-tool-error-code-indicator", self.entity_id))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .when(command_failed && self.exit_status.is_some(), |this| {
+                            this.tooltip(Tooltip::text(format!(
+                                "Exited with code {}",
+                                self.exit_status
+                                    .and_then(|status| status.code())
+                                    .unwrap_or(-1),
+                            )))
+                        })
+                        .when(
+                            !command_failed && tool_failed && status.error().is_some(),
+                            |this| {
+                                this.tooltip(Tooltip::text(format!(
+                                    "Error: {}",
+                                    status.error().unwrap(),
+                                )))
+                            },
+                        ),
+                )
+            })
             .when(self.was_content_truncated, |header| {
                 let tooltip = if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
                     "Output exceeded terminal max lines and was \
@@ -553,34 +598,6 @@ impl ToolCard for TerminalToolCard {
                         .buffer_font(cx)
                         .color(Color::Muted)
                         .size(LabelSize::Small),
-                )
-            })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", self.entity_id))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when(command_failed && self.exit_status.is_some(), |this| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                self.exit_status
-                                    .and_then(|status| status.code())
-                                    .unwrap_or(-1),
-                            )))
-                        })
-                        .when(
-                            !command_failed && tool_failed && status.error().is_some(),
-                            |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "Error: {}",
-                                    status.error().unwrap(),
-                                )))
-                            },
-                        ),
                 )
             })
             .when(!self.finished_with_empty_output, |header| {
@@ -634,6 +651,7 @@ impl ToolCard for TerminalToolCard {
                         div()
                             .pt_2()
                             .border_t_1()
+                            .when(tool_failed || command_failed, |card| card.border_dashed())
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
                             .rounded_b_md()

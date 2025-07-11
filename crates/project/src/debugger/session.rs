@@ -681,6 +681,7 @@ pub struct Session {
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
+    restart_task: Option<Task<()>>,
     task_context: TaskContext,
     memory: memory::Memory,
 }
@@ -843,6 +844,7 @@ impl Session {
                 loaded_sources: Vec::default(),
                 threads: IndexMap::default(),
                 background_tasks: Vec::default(),
+                restart_task: None,
                 locations: Default::default(),
                 is_session_terminated: false,
                 ignore_breakpoints: false,
@@ -1987,18 +1989,30 @@ impl Session {
     }
 
     pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) {
-        if self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated() {
-            self.request(
-                RestartCommand {
-                    raw: args.unwrap_or(Value::Null),
-                },
-                Self::fallback_to_manual_restart,
-                cx,
-            )
-            .detach();
-        } else {
-            cx.emit(SessionStateEvent::Restart);
+        if self.restart_task.is_some() || self.as_running().is_none() {
+            return;
         }
+
+        let supports_dap_restart =
+            self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
+
+        self.restart_task = Some(cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |session, cx| {
+                if supports_dap_restart {
+                    session
+                        .request(
+                            RestartCommand {
+                                raw: args.unwrap_or(Value::Null),
+                            },
+                            Self::fallback_to_manual_restart,
+                            cx,
+                        )
+                        .detach();
+                } else {
+                    cx.emit(SessionStateEvent::Restart);
+                }
+            });
+        }));
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -2036,8 +2050,13 @@ impl Session {
 
         cx.emit(SessionStateEvent::Shutdown);
 
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |this, cx| {
             task.await;
+            let _ = this.update(cx, |this, _| {
+                if let Some(adapter_client) = this.adapter_client() {
+                    adapter_client.kill();
+                }
+            });
         })
     }
 

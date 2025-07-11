@@ -268,7 +268,13 @@ pub mod agent {
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
             /// Resets the agent onboarding state.
-            ResetOnboarding
+            ResetOnboarding,
+            /// Starts a chat conversation with the agent.
+            Chat,
+            /// Displays the previous message in the history.
+            PreviousHistoryMessage,
+            /// Displays the next message in the history.
+            NextHistoryMessage
         ]
     );
 }

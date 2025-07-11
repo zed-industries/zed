@@ -67,6 +67,8 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub expand_edit_card: bool,
+    pub expand_terminal_card: bool,
 }
 
 impl AgentSettings {
@@ -291,6 +293,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    expand_edit_card: Option<bool>,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    expand_terminal_card: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -441,6 +451,11 @@ impl Settings for AgentSettings {
                 value.preferred_completion_mode,
             );
             merge(&mut settings.enable_feedback, value.enable_feedback);
+            merge(&mut settings.expand_edit_card, value.expand_edit_card);
+            merge(
+                &mut settings.expand_terminal_card,
+                value.expand_terminal_card,
+            );
 
             settings
                 .model_parameters

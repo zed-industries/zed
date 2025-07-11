@@ -404,6 +404,9 @@ impl SearchQuery {
                                     let start = line_offset + mat.start();
                                     let end = line_offset + mat.end();
                                     matches.push(start..end);
+                                    if self.one_match_per_line() == Some(true) {
+                                        break;
+                                    }
                                 }
 
                                 line_offset += line.len() + 1;

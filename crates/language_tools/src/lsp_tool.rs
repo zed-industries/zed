@@ -110,6 +110,7 @@ impl LanguageServerHealthStatus {
 
 impl LanguageServerState {
     fn fill_menu(&self, mut menu: ContextMenu, cx: &mut Context<Self>) -> ContextMenu {
+        menu = menu.align_popover_bottom();
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
             .and_then(|lsp_logs| lsp_logs.0.upgrade());
@@ -118,6 +119,7 @@ impl LanguageServerState {
             return menu;
         };
 
+        let mut first_button_encountered = false;
         for (i, item) in self.items.iter().enumerate() {
             if let LspItem::ToggleServersButton { restart } = item {
                 let label = if *restart {
@@ -182,18 +184,25 @@ impl LanguageServerState {
                             .ok();
                     }
                 });
-                menu = menu.separator().item(button);
+                if !first_button_encountered {
+                    menu = menu.separator();
+                    first_button_encountered = true;
+                }
+                menu = menu.item(button);
                 continue;
             };
+
             let Some(server_info) = item.server_info() else {
                 continue;
             };
+
             let workspace = self.workspace.clone();
             let server_selector = server_info.server_selector();
             // TODO currently, Zed remote does not work well with the LSP logs
             // https://github.com/zed-industries/zed/issues/28557
             let has_logs = lsp_store.read(cx).as_local().is_some()
                 && lsp_logs.read(cx).has_server_logs(&server_selector);
+
             let status_color = server_info
                 .binary_status
                 .and_then(|binary_status| match binary_status.status {
@@ -218,16 +227,40 @@ impl LanguageServerState {
                 .other_servers_start_index
                 .is_some_and(|index| index == i)
             {
-                menu = menu.separator();
+                menu = menu.separator().header("Other Buffers");
             }
+
+            if i == 0 && self.other_servers_start_index.is_some() {
+                menu = menu.header("Current Buffer");
+            }
+
             menu = menu.item(ContextMenuItem::custom_entry(
                 move |_, _| {
                     h_flex()
-                        .gap_1()
+                        .group("menu_item")
                         .w_full()
-                        .child(Indicator::dot().color(status_color))
-                        .child(Label::new(server_info.name.0.clone()))
-                        .when(!has_logs, |div| div.cursor_default())
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Indicator::dot().color(status_color))
+                                .child(Label::new(server_info.name.0.clone())),
+                        )
+                        .child(
+                            h_flex()
+                                .visible_on_hover("menu_item")
+                                .child(
+                                    Label::new("View Logs")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Icon::new(IconName::ChevronRight)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
                         .into_any_element()
                 },
                 {
@@ -678,6 +711,7 @@ impl LspTool {
             new_lsp_items.extend(other_servers.into_iter().map(ServerData::into_lsp_item));
             if !new_lsp_items.is_empty() {
                 if can_stop_all {
+                    new_lsp_items.push(LspItem::ToggleServersButton { restart: true });
                     new_lsp_items.push(LspItem::ToggleServersButton { restart: false });
                 } else if can_restart_all {
                     new_lsp_items.push(LspItem::ToggleServersButton { restart: true });
@@ -708,8 +742,6 @@ impl LspTool {
                             state.update(cx, |state, cx| state.fill_menu(menu, cx))
                         });
                         lsp_tool.lsp_menu = Some(menu.clone());
-                        // TODO kb will this work?
-                        // what about the selections?
                         lsp_tool.popover_menu_handle.refresh_menu(
                             window,
                             cx,
@@ -836,17 +868,27 @@ impl Render for LspTool {
             }
         }
 
-        let indicator = if has_errors {
-            Some(Indicator::dot().color(Color::Error))
+        let (indicator, description) = if has_errors {
+            (
+                Some(Indicator::dot().color(Color::Error)),
+                "Server with errors",
+            )
         } else if has_warnings {
-            Some(Indicator::dot().color(Color::Warning))
+            (
+                Some(Indicator::dot().color(Color::Warning)),
+                "Server with warnings",
+            )
         } else if has_other_notifications {
-            Some(Indicator::dot().color(Color::Modified))
+            (
+                Some(Indicator::dot().color(Color::Modified)),
+                "Server with notifications",
+            )
         } else {
-            None
+            (None, "All Servers Operational")
         };
 
         let lsp_tool = cx.entity().clone();
+
         div().child(
             PopoverMenu::new("lsp-tool")
                 .menu(move |_, cx| lsp_tool.read(cx).lsp_menu.clone())
@@ -858,7 +900,13 @@ impl Render for LspTool {
                         .icon_size(IconSize::Small)
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |window, cx| {
-                        Tooltip::for_action("Language Servers", &ToggleMenu, window, cx)
+                        Tooltip::with_meta(
+                            "Language Servers",
+                            Some(&ToggleMenu),
+                            description,
+                            window,
+                            cx,
+                        )
                     },
                 ),
         )

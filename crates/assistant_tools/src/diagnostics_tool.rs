@@ -59,7 +59,7 @@ impl Tool for DiagnosticsTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::XCircle
+        IconName::ToolDiagnostics
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

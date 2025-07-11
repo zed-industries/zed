@@ -286,7 +286,8 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
         &self,
         language: &LanguageName,
         language_server_id: &LanguageServerName,
-    );
+        cx: &mut App,
+    ) -> Task<Result<()>>;
 
     fn update_language_server_status(
         &self,
@@ -313,12 +314,13 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
         &self,
         language: &LanguageName,
         language_server_id: &LanguageServerName,
-    ) {
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         let Some(proxy) = self.language_server_proxy.read().clone() else {
-            return;
+            return Task::ready(Ok(()));
         };
 
-        proxy.remove_language_server(language, language_server_id)
+        proxy.remove_language_server(language, language_server_id, cx)
     }
 
     fn update_language_server_status(
@@ -350,6 +352,8 @@ impl ExtensionSnippetProxy for ExtensionHostProxy {
 
 pub trait ExtensionSlashCommandProxy: Send + Sync + 'static {
     fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand);
+
+    fn unregister_slash_command(&self, command_name: Arc<str>);
 }
 
 impl ExtensionSlashCommandProxy for ExtensionHostProxy {
@@ -359,6 +363,14 @@ impl ExtensionSlashCommandProxy for ExtensionHostProxy {
         };
 
         proxy.register_slash_command(extension, command)
+    }
+
+    fn unregister_slash_command(&self, command_name: Arc<str>) {
+        let Some(proxy) = self.slash_command_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.unregister_slash_command(command_name)
     }
 }
 
@@ -398,6 +410,8 @@ impl ExtensionContextServerProxy for ExtensionHostProxy {
 
 pub trait ExtensionIndexedDocsProviderProxy: Send + Sync + 'static {
     fn register_indexed_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>);
+
+    fn unregister_indexed_docs_provider(&self, provider_id: Arc<str>);
 }
 
 impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
@@ -407,6 +421,14 @@ impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
         };
 
         proxy.register_indexed_docs_provider(extension, provider_id)
+    }
+
+    fn unregister_indexed_docs_provider(&self, provider_id: Arc<str>) {
+        let Some(proxy) = self.indexed_docs_provider_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.unregister_indexed_docs_provider(provider_id)
     }
 }
 

@@ -46,6 +46,8 @@ extend-exclude = [
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
+    # File type extensions are not typos
+    "crates/zed/resources/windows/zed.iss",
     # typos-cli doesn't understand our `vˇariable` markup
     "crates/editor/src/hover_links.rs",
     # typos-cli doesn't understand `setis` is intentional test case
