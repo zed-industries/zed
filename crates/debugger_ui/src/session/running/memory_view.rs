@@ -391,6 +391,22 @@ impl MemoryView {
         .handle(self.width_picker_handle.clone())
     }
 
+    fn page_down(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
+        self.view_state.base_row = self
+            .view_state
+            .base_row
+            .overflowing_add(self.view_state.row_count())
+            .0;
+        cx.notify();
+    }
+    fn page_up(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
+        self.view_state.base_row = self
+            .view_state
+            .base_row
+            .overflowing_sub(self.view_state.row_count())
+            .0;
+        cx.notify();
+    }
     fn change_address(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
             if !self.is_writing_memory {
@@ -614,6 +630,8 @@ impl Render for MemoryView {
             .on_action(cx.listener(Self::cancel))
             .p_1()
             .on_action(cx.listener(Self::change_address))
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::page_up))
             .size_full()
             .track_focus(&self.focus_handle)
             .on_hover(cx.listener(|this, hovered, window, cx| {
