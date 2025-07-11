@@ -68,9 +68,7 @@ impl Keystroke {
                 ..Default::default()
             };
 
-            if ((&target.key == key_char) || (&target.key == &self.key))
-                && target.modifiers == ime_modifiers
-            {
+            if &target.key == key_char && target.modifiers == ime_modifiers {
                 return true;
             }
         }

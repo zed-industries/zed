@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, KeycodeSource, xcb_flush};
 use core::str;
 use std::{
     cell::RefCell,
@@ -1037,7 +1037,8 @@ impl X11Client {
                         xkb_state.latched_layout,
                         xkb_state.locked_layout,
                     );
-                    let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let mut keystroke =
+                        crate::Keystroke::from_xkb(&state.xkb, modifiers, code, KeycodeSource::X11);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1105,7 +1106,8 @@ impl X11Client {
                         xkb_state.latched_layout,
                         xkb_state.locked_layout,
                     );
-                    let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let keystroke =
+                        crate::Keystroke::from_xkb(&state.xkb, modifiers, code, KeycodeSource::X11);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1329,6 +1331,7 @@ impl X11Client {
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
+                    KeycodeSource::X11,
                 ));
                 let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);
@@ -2271,47 +2274,4 @@ fn create_invisible_cursor(
 
     xcb_flush(connection);
     Ok(cursor)
-}
-
-/// Map a keycode (u32) to an ASCII character on US QWERTY layout
-pub(crate) fn keycode_to_key_x11(keycode: u32) -> Option<char> {
-    let c = match keycode {
-        24 => 'q',
-        25 => 'w',
-        26 => 'e',
-        27 => 'r',
-        28 => 't',
-        29 => 'y',
-        30 => 'u',
-        31 => 'i',
-        32 => 'o',
-        33 => 'p',
-        34 => '[',
-        35 => ']',
-        38 => 'a',
-        39 => 's',
-        40 => 'd',
-        41 => 'f',
-        42 => 'g',
-        43 => 'h',
-        44 => 'j',
-        45 => 'k',
-        46 => 'l',
-        47 => ';',
-        48 => '\'',
-        52 => 'z',
-        53 => 'x',
-        54 => 'c',
-        55 => 'v',
-        56 => 'b',
-        57 => 'n',
-        58 => 'm',
-        59 => ',',
-        60 => '.',
-        61 => '/',
-
-        _ => return None,
-    };
-
-    Some(c)
 }

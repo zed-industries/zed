@@ -69,7 +69,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
@@ -77,6 +76,10 @@ use crate::{
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
     ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+};
+use crate::{
+    KeycodeSource,
+    platform::{PlatformWindow, blade::BladeContext},
 };
 use crate::{
     SharedString,
@@ -1293,8 +1296,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
-                        let mut keystroke =
-                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        let mut keystroke = Keystroke::from_xkb(
+                            &keymap_state,
+                            state.modifiers,
+                            keycode,
+                            KeycodeSource::Wayland,
+                        );
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
@@ -1379,7 +1386,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
                         let input = PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: Keystroke::from_xkb(
+                                keymap_state,
+                                state.modifiers,
+                                keycode,
+                                KeycodeSource::Wayland,
+                            ),
                         });
 
                         if state.repeat.current_keycode == Some(keycode) {
@@ -2153,46 +2165,4 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
             _ => {}
         }
     }
-}
-
-/// Map a keycode (u32) to an ASCII character on US QWERTY layout for Wayland
-pub(crate) fn keycode_to_key_wayland(keycode: u32) -> Option<char> {
-    let c = match keycode {
-        16 => 'q',
-        17 => 'w',
-        18 => 'e',
-        19 => 'r',
-        20 => 't',
-        21 => 'y',
-        22 => 'u',
-        23 => 'i',
-        24 => 'o',
-        25 => 'p',
-        26 => '[',
-        27 => ']',
-        30 => 'a',
-        31 => 's',
-        32 => 'd',
-        33 => 'f',
-        34 => 'g',
-        35 => 'h',
-        36 => 'j',
-        37 => 'k',
-        38 => 'l',
-        39 => ';',
-        40 => '\'',
-        44 => 'z',
-        45 => 'x',
-        46 => 'c',
-        47 => 'v',
-        48 => 'b',
-        49 => 'n',
-        50 => 'm',
-        51 => ',',
-        52 => '.',
-        53 => '/',
-
-        _ => return None,
-    };
-    Some(c)
 }
