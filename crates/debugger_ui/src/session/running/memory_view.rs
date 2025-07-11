@@ -72,7 +72,6 @@ impl SelectedMemoryRange {
 struct ViewState {
     /// Uppermost row index
     base_row: u64,
-
     /// How many cells per row do we have?
     line_width: ViewWidth,
     selection: Option<SelectedMemoryRange>,
@@ -341,6 +340,23 @@ impl MemoryView {
                     let width = width.clone();
                     this = this.entry(width.label.clone(), None, move |_, cx| {
                         _ = weak.update(cx, |this, _| {
+                            // Convert base ix between 2 line widths to keep the shown memory address roughly the same.
+                            // All widths are powers of 2, so the conversion should be lossless.
+                            match this.view_state.line_width.width.cmp(&width.width) {
+                                std::cmp::Ordering::Less => {
+                                    // We're converting up.
+                                    let shift = width.width.trailing_zeros()
+                                        - this.view_state.line_width.width.trailing_zeros();
+                                    this.view_state.base_row >>= shift;
+                                }
+                                std::cmp::Ordering::Greater => {
+                                    // We're converting down.
+                                    let shift = this.view_state.line_width.width.trailing_zeros()
+                                        - width.width.trailing_zeros();
+                                    this.view_state.base_row <<= shift;
+                                }
+                                _ => {}
+                            }
                             this.view_state.line_width = width.clone();
                         });
                     });
