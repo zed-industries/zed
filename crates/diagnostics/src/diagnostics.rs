@@ -199,7 +199,7 @@ impl ProjectDiagnosticsEditor {
                             .timer(Duration::from_millis(30))
                             .await;
                         this.update(cx, |this, cx| {
-                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                            this.summary = project.read(cx).diagnostic_summary_for_paths(this.path_matcher.as_ref(), false, cx);
                         })
                         .log_err();
                     });
@@ -285,7 +285,7 @@ impl ProjectDiagnosticsEditor {
         let project = project_handle.read(cx);
         let mut this = Self {
             project: project_handle.clone(),
-            summary: project.diagnostic_summary(false, cx),
+            summary: project.diagnostic_summary_for_paths(path_matcher.as_ref(), false, cx),
             diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
