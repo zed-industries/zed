@@ -21,7 +21,7 @@ use project::{
 use settings::Settings as _;
 use std::{
     borrow::Cow,
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
 };
 use util::maybe;
@@ -31,13 +31,6 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
-
-// TODO:
-// - [x] stop sorting by session ID
-// - [x] pick the most recent session by default (logs if available, RPC messages otherwise)
-// - [ ] dump the launch/attach request somewhere (logs?)
-
-const MAX_SESSIONS: usize = 10;
 
 struct DapLogView {
     editor: Entity<Editor>,
@@ -49,14 +42,34 @@ struct DapLogView {
     _subscriptions: Vec<Subscription>,
 }
 
+struct LogStoreEntryIdentifier<'a> {
+    session_id: SessionId,
+    project: Cow<'a, WeakEntity<Project>>,
+}
+impl LogStoreEntryIdentifier<'_> {
+    fn to_owned(&self) -> LogStoreEntryIdentifier<'static> {
+        LogStoreEntryIdentifier {
+            session_id: self.session_id,
+            project: Cow::Owned(self.project.as_ref().clone()),
+        }
+    }
+}
+
+struct LogStoreMessage {
+    id: LogStoreEntryIdentifier<'static>,
+    kind: IoKind,
+    command: Option<SharedString>,
+    message: SharedString,
+}
+
 pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
-    debug_sessions: VecDeque<DebugAdapterState>,
-    rpc_tx: UnboundedSender<(SessionId, IoKind, Option<SharedString>, SharedString)>,
-    adapter_log_tx: UnboundedSender<(SessionId, IoKind, Option<SharedString>, SharedString)>,
+    rpc_tx: UnboundedSender<LogStoreMessage>,
+    adapter_log_tx: UnboundedSender<LogStoreMessage>,
 }
 
 struct ProjectState {
+    debug_sessions: BTreeMap<SessionId, DebugAdapterState>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
@@ -122,13 +135,12 @@ impl DebugAdapterState {
 
 impl LogStore {
     pub fn new(cx: &Context<Self>) -> Self {
-        let (rpc_tx, mut rpc_rx) =
-            unbounded::<(SessionId, IoKind, Option<SharedString>, SharedString)>();
+        let (rpc_tx, mut rpc_rx) = unbounded::<LogStoreMessage>();
         cx.spawn(async move |this, cx| {
-            while let Some((session_id, io_kind, command, message)) = rpc_rx.next().await {
+            while let Some(message) = rpc_rx.next().await {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        this.add_debug_adapter_message(session_id, io_kind, command, message, cx);
+                        this.add_debug_adapter_message(message, cx);
                     })?;
                 }
 
@@ -138,13 +150,12 @@ impl LogStore {
         })
         .detach_and_log_err(cx);
 
-        let (adapter_log_tx, mut adapter_log_rx) =
-            unbounded::<(SessionId, IoKind, Option<SharedString>, SharedString)>();
+        let (adapter_log_tx, mut adapter_log_rx) = unbounded::<LogStoreMessage>();
         cx.spawn(async move |this, cx| {
-            while let Some((session_id, io_kind, _, message)) = adapter_log_rx.next().await {
+            while let Some(message) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        this.add_debug_adapter_log(session_id, io_kind, message, cx);
+                        this.add_debug_adapter_log(message, cx);
                     })?;
                 }
 
@@ -157,57 +168,76 @@ impl LogStore {
             rpc_tx,
             adapter_log_tx,
             projects: HashMap::new(),
-            debug_sessions: Default::default(),
         }
     }
 
     pub fn add_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
-        let weak_project = project.downgrade();
         self.projects.insert(
             project.downgrade(),
             ProjectState {
                 _subscriptions: [
-                    cx.observe_release(project, move |this, _, _| {
-                        this.projects.remove(&weak_project);
+                    cx.observe_release(project, {
+                        let weak_project = project.downgrade();
+                        move |this, _, _| {
+                            this.projects.remove(&weak_project);
+                        }
                     }),
-                    cx.subscribe(
-                        &project.read(cx).dap_store(),
-                        |this, dap_store, event, cx| match event {
+                    cx.subscribe(&project.read(cx).dap_store(), {
+                        let weak_project = project.downgrade();
+                        move |this, dap_store, event, cx| match event {
                             dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
                                 let session = dap_store.read(cx).session_by_id(session_id);
                                 if let Some(session) = session {
-                                    this.add_debug_session(*session_id, session, cx);
+                                    this.add_debug_session(
+                                        LogStoreEntryIdentifier {
+                                            project: Cow::Owned(weak_project.clone()),
+                                            session_id: *session_id,
+                                        },
+                                        session,
+                                        cx,
+                                    );
                                 }
                             }
                             dap_store::DapStoreEvent::DebugClientShutdown(session_id) => {
-                                this.get_debug_adapter_state(*session_id)
-                                    .iter_mut()
-                                    .for_each(|state| state.is_terminated = true);
+                                let id = LogStoreEntryIdentifier {
+                                    project: Cow::Borrowed(&weak_project),
+                                    session_id: *session_id,
+                                };
+                                if let Some(state) = this.get_debug_adapter_state(&id) {
+                                    state.is_terminated = true;
+                                }
+
                                 this.clean_sessions(cx);
                             }
                             _ => {}
-                        },
-                    ),
+                        }
+                    }),
                 ],
+                debug_sessions: Default::default(),
             },
         );
     }
 
-    fn get_debug_adapter_state(&mut self, id: SessionId) -> Option<&mut DebugAdapterState> {
-        self.debug_sessions
-            .iter_mut()
-            .find(|adapter_state| adapter_state.id == id)
+    fn get_debug_adapter_state(
+        &mut self,
+        id: &LogStoreEntryIdentifier<'_>,
+    ) -> Option<&mut DebugAdapterState> {
+        self.projects
+            .get_mut(&id.project)
+            .and_then(|state| state.debug_sessions.get_mut(&id.session_id))
     }
 
     fn add_debug_adapter_message(
         &mut self,
-        id: SessionId,
-        io_kind: IoKind,
-        command: Option<SharedString>,
-        message: SharedString,
+        LogStoreMessage {
+            id,
+            kind: io_kind,
+            command,
+            message,
+        }: LogStoreMessage,
         cx: &mut Context<Self>,
     ) {
-        let Some(debug_client_state) = self.get_debug_adapter_state(id) else {
+        let Some(debug_client_state) = self.get_debug_adapter_state(&id) else {
             return;
         };
 
@@ -229,7 +259,7 @@ impl LogStore {
         if rpc_messages.last_message_kind != Some(kind) {
             Self::get_debug_adapter_entry(
                 &mut rpc_messages.messages,
-                id,
+                id.to_owned(),
                 kind.label().into(),
                 LogKind::Rpc,
                 cx,
@@ -239,7 +269,7 @@ impl LogStore {
 
         let entry = Self::get_debug_adapter_entry(
             &mut rpc_messages.messages,
-            id,
+            id.to_owned(),
             message,
             LogKind::Rpc,
             cx,
@@ -260,12 +290,15 @@ impl LogStore {
 
     fn add_debug_adapter_log(
         &mut self,
-        id: SessionId,
-        io_kind: IoKind,
-        message: SharedString,
+        LogStoreMessage {
+            id,
+            kind: io_kind,
+            message,
+            ..
+        }: LogStoreMessage,
         cx: &mut Context<Self>,
     ) {
-        let Some(debug_adapter_state) = self.get_debug_adapter_state(id) else {
+        let Some(debug_adapter_state) = self.get_debug_adapter_state(&id) else {
             return;
         };
 
@@ -276,7 +309,7 @@ impl LogStore {
 
         Self::get_debug_adapter_entry(
             &mut debug_adapter_state.log_messages,
-            id,
+            id.to_owned(),
             message,
             LogKind::Adapter,
             cx,
@@ -286,13 +319,17 @@ impl LogStore {
 
     fn get_debug_adapter_entry(
         log_lines: &mut VecDeque<SharedString>,
-        id: SessionId,
+        id: LogStoreEntryIdentifier<'static>,
         message: SharedString,
         kind: LogKind,
         cx: &mut Context<Self>,
     ) -> SharedString {
-        while log_lines.len() >= RpcMessages::MESSAGE_QUEUE_LIMIT {
-            log_lines.pop_front();
+        if let Some(excess) = log_lines
+            .len()
+            .checked_sub(RpcMessages::MESSAGE_QUEUE_LIMIT)
+            && excess > 0
+        {
+            log_lines.drain(..excess);
         }
 
         let format_messages = DebuggerSettings::get_global(cx).format_dap_log_messages;
@@ -322,118 +359,116 @@ impl LogStore {
 
     fn add_debug_session(
         &mut self,
-        session_id: SessionId,
+        id: LogStoreEntryIdentifier<'static>,
         session: Entity<Session>,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .debug_sessions
-            .iter_mut()
-            .any(|adapter_state| adapter_state.id == session_id)
-        {
-            return;
-        }
+        maybe!({
+            let project_entry = self.projects.get_mut(&id.project)?;
+            let std::collections::btree_map::Entry::Vacant(state) =
+                project_entry.debug_sessions.entry(id.session_id)
+            else {
+                return None;
+            };
 
-        let (adapter_name, has_adapter_logs) = session.read_with(cx, |session, _| {
-            (
-                session.adapter(),
-                session
-                    .adapter_client()
-                    .map(|client| client.has_adapter_logs())
-                    .unwrap_or(false),
-            )
+            let (adapter_name, has_adapter_logs) = session.read_with(cx, |session, _| {
+                (
+                    session.adapter(),
+                    session
+                        .adapter_client()
+                        .map_or(false, |client| client.has_adapter_logs()),
+                )
+            });
+
+            state.insert(DebugAdapterState::new(
+                id.session_id,
+                adapter_name,
+                has_adapter_logs,
+            ));
+
+            self.clean_sessions(cx);
+
+            let io_tx = self.rpc_tx.clone();
+
+            let client = session.read(cx).adapter_client()?;
+            let project = id.project.clone();
+            let session_id = id.session_id;
+            client.add_log_handler(
+                move |kind, command, message| {
+                    io_tx
+                        .unbounded_send(LogStoreMessage {
+                            id: LogStoreEntryIdentifier {
+                                session_id,
+                                project: project.clone(),
+                            },
+                            kind,
+                            command: command.map(|command| command.to_owned().into()),
+                            message: message.to_owned().into(),
+                        })
+                        .ok();
+                },
+                LogKind::Rpc,
+            );
+
+            let log_io_tx = self.adapter_log_tx.clone();
+            let project = id.project;
+            client.add_log_handler(
+                move |kind, command, message| {
+                    log_io_tx
+                        .unbounded_send(LogStoreMessage {
+                            id: LogStoreEntryIdentifier {
+                                session_id,
+                                project: project.clone(),
+                            },
+                            kind,
+                            command: command.map(|command| command.to_owned().into()),
+                            message: message.to_owned().into(),
+                        })
+                        .ok();
+                },
+                LogKind::Adapter,
+            );
+            Some(())
         });
-
-        self.debug_sessions.push_back(DebugAdapterState::new(
-            session_id,
-            adapter_name,
-            has_adapter_logs,
-        ));
-
-        self.clean_sessions(cx);
-
-        let io_tx = self.rpc_tx.clone();
-
-        let Some(client) = session.read(cx).adapter_client() else {
-            return;
-        };
-
-        client.add_log_handler(
-            move |io_kind, command, message| {
-                io_tx
-                    .unbounded_send((
-                        session_id,
-                        io_kind,
-                        command.map(|command| command.to_owned().into()),
-                        message.to_owned().into(),
-                    ))
-                    .ok();
-            },
-            LogKind::Rpc,
-        );
-
-        let log_io_tx = self.adapter_log_tx.clone();
-        client.add_log_handler(
-            move |io_kind, command, message| {
-                log_io_tx
-                    .unbounded_send((
-                        session_id,
-                        io_kind,
-                        command.map(|command| command.to_owned().into()),
-                        message.to_owned().into(),
-                    ))
-                    .ok();
-            },
-            LogKind::Adapter,
-        );
     }
 
     fn clean_sessions(&mut self, cx: &mut Context<Self>) {
-        let mut to_remove = self.debug_sessions.len().saturating_sub(MAX_SESSIONS);
-        self.debug_sessions.retain(|session| {
-            if to_remove > 0 && session.is_terminated {
-                to_remove -= 1;
-                return false;
-            }
-            true
+        self.projects.values_mut().for_each(|project| {
+            let mut allowed_terminated_sessions = 10u32;
+            project.debug_sessions.retain(|_, session| {
+                if !session.is_terminated {
+                    return true;
+                }
+                allowed_terminated_sessions = allowed_terminated_sessions.saturating_sub(1);
+                allowed_terminated_sessions > 0
+            });
         });
+
         cx.notify();
     }
 
     fn log_messages_for_session(
         &mut self,
-        session_id: SessionId,
+        id: &LogStoreEntryIdentifier<'_>,
     ) -> Option<&mut VecDeque<SharedString>> {
-        self.debug_sessions
-            .iter_mut()
-            .find(|session| session.id == session_id)
+        self.get_debug_adapter_state(id)
             .map(|state| &mut state.log_messages)
     }
 
     fn rpc_messages_for_session(
         &mut self,
-        session_id: SessionId,
+        id: &LogStoreEntryIdentifier<'_>,
     ) -> Option<&mut VecDeque<SharedString>> {
-        self.debug_sessions.iter_mut().find_map(|state| {
-            if state.id == session_id {
-                Some(&mut state.rpc_messages.messages)
-            } else {
-                None
-            }
-        })
+        self.get_debug_adapter_state(id)
+            .map(|state| &mut state.rpc_messages.messages)
     }
 
     fn initialization_sequence_for_session(
         &mut self,
-        session_id: SessionId,
-    ) -> Option<&mut Vec<SharedString>> {
-        self.debug_sessions.iter_mut().find_map(|state| {
-            if state.id == session_id {
-                Some(&mut state.rpc_messages.initialization_sequence)
-            } else {
-                None
-            }
-        })
+        id: &LogStoreEntryIdentifier<'_>,
+    ) -> Option<&Vec<SharedString>> {
+        self.get_debug_adapter_state(&id)
+            .map(|state| &state.rpc_messages.initialization_sequence)
     }
 }
 
@@ -453,10 +488,11 @@ impl Render for DapLogToolbarItemView {
             return Empty.into_any_element();
         };
 
-        let (menu_rows, current_session_id) = log_view.update(cx, |log_view, cx| {
+        let (menu_rows, current_session_id, project) = log_view.update(cx, |log_view, cx| {
             (
                 log_view.menu_items(cx),
                 log_view.current_view.map(|(session_id, _)| session_id),
+                log_view.project.downgrade(),
             )
         });
 
@@ -484,6 +520,7 @@ impl Render for DapLogToolbarItemView {
             .menu(move |mut window, cx| {
                 let log_view = log_view.clone();
                 let menu_rows = menu_rows.clone();
+                let project = project.clone();
                 ContextMenu::build(&mut window, cx, move |mut menu, window, _cx| {
                     for row in menu_rows.into_iter() {
                         menu = menu.custom_row(move |_window, _cx| {
@@ -509,8 +546,15 @@ impl Render for DapLogToolbarItemView {
                                         .child(Label::new(ADAPTER_LOGS))
                                         .into_any_element()
                                 },
-                                window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_log_messages_for_adapter(row.session_id, window, cx);
+                                window.handler_for(&log_view, {
+                                    let project = project.clone();
+                                    let id = LogStoreEntryIdentifier {
+                                        project: Cow::Owned(project),
+                                        session_id: row.session_id,
+                                    };
+                                    move |view, window, cx| {
+                                        view.show_log_messages_for_adapter(&id, window, cx);
+                                    }
                                 }),
                             );
                         }
@@ -524,8 +568,15 @@ impl Render for DapLogToolbarItemView {
                                         .child(Label::new(RPC_MESSAGES))
                                         .into_any_element()
                                 },
-                                window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_rpc_trace_for_server(row.session_id, window, cx);
+                                window.handler_for(&log_view, {
+                                    let project = project.clone();
+                                    let id = LogStoreEntryIdentifier {
+                                        project: Cow::Owned(project),
+                                        session_id: row.session_id,
+                                    };
+                                    move |view, window, cx| {
+                                        view.show_rpc_trace_for_server(&id, window, cx);
+                                    }
                                 }),
                             )
                             .custom_entry(
@@ -536,12 +587,17 @@ impl Render for DapLogToolbarItemView {
                                         .child(Label::new(INITIALIZATION_SEQUENCE))
                                         .into_any_element()
                                 },
-                                window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_initialization_sequence_for_server(
-                                        row.session_id,
-                                        window,
-                                        cx,
-                                    );
+                                window.handler_for(&log_view, {
+                                    let project = project.clone();
+                                    let id = LogStoreEntryIdentifier {
+                                        project: Cow::Owned(project),
+                                        session_id: row.session_id,
+                                    };
+                                    move |view, window, cx| {
+                                        view.show_initialization_sequence_for_server(
+                                            &id, window, cx,
+                                        );
+                                    }
                                 }),
                             );
                     }
@@ -613,7 +669,9 @@ impl DapLogView {
 
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, event, cx| match event {
             Event::NewLogEntry { id, entry, kind } => {
-                if log_view.current_view == Some((*id, *kind)) {
+                if log_view.current_view == Some((id.session_id, *kind))
+                    && log_view.project == *id.project
+                {
                     log_view.editor.update(cx, |editor, cx| {
                         editor.set_read_only(false);
                         let last_point = editor.buffer().read(cx).len(cx);
@@ -629,12 +687,18 @@ impl DapLogView {
                 }
             }
         });
-
+        let weak_project = project.downgrade();
         let state_info = log_store
             .read(cx)
-            .debug_sessions
-            .back()
-            .map(|session| (session.id, session.has_adapter_logs));
+            .projects
+            .get(&weak_project)
+            .and_then(|project| {
+                project
+                    .debug_sessions
+                    .values()
+                    .next_back()
+                    .map(|session| (session.id, session.has_adapter_logs))
+            });
 
         let mut this = Self {
             editor,
@@ -647,10 +711,14 @@ impl DapLogView {
         };
 
         if let Some((session_id, have_adapter_logs)) = state_info {
+            let id = LogStoreEntryIdentifier {
+                session_id,
+                project: Cow::Owned(weak_project),
+            };
             if have_adapter_logs {
-                this.show_log_messages_for_adapter(session_id, window, cx);
+                this.show_log_messages_for_adapter(&id, window, cx);
             } else {
-                this.show_rpc_trace_for_server(session_id, window, cx);
+                this.show_rpc_trace_for_server(&id, window, cx);
             }
         }
 
@@ -690,31 +758,38 @@ impl DapLogView {
     fn menu_items(&self, cx: &App) -> Vec<DapMenuItem> {
         self.log_store
             .read(cx)
-            .debug_sessions
-            .iter()
-            .rev()
-            .map(|state| DapMenuItem {
-                session_id: state.id,
-                adapter_name: state.adapter_name.clone(),
-                has_adapter_logs: state.has_adapter_logs,
-                selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
+            .projects
+            .get(&self.project.downgrade())
+            .map_or_else(Vec::new, |state| {
+                state
+                    .debug_sessions
+                    .values()
+                    .rev()
+                    .map(|state| DapMenuItem {
+                        session_id: state.id,
+                        adapter_name: state.adapter_name.clone(),
+                        has_adapter_logs: state.has_adapter_logs,
+                        selected_entry: self
+                            .current_view
+                            .map_or(LogKind::Adapter, |(_, kind)| kind),
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>()
     }
 
     fn show_rpc_trace_for_server(
         &mut self,
-        session_id: SessionId,
+        id: &LogStoreEntryIdentifier<'_>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
-                .rpc_messages_for_session(session_id)
+                .rpc_messages_for_session(id)
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, LogKind::Rpc));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -725,8 +800,7 @@ impl DapLogView {
                 .expect("log buffer should be a singleton")
                 .update(cx, |_, cx| {
                     cx.spawn({
-                        let buffer = cx.entity();
-                        async move |_, cx| {
+                        async move |buffer, cx| {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
@@ -746,17 +820,17 @@ impl DapLogView {
 
     fn show_log_messages_for_adapter(
         &mut self,
-        session_id: SessionId,
+        id: &LogStoreEntryIdentifier<'_>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let message_log = self.log_store.update(cx, |log_store, _| {
             log_store
-                .log_messages_for_session(session_id)
+                .log_messages_for_session(id)
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(message_log) = message_log {
-            self.current_view = Some((session_id, LogKind::Adapter));
+            self.current_view = Some((id.session_id, LogKind::Adapter));
             let (editor, editor_subscriptions) = Self::editor_for_logs(message_log, window, cx);
             editor
                 .read(cx)
@@ -775,17 +849,17 @@ impl DapLogView {
 
     fn show_initialization_sequence_for_server(
         &mut self,
-        session_id: SessionId,
+        id: &LogStoreEntryIdentifier<'_>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
-                .initialization_sequence_for_session(session_id)
+                .initialization_sequence_for_session(id)
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, LogKind::Rpc));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -844,7 +918,13 @@ impl Render for DapLogView {
     }
 }
 
-actions!(dev, [OpenDebugAdapterLogs]);
+actions!(
+    dev,
+    [
+        /// Opens the debug adapter protocol logs viewer.
+        OpenDebugAdapterLogs
+    ]
+);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(cx));
@@ -993,9 +1073,9 @@ impl Focusable for DapLogView {
     }
 }
 
-pub enum Event {
+enum Event {
     NewLogEntry {
-        id: SessionId,
+        id: LogStoreEntryIdentifier<'static>,
         entry: SharedString,
         kind: LogKind,
     },
@@ -1008,31 +1088,30 @@ impl EventEmitter<SearchEvent> for DapLogView {}
 
 #[cfg(any(test, feature = "test-support"))]
 impl LogStore {
-    pub fn contained_session_ids(&self) -> Vec<SessionId> {
-        self.debug_sessions
-            .iter()
-            .map(|session| session.id)
-            .collect()
+    pub fn has_projects(&self) -> bool {
+        !self.projects.is_empty()
     }
 
-    pub fn rpc_messages_for_session_id(&self, session_id: SessionId) -> Vec<SharedString> {
-        self.debug_sessions
-            .iter()
-            .find(|adapter_state| adapter_state.id == session_id)
-            .expect("This session should exist if a test is calling")
-            .rpc_messages
-            .messages
-            .clone()
-            .into()
+    pub fn contained_session_ids(&self, project: &WeakEntity<Project>) -> Vec<SessionId> {
+        self.projects.get(project).map_or(vec![], |state| {
+            state.debug_sessions.keys().copied().collect()
+        })
     }
 
-    pub fn log_messages_for_session_id(&self, session_id: SessionId) -> Vec<SharedString> {
-        self.debug_sessions
-            .iter()
-            .find(|adapter_state| adapter_state.id == session_id)
-            .expect("This session should exist if a test is calling")
-            .log_messages
-            .clone()
-            .into()
+    pub fn rpc_messages_for_session_id(
+        &self,
+        project: &WeakEntity<Project>,
+        session_id: SessionId,
+    ) -> Vec<SharedString> {
+        self.projects.get(&project).map_or(vec![], |state| {
+            state
+                .debug_sessions
+                .get(&session_id)
+                .expect("This session should exist if a test is calling")
+                .rpc_messages
+                .messages
+                .clone()
+                .into()
+        })
     }
 }

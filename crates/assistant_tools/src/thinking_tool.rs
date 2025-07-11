@@ -37,7 +37,7 @@ impl Tool for ThinkingTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::LightBulb
+        IconName::ToolBulb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

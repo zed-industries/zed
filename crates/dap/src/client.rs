@@ -2,7 +2,7 @@ use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
@@ -108,7 +108,11 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
         self.transport_delegate
-            .add_pending_request(sequence_id, callback_tx);
+            .pending_requests
+            .lock()
+            .as_mut()
+            .context("client is closed")?
+            .insert(sequence_id, callback_tx);
 
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
@@ -163,8 +167,9 @@ impl DebugAdapterClient {
         self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn shutdown(&self) -> Result<()> {
-        self.transport_delegate.shutdown().await
+    pub fn kill(&self) {
+        log::debug!("Killing DAP process");
+        self.transport_delegate.transport.lock().kill();
     }
 
     pub fn has_adapter_logs(&self) -> bool {
@@ -315,8 +320,6 @@ mod tests {
             },
             response
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -368,8 +371,6 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -433,7 +434,5 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 }

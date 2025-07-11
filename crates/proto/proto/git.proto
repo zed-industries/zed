@@ -294,6 +294,7 @@ message Commit {
     optional string email = 5;
     string message = 6;
     optional CommitOptions options = 7;
+    optional uint64 askpass_id = 8;
 
     message CommitOptions {
         bool amend = 1;

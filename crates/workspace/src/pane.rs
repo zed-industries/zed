@@ -20,7 +20,7 @@ use gpui::{
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, impl_actions, prelude::*,
+    actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -95,62 +95,83 @@ pub enum SaveIntent {
     Skip,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Activates a specific item in the pane by its index.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 pub struct ActivateItem(pub usize);
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes the currently active item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all inactive items in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items that have no unsaved changes.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items to the right of the current item.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items to the left of the current item.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Reveals the current item in the project panel.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Opens the search interface with the specified configuration.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct DeploySearch {
     #[serde(default)]
@@ -161,43 +182,48 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
-impl_actions!(
-    pane,
-    [
-        CloseAllItems,
-        CloseActiveItem,
-        CloseCleanItems,
-        CloseItemsToTheLeft,
-        CloseItemsToTheRight,
-        CloseInactiveItems,
-        ActivateItem,
-        RevealInProjectPanel,
-        DeploySearch,
-    ]
-);
-
 actions!(
     pane,
     [
+        /// Activates the previous item in the pane.
         ActivatePreviousItem,
+        /// Activates the next item in the pane.
         ActivateNextItem,
+        /// Activates the last item in the pane.
         ActivateLastItem,
+        /// Switches to the alternate file.
         AlternateFile,
+        /// Navigates back in history.
         GoBack,
+        /// Navigates forward in history.
         GoForward,
+        /// Joins this pane into the next pane.
         JoinIntoNext,
+        /// Joins all panes into one.
         JoinAll,
+        /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Splits the pane to the left.
         SplitLeft,
+        /// Splits the pane upward.
         SplitUp,
+        /// Splits the pane to the right.
         SplitRight,
+        /// Splits the pane downward.
         SplitDown,
+        /// Splits the pane horizontally.
         SplitHorizontal,
+        /// Splits the pane vertically.
         SplitVertical,
+        /// Swaps the current item with the one to the left.
         SwapItemLeft,
+        /// Swaps the current item with the one to the right.
         SwapItemRight,
+        /// Toggles preview mode for the current tab.
         TogglePreviewTab,
+        /// Toggles pin status for the current tab.
         TogglePinTab,
+        /// Unpins all tabs in the pane.
         UnpinAllTabs,
     ]
 );
@@ -2527,7 +2553,7 @@ impl Pane {
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
         right_click_menu(ix)
-            .trigger(|_| tab)
+            .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
@@ -2709,9 +2735,7 @@ impl Pane {
                                 .when(visible_in_project_panel, |menu| {
                                     menu.entry(
                                         "Reveal In Project Panel",
-                                        Some(Box::new(RevealInProjectPanel {
-                                            entry_id: Some(entry_id),
-                                        })),
+                                        Some(Box::new(RevealInProjectPanel::default())),
                                         window.handler_for(&pane, move |pane, _, cx| {
                                             pane.project
                                                 .update(cx, |_, cx| {
@@ -2790,6 +2814,16 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
+        if self.pinned_tab_count > tab_count {
+            log::warn!(
+                "Pinned tab count ({}) exceeds actual tab count ({}). \
+                This should not happen. If possible, add reproduction steps, \
+                in a comment, to https://github.com/zed-industries/zed/issues/33342",
+                self.pinned_tab_count,
+                tab_count
+            );
+            self.pinned_tab_count = tab_count;
+        }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")

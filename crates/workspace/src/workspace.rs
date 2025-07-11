@@ -39,8 +39,8 @@ use gpui::{
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions,
-    canvas, impl_action_as, impl_actions, point, relative, size, transparent_black,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
+    point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -146,6 +146,7 @@ pub trait DebuggerProvider {
         definition: DebugScenario,
         task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
     );
@@ -168,42 +169,83 @@ pub trait DebuggerProvider {
 actions!(
     workspace,
     [
+        /// Activates the next pane in the workspace.
         ActivateNextPane,
+        /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
+        /// Switches to the next window.
         ActivateNextWindow,
+        /// Switches to the previous window.
         ActivatePreviousWindow,
+        /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Clears all notifications.
         ClearAllNotifications,
+        /// Closes the active dock.
         CloseActiveDock,
+        /// Closes all docks.
         CloseAllDocks,
+        /// Closes the current window.
         CloseWindow,
+        /// Opens the feedback dialog.
         Feedback,
+        /// Follows the next collaborator in the session.
         FollowNextCollaborator,
+        /// Moves the focused panel to the next position.
         MoveFocusedPanelToNextPosition,
+        /// Opens a new terminal in the center.
         NewCenterTerminal,
+        /// Creates a new file.
         NewFile,
+        /// Creates a new file in a vertical split.
         NewFileSplitVertical,
+        /// Creates a new file in a horizontal split.
         NewFileSplitHorizontal,
+        /// Opens a new search.
         NewSearch,
+        /// Opens a new terminal.
         NewTerminal,
+        /// Opens a new window.
         NewWindow,
+        /// Opens a file or directory.
         Open,
+        /// Opens multiple files.
         OpenFiles,
+        /// Opens the current location in terminal.
         OpenInTerminal,
+        /// Opens the component preview.
         OpenComponentPreview,
+        /// Reloads the active item.
         ReloadActiveItem,
+        /// Resets the active dock to its default size.
+        ResetActiveDockSize,
+        /// Resets all open docks to their default sizes.
+        ResetOpenDocksSize,
+        /// Saves the current file with a new name.
         SaveAs,
+        /// Saves without formatting.
         SaveWithoutFormat,
+        /// Shuts down all debug adapters.
         ShutdownDebugAdapters,
+        /// Suppresses the current notification.
         SuppressNotification,
+        /// Toggles the bottom dock.
         ToggleBottomDock,
+        /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles the left dock.
         ToggleLeftDock,
+        /// Toggles the right dock.
         ToggleRightDock,
+        /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Stops following a collaborator.
         Unfollow,
+        /// Shows the welcome screen.
         Welcome,
+        /// Restores the banner.
         RestoreBanner,
+        /// Toggles expansion of the selected item.
         ToggleExpandItem,
     ]
 );
@@ -213,94 +255,170 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+/// Activates a specific pane by its index.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+/// Moves an item to a specific pane by index.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
+    #[serde(default = "default_1")]
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+fn default_1() -> usize {
+    1
+}
+
+/// Moves an item to a pane in the specified direction.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
+    #[serde(default = "default_right")]
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
+    #[serde(default)]
+    pub clone: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+fn default_right() -> SplitDirection {
+    SplitDirection::Right
+}
+
+/// Saves all open files in the workspace.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+/// Saves the current file with the specified options.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+/// Closes all items and panes in the workspace.
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+/// Closes all inactive tabs and panes in the workspace.
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+/// Sends a sequence of keystrokes to the active element.
+#[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+/// Reloads the active item or workspace.
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
-action_as!(project_symbols, ToggleProjectSymbols as Toggle);
+actions!(
+    project_symbols,
+    [
+        /// Toggles the project symbols search.
+        #[action(name = "Toggle")]
+        ToggleProjectSymbols
+    ]
+);
 
-#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
+/// Toggles the file finder interface.
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = file_finder, name = "Toggle")]
+#[serde(deny_unknown_fields)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
 }
 
-impl_action_as!(file_finder, ToggleFileFinder as Toggle);
+/// Increases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
 
-impl_actions!(
-    workspace,
-    [
-        ActivatePane,
-        CloseAllItemsAndPanes,
-        CloseInactiveTabsAndPanes,
-        MoveItemToPane,
-        MoveItemToPaneInDirection,
-        OpenTerminal,
-        Reload,
-        Save,
-        SaveAll,
-        SendKeystrokes,
-    ]
-);
+/// Decreases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Increases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Decreases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
 
 actions!(
     workspace,
     [
+        /// Activates the pane to the left.
         ActivatePaneLeft,
+        /// Activates the pane to the right.
         ActivatePaneRight,
+        /// Activates the pane above.
         ActivatePaneUp,
+        /// Activates the pane below.
         ActivatePaneDown,
+        /// Swaps the current pane with the one to the left.
         SwapPaneLeft,
+        /// Swaps the current pane with the one to the right.
         SwapPaneRight,
+        /// Swaps the current pane with the one above.
         SwapPaneUp,
+        /// Swaps the current pane with the one below.
         SwapPaneDown,
     ]
 );
@@ -356,7 +474,9 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+/// Opens a new terminal with the specified working directory.
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
+#[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
@@ -2196,7 +2316,7 @@ impl Workspace {
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            window.draw(cx);
+                            window.draw(cx).clear();
                         }
                     })?;
                 }
@@ -2759,12 +2879,14 @@ impl Workspace {
         })
     }
 
-    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(dock) = self.active_dock(window, cx) {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
+            return true;
         }
+        false
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3355,7 +3477,7 @@ impl Workspace {
         let destination = match panes.get(action.destination) {
             Some(&destination) => destination.clone(),
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let direction = SplitDirection::Right;
@@ -3375,14 +3497,25 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        )
+        if action.clone {
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            )
+        }
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3526,7 +3659,7 @@ impl Workspace {
         let destination = match self.find_pane_in_direction(action.direction, cx) {
             Some(destination) => destination,
             None => {
-                if self.active_pane.read(cx).items_len() < 2 {
+                if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
                 let new_pane = self.add_pane(window, cx);
@@ -3542,14 +3675,25 @@ impl Workspace {
             }
         };
 
-        move_active_item(
-            &self.active_pane,
-            &destination,
-            action.focus,
-            true,
-            window,
-            cx,
-        );
+        if action.clone {
+            clone_active_item(
+                self.database_id(),
+                &self.active_pane,
+                &destination,
+                action.focus,
+                window,
+                cx,
+            )
+        } else {
+            move_active_item(
+                &self.active_pane,
+                &destination,
+                action.focus,
+                true,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -3590,9 +3734,9 @@ impl Workspace {
                 return;
             };
             match dock.read(cx).position() {
-                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
-                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
-                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+                DockPosition::Left => self.resize_left_dock(panel_size + amount, window, cx),
+                DockPosition::Bottom => self.resize_bottom_dock(panel_size + amount, window, cx),
+                DockPosition::Right => self.resize_right_dock(panel_size + amount, window, cx),
             }
         } else {
             self.center
@@ -5381,7 +5525,9 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
-                    workspace.close_active_dock(window, cx);
+                    if !workspace.close_active_dock(window, cx) {
+                        cx.propagate();
+                    }
                 },
             ))
             .on_action(
@@ -5404,6 +5550,72 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+
+                            return;
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if let Some(panel) = dock.read(cx).visible_panel() {
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
@@ -5592,9 +5804,74 @@ impl Workspace {
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
-            cx.emit(Event::ClearActivityIndicator);
             cx.propagate();
         }
+    }
+
+    fn adjust_dock_size_by_px(
+        &mut self,
+        panel_size: Pixels,
+        dock_pos: DockPosition,
+        px: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match dock_pos {
+            DockPosition::Left => self.resize_left_dock(panel_size + px, window, cx),
+            DockPosition::Right => self.resize_right_dock(panel_size + px, window, cx),
+            DockPosition::Bottom => self.resize_bottom_dock(panel_size + px, window, cx),
+        }
+    }
+
+    fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+
+        self.left_dock.update(cx, |left_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Left)
+            {
+                left_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                left_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        self.left_dock.read_with(cx, |left_dock, cx| {
+            let left_dock_size = left_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels(0.0));
+            if left_dock_size + size > self.bounds.right() {
+                size = self.bounds.right() - left_dock_size
+            }
+        });
+        self.right_dock.update(cx, |right_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Right)
+            {
+                right_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                right_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.bottom() - RESIZE_HANDLE_SIZE - self.bounds.top());
+        self.bottom_dock.update(cx, |bottom_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Bottom)
+            {
+                bottom_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                bottom_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
     }
 }
 
@@ -5780,6 +6057,63 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
+fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0 {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    } else {
+        px(val as f32)
+    }
+}
+
+fn adjust_active_dock_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(active_dock) = workspace
+        .all_docks()
+        .into_iter()
+        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+    else {
+        return;
+    };
+    let dock = active_dock.read(cx);
+    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+        return;
+    };
+    let dock_pos = dock.position();
+    workspace.adjust_dock_size_by_px(panel_size, dock_pos, px, window, cx);
+}
+
+fn adjust_open_docks_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let docks = workspace
+        .all_docks()
+        .into_iter()
+        .filter_map(|dock| {
+            if dock.read(cx).is_open() {
+                let dock = dock.read(cx);
+                let panel_size = dock.active_panel_size(window, cx)?;
+                let dock_pos = dock.position();
+                Some((panel_size, dock_pos, px))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    docks
+        .into_iter()
+        .for_each(|(panel_size, dock_pos, offset)| {
+            workspace.adjust_dock_size_by_px(panel_size, dock_pos, offset, window, cx);
+        });
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.active_pane.focus_handle(cx)
@@ -5937,28 +6271,25 @@ impl Render for Workspace {
                                                     Some(e.event.position);
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
-                                                        resize_left_dock(
+                                                        workspace.resize_left_dock(
                                                             e.event.position.x
                                                                 - workspace.bounds.left(),
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Right => {
-                                                        resize_right_dock(
+                                                        workspace.resize_right_dock(
                                                             workspace.bounds.right()
                                                                 - e.event.position.x,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Bottom => {
-                                                        resize_bottom_dock(
+                                                        workspace.resize_bottom_dock(
                                                             workspace.bounds.bottom()
                                                                 - e.event.position.y,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
@@ -6244,73 +6575,6 @@ impl Render for Workspace {
     }
 }
 
-fn resize_bottom_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size =
-        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
-    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Bottom)
-        {
-            bottom_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            bottom_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_right_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
-    workspace.left_dock.read_with(cx, |left_dock, cx| {
-        let left_dock_size = left_dock
-            .active_panel_size(window, cx)
-            .unwrap_or(Pixels(0.0));
-        if left_dock_size + size > workspace.bounds.right() {
-            size = workspace.bounds.right() - left_dock_size
-        }
-    });
-    workspace.right_dock.update(cx, |right_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Right)
-        {
-            right_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            right_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_left_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
-
-    workspace.left_dock.update(cx, |left_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Left)
-        {
-            left_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            left_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
 impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
@@ -6393,6 +6657,10 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
+
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+        &self.workspaces
+    }
 }
 
 impl ViewId {
@@ -6466,15 +6734,31 @@ pub fn last_session_workspace_locations(
 actions!(
     collab,
     [
+        /// Opens the channel notes for the current call.
+        ///
+        /// If you want to open a specific channel, use `zed::OpenZedUrl` with a channel notes URL -
+        /// can be copied via "Copy link to section" in the context menu of the channel notes
+        /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
+        /// Mutes your microphone.
         Mute,
+        /// Deafens yourself (mute both microphone and speakers).
         Deafen,
+        /// Leaves the current call.
         LeaveCall,
+        /// Shares the current project with collaborators.
         ShareProject,
+        /// Shares your screen with collaborators.
         ScreenShare
     ]
 );
-actions!(zed, [OpenLog]);
+actions!(
+    zed,
+    [
+        /// Opens the Zed log file.
+        OpenLog
+    ]
+);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -7281,6 +7565,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
+/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -7289,8 +7574,9 @@ pub fn client_side_decorations(
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
 
-    if matches!(decorations, Decorations::Client { .. }) {
-        window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    match decorations {
+        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
+        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -7628,6 +7914,35 @@ pub fn move_active_item(
                 cx,
             );
         });
+    });
+}
+
+pub fn clone_active_item(
+    workspace_id: Option<WorkspaceId>,
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
+    focus_destination: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if source == destination {
+        return;
+    }
+    let Some(active_item) = source.read(cx).active_item() else {
+        return;
+    };
+    destination.update(cx, |target_pane, cx| {
+        let Some(clone) = active_item.clone_on_split(workspace_id, window, cx) else {
+            return;
+        };
+        target_pane.add_item(
+            clone,
+            focus_destination,
+            focus_destination,
+            Some(target_pane.items_len()),
+            window,
+            cx,
+        );
     });
 }
 
@@ -9814,6 +10129,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9822,6 +10138,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9848,6 +10165,7 @@ mod tests {
                 &MoveItemToPaneInDirection {
                     direction: SplitDirection::Right,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9884,6 +10202,7 @@ mod tests {
                 &MoveItemToPane {
                     destination: 3,
                     focus: true,
+                    clone: false,
                 },
                 window,
                 cx,
@@ -9905,6 +10224,61 @@ mod tests {
                 "New item should have been moved to the new pane"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_moving_items_can_clone_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item_1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_1), None, true, window, cx);
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 3, "Two new panes were created");
+            for pane in workspace.panes() {
+                assert_eq!(
+                    pane_items_paths(pane, cx),
+                    vec!["first.txt".to_string()],
+                    "Single item exists in all panes"
+                );
+            }
+        });
+
+        // verify that the active pane has been updated after waiting for the
+        // pane focus event to fire and resolve
+        workspace.read_with(cx, |workspace, _app| {
+            assert_eq!(
+                workspace.active_pane(),
+                &workspace.panes[2],
+                "The third pane should be the active one: {:?}",
+                workspace.panes
+            );
+        })
     }
 
     mod register_project_item_tests {

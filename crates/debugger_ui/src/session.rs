@@ -11,7 +11,8 @@ use project::worktree_store::WorktreeStore;
 use rpc::proto;
 use running::RunningState;
 use std::{cell::OnceCell, sync::OnceLock};
-use ui::{Indicator, prelude::*};
+use ui::{Indicator, Tooltip, prelude::*};
+use util::truncate_and_trailoff;
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
@@ -126,7 +127,10 @@ impl DebugSession {
     }
 
     pub(crate) fn label_element(&self, depth: usize, cx: &App) -> AnyElement {
+        const MAX_LABEL_CHARS: usize = 150;
+
         let label = self.label(cx);
+        let label = truncate_and_trailoff(&label, MAX_LABEL_CHARS);
 
         let is_terminated = self
             .running_state
@@ -153,6 +157,8 @@ impl DebugSession {
         };
 
         h_flex()
+            .id("session-label")
+            .tooltip(Tooltip::text(format!("Session {}", self.session_id(cx).0,)))
             .ml(depth * px(16.0))
             .gap_2()
             .when_some(icon, |this, indicator| this.child(indicator))

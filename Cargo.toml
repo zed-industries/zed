@@ -2,12 +2,15 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/acp",
+    "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
+    "crates/agent_servers",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_context_editor",
+    "crates/assistant_context",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
     "crates/assistant_tool",
@@ -44,6 +47,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/explorer_command_injector",
     "crates/eval",
     "crates/extension",
     "crates/extension_api",
@@ -94,9 +98,11 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/svg_preview",
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/net",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
@@ -164,6 +170,7 @@ members = [
     "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
+    "crates/vercel",
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/watch",
@@ -185,7 +192,6 @@ members = [
     "extensions/emmet",
     "extensions/glsl",
     "extensions/html",
-    "extensions/perplexity",
     "extensions/proto",
     "extensions/ruff",
     "extensions/slash-commands-example",
@@ -212,14 +218,17 @@ edition = "2024"
 # Workspace member crates
 #
 
-activity_indicator = { path = "crates/activity_indicator" }
+acp = { path = "crates/acp" }
 agent = { path = "crates/agent" }
+activity_indicator = { path = "crates/activity_indicator" }
+agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
+agent_servers = { path = "crates/agent_servers" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_context_editor = { path = "crates/assistant_context_editor" }
+assistant_context = { path = "crates/assistant_context" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
@@ -301,11 +310,13 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
@@ -373,6 +384,7 @@ ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
+vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
 
@@ -392,6 +404,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
+agentic-coding-protocol = "0.0.7"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -419,9 +432,9 @@ aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -438,12 +451,12 @@ core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b40956a7f4d1939da67429d941389ee306a3a308" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "7f39295b441614ca9dbf44293e53c32f666897f9" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
 documented = "0.9.1"
-dotenv = "0.15.0"
+dotenvy = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
@@ -455,7 +468,6 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
-hashbrown = "0.15.3"
 handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -475,7 +487,7 @@ json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
@@ -483,11 +495,10 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
-mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -518,7 +529,6 @@ rand = "0.8.5"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
-repair_json = "0.1.0"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
     "charset",
     "http2",
@@ -528,7 +538,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
+runtimelib = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -536,8 +546,8 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
-schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
+scap = { git = "https://github.com/zed-industries/scap", rev = "28dd306ff2e3374404936dec778fc1e975b8dd12", default-features = false }
+schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -550,7 +560,6 @@ serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
-signal-hook = "0.3.17"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
@@ -595,7 +604,7 @@ tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
-tree-sitter-python = "0.23"
+tree-sitter-python = { git = "https://github.com/zed-industries/tree-sitter-python", rev = "218fcbf3fda3d029225f3dec005cb497d111b35e" }
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
@@ -622,8 +631,10 @@ wasmtime = { version = "29", default-features = false, features = [
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
+windows-core = "0.61"
+wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.4"
+zed_llm_client = "= 0.8.6"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -658,6 +669,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
     "Win32_Graphics_Imaging_D2D",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",

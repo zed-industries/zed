@@ -425,14 +425,14 @@ mod tests {
     #[test]
     fn test_actions_definition() {
         {
-            actions!(test, [A, B, C, D, E, F, G]);
+            actions!(test_only, [A, B, C, D, E, F, G]);
         }
 
         {
             actions!(
-                test,
+                test_only,
                 [
-                    A, B, C, D, E, F, G, // Don't wrap, test the trailing comma
+                    H, I, J, K, L, M, N, // Don't wrap, test the trailing comma
                 ]
             );
         }

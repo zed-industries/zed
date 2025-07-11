@@ -3,6 +3,34 @@
 version = 4
 
 [[package]]
+name = "acp"
+version = "0.1.0"
+dependencies = [
+ "agent_servers",
+ "agentic-coding-protocol",
+ "anyhow",
+ "assistant_tool",
+ "async-pipe",
+ "buffer_diff",
+ "editor",
+ "env_logger 0.11.8",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "markdown",
+ "project",
+ "serde_json",
+ "settings",
+ "smol",
+ "tempfile",
+ "ui",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "activity_indicator"
 version = "0.1.0"
 dependencies = [
@@ -14,6 +42,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "proto",
  "release_channel",
  "smallvec",
  "ui",
@@ -55,7 +84,105 @@ version = "0.1.0"
 dependencies = [
  "agent_settings",
  "anyhow",
- "assistant_context_editor",
+ "assistant_context",
+ "assistant_tool",
+ "assistant_tools",
+ "chrono",
+ "client",
+ "collections",
+ "component",
+ "context_server",
+ "convert_case 0.8.0",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "git",
+ "gpui",
+ "heed",
+ "http_client",
+ "icons",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "language_model",
+ "log",
+ "parking_lot",
+ "paths",
+ "postage",
+ "pretty_assertions",
+ "project",
+ "prompt_store",
+ "proto",
+ "rand 0.8.5",
+ "ref-cast",
+ "rope",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "sqlez",
+ "telemetry",
+ "text",
+ "theme",
+ "thiserror 2.0.12",
+ "time",
+ "util",
+ "uuid",
+ "workspace",
+ "workspace-hack",
+ "zed_llm_client",
+ "zstd",
+]
+
+[[package]]
+name = "agent_servers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "paths",
+ "project",
+ "schemars",
+ "serde",
+ "settings",
+ "util",
+ "which 6.0.3",
+ "workspace-hack",
+]
+
+[[package]]
+name = "agent_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "fs",
+ "gpui",
+ "language_model",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "workspace-hack",
+ "zed_llm_client",
+]
+
+[[package]]
+name = "agent_ui"
+version = "0.1.0"
+dependencies = [
+ "acp",
+ "agent",
+ "agent_servers",
+ "agent_settings",
+ "agentic-coding-protocol",
+ "anyhow",
+ "assistant_context",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
@@ -67,7 +194,6 @@ dependencies = [
  "collections",
  "component",
  "context_server",
- "convert_case 0.8.0",
  "db",
  "editor",
  "extension",
@@ -77,9 +203,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "fuzzy",
- "git",
  "gpui",
- "heed",
  "html_to_markdown",
  "http_client",
  "indexed_docs",
@@ -89,6 +213,7 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
+ "languages",
  "log",
  "lsp",
  "markdown",
@@ -99,13 +224,11 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
- "postage",
  "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
  "rand 0.8.5",
- "ref-cast",
  "release_channel",
  "rope",
  "rules_library",
@@ -116,18 +239,19 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
- "sqlez",
  "streaming_diff",
+ "task",
  "telemetry",
  "telemetry_events",
  "terminal",
  "terminal_view",
  "text",
  "theme",
- "thiserror 2.0.12",
  "time",
  "time_format",
+ "tree-sitter-md",
  "ui",
+ "unindent",
  "urlencoding",
  "util",
  "uuid",
@@ -136,33 +260,22 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
- "zstd",
 ]
 
 [[package]]
-name = "agent_settings"
-version = "0.1.0"
+name = "agentic-coding-protocol"
+version = "0.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a75f520bcc049ebe40c8c99427aa61b48ad78a01bcc96a13b350b903dcfb9438"
 dependencies = [
- "anthropic",
  "anyhow",
- "collections",
- "deepseek",
- "fs",
- "gpui",
- "language_model",
- "lmstudio",
+ "chrono",
+ "futures 0.3.31",
  "log",
- "mistral",
- "ollama",
- "open_ai",
- "paths",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
- "serde_json_lenient",
- "settings",
- "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -491,8 +604,11 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "net",
+ "parking_lot",
  "smol",
  "tempfile",
+ "unindent",
  "util",
  "workspace-hack",
 ]
@@ -508,7 +624,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant_context_editor"
+name = "assistant_context"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
@@ -520,31 +636,23 @@ dependencies = [
  "clock",
  "collections",
  "context_server",
- "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "indexed_docs",
  "indoc",
  "language",
  "language_model",
- "languages",
  "log",
- "multi_buffer",
  "open_ai",
- "ordered-float 2.10.1",
  "parking_lot",
  "paths",
- "picker",
  "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
  "rand 0.8.5",
  "regex",
- "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -553,15 +661,12 @@ dependencies = [
  "smol",
  "telemetry_events",
  "text",
- "theme",
- "tree-sitter-md",
  "ui",
  "unindent",
  "util",
  "uuid",
  "workspace",
  "workspace-hack",
- "zed_actions",
  "zed_llm_client",
 ]
 
@@ -1875,7 +1980,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.1",
  "thiserror 2.0.12",
- "tokio",
  "workspace-hack",
 ]
 
@@ -2041,7 +2145,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.6.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
 dependencies = [
  "ash",
  "ash-window",
@@ -2074,7 +2178,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2084,7 +2188,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.2.0"
-source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
+source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -2648,6 +2752,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "postage",
  "rand 0.8.5",
  "release_channel",
  "rpc",
@@ -2821,6 +2926,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
+ "derive_more",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -2859,6 +2965,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -2979,7 +3086,7 @@ version = "0.44.0"
 dependencies = [
  "agent_settings",
  "anyhow",
- "assistant_context_editor",
+ "assistant_context",
  "assistant_slash_command",
  "async-stripe",
  "async-trait",
@@ -4094,7 +4201,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=b40956a7f4d1939da67429d941389ee306a3a308#b40956a7f4d1939da67429d941389ee306a3a308"
+source = "git+https://github.com/zed-industries/dap-types?rev=7f39295b441614ca9dbf44293e53c32f666897f9#7f39295b441614ca9dbf44293e53c32f666897f9"
 dependencies = [
  "schemars",
  "serde",
@@ -4109,6 +4216,8 @@ dependencies = [
  "async-trait",
  "collections",
  "dap",
+ "dotenvy",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "json_dotpath",
@@ -4117,6 +4226,7 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
+ "shlex",
  "task",
  "util",
  "workspace-hack",
@@ -4270,6 +4380,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "bitflags 2.9.0",
  "client",
  "collections",
  "command_palette_hooks",
@@ -4282,6 +4393,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "log",
@@ -4302,8 +4414,10 @@ dependencies = [
  "tasks_ui",
  "telemetry",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter",
+ "tree-sitter-go",
  "tree-sitter-json",
  "ui",
  "unindent",
@@ -4635,12 +4749,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
-
-[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4772,6 +4880,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "rpc",
  "schemars",
@@ -4792,6 +4901,7 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "ui",
  "unicode-script",
  "unicode-segmentation",
@@ -5060,6 +5170,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
@@ -5071,7 +5182,7 @@ dependencies = [
  "collections",
  "debug_adapter_extension",
  "dirs 4.0.0",
- "dotenv",
+ "dotenvy",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -5145,6 +5256,16 @@ checksum = "886b70328cba8871bfc025858e1de4be16b1d5088f2ba50b57816f4210672615"
 dependencies = [
  "errno 0.2.8",
  "libc",
+]
+
+[[package]]
+name = "explorer_command_injector"
+version = "0.1.0"
+dependencies = [
+ "windows 0.61.1",
+ "windows-core 0.61.0",
+ "windows-registry 0.5.1",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8158,12 +8279,11 @@ dependencies = [
 name = "inline_completion"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "client",
  "gpui",
  "language",
  "project",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -8805,6 +8925,7 @@ dependencies = [
  "http_client",
  "imara-diff",
  "indoc",
+ "inventory",
  "itertools 0.14.0",
  "log",
  "lsp",
@@ -8859,6 +8980,7 @@ dependencies = [
  "gpui",
  "language",
  "lsp",
+ "project",
  "serde",
  "serde_json",
  "util",
@@ -8903,12 +9025,15 @@ dependencies = [
  "aws-credential-types",
  "aws_http_client",
  "bedrock",
+ "chrono",
  "client",
  "collections",
+ "component",
  "copilot",
  "credentials_provider",
  "deepseek",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -8941,6 +9066,7 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
+ "vercel",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8974,6 +9100,7 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -9196,7 +9323,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "cxx",
  "jni",
@@ -9276,7 +9403,7 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 [[package]]
 name = "livekit"
 version = "0.7.8"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "chrono",
  "futures-util",
@@ -9299,7 +9426,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "futures-util",
  "http 0.2.12",
@@ -9323,7 +9450,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9340,7 +9467,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -10183,6 +10310,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "smol",
+ "tempfile",
+ "windows 0.61.1",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -11190,9 +11329,9 @@ dependencies = [
 
 [[package]]
 name = "pathfinder_simd"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf07ef4804cfa9aea3b04a7bbdd5a40031dbb6b4f2cbaf2b011666c80c5b4f2"
+checksum = "bf9027960355bf3afff9841918474a81a5f972ac6d226d518060bba758b5ad57"
 dependencies = [
  "rustc_version",
 ]
@@ -11289,14 +11428,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "perplexity"
-version = "0.1.0"
-dependencies = [
- "serde",
- "zed_extension_api 0.6.0",
-]
 
 [[package]]
 name = "pest"
@@ -12214,6 +12345,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "markdown",
  "node_runtime",
  "parking_lot",
  "pathdiff",
@@ -12488,6 +12620,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
+ "typed-path",
  "workspace-hack",
 ]
 
@@ -13122,6 +13255,7 @@ dependencies = [
  "thiserror 2.0.12",
  "urlencoding",
  "util",
+ "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -13150,6 +13284,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "git",
+ "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
@@ -13964,7 +14099,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=08f0a01417505cc0990b9931a37e5120db92e0d0#08f0a01417505cc0990b9931a37e5120db92e0d0"
+source = "git+https://github.com/zed-industries/scap?rev=28dd306ff2e3374404936dec778fc1e975b8dd12#28dd306ff2e3374404936dec778fc1e975b8dd12"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -14007,12 +14142,14 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "0.8.22"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+checksum = "fe8c9d1c68d67dd9f97ecbc6f932b60eb289c5dbddd8aa1405484a8fd2fcd984"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "indexmap",
+ "ref-cast",
  "schemars_derive",
  "serde",
  "serde_json",
@@ -14020,9 +14157,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "0.8.22"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+checksum = "6ca9fcb757952f8e8629b9ab066fc62da523c46c2b247b1708a3be06dd82530b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -14509,28 +14646,41 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
+ "command_palette",
  "command_palette_hooks",
+ "component",
+ "db",
  "editor",
  "feature_flags",
  "fs",
+ "fuzzy",
  "gpui",
+ "language",
  "log",
+ "menu",
+ "paths",
+ "project",
  "schemars",
+ "search",
  "serde",
  "settings",
  "theme",
+ "tree-sitter-json",
+ "tree-sitter-rust",
  "ui",
  "util",
  "workspace",
@@ -15482,6 +15632,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
 
 [[package]]
+name = "svg_preview"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "file_icons",
+ "gpui",
+ "ui",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "svgtypes"
 version = "0.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15952,6 +16114,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indexmap",
+ "inventory",
  "log",
  "palette",
  "parking_lot",
@@ -15992,7 +16155,6 @@ dependencies = [
  "indexmap",
  "log",
  "palette",
- "rust-embed",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -16823,8 +16985,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-python"
 version = "0.23.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d065aaa27f3aaceaf60c1f0e0ac09e1cb9eb8ed28e7bcdaa52129cffc7f4b04"
+source = "git+https://github.com/zed-industries/tree-sitter-python?rev=218fcbf3fda3d029225f3dec005cb497d111b35e#218fcbf3fda3d029225f3dec005cb497d111b35e"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -16962,6 +17123,12 @@ dependencies = [
  "thiserror 2.0.12",
  "utf-8",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
 
 [[package]]
 name = "typeid"
@@ -17276,6 +17443,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -17379,6 +17547,17 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vercel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
+]
 
 [[package]]
 name = "version-compare"
@@ -18197,6 +18376,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -18229,7 +18409,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "cc",
  "cxx",
@@ -18242,7 +18422,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=80bb8f4c9112789f7c24cc98d8423010977806a6#80bb8f4c9112789f7c24cc98d8423010977806a6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4#d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4"
 dependencies = [
  "fs2",
  "regex",
@@ -18274,7 +18454,6 @@ dependencies = [
  "language",
  "picker",
  "project",
- "schemars",
  "serde",
  "settings",
  "telemetry",
@@ -19469,6 +19648,7 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
+ "schemars",
  "scopeguard",
  "sea-orm",
  "sea-query-binder",
@@ -19515,7 +19695,9 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
+ "windows 0.61.1",
  "windows-core 0.61.0",
+ "windows-future",
  "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
@@ -19862,16 +20044,17 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.193.0"
+version = "0.196.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_servers",
  "agent_settings",
+ "agent_ui",
  "anyhow",
  "ashpd",
  "askpass",
  "assets",
- "assistant_context_editor",
  "assistant_tool",
  "assistant_tools",
  "audio",
@@ -19918,6 +20101,7 @@ dependencies = [
  "inline_completion_button",
  "inspector_ui",
  "install_cli",
+ "itertools 0.14.0",
  "jj_ui",
  "journal",
  "language",
@@ -19942,6 +20126,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pretty_assertions",
  "profiling",
  "project",
  "project_panel",
@@ -19965,6 +20150,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "supermaven",
+ "svg_preview",
  "sysinfo",
  "tab_switcher",
  "task",
@@ -20057,9 +20243,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.4"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
+checksum = "6607f74dee2a18a9ce0f091844944a0e59881359ab62e0768fb0618f55d4c1dc"
 dependencies = [
  "anyhow",
  "serde",

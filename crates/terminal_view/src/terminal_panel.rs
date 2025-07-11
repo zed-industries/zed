@@ -46,7 +46,13 @@ use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(
+    terminal_panel,
+    [
+        /// Toggles focus on the terminal panel.
+        ToggleFocus
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -499,7 +505,7 @@ impl TerminalPanel {
 
         let task = SpawnInTerminal {
             command_label,
-            command,
+            command: Some(command),
             args,
             ..task.clone()
         };
