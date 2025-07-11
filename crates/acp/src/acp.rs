@@ -831,14 +831,16 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+    pub fn initialize(
+        &self,
+    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
         let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::InitializeParams).await?) }
+        async move { connection.request(acp::InitializeParams).await }
     }
 
-    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
         let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::AuthenticateParams).await?) }
+        async move { connection.request(acp::AuthenticateParams).await }
     }
 
     #[cfg(test)]
@@ -846,7 +848,7 @@ impl AcpThread {
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<(), acp::Error>> {
         self.send(
             acp::SendUserMessageParams {
                 chunks: vec![acp::UserMessageChunk::Text {
@@ -861,7 +863,7 @@ impl AcpThread {
         &mut self,
         message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<(), acp::Error>> {
         let agent = self.connection.clone();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
@@ -892,7 +894,7 @@ impl AcpThread {
         .boxed()
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<(), acp::Error>> {
         let agent = self.connection.clone();
 
         if self.send_task.take().is_some() {
@@ -925,7 +927,8 @@ impl AcpThread {
                             }
                         }
                     }
-                })
+                })?;
+                Ok(())
             })
         } else {
             Task::ready(Ok(()))
@@ -1067,7 +1070,7 @@ impl acp::Client for AcpClientDelegate {
     async fn stream_assistant_message_chunk(
         &self,
         params: acp::StreamAssistantMessageChunkParams,
-    ) -> Result<()> {
+    ) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -1084,7 +1087,7 @@ impl acp::Client for AcpClientDelegate {
     async fn request_tool_call_confirmation(
         &self,
         request: acp::RequestToolCallConfirmationParams,
-    ) -> Result<acp::RequestToolCallConfirmationResponse> {
+    ) -> Result<acp::RequestToolCallConfirmationResponse, acp::Error> {
         let cx = &mut self.cx.clone();
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
@@ -1095,14 +1098,14 @@ impl acp::Client for AcpClientDelegate {
 
         Ok(acp::RequestToolCallConfirmationResponse {
             id,
-            outcome: outcome.await?,
+            outcome: outcome.await.map_err(acp::Error::into_internal_error)?,
         })
     }
 
     async fn push_tool_call(
         &self,
         request: acp::PushToolCallParams,
-    ) -> Result<acp::PushToolCallResponse> {
+    ) -> Result<acp::PushToolCallResponse, acp::Error> {
         let cx = &mut self.cx.clone();
         let id = cx
             .update(|cx| {
@@ -1114,7 +1117,7 @@ impl acp::Client for AcpClientDelegate {
         Ok(acp::PushToolCallResponse { id })
     }
 
-    async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<()> {
+    async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -1783,7 +1786,7 @@ mod tests {
                     acp::SendUserMessageParams,
                     Entity<FakeAcpServer>,
                     AsyncApp,
-                ) -> LocalBoxFuture<'static, Result<()>>,
+                ) -> LocalBoxFuture<'static, Result<(), acp::Error>>,
             >,
         >,
     }
@@ -1795,21 +1798,24 @@ mod tests {
     }
 
     impl acp::Agent for FakeAgent {
-        async fn initialize(&self) -> Result<acp::InitializeResponse> {
+        async fn initialize(&self) -> Result<acp::InitializeResponse, acp::Error> {
             Ok(acp::InitializeResponse {
                 is_authenticated: true,
             })
         }
 
-        async fn authenticate(&self) -> Result<()> {
+        async fn authenticate(&self) -> Result<(), acp::Error> {
             Ok(())
         }
 
-        async fn cancel_send_message(&self) -> Result<()> {
+        async fn cancel_send_message(&self) -> Result<(), acp::Error> {
             Ok(())
         }
 
-        async fn send_user_message(&self, request: acp::SendUserMessageParams) -> Result<()> {
+        async fn send_user_message(
+            &self,
+            request: acp::SendUserMessageParams,
+        ) -> Result<(), acp::Error> {
             let mut cx = self.cx.clone();
             let handler = self
                 .server
@@ -1819,7 +1825,7 @@ mod tests {
             if let Some(handler) = handler {
                 handler(request, self.server.clone(), self.cx.clone()).await
             } else {
-                anyhow::bail!("No handler for on_user_message")
+                Err(anyhow::anyhow!("No handler for on_user_message").into())
             }
         }
     }
@@ -1854,7 +1860,7 @@ mod tests {
             handler: impl for<'a> Fn(acp::SendUserMessageParams, Entity<FakeAcpServer>, AsyncApp) -> F
             + 'static,
         ) where
-            F: Future<Output = Result<()>> + 'static,
+            F: Future<Output = Result<(), acp::Error>> + 'static,
         {
             self.on_user_message
                 .replace(Rc::new(move |request, server, cx| {
