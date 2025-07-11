@@ -12,7 +12,10 @@ New-Item -Path "$outputFile" -ItemType File -Value "" -Force
     "\n# ###### CODE LICENSES ######\n"
 ) | Add-Content -Path $outputFile
 
-$versionOutput = cargo about --version
+$versionOutput = cargo about --version 2>$null
+if ($LASTEXITCODE -ne 0) {
+   $versionOutput = ""
+}
 if (-not ($versionOutput -match "cargo-about $CARGO_ABOUT_VERSION")) {
     Write-Host "Installing cargo-about@^$CARGO_ABOUT_VERSION..."
     cargo install "cargo-about@^$CARGO_ABOUT_VERSION"
