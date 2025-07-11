@@ -1,10 +1,11 @@
 pub use acp::ToolCallId;
 use agent_servers::AgentServer;
-use agentic_coding_protocol::{self as acp, UserMessageChunk};
+use agentic_coding_protocol::{self as acp, AgentRequest, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
+use futures::future::LocalBoxFuture;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -428,14 +429,33 @@ impl Diff {
     }
 }
 
+trait AgentConnection {
+    /// Send a request to the agent and wait for a response.
+    fn request(
+        &self,
+        method: &'static str,
+        params: acp::AnyAgentRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>>;
+}
+
+impl AgentConnection for acp::AgentConnection {
+    fn request(
+        &self,
+        method: &'static str,
+        params: acp::AnyAgentRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
+        self.request_raw(method, params).boxed_local()
+    }
+}
+
 pub struct AcpThread {
     entries: Vec<AgentThreadEntry>,
     title: SharedString,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    send_task: Option<Task<()>>,
-    connection: Arc<acp::AgentConnection>,
+    send_task: Option<Task<Result<()>>>,
+    connection: Arc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
     _io_task: Task<()>,
 }
@@ -549,6 +569,24 @@ impl AcpThread {
                 _io_task: io_task,
             }
         })
+    }
+
+    /// Send a request to the agent and wait for a response.
+    pub fn request<R: AgentRequest + 'static>(
+        &self,
+        params: R,
+    ) -> impl use<R> + Future<Output = Result<R::Response>> {
+        let params = params.into_any();
+        let result = self.connection.request(params.method_name(), params);
+        async move {
+            let result = result.await?;
+            R::response_from_any(result).ok_or_else(|| {
+                anyhow!(acp::Error {
+                    code: -32700,
+                    message: "Unexpected Response".to_string(),
+                })
+            })
+        }
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -832,13 +870,11 @@ impl AcpThread {
     }
 
     pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
-        let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::InitializeParams).await?) }
+        self.request(acp::InitializeParams)
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
-        let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::AuthenticateParams).await?) }
+        self.request(acp::AuthenticateParams)
     }
 
     #[cfg(test)]
@@ -862,7 +898,6 @@ impl AcpThread {
         message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<()>> {
-        let agent = self.connection.clone();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
                 &message,
@@ -878,9 +913,10 @@ impl AcpThread {
         self.send_task = Some(cx.spawn(async move |this, cx| {
             cancel.await.log_err();
 
-            let result = agent.request(message).await;
+            let result = this.update(cx, |this, _| this.request(message))?.await;
             tx.send(result).log_err();
-            this.update(cx, |this, _cx| this.send_task.take()).log_err();
+            this.update(cx, |this, _cx| this.send_task.take())?;
+            Ok(())
         }));
 
         async move {
@@ -893,12 +929,10 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let agent = self.connection.clone();
-
         if self.send_task.take().is_some() {
+            let request = self.request(acp::CancelSendMessageParams);
             cx.spawn(async move |this, cx| {
-                agent.request(acp::CancelSendMessageParams).await?;
-
+                request.await?;
                 this.update(cx, |this, _cx| {
                     for entry in this.entries.iter_mut() {
                         if let AgentThreadEntry::ToolCall(call) = entry {
