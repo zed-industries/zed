@@ -340,6 +340,12 @@ pub fn main() {
             .detach();
         }
     });
+    #[cfg(target_os = "windows")]
+    app.on_quit(|| {
+        // Check if there is a pending installer
+        // If there is, run the installer and exit
+        auto_update::check_pending_installation();
+    });
 
     app.run(move |cx| {
         menu::init();
@@ -698,10 +704,6 @@ pub fn main() {
         })
         .detach();
     });
-    // Check if there is a pending installer
-    // If there is, run the installer and exit
-    #[cfg(target_os = "windows")]
-    auto_update::check_pending_installation();
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {

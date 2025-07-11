@@ -921,7 +921,9 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
         "failed to start installer: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(std::env::current_exe()?)
+    let running_app_path = std::env::current_exe()?;
+    println!("==> Running app path: {:?}", running_app_path);
+    Ok(running_app_path)
 }
 
 pub fn check_pending_installation() {

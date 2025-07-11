@@ -207,6 +207,17 @@ impl Application {
         self
     }
 
+    /// TODO:
+    pub fn on_quit<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(),
+    {
+        self.0.borrow_mut().on_quit = Some(Box::new(move || {
+            callback();
+        }));
+        self
+    }
+
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
@@ -291,6 +302,7 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     quitting: bool,
+    on_quit: Option<Box<dyn FnMut()>>,
 }
 
 impl App {
@@ -358,6 +370,7 @@ impl App {
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
+                on_quit: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -382,7 +395,11 @@ impl App {
         platform.on_quit(Box::new({
             let cx = app.clone();
             move || {
-                cx.borrow_mut().shutdown();
+                let mut lock = cx.borrow_mut();
+                if let Some(mut on_quit) = lock.on_quit.take() {
+                    on_quit();
+                }
+                lock.shutdown();
             }
         }));
 
