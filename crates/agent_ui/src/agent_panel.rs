@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
@@ -433,6 +434,8 @@ pub struct AgentPanel {
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
+    acp_message_history:
+        Rc<RefCell<crate::acp::MessageHistory<agentic_coding_protocol::SendUserMessageParams>>>,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
@@ -699,6 +702,7 @@ impl AgentPanel {
             .unwrap(),
             inline_assist_context_store,
             previous_view: None,
+            acp_message_history: Default::default(),
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             hovered_recent_history_item: None,
@@ -888,10 +892,17 @@ impl AgentPanel {
     fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
+        let message_history = self.acp_message_history.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let thread_view = cx.new_window_entity(|window, cx| {
-                crate::acp::AcpThreadView::new(workspace.clone(), project, window, cx)
+                crate::acp::AcpThreadView::new(
+                    workspace.clone(),
+                    project,
+                    message_history,
+                    window,
+                    cx,
+                )
             })?;
             this.update_in(cx, |this, window, cx| {
                 this.set_active_view(
@@ -1431,6 +1442,8 @@ impl AgentPanel {
             }
             self.active_view = new_view;
         }
+
+        self.acp_message_history.borrow_mut().reset_position();
 
         self.focus_handle(cx).focus(window);
     }
