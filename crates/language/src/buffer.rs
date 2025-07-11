@@ -355,6 +355,14 @@ pub trait File: Send + Sync + Any {
 
     /// Return whether Zed considers this to be a private file.
     fn is_private(&self) -> bool;
+
+    /// Returns the LSP URL for this file if it supports LSP operations.
+    /// Returns None if the file doesn't support LSP (e.g., untitled files).
+    fn lsp_url(&self, cx: &App) -> Option<lsp::Url> {
+        // Default implementation for local files
+        self.as_local()
+            .and_then(|local| lsp::Url::from_file_path(local.abs_path(cx)).ok())
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last

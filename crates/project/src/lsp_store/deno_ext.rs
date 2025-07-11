@@ -15,7 +15,7 @@ use language::Buffer;
 use lsp::{AdapterServerCapabilities, LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use text::BufferId;
 use util::ConnectionResult;
 
@@ -56,7 +56,7 @@ impl LspCommand for FetchVirtualTextDocument {
 
     fn to_lsp(
         &self,
-        _path: &Path,
+        _file: &Arc<dyn language::File>,
         _buffer: &Buffer,
         _language_server: &Arc<LanguageServer>,
         _cx: &App,
@@ -156,19 +156,33 @@ pub async fn open_deno_virtual_document(
     // The LSP expects URLs like: deno:/https/jsr.io/%40fresh/core/2.0.0-alpha.37/src/mod.ts
     let request_url = original_url.clone();
 
-    // Get the language server directly
-    let language_server = lsp_store.read_with(cx, |lsp_store, _| {
-        lsp_store
-            .as_local()?
-            .language_servers
-            .get(&language_server_id)
-            .and_then(|state| match state {
-                LanguageServerState::Running { server, .. } => Some(server.clone()),
-                _ => None,
-            })
-    })?;
+    // Get the language server and find its associated worktree
+    let Some((language_server, worktree_id)) = lsp_store.read_with(cx, |lsp_store, _| {
+        let local = lsp_store.as_local()?;
+        let server =
+            local
+                .language_servers
+                .get(&language_server_id)
+                .and_then(|state| match state {
+                    LanguageServerState::Running { server, .. } => Some(server.clone()),
+                    _ => None,
+                })?;
 
-    let Some(language_server) = language_server else {
+        // Find the worktree ID for this language server
+        let mut found_worktree_id = None;
+        for ((worktree_id, _), server_ids) in &local.language_server_ids {
+            if server_ids.contains(&language_server_id) {
+                found_worktree_id = Some(*worktree_id);
+                break;
+            }
+        }
+
+        Some((
+            server,
+            found_worktree_id.unwrap_or(worktree::WorktreeId::from_usize(0)),
+        ))
+    })?
+    else {
         return Err(anyhow!("Language server not found"));
     };
 
@@ -211,6 +225,7 @@ pub async fn open_deno_virtual_document(
                         original_url.clone(),
                         content,
                         language_registry,
+                        worktree_id,
                         cx,
                     )
                 }))
@@ -235,10 +250,21 @@ pub async fn open_deno_virtual_document(
     // Language detection is async, but we'll do it after returning the buffer
     let buffer_handle = buffer.clone();
     let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone())?;
+    let lsp_store_for_registration = lsp_store.clone();
     cx.spawn(async move |cx| {
         if let Ok(language) = languages.language_for_name(language_name).await {
             let _ = buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_language(Some(language), cx);
+            });
+
+            // Register the buffer with language servers after setting the language
+            let _ = lsp_store_for_registration.update(cx, |lsp_store, cx| {
+                lsp_store.register_buffer_with_language_servers(
+                    &buffer_handle,
+                    Default::default(),
+                    false,
+                    cx,
+                );
             });
         }
         Ok::<(), anyhow::Error>(())

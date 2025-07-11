@@ -16,12 +16,15 @@ use language::{Buffer, DiskState};
 use worktree::ProjectEntryId;
 
 /// A virtual file for Deno external dependencies
-struct DenoVirtualFile {
-    uri: lsp::Url,
+pub(crate) struct DenoVirtualFile {
+    pub(crate) uri: lsp::Url,
     entry_id: ProjectEntryId,
     mtime: Option<SystemTime>,
     path: Arc<Path>,
+    worktree_id: worktree::WorktreeId,
 }
+
+impl DenoVirtualFile {}
 
 impl language::File for DenoVirtualFile {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
@@ -39,8 +42,7 @@ impl language::File for DenoVirtualFile {
     }
 
     fn worktree_id(&self, _cx: &App) -> worktree::WorktreeId {
-        // Use a special worktree ID for virtual documents
-        worktree::WorktreeId::from_usize(0)
+        self.worktree_id
     }
 
     fn path(&self) -> &Arc<Path> {
@@ -75,6 +77,11 @@ impl language::File for DenoVirtualFile {
     fn is_private(&self) -> bool {
         false
     }
+
+    fn lsp_url(&self, _cx: &App) -> Option<lsp::Url> {
+        // Deno virtual documents always have their URI
+        Some(self.uri.clone())
+    }
 }
 
 /// Generates unique entry IDs for virtual documents
@@ -104,6 +111,7 @@ impl DenoVirtualDocumentStore {
         uri: lsp::Url,
         content: String,
         language_registry: Arc<language::LanguageRegistry>,
+        worktree_id: worktree::WorktreeId,
         cx: &mut Context<Self>,
     ) -> Entity<Buffer> {
         // Check if we already have this buffer
@@ -122,6 +130,7 @@ impl DenoVirtualDocumentStore {
             entry_id,
             mtime: Some(SystemTime::now()),
             path: Arc::from(Path::new(uri.as_str())),
+            worktree_id,
         });
 
         // Create a read-only in-memory buffer with the virtual file

@@ -1127,16 +1127,20 @@ impl LocalLspStore {
         buffer: &Buffer,
         cx: &mut App,
     ) -> Vec<LanguageServerId> {
-        if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
-            let worktree_id = file.worktree_id(cx);
-
-            let path: Arc<Path> = file
-                .path()
-                .parent()
-                .map(Arc::from)
-                .unwrap_or_else(|| file.path().clone());
-            let worktree_path = ProjectPath { worktree_id, path };
-            self.language_server_ids_for_project_path(worktree_path, language, cx)
+        if let Some((file, language)) = buffer.file().zip(buffer.language()) {
+            // Check if the file supports LSP
+            if file.lsp_url(cx).is_some() {
+                let worktree_id = file.worktree_id(cx);
+                let path: Arc<Path> = file
+                    .path()
+                    .parent()
+                    .map(Arc::from)
+                    .unwrap_or_else(|| file.path().clone());
+                let worktree_path = ProjectPath { worktree_id, path };
+                self.language_server_ids_for_project_path(worktree_path, language, cx)
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         }
@@ -2347,28 +2351,28 @@ impl LocalLspStore {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
-        let Some(file) = File::from_dyn(buffer.file()) else {
+        let Some(file) = buffer.file() else {
             return;
         };
-        if !file.is_local() {
-            return;
-        }
 
-        let abs_path = file.abs_path(cx);
-        let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
+        let Some(uri) = file.lsp_url(cx) else {
             return;
         };
-        let initial_snapshot = buffer.text_snapshot();
+
         let worktree_id = file.worktree_id(cx);
+        let initial_snapshot = buffer.text_snapshot();
 
         let Some(language) = buffer.language().cloned() else {
             return;
         };
+
+        // Get the path for the file
         let path: Arc<Path> = file
             .path()
             .parent()
             .map(Arc::from)
             .unwrap_or_else(|| file.path().clone());
+
         let Some(worktree) = self
             .worktree_store
             .read(cx)
@@ -2491,7 +2495,7 @@ impl LocalLspStore {
                         };
                         let lsp_store = self.weak.clone();
                         let server_name = server_node.name();
-                        let buffer_abs_path = abs_path.to_string_lossy().to_string();
+                        let buffer_abs_path = uri.to_string();
                         cx.defer(move |cx| {
                             lsp_store.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id: server_id,
@@ -2560,7 +2564,7 @@ impl LocalLspStore {
                 name: None,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: uri.to_string(),
                     },
                 ),
             });
@@ -4147,11 +4151,14 @@ impl LspStore {
             // We run early exits on non-existing buffers AFTER we mark the buffer as registered in order to handle buffer saving.
             // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
             // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
-            // servers in practice (we don't support non-file URI schemes in our LSP impl).
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            // servers in practice.
+            let buffer_snapshot = buffer.read(cx);
+            let Some(file) = buffer_snapshot.file() else {
                 return handle;
             };
-            if !file.is_local() {
+
+            // Check if the file supports LSP
+            if file.lsp_url(cx).is_none() {
                 return handle;
             }
 
@@ -4485,18 +4492,12 @@ impl LspStore {
         };
 
         let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-
-        let Some(file) = file else {
+        let Some(file) = buffer.file() else {
             return Task::ready(Ok(Default::default()));
         };
 
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer,
-            &language_server,
-            cx,
-        ) {
+        let lsp_params = match request.to_lsp_params_or_response(file, buffer, &language_server, cx)
+        {
             Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
             Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
 
