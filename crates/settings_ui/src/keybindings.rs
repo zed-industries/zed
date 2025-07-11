@@ -632,13 +632,22 @@ impl KeymapEditor {
 
             let context_menu_handle = context_menu.focus_handle(cx);
             window.defer(cx, move |window, _cx| window.focus(&context_menu_handle));
-            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
-                this.context_menu.take();
-                cx.notify();
-            });
+            let subscription = cx.subscribe_in(
+                &context_menu,
+                window,
+                |this, _, _: &DismissEvent, window, cx| {
+                    this.dismiss_context_menu(window, cx);
+                },
+            );
             (context_menu, position, subscription)
         });
 
+        cx.notify();
+    }
+
+    fn dismiss_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_menu.take();
+        window.focus(&self.focus_handle);
         cx.notify();
     }
 
@@ -646,9 +655,10 @@ impl KeymapEditor {
         self.context_menu.is_some()
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        self.context_menu.take();
-        cx.notify();
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.context_menu_deployed() {
+            self.dismiss_context_menu(window, cx);
+        }
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
