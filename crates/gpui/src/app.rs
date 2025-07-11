@@ -1787,8 +1787,11 @@ impl App {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
     }
 
-    /// TODO:
-    pub fn unset_on_quit(&mut self) {
+    /// Removes the previously registered exit updater callback.
+    ///
+    /// This function clears any exit updater that was set using [`Application::register_exit_updater`].
+    /// After calling this function, no update operations will be performed when the application exits.
+    pub fn remove_exit_updater(&mut self) {
         self.exit_updater.take();
     }
 }

@@ -7566,7 +7566,8 @@ fn reload_impl(reload: &Reload, cx: &mut App, #[cfg(target_os = "windows")] upda
         {
             cx.update(|cx| {
                 if updating {
-                    cx.unset_on_quit();
+                    // User requested an update, so remove the exit updater.
+                    cx.remove_exit_updater();
                 }
                 cx.restart(binary_path)
             })
