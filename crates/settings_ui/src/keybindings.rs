@@ -10,7 +10,7 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy,
     StyledText, Subscription, WeakEntity, actions, div,
 };
@@ -57,7 +57,11 @@ actions!(
         /// Copies the action name to clipboard.
         CopyAction,
         /// Copies the context predicate to clipboard.
-        CopyContext
+        CopyContext,
+        /// Toggles Conflict Filtering
+        ToggleConflictFilter,
+        /// Toggle Keystroke search
+        ToggleKeystrokeSearch,
     ]
 );
 
@@ -143,6 +147,22 @@ impl KeymapEventChannel {
 }
 
 #[derive(Default, PartialEq)]
+enum SearchMode {
+    #[default]
+    Normal,
+    KeyStroke,
+}
+
+impl SearchMode {
+    fn invert(&self) -> Self {
+        match self {
+            SearchMode::Normal => SearchMode::KeyStroke,
+            SearchMode::KeyStroke => SearchMode::Normal,
+        }
+    }
+}
+
+#[derive(Default, PartialEq, Copy, Clone)]
 enum FilterState {
     #[default]
     All,
@@ -221,11 +241,13 @@ struct KeymapEditor {
     keybindings: Vec<ProcessedKeybinding>,
     keybinding_conflict_state: ConflictState,
     filter_state: FilterState,
+    search_mode: SearchMode,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
     matches: Vec<StringMatch>,
     table_interaction_state: Entity<TableInteractionState>,
     filter_editor: Entity<Editor>,
+    keystroke_editor: Entity<KeystrokeInput>,
     selected_index: Option<usize>,
 }
 
@@ -245,6 +267,12 @@ impl KeymapEditor {
             cx.observe_global::<KeymapEventChannel>(Self::update_keybindings);
         let table_interaction_state = TableInteractionState::new(window, cx);
 
+        let keystroke_editor = cx.new(|cx| {
+            let mut keystroke_editor = KeystrokeInput::new(window, cx);
+            keystroke_editor.highlight_on_focus = false;
+            keystroke_editor
+        });
+
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Filter action names…", cx);
@@ -260,17 +288,28 @@ impl KeymapEditor {
         })
         .detach();
 
+        cx.subscribe(&keystroke_editor, |this, _, _, cx| {
+            if matches!(this.search_mode, SearchMode::Normal) {
+                return;
+            }
+
+            this.update_matches(cx);
+        })
+        .detach();
+
         let mut this = Self {
             workspace,
             keybindings: vec![],
             keybinding_conflict_state: ConflictState::default(),
             filter_state: FilterState::default(),
+            search_mode: SearchMode::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
             focus_handle: focus_handle.clone(),
             _keymap_subscription,
             table_interaction_state,
             filter_editor,
+            keystroke_editor,
             selected_index: None,
         };
 
@@ -279,30 +318,47 @@ impl KeymapEditor {
         this
     }
 
-    fn current_query(&self, cx: &mut Context<Self>) -> String {
+    fn current_action_query(&self, cx: &App) -> String {
         self.filter_editor.read(cx).text(cx)
     }
 
-    fn update_matches(&self, cx: &mut Context<Self>) {
-        let query = self.current_query(cx);
+    fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
+        match self.search_mode {
+            SearchMode::KeyStroke => self
+                .keystroke_editor
+                .read(cx)
+                .keystrokes()
+                .iter()
+                .cloned()
+                .collect(),
+            SearchMode::Normal => Default::default(),
+        }
+    }
 
-        cx.spawn(async move |this, cx| Self::process_query(this, query, cx).await)
-            .detach();
+    fn update_matches(&self, cx: &mut Context<Self>) {
+        let action_query = self.current_action_query(cx);
+        let keystroke_query = self.current_keystroke_query(cx);
+
+        cx.spawn(async move |this, cx| {
+            Self::process_query(this, action_query, keystroke_query, cx).await
+        })
+        .detach();
     }
 
     async fn process_query(
         this: WeakEntity<Self>,
-        query: String,
+        action_query: String,
+        keystroke_query: Vec<Keystroke>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
-        let query = command_palette::normalize_action_query(&query);
+        let action_query = command_palette::normalize_action_query(&action_query);
         let (string_match_candidates, keybind_count) = this.read_with(cx, |this, _| {
             (this.string_match_candidates.clone(), this.keybindings.len())
         })?;
         let executor = cx.background_executor().clone();
         let mut matches = fuzzy::match_strings(
             &string_match_candidates,
-            &query,
+            &action_query,
             true,
             true,
             keybind_count,
@@ -321,7 +377,26 @@ impl KeymapEditor {
                 FilterState::All => {}
             }
 
-            if query.is_empty() {
+            match this.search_mode {
+                SearchMode::KeyStroke => {
+                    matches.retain(|item| {
+                        this.keybindings[item.candidate_id]
+                            .ui_key_binding
+                            .as_ref()
+                            .is_some_and(|binding| {
+                                keystroke_query.iter().all(|key| {
+                                    binding.keystrokes.iter().any(|keystroke| {
+                                        keystroke.key == key.key
+                                            && keystroke.modifiers == key.modifiers
+                                    })
+                                })
+                            })
+                    });
+                }
+                SearchMode::Normal => {}
+            }
+
+            if action_query.is_empty() {
                 // apply default sort
                 // sorts by source precedence, and alphabetically by action name within each source
                 matches.sort_by_key(|match_item| {
@@ -432,7 +507,7 @@ impl KeymapEditor {
             let json_language = load_json_language(workspace.clone(), cx).await;
             let rust_language = load_rust_language(workspace.clone(), cx).await;
 
-            let query = this.update(cx, |this, cx| {
+            let (action_query, keystroke_query) = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
                     Self::process_bindings(json_language, rust_language, cx);
 
@@ -455,10 +530,13 @@ impl KeymapEditor {
                         string: candidate.string.clone(),
                     })
                     .collect();
-                this.current_query(cx)
+                (
+                    this.current_action_query(cx),
+                    this.current_keystroke_query(cx),
+                )
             })?;
             // calls cx.notify
-            Self::process_query(this, query, cx).await
+            Self::process_query(this, action_query, keystroke_query, cx).await
         })
         .detach_and_log_err(cx);
     }
@@ -664,6 +742,33 @@ impl KeymapEditor {
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
     }
+
+    fn toggle_conflict_filter(
+        &mut self,
+        _: &ToggleConflictFilter,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_state = self.filter_state.invert();
+        self.update_matches(cx);
+    }
+
+    fn toggle_keystroke_search(
+        &mut self,
+        _: &ToggleKeystrokeSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.search_mode = self.search_mode.invert();
+        self.update_matches(cx);
+
+        match self.search_mode {
+            SearchMode::KeyStroke => {
+                window.focus(&self.keystroke_editor.focus_handle(cx));
+            }
+            SearchMode::Normal => {}
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -763,41 +868,97 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::delete_binding))
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
+            .on_action(cx.listener(Self::toggle_conflict_filter))
+            .on_action(cx.listener(Self::toggle_keystroke_search))
             .size_full()
             .p_2()
             .gap_1()
             .bg(theme.colors().editor_background)
             .child(
                 h_flex()
+                    .p_2()
+                    .gap_1()
                     .key_context({
                         let mut context = KeyContext::new_with_defaults();
                         context.add("BufferSearchBar");
                         context
                     })
-                    .h_8()
-                    .pl_2()
-                    .pr_1()
-                    .py_1()
-                    .border_1()
-                    .border_color(theme.colors().border)
-                    .rounded_lg()
-                    .child(self.filter_editor.clone())
-                    .when(self.keybinding_conflict_state.any_conflicts(), |this| {
-                        this.child(
-                            IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                .tooltip(Tooltip::text(match self.filter_state {
-                                    FilterState::All => "Show conflicts",
-                                    FilterState::Conflicts => "Hide conflicts",
-                                }))
-                                .selected_icon_color(Color::Error)
-                                .toggle_state(matches!(self.filter_state, FilterState::Conflicts))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.filter_state = this.filter_state.invert();
-                                    this.update_matches(cx);
-                                })),
-                        )
-                    }),
+                    .child(
+                        div()
+                            .size_full()
+                            .h_8()
+                            .pl_2()
+                            .pr_1()
+                            .py_1()
+                            .border_1()
+                            .border_color(theme.colors().border)
+                            .rounded_lg()
+                            .child(self.filter_editor.clone()),
+                    )
+                    .child(
+                        // TODO: Ask Mikyala if there's a way to get have items be aligned by horizontally
+                        // without embedding a h_flex in another h_flex
+                        h_flex()
+                            .when(self.keybinding_conflict_state.any_conflicts(), |this| {
+                                this.child(
+                                    IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                        .tooltip({
+                                            let filter_state = self.filter_state;
+
+                                            move |window, cx| {
+                                                Tooltip::for_action(
+                                                    match filter_state {
+                                                        FilterState::All => "Show conflicts",
+                                                        FilterState::Conflicts => "Hide conflicts",
+                                                    },
+                                                    &ToggleConflictFilter,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .selected_icon_color(Color::Error)
+                                        .toggle_state(matches!(
+                                            self.filter_state,
+                                            FilterState::Conflicts
+                                        ))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                ToggleConflictFilter.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                )
+                            })
+                            .child(
+                                IconButton::new("KeymapEditorToggleFiltersIcon", IconName::Filter)
+                                    .tooltip(|window, cx| {
+                                        Tooltip::for_action(
+                                            "Toggle Keystroke Search",
+                                            &ToggleKeystrokeSearch,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .toggle_state(matches!(self.search_mode, SearchMode::KeyStroke))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            ToggleKeystrokeSearch.boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            ),
+                    ),
             )
+            .when(matches!(self.search_mode, SearchMode::KeyStroke), |this| {
+                this.child(
+                    div()
+                        .child(self.keystroke_editor.clone())
+                        .border_1()
+                        .border_color(theme.colors().border)
+                        .rounded_lg(),
+                )
+            })
             .child(
                 Table::new()
                     .interactable(&self.table_interaction_state)
@@ -1522,6 +1683,7 @@ async fn remove_keybinding(
 
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
+    highlight_on_focus: bool,
     focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
@@ -1536,6 +1698,7 @@ impl KeystrokeInput {
         ];
         Self {
             keystrokes: Vec::new(),
+            highlight_on_focus: true,
             focus_handle,
             intercept_subscription: None,
             _focus_subscriptions,
@@ -1553,6 +1716,7 @@ impl KeystrokeInput {
         {
             if !event.modifiers.modified() {
                 self.keystrokes.pop();
+                cx.emit(());
             } else {
                 last.modifiers = event.modifiers;
             }
@@ -1562,6 +1726,7 @@ impl KeystrokeInput {
                 key: "".to_string(),
                 key_char: None,
             });
+            cx.emit(());
         }
         cx.stop_propagation();
         cx.notify();
@@ -1575,6 +1740,7 @@ impl KeystrokeInput {
         } else if Some(keystroke) != self.keystrokes.last() {
             self.keystrokes.push(keystroke.clone());
         }
+        cx.emit(());
         cx.stop_propagation();
         cx.notify();
     }
@@ -1589,6 +1755,7 @@ impl KeystrokeInput {
             && !last.key.is_empty()
             && last.modifiers == event.keystroke.modifiers
         {
+            cx.emit(());
             self.keystrokes.push(Keystroke {
                 modifiers: event.keystroke.modifiers,
                 key: "".to_string(),
@@ -1629,6 +1796,8 @@ impl KeystrokeInput {
     }
 }
 
+impl EventEmitter<()> for KeystrokeInput {}
+
 impl Focusable for KeystrokeInput {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -1645,9 +1814,11 @@ impl Render for KeystrokeInput {
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_key_up(cx.listener(Self::on_key_up))
-            .focus(|mut style| {
-                style.border_color = Some(colors.border_focused);
-                style
+            .when(self.highlight_on_focus, |this| {
+                this.focus(|mut style| {
+                    style.border_color = Some(colors.border_focused);
+                    style
+                })
             })
             .py_2()
             .px_3()
@@ -1688,6 +1859,7 @@ impl Render for KeystrokeInput {
                             .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.pop();
+                                cx.emit(());
                                 cx.notify();
                             })),
                     )
@@ -1697,6 +1869,7 @@ impl Render for KeystrokeInput {
                             .when(!is_focused, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.clear();
+                                cx.emit(());
                                 cx.notify();
                             })),
                     ),
