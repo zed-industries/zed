@@ -71,20 +71,30 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &OpenKeymapEditor, cx| {
         workspace::with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let existing = workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .find_map(|item| item.downcast::<KeymapEditor>());
+            workspace
+                .with_local_workspace(window, cx, |workspace, window, cx| {
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<KeymapEditor>());
 
-            if let Some(existing) = existing {
-                workspace.activate_item(&existing, true, true, window, cx);
-            } else {
-                let keymap_editor =
-                    cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
-                workspace.add_item_to_active_pane(Box::new(keymap_editor), None, true, window, cx);
-            }
-        });
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let keymap_editor =
+                            cx.new(|cx| KeymapEditor::new(workspace.weak_handle(), window, cx));
+                        workspace.add_item_to_active_pane(
+                            Box::new(keymap_editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    }
+                })
+                .detach();
+        })
     });
 
     cx.observe_new(|_workspace: &mut Workspace, window, cx| {
