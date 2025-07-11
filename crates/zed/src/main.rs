@@ -181,16 +181,6 @@ pub fn main() {
         return;
     }
 
-    // Check if there is a pending installer
-    // If there is, run the installer and exit
-    // And we don't want to run the installer if we are not the first instance
-    #[cfg(target_os = "windows")]
-    let is_first_instance = crate::zed::windows_only_instance::is_first_instance();
-    #[cfg(target_os = "windows")]
-    if is_first_instance && auto_update::check_pending_installation() {
-        return;
-    }
-
     if args.dump_all_actions {
         dump_all_gpui_actions();
         return;
@@ -711,6 +701,10 @@ pub fn main() {
         })
         .detach();
     });
+    // Check if there is a pending installer
+    // If there is, run the installer and exit
+    #[cfg(target_os = "windows")]
+    auto_update::check_pending_installation();
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
