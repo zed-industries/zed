@@ -240,7 +240,8 @@ where
             if let Some(drifting_indent) = drifting_indent {
                 let drifting_indent_vec: SmallVec<[usize; 8]> =
                     [drifting_indent].into_iter().collect();
-                let sticky_origin = bounds.origin - scroll_offset
+
+                let sticky_origin = bounds.origin - point(px(0.), scroll_offset.y)
                     + point(px(0.), item_height * rest_indents.len() + drifting_y_offset);
                 let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
 
@@ -258,7 +259,8 @@ where
             }
 
             if !rest_indents.is_empty() {
-                let decoration_bounds = Bounds::new(bounds.origin - scroll_offset, bounds.size);
+                let decoration_bounds =
+                    Bounds::new(bounds.origin - point(px(0.), scroll_offset.y), bounds.size);
                 let mut rest_dec = decoration.as_ref().compute(
                     &rest_indents,
                     decoration_bounds,
@@ -282,7 +284,8 @@ where
             };
 
         for (ix, element) in rest_elements.iter_mut().enumerate() {
-            let sticky_origin = bounds.origin - scroll_offset + point(px(0.), item_height * ix);
+            let sticky_origin =
+                bounds.origin - point(px(0.), scroll_offset.y) + point(px(0.), item_height * ix);
             let element_available_space = size(
                 AvailableSpace::Definite(bounds.size.width),
                 AvailableSpace::Definite(item_height),
@@ -293,7 +296,7 @@ where
         }
 
         if let Some(ref mut drifting_element) = drifting_element {
-            let sticky_origin = bounds.origin - scroll_offset
+            let sticky_origin = bounds.origin - point(px(0.), scroll_offset.y)
                 + point(
                     px(0.),
                     item_height * rest_elements.len() + drifting_y_offset,
