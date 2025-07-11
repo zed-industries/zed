@@ -216,27 +216,11 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let (new_anchor, top_row) = if scroll_position.y <= 0. && scroll_position.x <= 0. {
+        let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
                     anchor: Anchor::min(),
-                    offset: scroll_position.max(&gpui::Point::default()),
-                },
-                0,
-            )
-        } else if scroll_position.y <= 0. {
-            let buffer_point = map
-                .clip_point(
-                    DisplayPoint::new(DisplayRow(0), scroll_position.x as u32),
-                    Bias::Left,
-                )
-                .to_point(map);
-            let anchor = map.buffer_snapshot.anchor_at(buffer_point, Bias::Right);
-
-            (
-                ScrollAnchor {
-                    anchor: anchor,
-                    offset: scroll_position.max(&gpui::Point::default()),
+                    offset: point(scroll_position.x.max(0.), 0.),
                 },
                 0,
             )
