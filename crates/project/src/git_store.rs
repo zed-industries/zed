@@ -1726,18 +1726,6 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let askpass = if let Some(askpass_id) = envelope.payload.askpass_id {
-            make_remote_delegate(
-                this,
-                envelope.payload.project_id,
-                repository_id,
-                askpass_id,
-                &mut cx,
-            )
-        } else {
-            AskPassDelegate::new_always_failing()
-        };
-
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
@@ -1751,7 +1739,6 @@ impl GitStore {
                     CommitOptions {
                         amend: options.amend,
                     },
-                    askpass,
                     cx,
                 )
             })?
@@ -3475,14 +3462,11 @@ impl Repository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        askpass: AskPassDelegate,
         _cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        let askpass_delegates = self.askpass_delegates.clone();
-        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
 
-        self.send_job(Some("git commit".into()), move |git_repo, cx| async move {
+        self.send_job(Some("git commit".into()), move |git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local {
                     backend,
@@ -3490,16 +3474,10 @@ impl Repository {
                     ..
                 } => {
                     backend
-                        .commit(message, name_and_email, options, askpass, environment, cx)
+                        .commit(message, name_and_email, options, environment)
                         .await
                 }
                 RepositoryState::Remote { project_id, client } => {
-                    askpass_delegates.lock().insert(askpass_id, askpass);
-                    let _defer = util::defer(|| {
-                        let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                        debug_assert!(askpass_delegate.is_some());
-                    });
-
                     let (name, email) = name_and_email.unzip();
                     client
                         .request(proto::Commit {
@@ -3511,9 +3489,9 @@ impl Repository {
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
                             }),
-                            askpass_id: Some(askpass_id),
                         })
-                        .await?;
+                        .await
+                        .context("sending commit request")?;
 
                     Ok(())
                 }
