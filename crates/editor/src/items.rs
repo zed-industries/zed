@@ -1226,7 +1226,20 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => window.spawn(cx, async move |cx| {
+                let buffer = project
+                    .update(cx, |project, cx| project.create_buffer(cx))?
+                    .await?;
+
+                cx.update(|window, cx| {
+                    cx.new(|cx| {
+                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+
+                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor
+                    })
+                })
+            }),
         }
     }
 
@@ -2096,6 +2109,39 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.has_conflict(cx)); // The editor should have a conflict
+            });
+        }
+
+        // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
+        {
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 10000 as ItemId;
+            let serialized_editor = SerializedEditor {
+                abs_path: None,
+                contents: None,
+                language: None,
+                mtime: None,
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "");
+                assert!(!editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_none());
             });
         }
     }
