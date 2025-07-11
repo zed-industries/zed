@@ -7496,18 +7496,21 @@ pub fn join_in_room_project(
 }
 
 pub fn reload(reload: &Reload, cx: &mut App) {
+    #[cfg(not(target_os = "windows"))]
+    reload_impl(reload, cx);
+    #[cfg(target_os = "windows")]
     reload_impl(reload, cx, false);
 }
 
 pub fn reload_updating(reload: &Reload, cx: &mut App) {
-    #[cfg(target_os = "windows")]
-    let updating = true;
     #[cfg(not(target_os = "windows"))]
-    let updating = false;
+    reload_impl(reload, cx);
 
-    reload_impl(reload, cx, updating);
+    #[cfg(target_os = "windows")]
+    reload_impl(reload, cx, true);
 }
 
+#[inline]
 fn reload_impl(reload: &Reload, cx: &mut App, #[cfg(target_os = "windows")] updating: bool) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
