@@ -214,8 +214,10 @@ where
         let mut last_decoration_element = None;
         let mut rest_decoration_elements = SmallVec::new();
 
+        let expanded_width = bounds.size.width + scroll_offset.x.abs();
+
         let available_space = size(
-            AvailableSpace::Definite(bounds.size.width),
+            AvailableSpace::Definite(expanded_width),
             AvailableSpace::Definite(bounds.size.height),
         );
 
@@ -283,13 +285,14 @@ where
                 (None, elements)
             };
 
+        let element_available_space = size(
+            AvailableSpace::Definite(expanded_width),
+            AvailableSpace::Definite(item_height),
+        );
+
         for (ix, element) in rest_elements.iter_mut().enumerate() {
             let sticky_origin =
                 bounds.origin - point(px(0.), scroll_offset.y) + point(px(0.), item_height * ix);
-            let element_available_space = size(
-                AvailableSpace::Definite(bounds.size.width),
-                AvailableSpace::Definite(item_height),
-            );
 
             element.layout_as_root(element_available_space, window, cx);
             element.prepaint_at(sticky_origin, window, cx);
@@ -301,10 +304,6 @@ where
                     px(0.),
                     item_height * rest_elements.len() + drifting_y_offset,
                 );
-            let element_available_space = size(
-                AvailableSpace::Definite(bounds.size.width),
-                AvailableSpace::Definite(item_height),
-            );
 
             drifting_element.layout_as_root(element_available_space, window, cx);
             drifting_element.prepaint_at(sticky_origin, window, cx);
