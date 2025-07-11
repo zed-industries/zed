@@ -112,7 +112,8 @@ To disable this behavior use:
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
-    "show_sign_in": true            // Show/hide sign-in button
+    "show_sign_in": true,           // Show/hide sign-in button
+    "show_menus": false             // Show/hide menus
   },
 ```
 

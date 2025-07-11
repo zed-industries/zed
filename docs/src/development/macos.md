@@ -136,6 +136,21 @@ This error seems to be caused by OS resource constraints. Installing and running
 
 ## Tips & Tricks
 
+### Avoiding continual rebuilds
+
+If you are finding that Zed is continually rebuilding root crates, it may be because
+you are pointing your development Zed at the codebase itself.
+
+This causes problems because `cargo run` exports a bunch of environment
+variables which are picked up by the `rust-analyzer` that runs in the development
+build of Zed. These environment variables are in turn passed to `cargo check`, which
+invalidates the build cache of some of the crates we depend on.
+
+You can easily avoid running the built binary on the checked-out Zed codebase using `cargo run
+~/path/to/other/project` to ensure that you don't hit this.
+
+### Speeding up verification
+
 If you are building Zed a lot, you may find that macOS continually verifies new
 builds which can add a few seconds to your iteration cycles.
 

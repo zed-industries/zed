@@ -77,7 +77,6 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
@@ -185,6 +184,11 @@ impl HeadlessProject {
         });
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+        language_extension::init(
+            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            proxy.clone(),
+            languages.clone(),
+        );
 
         cx.subscribe(
             &buffer_store,

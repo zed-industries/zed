@@ -206,7 +206,7 @@ impl PickerDelegate for AttachModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
             .get(self.selected_index())
@@ -229,30 +229,44 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
+        let workspace = self.workspace.clone();
+        let Some(panel) = workspace
+            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+
+        if secondary {
+            // let Some(id) = worktree_id else { return };
+            // cx.spawn_in(window, async move |_, cx| {
+            //     panel
+            //         .update_in(cx, |debug_panel, window, cx| {
+            //             debug_panel.save_scenario(&debug_scenario, id, window, cx)
+            //         })?
+            //         .await?;
+            //     anyhow::Ok(())
+            // })
+            // .detach_and_log_err(cx);
+        }
         let Some(adapter) = cx.read_global::<DapRegistry, _>(|registry, _| {
             registry.adapter(&self.definition.adapter)
         }) else {
             return;
         };
 
-        let workspace = self.workspace.clone();
         let definition = self.definition.clone();
         cx.spawn_in(window, async move |this, cx| {
             let Ok(scenario) = adapter.config_from_zed_format(definition).await else {
                 return;
             };
 
-            let panel = workspace
-                .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
-                .ok()
-                .flatten();
-            if let Some(panel) = panel {
-                panel
-                    .update_in(cx, |panel, window, cx| {
-                        panel.start_session(scenario, Default::default(), None, None, window, cx);
-                    })
-                    .ok();
-            }
+            panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.start_session(scenario, Default::default(), None, None, window, cx);
+                })
+                .ok();
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })

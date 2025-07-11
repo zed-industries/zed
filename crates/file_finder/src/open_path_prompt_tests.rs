@@ -5,7 +5,7 @@ use picker::{Picker, PickerDelegate};
 use project::Project;
 use serde_json::json;
 use ui::rems;
-use util::path;
+use util::{path, paths::PathStyle};
 use workspace::{AppState, Workspace};
 
 use crate::OpenPathDelegate;
@@ -37,7 +37,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
 
     let query = path!("/root");
     insert_query(query, &picker, cx).await;
@@ -111,7 +111,7 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
 
     // Confirm completion for the query "/root", since it's a directory, it should add a trailing slash.
     let query = path!("/root");
@@ -186,7 +186,7 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(target_os = "windows"), ignore)]
 async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -204,7 +204,7 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
 
     // Support both forward and backward slashes.
     let query = "C:/root/";
@@ -252,6 +252,47 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(not(target_os = "windows"), ignore)]
+async fn test_open_path_prompt_on_windows_with_remote(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "a": "A",
+                "dir1": {},
+                "dir2": {}
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::Posix, cx);
+
+    let query = "/root/";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec!["a", "dir1", "dir2"]
+    );
+    assert_eq!(confirm_completion(query, 0, &picker, cx), "/root/a");
+
+    // Confirm completion for the query "/root/d", selecting the second candidate "dir2", since it's a directory, it should add a trailing slash.
+    let query = "/root/d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(confirm_completion(query, 1, &picker, cx), "/root/dir2/");
+
+    let query = "/root/d";
+    insert_query(query, &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), vec!["dir1", "dir2"]);
+    assert_eq!(confirm_completion(query, 0, &picker, cx), "/root/dir1/");
+}
+
+#[gpui::test]
 async fn test_new_path_prompt(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
@@ -278,7 +319,7 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, true, cx);
+    let (picker, cx) = build_open_path_prompt(project, true, PathStyle::current(), cx);
 
     insert_query(path!("/root"), &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["root"]);
@@ -315,11 +356,12 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 fn build_open_path_prompt(
     project: Entity<Project>,
     creating_path: bool,
+    path_style: PathStyle,
     cx: &mut TestAppContext,
 ) -> (Entity<Picker<OpenPathDelegate>>, &mut VisualTestContext) {
     let (tx, _) = futures::channel::oneshot::channel();
     let lister = project::DirectoryLister::Project(project.clone());
-    let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path);
+    let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, path_style);
 
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     (

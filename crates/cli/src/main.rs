@@ -130,6 +130,13 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
     #[cfg(unix)]
     util::prevent_root_execution();
 

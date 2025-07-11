@@ -41,9 +41,9 @@ futures.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
-tempfile.workspace = true

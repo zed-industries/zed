@@ -310,6 +310,14 @@
     }
   },
   {
+    "context": "AgentPanel && acp_thread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewAcpThread",
+      "cmd-alt-t": "agent::NewThread"
+    }
+  },
+  {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -355,6 +363,16 @@
     "context": "AgentConfiguration",
     "bindings": {
       "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "agent::Chat",
+      "up": "agent::PreviousHistoryMessage",
+      "down": "agent::NextHistoryMessage",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -1194,7 +1212,8 @@
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-f": "search::FocusSearch"
+      "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      "cmd-alt-c": "keymap_editor::ToggleConflictFilter"
     }
   }
 ]

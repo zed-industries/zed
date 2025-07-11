@@ -1331,6 +1331,7 @@ impl Render for LspLogToolbarItemView {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };
+
         let (menu_rows, current_server_id) = log_view.update(cx, |log_view, cx| {
             let menu_rows = log_view.menu_items(cx).unwrap_or_default();
             let current_server_id = log_view.current_server_id;
@@ -1344,6 +1345,7 @@ impl Render for LspLogToolbarItemView {
                 None
             }
         });
+
         let available_language_servers: Vec<_> = menu_rows
             .into_iter()
             .map(|row| {
@@ -1355,21 +1357,28 @@ impl Render for LspLogToolbarItemView {
                 )
             })
             .collect();
+
         let log_toolbar_view = cx.entity().clone();
+
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)
-            .trigger(Button::new(
-                "language_server_menu_header",
-                current_server
-                    .as_ref()
-                    .map(|row| {
-                        Cow::Owned(format!(
-                            "{} ({})",
-                            row.server_name.0, row.worktree_root_name,
-                        ))
-                    })
-                    .unwrap_or_else(|| "No server selected".into()),
-            ))
+            .trigger(
+                Button::new(
+                    "language_server_menu_header",
+                    current_server
+                        .as_ref()
+                        .map(|row| {
+                            Cow::Owned(format!(
+                                "{} ({})",
+                                row.server_name.0, row.worktree_root_name,
+                            ))
+                        })
+                        .unwrap_or_else(|| "No server selected".into()),
+                )
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted),
+            )
             .menu({
                 let log_view = log_view.clone();
                 move |window, cx| {
@@ -1413,6 +1422,7 @@ impl Render for LspLogToolbarItemView {
                     .into()
                 }
             });
+
         let view_selector = current_server.map(|server| {
             let server_id = server.server_id;
             let is_remote = server.server_kind.is_remote();
@@ -1420,10 +1430,12 @@ impl Render for LspLogToolbarItemView {
             let log_view = log_view.clone();
             PopoverMenu::new("LspViewSelector")
                 .anchor(Corner::TopLeft)
-                .trigger(Button::new(
-                    "language_server_menu_header",
-                    server.selected_entry.label(),
-                ))
+                .trigger(
+                    Button::new("language_server_menu_header", server.selected_entry.label())
+                        .icon(IconName::ChevronDown)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted),
+                )
                 .menu(move |window, cx| {
                     let log_toolbar_view = log_toolbar_view.clone();
                     let log_view = log_view.clone();
@@ -1494,11 +1506,14 @@ impl Render for LspLogToolbarItemView {
                     }))
                 })
         });
+
         h_flex()
             .size_full()
+            .gap_1()
             .justify_between()
             .child(
                 h_flex()
+                    .gap_0p5()
                     .child(lsp_menu)
                     .children(view_selector)
                     .child(
@@ -1508,10 +1523,15 @@ impl Render for LspLogToolbarItemView {
                                 div().child(
                                     PopoverMenu::new("lsp-trace-level-menu")
                                         .anchor(Corner::TopLeft)
-                                        .trigger(Button::new(
-                                            "language_server_trace_level_selector",
-                                            "Trace level",
-                                        ))
+                                        .trigger(
+                                            Button::new(
+                                                "language_server_trace_level_selector",
+                                                "Trace level",
+                                            )
+                                            .icon(IconName::ChevronDown)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted),
+                                        )
                                         .menu({
                                             let log_view = log_view.clone();
 
@@ -1571,10 +1591,15 @@ impl Render for LspLogToolbarItemView {
                                 div().child(
                                     PopoverMenu::new("lsp-log-level-menu")
                                         .anchor(Corner::TopLeft)
-                                        .trigger(Button::new(
-                                            "language_server_log_level_selector",
-                                            "Log level",
-                                        ))
+                                        .trigger(
+                                            Button::new(
+                                                "language_server_log_level_selector",
+                                                "Log level",
+                                            )
+                                            .icon(IconName::ChevronDown)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted),
+                                        )
                                         .menu({
                                             let log_view = log_view.clone();
 
@@ -1635,23 +1660,19 @@ impl Render for LspLogToolbarItemView {
                     ),
             )
             .child(
-                div()
-                    .child(
-                        Button::new("clear_log_button", "Clear").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                if let Some(log_view) = this.log_view.as_ref() {
-                                    log_view.update(cx, |log_view, cx| {
-                                        log_view.editor.update(cx, |editor, cx| {
-                                            editor.set_read_only(false);
-                                            editor.clear(window, cx);
-                                            editor.set_read_only(true);
-                                        });
-                                    })
-                                }
-                            },
-                        )),
-                    )
-                    .ml_2(),
+                Button::new("clear_log_button", "Clear").on_click(cx.listener(
+                    |this, _, window, cx| {
+                        if let Some(log_view) = this.log_view.as_ref() {
+                            log_view.update(cx, |log_view, cx| {
+                                log_view.editor.update(cx, |editor, cx| {
+                                    editor.set_read_only(false);
+                                    editor.clear(window, cx);
+                                    editor.set_read_only(true);
+                                });
+                            })
+                        }
+                    },
+                )),
             )
     }
 }

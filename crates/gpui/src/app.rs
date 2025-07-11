@@ -272,6 +272,7 @@ pub struct App {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
@@ -344,6 +345,7 @@ impl App {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
@@ -1315,6 +1317,32 @@ impl App {
 
         inner(
             &mut self.keystroke_observers,
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
+                true
+            }),
+        )
+    }
+
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires _before_ all other action and event mechanisms have resolved
+    /// unlike [`App::observe_keystrokes`] which fires after. This means that `cx.stop_propagation` calls
+    /// within interceptors will prevent action dispatch
+    pub fn intercept_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_interceptors: &SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_interceptors.insert((), handler);
+            activate();
+            subscription
+        }
+
+        inner(
+            &mut self.keystroke_interceptors,
             Box::new(move |event, window, cx| {
                 f(event, window, cx);
                 true
