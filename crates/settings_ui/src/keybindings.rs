@@ -397,11 +397,10 @@ impl KeymapEditor {
                 SearchMode::KeyStroke => {
                     matches.retain(|item| {
                         this.keybindings[item.candidate_id]
-                            .ui_key_binding
-                            .as_ref()
-                            .is_some_and(|binding| {
+                            .keystrokes()
+                            .is_some_and(|keystrokes| {
                                 keystroke_query.iter().all(|key| {
-                                    binding.keystrokes.iter().any(|keystroke| {
+                                    keystrokes.iter().any(|keystroke| {
                                         keystroke.key == key.key
                                             && keystroke.modifiers == key.modifiers
                                     })
@@ -623,7 +622,7 @@ impl KeymapEditor {
                 .and_then(KeybindContextString::local)
                 .is_none();
 
-            let selected_binding_is_unbound = selected_binding.ui_key_binding.is_none();
+            let selected_binding_is_unbound = selected_binding.keystrokes().is_none();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.action_disabled_when(
@@ -875,6 +874,12 @@ impl ProcessedKeybinding {
                 .and_then(|context| context.local())
                 .cloned(),
         )
+    }
+
+    fn keystrokes(&self) -> Option<&[Keystroke]> {
+        self.ui_key_binding
+            .as_ref()
+            .map(|binding| binding.keystrokes.as_slice())
     }
 }
 
@@ -1303,16 +1308,8 @@ impl KeybindingEditorModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let keybind_editor = cx.new(|cx| {
-            KeystrokeInput::new(
-                editing_keybind
-                    .ui_key_binding
-                    .as_ref()
-                    .map(|keybinding| keybinding.keystrokes.clone()),
-                window,
-                cx,
-            )
-        });
+        let keybind_editor = cx
+            .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
         let context_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1398,6 +1395,24 @@ impl KeybindingEditorModal {
         }
     }
 
+    fn validate_action_input(&self, cx: &App) -> anyhow::Result<Option<String>> {
+        let input = self
+            .input_editor
+            .as_ref()
+            .map(|editor| editor.read(cx).text(cx));
+
+        let value = input
+            .as_ref()
+            .map(|input| {
+                serde_json::from_str(input).context("Failed to parse action input as JSON")
+            })
+            .transpose()?;
+
+        cx.build_action(&self.editing_keybind.action_name, value)
+            .context("Failed to validate action input")?;
+        Ok(input)
+    }
+
     fn save(&mut self, cx: &mut Context<Self>) {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
@@ -1424,6 +1439,14 @@ impl KeybindingEditorModal {
             self.set_error(InputError::error(err.to_string()), cx);
             return;
         }
+
+        let new_input = match self.validate_action_input(cx) {
+            Err(input_err) => {
+                self.set_error(InputError::error(input_err.to_string()), cx);
+                return;
+            }
+            Ok(input) => input,
+        };
 
         let action_mapping: ActionMapping = (
             ui::text_for_keystrokes(&new_keystrokes, cx).into(),
@@ -1481,6 +1504,7 @@ impl KeybindingEditorModal {
                 existing_keybind,
                 &new_keystrokes,
                 new_context.as_deref(),
+                new_input.as_deref(),
                 &fs,
                 tab_size,
             )
@@ -1711,6 +1735,7 @@ async fn save_keybinding_update(
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
     new_context: Option<&str>,
+    new_input: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
 ) -> anyhow::Result<()> {
@@ -1718,41 +1743,36 @@ async fn save_keybinding_update(
         .await
         .context("Failed to load keymap file")?;
 
-    let existing_keystrokes = existing
-        .ui_key_binding
-        .as_ref()
-        .map(|keybinding| keybinding.keystrokes.as_slice())
-        .unwrap_or_default();
-
-    let existing_context = existing
-        .context
-        .as_ref()
-        .and_then(KeybindContextString::local_str);
-
-    let input = existing
-        .action_input
-        .as_ref()
-        .map(|input| input.text.as_ref());
-
     let operation = if !create {
+        let existing_keystrokes = existing.keystrokes().unwrap_or_default();
+        let existing_context = existing
+            .context
+            .as_ref()
+            .and_then(KeybindContextString::local_str);
+        let existing_input = existing
+            .action_input
+            .as_ref()
+            .map(|input| input.text.as_ref());
+
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
                 context: existing_context,
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input,
+                input: existing_input,
             },
             target_keybind_source: existing
                 .source
-                .map(|(source, _name)| source)
+                .as_ref()
+                .map(|(source, _name)| *source)
                 .unwrap_or(KeybindSource::User),
             source: settings::KeybindUpdateTarget {
                 context: new_context,
                 keystrokes: new_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input,
+                input: new_input,
             },
         }
     } else {
@@ -1761,7 +1781,7 @@ async fn save_keybinding_update(
             keystrokes: new_keystrokes,
             action_name: &existing.action_name,
             use_key_equivalents: false,
-            input,
+            input: new_input,
         })
     };
     let updated_keymap_contents =
@@ -1778,7 +1798,7 @@ async fn remove_keybinding(
     fs: &Arc<dyn Fs>,
     tab_size: usize,
 ) -> anyhow::Result<()> {
-    let Some(ui_key_binding) = existing.ui_key_binding else {
+    let Some(keystrokes) = existing.keystrokes() else {
         anyhow::bail!("Cannot remove a keybinding that does not exist");
     };
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
@@ -1791,7 +1811,7 @@ async fn remove_keybinding(
                 .context
                 .as_ref()
                 .and_then(KeybindContextString::local_str),
-            keystrokes: &ui_key_binding.keystrokes,
+            keystrokes,
             action_name: &existing.action_name,
             use_key_equivalents: false,
             input: existing
@@ -1801,7 +1821,8 @@ async fn remove_keybinding(
         },
         target_keybind_source: existing
             .source
-            .map(|(source, _name)| source)
+            .as_ref()
+            .map(|(source, _name)| *source)
             .unwrap_or(KeybindSource::User),
     };
 

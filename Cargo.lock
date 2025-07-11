@@ -14677,6 +14677,7 @@ dependencies = [
  "schemars",
  "search",
  "serde",
+ "serde_json",
  "settings",
  "theme",
  "tree-sitter-json",
