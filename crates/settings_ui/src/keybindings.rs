@@ -11,8 +11,8 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, KeyContext, Keystroke, ModifiersChangedEvent, ScrollStrategy,
-    StyledText, Subscription, WeakEntity, actions, div,
+    FocusHandle, Focusable, Global, KeyContext, Keystroke, ModifiersChangedEvent, MouseButton,
+    Point, ScrollStrategy, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -21,7 +21,7 @@ use util::ResultExt;
 
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
-    SharedString, Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    SharedString, Styled as _, Tooltip, Window, prelude::*,
 };
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
@@ -187,7 +187,7 @@ struct ConflictState {
 }
 
 impl ConflictState {
-    fn new(key_bindings: &Vec<ProcessedKeybinding>) -> Self {
+    fn new(key_bindings: &[ProcessedKeybinding]) -> Self {
         let mut action_keybind_mapping: HashMap<_, Vec<usize>> = HashMap::default();
 
         key_bindings
@@ -255,6 +255,7 @@ struct KeymapEditor {
     filter_editor: Entity<Editor>,
     keystroke_editor: Entity<KeystrokeInput>,
     selected_index: Option<usize>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -267,8 +268,6 @@ impl Focusable for KeymapEditor {
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
-
         let _keymap_subscription =
             cx.observe_global::<KeymapEventChannel>(Self::update_keybindings);
         let table_interaction_state = TableInteractionState::new(window, cx);
@@ -311,12 +310,13 @@ impl KeymapEditor {
             search_mode: SearchMode::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
-            focus_handle: focus_handle.clone(),
+            focus_handle: cx.focus_handle(),
             _keymap_subscription,
             table_interaction_state,
             filter_editor,
             keystroke_editor,
             selected_index: None,
+            context_menu: None,
         };
 
         this.update_keybindings(cx);
@@ -591,6 +591,68 @@ impl KeymapEditor {
     fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
         self.selected_keybind_idx()
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
+    }
+
+    fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.selected_index != Some(index) {
+            self.selected_index = Some(index);
+            cx.notify();
+        }
+    }
+
+    fn create_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = self.selected_binding().map(|selected_binding| {
+            let selected_binding_has_no_context = selected_binding
+                .context
+                .as_ref()
+                .and_then(KeybindContextString::local)
+                .is_none();
+
+            let selected_binding_is_unbound = selected_binding.ui_key_binding.is_none();
+
+            let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+                menu.action_disabled_when(
+                    selected_binding_is_unbound,
+                    "Edit",
+                    Box::new(EditBinding),
+                )
+                .action("Create", Box::new(CreateBinding))
+                .action("Copy action", Box::new(CopyAction))
+                .action_disabled_when(
+                    selected_binding_has_no_context,
+                    "Copy Context",
+                    Box::new(CopyContext),
+                )
+            });
+
+            let context_menu_handle = context_menu.focus_handle(cx);
+            window.defer(cx, move |window, _cx| window.focus(&context_menu_handle));
+            let subscription = cx.subscribe_in(
+                &context_menu,
+                window,
+                |this, _, _: &DismissEvent, window, cx| {
+                    this.dismiss_context_menu(window, cx);
+                },
+            );
+            (context_menu, position, subscription)
+        });
+
+        cx.notify();
+    }
+
+    fn dismiss_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_menu.take();
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn context_menu_deployed(&self) -> bool {
+        self.context_menu.is_some()
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -975,6 +1037,7 @@ impl Render for KeymapEditor {
                         "keymap-editor-table",
                         row_count,
                         cx.processor(move |this, range: Range<usize>, _window, cx| {
+                            let context_menu_deployed = this.context_menu_deployed();
                             range
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
@@ -983,21 +1046,23 @@ impl Render for KeymapEditor {
                                     let action = div()
                                         .child(binding.action_name.clone())
                                         .id(("keymap action", index))
-                                        .tooltip({
-                                            let action_name = binding.action_name.clone();
-                                            let action_docs = binding.action_docs;
-                                            move |_, cx| {
-                                                let action_tooltip = Tooltip::new(
-                                                    command_palette::humanize_action_name(
-                                                        &action_name,
-                                                    ),
-                                                );
-                                                let action_tooltip = match action_docs {
-                                                    Some(docs) => action_tooltip.meta(docs),
-                                                    None => action_tooltip,
-                                                };
-                                                cx.new(|_| action_tooltip).into()
-                                            }
+                                        .when(!context_menu_deployed, |this| {
+                                            this.tooltip({
+                                                let action_name = binding.action_name.clone();
+                                                let action_docs = binding.action_docs;
+                                                move |_, cx| {
+                                                    let action_tooltip = Tooltip::new(
+                                                        command_palette::humanize_action_name(
+                                                            &action_name,
+                                                        ),
+                                                    );
+                                                    let action_tooltip = match action_docs {
+                                                        Some(docs) => action_tooltip.meta(docs),
+                                                        None => action_tooltip,
+                                                    };
+                                                    cx.new(|_| action_tooltip).into()
+                                                }
+                                            })
                                         })
                                         .into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
@@ -1023,7 +1088,7 @@ impl Render for KeymapEditor {
                                             div()
                                                 .id(("keymap context", index))
                                                 .child(context.clone())
-                                                .when(is_local, |this| {
+                                                .when(is_local && !context_menu_deployed, |this| {
                                                     this.tooltip(Tooltip::element({
                                                         move |_, _| {
                                                             context.clone().into_any_element()
@@ -1055,9 +1120,30 @@ impl Render for KeymapEditor {
 
                             let row = row
                                 .id(("keymap-table-row", row_index))
+                                .on_any_mouse_down(cx.listener(
+                                    move |this,
+                                          mouse_down_event: &gpui::MouseDownEvent,
+                                          window,
+                                          cx| {
+                                        match mouse_down_event.button {
+                                            MouseButton::Left => {
+                                                this.select_index(row_index, cx);
+                                            }
+
+                                            MouseButton::Right => {
+                                                this.select_index(row_index, cx);
+                                                this.create_context_menu(
+                                                    mouse_down_event.position,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    },
+                                ))
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        this.selected_index = Some(row_index);
                                         if event.up.click_count == 2 {
                                             this.open_edit_keybinding_modal(false, window, cx);
                                         }
@@ -1071,18 +1157,23 @@ impl Render for KeymapEditor {
                                     row.border_color(cx.theme().colors().panel_focused_border)
                                 });
 
-                            right_click_menu(("keymap-table-row-menu", row_index))
-                                .trigger(move |_, _, _| row)
-                                .menu({
-                                    let this = cx.weak_entity();
-                                    move |window, cx| {
-                                        build_keybind_context_menu(&this, row_index, window, cx)
-                                    }
-                                })
-                                .into_any_element()
+                            row.into_any_element()
                         }),
                     ),
             )
+            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                this.context_menu.take();
+                cx.notify();
+            }))
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Corner::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(1)
+            }))
     }
 }
 
@@ -1893,53 +1984,6 @@ impl Render for KeystrokeInput {
                     ),
             );
     }
-}
-
-fn build_keybind_context_menu(
-    this: &WeakEntity<KeymapEditor>,
-    item_idx: usize,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, |menu, _window, cx| {
-        let selected_binding = this
-            .update(cx, |this, _cx| {
-                this.selected_index = Some(item_idx);
-                this.selected_binding().cloned()
-            })
-            .ok()
-            .flatten();
-
-        let Some(selected_binding) = selected_binding else {
-            return menu;
-        };
-
-        let selected_binding_has_no_context = selected_binding
-            .context
-            .as_ref()
-            .and_then(KeybindContextString::local)
-            .is_none();
-
-        let selected_binding_is_unbound_action = selected_binding.ui_key_binding.is_none();
-
-        menu.action_disabled_when(
-            selected_binding_is_unbound_action,
-            "Edit",
-            Box::new(EditBinding),
-        )
-        .action("Create", Box::new(CreateBinding))
-        .action_disabled_when(
-            selected_binding_is_unbound_action,
-            "Delete",
-            Box::new(DeleteBinding),
-        )
-        .action("Copy action", Box::new(CopyAction))
-        .action_disabled_when(
-            selected_binding_has_no_context,
-            "Copy Context",
-            Box::new(CopyContext),
-        )
-    })
 }
 
 fn collect_contexts_from_assets() -> Vec<SharedString> {
