@@ -207,9 +207,9 @@ impl Application {
         self
     }
 
-    /// Register a callback to perform application updates before the process exits.
+    /// Register a callback to perform application updates after the app exits.
     /// This is specifically designed for executing update operations that need to
-    /// happen after all windows are closed but before the process terminates.
+    /// happen after all windows are closed.
     #[cfg(target_os = "windows")]
     pub fn register_exit_updater<F>(&self, mut callback: F) -> &Self
     where
