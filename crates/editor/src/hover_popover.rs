@@ -110,7 +110,7 @@ pub fn find_hovered_hint_part(
         let mut part_start = hint_start;
         for part in label_parts {
             let part_len = part.value.chars().count();
-            if hovered_character >= part_len {
+            if hovered_character > part_len {
                 hovered_character -= part_len;
                 part_start.0 += part_len;
             } else {

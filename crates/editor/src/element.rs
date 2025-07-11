@@ -1238,8 +1238,7 @@ impl EditorElement {
                 hover_at(editor, Some(anchor), window, cx);
                 Self::update_visible_cursor(editor, point, position_map, window, cx);
             } else {
-                // Don't call hover_at with None when we're over an inlay
-                // The inlay hover is already handled by update_hovered_link
+                hover_at(editor, None, window, cx);
             }
         } else {
             editor.hide_hovered_link(cx);

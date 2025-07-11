@@ -124,28 +124,13 @@ impl Editor {
     ) {
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
 
-        // Allow inlay hover points to be updated even without modifier key
-        if point_for_position.as_valid().is_none() {
-            // Hovering over inlay - check for hover tooltips
-            update_inlay_link_and_hover_points(
-                snapshot,
-                point_for_position,
-                self,
-                hovered_link_modifier,
-                modifiers.shift,
-                window,
-                cx,
-            );
-            return;
-        }
-
-        if !hovered_link_modifier || self.has_pending_selection() {
-            self.hide_hovered_link(cx);
-            return;
-        }
-
         match point_for_position.as_valid() {
             Some(point) => {
+                if !hovered_link_modifier || self.has_pending_selection() {
+                    self.hide_hovered_link(cx);
+                    return;
+                }
+
                 let trigger_point = TriggerPoint::Text(
                     snapshot
                         .buffer_snapshot
@@ -155,8 +140,15 @@ impl Editor {
                 show_link_definition(modifiers.shift, self, trigger_point, snapshot, window, cx);
             }
             None => {
-                // This case should not be reached anymore as we handle it above
-                unreachable!("Invalid position should have been handled earlier");
+                update_inlay_link_and_hover_points(
+                    snapshot,
+                    point_for_position,
+                    self,
+                    hovered_link_modifier,
+                    modifiers.shift,
+                    window,
+                    cx,
+                );
             }
         }
     }
@@ -337,17 +329,11 @@ pub fn update_inlay_link_and_hover_points(
                                 window,
                                 cx,
                             );
-                            // Don't set hover_updated during resolution to prevent empty tooltip
-                            // hover_updated = true;
                         }
                         false // Don't process unresolved hints
                     }
                     ResolveState::Resolved => true,
-                    ResolveState::Resolving => {
-                        // Don't set hover_updated during resolution to prevent empty tooltip
-                        // hover_updated = true;
-                        false // Don't process further
-                    }
+                    ResolveState::Resolving => false,
                 };
 
                 if should_process_hint {
@@ -392,7 +378,6 @@ pub fn update_inlay_link_and_hover_points(
                             }
                         }
                         project::InlayHintLabel::LabelParts(label_parts) => {
-                            // VS Code shows hover for the meaningful part regardless of where you hover
                             // Find the first part with actual hover information (tooltip or location)
                             let _hint_start =
                                 snapshot.anchor_to_inlay_offset(hovered_inlay.position);
@@ -609,7 +594,6 @@ pub fn update_inlay_link_and_hover_points(
                                         }
                                     }
 
-                                    // Found and processed the meaningful part
                                     break;
                                 }
 
