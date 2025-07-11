@@ -2333,7 +2333,7 @@ fn get_scale_factor(
     // TODO: Use scale factor from XSettings here
 
     if let Some(dpi) = resource_database
-        .get_value("Xft.dpi", "Xft.dpi")
+        .get_value::<f32>("Xft.dpi", "Xft.dpi")
         .ok()
         .flatten()
     {
@@ -2362,12 +2362,12 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
 
     let mut crtc_cookies = Vec::with_capacity(screen_resources.crtcs.len());
     for &crtc in &screen_resources.crtcs {
-        if let Ok(cookie) = connection.randr_get_crtc_info(crtc, CURRENT_TIME) {
+        if let Ok(cookie) = connection.randr_get_crtc_info(crtc, x11rb::CURRENT_TIME) {
             crtc_cookies.push((crtc, cookie));
         }
     }
 
-    let mut crtc_infos: HashMap<randr::Crtc, randr::GetCrtcInfoReply> = HashMap::new();
+    let mut crtc_infos: HashMap<randr::Crtc, randr::GetCrtcInfoReply> = HashMap::default();
     let mut valid_outputs: HashSet<randr::Output> = HashSet::new();
     for (crtc, cookie) in crtc_cookies {
         if let Ok(reply) = cookie.reply() {
@@ -2384,11 +2384,11 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
 
     let mut output_cookies = Vec::with_capacity(valid_outputs.len());
     for &output in &valid_outputs {
-        if let Ok(cookie) = connection.randr_get_output_info(output, CURRENT_TIME) {
+        if let Ok(cookie) = connection.randr_get_output_info(output, x11rb::CURRENT_TIME) {
             output_cookies.push((output, cookie));
         }
     }
-    let mut output_infos: HashMap<randr::Output, randr::GetOutputInfoReply> = HashMap::new();
+    let mut output_infos: HashMap<randr::Output, randr::GetOutputInfoReply> = HashMap::default();
     for (output, cookie) in output_cookies {
         if let Ok(reply) = cookie.reply() {
             output_infos.insert(output, reply);
