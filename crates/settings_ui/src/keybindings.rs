@@ -1922,9 +1922,10 @@ impl KeystrokeInput {
         &mut self,
         _event: gpui::FocusOutEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.intercept_subscription.take();
+        cx.notify();
     }
 
     fn keystrokes(&self) -> &[Keystroke] {
@@ -2025,6 +2026,24 @@ impl Render for KeystrokeInput {
                 h_flex()
                     .gap_0p5()
                     .flex_none()
+                    .when(is_inner_focused, |this| {
+                        this.child(
+                            Icon::new(IconName::Circle)
+                                .color(Color::Error)
+                                .with_animation(
+                                    "recording-pulse",
+                                    gpui::Animation::new(std::time::Duration::from_secs(1))
+                                        .repeat()
+                                        .with_easing(gpui::pulsating_between(0.8, 1.0)),
+                                    {
+                                        let color = Color::Error.color(cx);
+                                        move |this, delta| {
+                                            this.color(Color::Custom(color.opacity(delta)))
+                                        }
+                                    },
+                                ),
+                        )
+                    })
                     .child(
                         IconButton::new("backspace-btn", IconName::Delete)
                             .tooltip(Tooltip::text("Delete Keystroke"))
