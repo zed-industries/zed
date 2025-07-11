@@ -1080,7 +1080,7 @@ impl SshRemoteClient {
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
-            let result = io_task.await;
+            let result = io_task.await
 
             match result {
                 Ok(exit_code) => {

@@ -1431,7 +1431,7 @@ impl AcpThreadView {
     }
 
     fn render_error_gemini_logo(&self) -> AnyElement {
-        let logo = Icon::new(IconName::AiGemini)
+        let logo = Icon::new(IconName::Hammer)
             .color(Color::Muted)
             .size(IconSize::XLarge)
             .into_any_element();
@@ -1477,9 +1477,9 @@ impl AcpThreadView {
                     .mb_1()
                     .justify_center()
                     .child(Headline::new(if loading {
-                        "Connecting to Gemini…"
+                        "Connecting to Claude Code…"
                     } else {
-                        "Welcome to Gemini"
+                        "Welcome to Claude Code"
                     }).size(HeadlineSize::Medium)),
             )
             .child(

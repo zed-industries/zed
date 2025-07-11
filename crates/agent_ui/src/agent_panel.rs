@@ -1839,7 +1839,7 @@ impl AgentPanel {
                         .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
                             this.separator()
                                 .header("External Agents")
-                                .action("New Gemini Thread", NewAcpThread.boxed_clone())
+                                .action("New Claude Code Thread", NewAcpThread.boxed_clone())
                         });
                     menu
                 }))
