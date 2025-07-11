@@ -570,20 +570,29 @@ fn render_single_memory_view_line(
                 .h_full()
                 .px_1()
                 .mr_4()
-                .gap_x_1p5()
+                // .gap_x_1p5()
                 .border_x_1()
                 .border_color(Color::Muted.color(cx))
-                .children(memory.iter().map(|cell| {
+                .children(memory.iter().enumerate().map(|(ix, cell)| {
                     let as_character = char::from(cell.0.unwrap_or(0));
                     let as_visible = if as_character.is_ascii_graphic() {
                         as_character
                     } else {
                         '·'
                     };
-                    Label::new(format!("{as_visible}"))
-                        .buffer_font(cx)
-                        .when(cell.0.is_none(), |this| this.color(Color::Muted))
-                        .size(ui::LabelSize::Small)
+                    div()
+                        .px_0p5()
+                        .when_some(view_state.selection.as_ref(), |this, selection| {
+                            this.when(selection.contains(base_address + ix as u64), |this| {
+                                this.bg(Color::Accent.color(cx))
+                            })
+                        })
+                        .child(
+                            Label::new(format!("{as_visible}"))
+                                .buffer_font(cx)
+                                .when(cell.0.is_none(), |this| this.color(Color::Muted))
+                                .size(ui::LabelSize::Small),
+                        )
                 })),
         )
         .into_any()
