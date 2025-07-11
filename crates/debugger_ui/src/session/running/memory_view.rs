@@ -522,7 +522,16 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx))
+                                this.bg(Color::Accent.color(cx)).child(
+                                    h_flex()
+                                        .absolute()
+                                        .bottom_0p5()
+                                        .left_0()
+                                        .right_0()
+                                        .p_0p5()
+                                        .border_b_1()
+                                        .border_color(gpui::red()),
+                                )
                             })
                         })
                         .child(
