@@ -8,8 +8,8 @@ mod updater;
 #[cfg(target_os = "windows")]
 #[derive(clap::Parser, Debug)]
 struct Args {
-    #[clap(long, default_value = "true")]
-    launch: bool,
+    #[clap(long, help = "Launch Zed after update")]
+    launch: Option<bool>,
 }
 
 #[cfg(target_os = "windows")]
@@ -61,11 +61,10 @@ mod windows_impl {
             .to_path_buf();
 
         log::info!("======= Starting Zed update =======");
-        log::info!("Args: {:?}", args);
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
         std::thread::spawn(move || {
-            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
+            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch.unwrap_or(true));
             tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
