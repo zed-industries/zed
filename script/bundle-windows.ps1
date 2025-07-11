@@ -167,7 +167,7 @@ function BuildInstaller {
         }
         "dev" {
             $appId = "{{8357632E-24A4-4F32-BA97-E575B4D1FE5D}"
-            $appIconName = "app-icon-nightly"
+            $appIconName = "app-icon-dev"
             $appName = "Zed Dev"
             $appDisplayName = "Zed Dev"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-dev"
