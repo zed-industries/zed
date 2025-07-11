@@ -860,8 +860,8 @@ impl crate::Keystroke {
         }
 
         // Ignore control characters (and DEL) for the purposes of key_char
-        let key_char = (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.clone().is_empty())
-            .then_some(key_utf8.clone());
+        let key_char =
+            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         Self {
             modifiers,
