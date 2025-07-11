@@ -1761,6 +1761,7 @@ impl Session {
                 this.memory.clear(cx.background_executor());
                 this.invalidate_command_type::<ReadMemory>();
                 this.invalidate_command_type::<VariablesCommand>();
+                cx.emit(SessionEvent::Variables);
                 response.ok()
             },
             cx,

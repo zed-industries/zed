@@ -11,9 +11,9 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
-    FluentBuilder, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
-    PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
-    Styled, TextSize, Window, div, h_flex, px, v_flex,
+    FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
+    ParentElement, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
+    StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 
@@ -27,6 +27,7 @@ pub(crate) struct MemoryView {
     query_editor: Entity<Editor>,
     session: Entity<Session>,
     width_picker_handle: PopoverMenuHandle<ContextMenu>,
+    is_writing_memory: bool,
 }
 
 impl Focusable for MemoryView {
@@ -117,7 +118,7 @@ impl MemoryView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Memory Address or Expression", cx);
+            editor.set_placeholder_text("Go to Memory Address / Expression", cx);
             editor
         });
 
@@ -132,6 +133,7 @@ impl MemoryView {
             query_editor,
             session,
             width_picker_handle: Default::default(),
+            is_writing_memory: false,
         }
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -389,14 +391,30 @@ impl MemoryView {
         .handle(self.width_picker_handle.clone())
     }
 
-    fn change_address(&mut self, _: &menu::Confirm, _: &mut Window, cx: &mut Context<Self>) {
+    fn change_address(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
-            self.session.update(cx, |this, cx| {
-                let range = drag.memory_range();
-                let memory = vec![0xcc_u8; (range.end() - range.start()) as usize + 1];
-                this.write_memory(*range.start(), &memory, cx);
-            });
+            if !self.is_writing_memory {
+                self.query_editor.update(cx, |this, cx| {
+                    this.clear(window, cx);
+                });
+                self.is_writing_memory = true;
+                self.query_editor.focus_handle(cx).focus(window);
+            } else if self.query_editor.focus_handle(cx).is_focused(window) {
+                let text = self.query_editor.read(cx).text(cx);
+                self.session.update(cx, |this, cx| {
+                    let range = drag.memory_range();
+
+                    if let Ok(as_hex) = hex::decode(text) {
+                        this.write_memory(*range.start(), &as_hex, cx);
+                    }
+                });
+                self.is_writing_memory = false;
+            }
+
             cx.notify();
+            return;
+        }
+        if !self.query_editor.focus_handle(cx).is_focused(window) {
             return;
         }
         use parse_int::parse;
@@ -573,10 +591,16 @@ impl Render for MemoryView {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
+        let icon = if self.is_writing_memory {
+            IconName::Pencil
+        } else {
+            IconName::ArrowCircle
+        };
         v_flex()
             .id("Memory-view")
             .on_action(cx.listener(Self::cancel))
             .p_1()
+            .on_action(cx.listener(Self::change_address))
             .size_full()
             .track_focus(&self.focus_handle)
             .on_hover(cx.listener(|this, hovered, window, cx| {
@@ -598,10 +622,11 @@ impl Render for MemoryView {
                             .w_full()
                             .rounded_md()
                             .border_1()
-                            .p_0p5()
+                            .gap_x_2()
+                            .px_2()
+                            .py_0p5()
                             .mb_0p5()
                             .bg(cx.theme().colors().editor_background)
-                            .on_action(cx.listener(Self::change_address))
                             .when_else(
                                 self.query_editor
                                     .focus_handle(cx)
@@ -609,6 +634,7 @@ impl Render for MemoryView {
                                 |this| this.border_color(cx.theme().colors().border_focused),
                                 |this| this.border_color(cx.theme().colors().border_transparent),
                             )
+                            .child(Icon::new(icon).size(ui::IconSize::XSmall))
                             .child(self.render_query_bar(cx)),
                     )
                     .child(self.render_width_picker(window, cx)),
