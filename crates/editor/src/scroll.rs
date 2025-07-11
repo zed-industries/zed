@@ -216,80 +216,49 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let (new_anchor, top_row) = if scroll_position.y <= 0. && scroll_position.x <= 0. {
-            (
-                ScrollAnchor {
-                    anchor: Anchor::min(),
-                    offset: scroll_position.max(&gpui::Point::default()),
-                },
-                0,
-            )
-        } else if scroll_position.y <= 0. {
-            let buffer_point = map
-                .clip_point(
-                    DisplayPoint::new(DisplayRow(0), scroll_position.x as u32),
-                    Bias::Left,
-                )
-                .to_point(map);
-            let anchor = map.buffer_snapshot.anchor_at(buffer_point, Bias::Right);
-
-            (
-                ScrollAnchor {
-                    anchor: anchor,
-                    offset: scroll_position.max(&gpui::Point::default()),
-                },
-                0,
-            )
-        } else {
-            let scroll_top = scroll_position.y;
-            let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
-                ScrollBeyondLastLine::OnePage => scroll_top,
-                ScrollBeyondLastLine::Off => {
-                    if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_point().row().0 as f32;
-                        scroll_top.min(max_row - height_in_lines + 1.).max(0.)
-                    } else {
-                        scroll_top
-                    }
+        let scroll_top = scroll_position.y.max(0.);
+        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scroll_top,
+            ScrollBeyondLastLine::Off => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().0 as f32;
+                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                } else {
+                    scroll_top
                 }
-                ScrollBeyondLastLine::VerticalScrollMargin => {
-                    if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_point().row().0 as f32;
-                        scroll_top
-                            .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
-                            .max(0.)
-                    } else {
-                        scroll_top
-                    }
+            }
+            ScrollBeyondLastLine::VerticalScrollMargin => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().0 as f32;
+                    scroll_top
+                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                        .max(0.)
+                } else {
+                    scroll_top
                 }
-            };
-
-            let scroll_top_row = DisplayRow(scroll_top as u32);
-            let scroll_top_buffer_point = map
-                .clip_point(
-                    DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
-                    Bias::Left,
-                )
-                .to_point(map);
-            let top_anchor = map
-                .buffer_snapshot
-                .anchor_at(scroll_top_buffer_point, Bias::Right);
-
-            (
-                ScrollAnchor {
-                    anchor: top_anchor,
-                    offset: point(
-                        scroll_position.x.max(0.),
-                        scroll_top - top_anchor.to_display_point(map).row().as_f32(),
-                    ),
-                },
-                scroll_top_buffer_point.row,
-            )
+            }
         };
 
+        let scroll_top_row = DisplayRow(scroll_top as u32);
+        let scroll_top_buffer_point = map
+            .clip_point(
+                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
+                Bias::Left,
+            )
+            .to_point(map);
+        let top_anchor = map
+            .buffer_snapshot
+            .anchor_at(scroll_top_buffer_point, Bias::Right);
+
         self.set_anchor(
-            new_anchor,
-            top_row,
+            ScrollAnchor {
+                anchor: top_anchor,
+                offset: point(
+                    scroll_position.x.max(0.),
+                    scroll_top - top_anchor.to_display_point(map).row().as_f32(),
+                ),
+            },
+            scroll_top_buffer_point.row,
             local,
             autoscroll,
             workspace_id,
