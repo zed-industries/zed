@@ -32,12 +32,19 @@ use workspace::{
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum View {
+    AdapterLogs,
+    RpcMessages,
+    InitializationSequence,
+}
+
 struct DapLogView {
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
     log_store: Entity<LogStore>,
     editor_subscriptions: Vec<Subscription>,
-    current_view: Option<(SessionId, LogKind)>,
+    current_view: Option<(SessionId, View)>,
     project: Entity<Project>,
     _subscriptions: Vec<Subscription>,
 }
@@ -510,8 +517,9 @@ impl Render for DapLogToolbarItemView {
                             sub_item.adapter_name,
                             sub_item.session_id.0,
                             match sub_item.selected_entry {
-                                LogKind::Adapter => ADAPTER_LOGS,
-                                LogKind::Rpc => RPC_MESSAGES,
+                                View::AdapterLogs => ADAPTER_LOGS,
+                                View::RpcMessages => RPC_MESSAGES,
+                                View::InitializationSequence => INITIALIZATION_SEQUENCE,
                             }
                         ))
                     })
@@ -669,8 +677,11 @@ impl DapLogView {
 
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, event, cx| match event {
             Event::NewLogEntry { id, entry, kind } => {
-                if log_view.current_view == Some((id.session_id, *kind))
-                    && log_view.project == *id.project
+                let is_current_view = match (log_view.current_view, *kind) {
+                    (Some((i, View::AdapterLogs)), LogKind::Adapter) | (Some((i, View::RpcMessages)), LogKind::Rpc) if i == id.session_id => log_view.project == *id.project,
+                    _ => false,
+                };
+                if is_current_view
                 {
                     log_view.editor.update(cx, |editor, cx| {
                         editor.set_read_only(false);
@@ -771,7 +782,7 @@ impl DapLogView {
                         has_adapter_logs: state.has_adapter_logs,
                         selected_entry: self
                             .current_view
-                            .map_or(LogKind::Adapter, |(_, kind)| kind),
+                            .map_or(View::AdapterLogs, |(_, kind)| kind),
                     })
                     .collect::<Vec<_>>()
             })
@@ -789,7 +800,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((id.session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, View::RpcMessages));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -830,7 +841,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(message_log) = message_log {
-            self.current_view = Some((id.session_id, LogKind::Adapter));
+            self.current_view = Some((id.session_id, View::AdapterLogs));
             let (editor, editor_subscriptions) = Self::editor_for_logs(message_log, window, cx);
             editor
                 .read(cx)
@@ -859,7 +870,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((id.session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, View::InitializationSequence));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -903,7 +914,7 @@ pub(crate) struct DapMenuItem {
     pub session_id: SessionId,
     pub adapter_name: DebugAdapterName,
     pub has_adapter_logs: bool,
-    pub selected_entry: LogKind,
+    pub selected_entry: View,
 }
 
 const ADAPTER_LOGS: &str = "Adapter Logs";
