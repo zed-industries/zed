@@ -375,8 +375,10 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
+        _ask_pass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<()>> {
+        _cx: AsyncApp,
+    ) -> BoxFuture<'static, Result<()>> {
         unimplemented!()
     }
 

@@ -607,6 +607,7 @@ dependencies = [
  "parking_lot",
  "smol",
  "tempfile",
+ "unindent",
  "util",
  "workspace-hack",
 ]
