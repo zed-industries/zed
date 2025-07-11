@@ -71,8 +71,6 @@ const ASKPASS_SCRIPT_NAME: &str = "askpass.ps1";
 
 #[cfg(not(target_os = "windows"))]
 const GPG_SCRIPT_NAME: &str = "gpg.sh";
-#[cfg(target_os = "windows")]
-const GPG_SCRIPT_NAME: &str = "gpg.ps1";
 
 impl AskPassSession {
     /// This will create a new AskPassSession.

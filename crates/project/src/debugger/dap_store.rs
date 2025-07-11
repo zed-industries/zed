@@ -669,25 +669,25 @@ impl DapStore {
             .map(|session_id| self.shutdown_session(*session_id, cx))
             .collect::<Vec<_>>();
 
-        // let shutdown_parent_task = if let Some(parent_session) = session
-        //     .read(cx)
-        //     .parent_id(cx)
-        //     .and_then(|session_id| self.session_by_id(session_id))
-        // {
-        //     let shutdown_id = parent_session.update(cx, |parent_session, _| {
-        //         parent_session.remove_child_session_id(session_id);
+        let shutdown_parent_task = if let Some(parent_session) = session
+            .read(cx)
+            .parent_id(cx)
+            .and_then(|session_id| self.session_by_id(session_id))
+        {
+            let shutdown_id = parent_session.update(cx, |parent_session, _| {
+                parent_session.remove_child_session_id(session_id);
 
-        //         if parent_session.child_session_ids().len() == 0 {
-        //             Some(parent_session.session_id())
-        //         } else {
-        //             None
-        //         }
-        //     });
+                if parent_session.child_session_ids().len() == 0 {
+                    Some(parent_session.session_id())
+                } else {
+                    None
+                }
+            });
 
-        //     shutdown_id.map(|session_id| self.shutdown_session(session_id, cx))
-        // } else {
-        //     None
-        // };
+            shutdown_id.map(|session_id| self.shutdown_session(session_id, cx))
+        } else {
+            None
+        };
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
@@ -700,9 +700,9 @@ impl DapStore {
 
             shutdown_task.await;
 
-            // if let Some(parent_task) = shutdown_parent_task {
-            //     parent_task.await?;
-            // }
+            if let Some(parent_task) = shutdown_parent_task {
+                parent_task.await?;
+            }
 
             Ok(())
         })
