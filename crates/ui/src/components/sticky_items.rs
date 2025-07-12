@@ -216,7 +216,7 @@ where
 
         let expanded_width = bounds.size.width + scroll_offset.x.abs();
 
-        let available_space = size(
+        let decor_available_space = size(
             AvailableSpace::Definite(expanded_width),
             AvailableSpace::Definite(bounds.size.height),
         );
@@ -238,12 +238,14 @@ where
             (None, indents)
         };
 
+        let base_origin = bounds.origin - point(px(0.), scroll_offset.y);
+
         for decoration in &self.decorations {
             if let Some(drifting_indent) = drifting_indent {
                 let drifting_indent_vec: SmallVec<[usize; 8]> =
                     [drifting_indent].into_iter().collect();
 
-                let sticky_origin = bounds.origin - point(px(0.), scroll_offset.y)
+                let sticky_origin = base_origin
                     + point(px(0.), item_height * rest_indents.len() + drifting_y_offset);
                 let decoration_bounds = Bounds::new(sticky_origin, bounds.size);
 
@@ -255,14 +257,13 @@ where
                     window,
                     cx,
                 );
-                drifting_dec.layout_as_root(available_space, window, cx);
+                drifting_dec.layout_as_root(decor_available_space, window, cx);
                 drifting_dec.prepaint_at(sticky_origin, window, cx);
                 last_decoration_element = Some(drifting_dec);
             }
 
             if !rest_indents.is_empty() {
-                let decoration_bounds =
-                    Bounds::new(bounds.origin - point(px(0.), scroll_offset.y), bounds.size);
+                let decoration_bounds = Bounds::new(base_origin, bounds.size);
                 let mut rest_dec = decoration.as_ref().compute(
                     &rest_indents,
                     decoration_bounds,
@@ -271,7 +272,7 @@ where
                     window,
                     cx,
                 );
-                rest_dec.layout_as_root(available_space, window, cx);
+                rest_dec.layout_as_root(decor_available_space, window, cx);
                 rest_dec.prepaint_at(bounds.origin, window, cx);
                 rest_decoration_elements.push(rest_dec);
             }
@@ -293,7 +294,7 @@ where
         // order of prepaint is important here
         // mouse events checks hitboxes in reverse insertion order
         if let Some(ref mut drifting_element) = drifting_element {
-            let sticky_origin = bounds.origin - point(px(0.), scroll_offset.y)
+            let sticky_origin = base_origin
                 + point(
                     px(0.),
                     item_height * rest_elements.len() + drifting_y_offset,
@@ -304,8 +305,7 @@ where
         }
 
         for (ix, element) in rest_elements.iter_mut().enumerate() {
-            let sticky_origin =
-                bounds.origin - point(px(0.), scroll_offset.y) + point(px(0.), item_height * ix);
+            let sticky_origin = base_origin + point(px(0.), item_height * ix);
 
             element.layout_as_root(element_available_space, window, cx);
             element.prepaint_at(sticky_origin, window, cx);
