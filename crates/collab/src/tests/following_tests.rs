@@ -1013,7 +1013,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // and some of which were originally opened by client B.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.close_inactive_items(&Default::default(), window, cx)
+            pane.close_inactive_items(&Default::default(), None, window, cx)
                 .detach();
         });
     });

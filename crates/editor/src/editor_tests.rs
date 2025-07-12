@@ -21465,7 +21465,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21501,7 +21501,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
