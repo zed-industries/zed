@@ -3362,8 +3362,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3374,8 +3380,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.declarations(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3386,8 +3398,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3398,8 +3416,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.implementations(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3410,8 +3434,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
