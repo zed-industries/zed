@@ -2,7 +2,7 @@
 use super::*;
 use gpui::{Action, actions};
 use schemars::JsonSchema;
-use util::serde::default_true;
+use util::{paths::PathExt, serde::default_true};
 
 /// Selects the next occurrence of the current selection.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
@@ -258,6 +258,57 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(no_json, no_register)]
+pub struct DiffText {
+    pub old_text_source: TextSource,
+    pub new_text_source: TextSource,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum TextSource {
+    Editor(Entity<Editor>),
+    Clipboard(String),
+}
+
+// TODO - diff - where should this impl go? I don't see any other impl here.
+impl TextSource {
+    fn clipboard_label() -> String {
+        "Clipboard".to_string()
+    }
+
+    pub fn label(&self, cx: &App) -> String {
+        // TODO - diff - line location
+        match self {
+            TextSource::Clipboard(_) => Self::clipboard_label(),
+            TextSource::Editor(editor) => editor.read(cx).buffer().read(cx).title(cx).to_string(),
+        }
+    }
+
+    pub fn path(&self, cx: &App) -> String {
+        // TODO - diff - line location
+        match self {
+            TextSource::Clipboard(_) => Self::clipboard_label(),
+            TextSource::Editor(editor) => editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .map(|b| {
+                    b.read(cx)
+                        .file()
+                        .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                })
+                .flatten()
+                .unwrap_or("untitled".into()),
+        }
+    }
+
+    fn selection_location(selection: Range<usize>) -> String {
+        todo!()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
 pub enum UuidVersion {
     #[default]
@@ -377,6 +428,8 @@ actions!(
         DeleteToNextSubwordEnd,
         /// Deletes to the start of the previous subword.
         DeleteToPreviousSubwordStart,
+        /// Diffs the text stored in the clipboard against the current selection.
+        DiffClipboardWithSelection,
         /// Displays names of all active cursors.
         DisplayCursorNames,
         /// Duplicates the current line below.
