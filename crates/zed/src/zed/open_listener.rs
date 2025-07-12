@@ -37,6 +37,7 @@ pub struct OpenRequest {
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
     pub dock_menu_action: Option<usize>,
+    pub clone_repo: Option<(String, String)>,
 }
 
 impl OpenRequest {
@@ -54,6 +55,8 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
+            } else if let Some(url) = url.strip_prefix("zed://repo/") {
+                this.parse_clone_repo(url)?;
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
@@ -130,6 +133,18 @@ impl OpenRequest {
             }
         }
         anyhow::bail!("invalid zed url: {request_path}")
+    }
+
+    fn parse_clone_repo(&mut self, url: &str) -> Result<()> {
+        let url = urlencoding::decode(url)?;
+        let folder_name = url
+            .split('/')
+            .last()
+            .ok_or_else(|| anyhow!("Inviald git url"))?
+            .trim_end_matches(".git")
+            .to_owned();
+        self.clone_repo = Some((url.to_string(), folder_name));
+        Ok(())
     }
 }
 
