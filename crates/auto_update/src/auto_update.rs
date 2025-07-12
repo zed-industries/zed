@@ -24,7 +24,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-// use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -84,6 +83,7 @@ pub struct AutoUpdater {
     current_version: SemanticVersion,
     http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
+    #[cfg(target_os = "windows")]
     exit_updater: Option<Subscription>,
 }
 
@@ -159,15 +159,6 @@ impl Global for GlobalAutoUpdate {}
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
-
-    // cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-    //     workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
-
-    //     workspace.register_action(|_, action, _, cx| {
-    //         view_release_notes(action, cx);
-    //     });
-    // })
-    // .detach();
 
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
@@ -318,6 +309,7 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn new(
         current_version: SemanticVersion,
         http_client: Arc<HttpClientWithUrl>,
@@ -325,12 +317,14 @@ impl AutoUpdater {
     ) -> Self {
         // Check if there is a pending installer
         // If there is, run the installer and exit
+        #[cfg(target_os = "windows")]
         let exit_updater = cx.on_app_quit(|_| async move { check_pending_installation() });
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
             http_client,
             pending_poll: None,
+            #[cfg(target_os = "windows")]
             exit_updater: Some(exit_updater),
         }
     }
@@ -713,6 +707,7 @@ impl AutoUpdater {
         })
     }
 
+    #[cfg(target_os = "windows")]
     pub fn remove_exit_updater(&mut self) {
         self.exit_updater.take();
     }

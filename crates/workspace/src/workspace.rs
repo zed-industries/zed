@@ -7506,54 +7506,7 @@ pub fn join_in_room_project(
     })
 }
 
-// pub fn reload(reload: &Reload, cx: &mut App) {
-//     #[cfg(not(target_os = "windows"))]
-//     prepare_reload(reload, cx, |binary_path, cx| cx.restart(binary_path));
-//     #[cfg(target_os = "windows")]
-//     prepare_reload(reload, cx, |binary_path, cx| {
-//         // If we are updating, we need to remove the exit updater.
-
-//         use auto_update::AutoUpdater;
-//         if let Some(auto_updater) = AutoUpdater::get(cx) {
-//             cx.remove_exit_updater();
-//         }
-//         cx.restart(binary_path)
-//     });
-// }
-
 pub fn reload(reload: &Reload, cx: &mut App) {
-    #[cfg(not(target_os = "windows"))]
-    reload_impl(reload, cx, |binary_path, cx| cx.restart(binary_path));
-
-    #[cfg(target_os = "windows")]
-    reload_impl(reload, cx, |reload_path, cx| {
-        // If we are updating, we need to remove the exit updater.
-        let update_path = auto_update::AutoUpdater::get(cx)
-            .map(|updater| {
-                updater.update(cx, |updater, _| {
-                    if let auto_update::AutoUpdateStatus::Updated { binary_path, .. } =
-                        updater.status()
-                    {
-                        updater.remove_exit_updater();
-                        Some(binary_path)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .flatten();
-        if update_path.is_some() {
-            cx.restart(update_path);
-        } else {
-            cx.restart(reload_path);
-        }
-    });
-}
-
-fn reload_impl<F>(reload: &Reload, cx: &mut App, f: F)
-where
-    F: FnOnce(Option<PathBuf>, &mut App) + 'static,
-{
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -7599,9 +7552,34 @@ where
                 }
             }
         }
-        cx.update(|cx| f(binary_path, cx))
+        cx.update(|cx| perform_restart(binary_path, cx))
     })
     .detach_and_log_err(cx);
+}
+
+#[cfg(target_os = "windows")]
+fn perform_restart(reload_path: Option<PathBuf>, cx: &mut App) {
+    // If we are updating, we need to remove the exit updater.
+    let update_path = auto_update::AutoUpdater::get(cx).and_then(|updater| {
+        updater.update(cx, |updater, _| {
+            if let auto_update::AutoUpdateStatus::Updated { binary_path, .. } = updater.status() {
+                updater.remove_exit_updater();
+                Some(binary_path)
+            } else {
+                None
+            }
+        })
+    });
+    if update_path.is_some() {
+        cx.restart(update_path);
+    } else {
+        cx.restart(reload_path);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn perform_restart(reload_path: Option<PathBuf>, cx: &mut App) {
+    cx.restart(reload_path);
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
