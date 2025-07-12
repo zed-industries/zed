@@ -442,10 +442,18 @@ impl DebugAdapter for FakeAdapter {
         _: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        let connection = task_definition
+            .tcp_connection
+            .as_ref()
+            .map(|connection| TcpArguments {
+                host: connection.host(),
+                port: connection.port.unwrap_or(17),
+                timeout: connection.timeout,
+            });
         Ok(DebugAdapterBinary {
             command: Some("command".into()),
             arguments: vec![],
-            connection: None,
+            connection,
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {
