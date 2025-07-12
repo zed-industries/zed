@@ -132,6 +132,7 @@ pub enum Operator {
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
+    HelixMatch,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1024,6 +1025,7 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::HelixMatch => "helix_m",
         }
     }
 
@@ -1037,6 +1039,7 @@ impl Operator {
             } => format!("^V{prefix}"),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1075,7 +1078,8 @@ impl Operator {
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
-            | Operator::ToggleComments => false,
+            | Operator::ToggleComments
+            | Operator::HelixMatch => false,
         }
     }
 
@@ -1114,7 +1118,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::Register
             | Operator::RecordRegister
-            | Operator::ReplayRegister => false,
+            | Operator::ReplayRegister
+            | Operator::HelixMatch => false,
         }
     }
 }
