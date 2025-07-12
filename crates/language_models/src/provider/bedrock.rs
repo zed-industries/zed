@@ -258,13 +258,12 @@ impl BedrockLanguageModelProvider {
             }),
         });
 
-        let tokio_handle = Tokio::handle(cx);
-
-        let coerced_client = AwsHttpClient::new(http_client.clone(), tokio_handle.clone());
+        let handler = Tokio::handle(cx);
+        let coerced_client = AwsHttpClient::new(http_client.clone());
 
         Self {
             http_client: coerced_client,
-            handler: tokio_handle.clone(),
+            handler: handler,
             state,
         }
     }
