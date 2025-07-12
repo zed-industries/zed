@@ -221,9 +221,9 @@ pub enum DockPosition {
 impl DockPosition {
     fn label(&self) -> &'static str {
         match self {
-            Self::Left => "left",
-            Self::Bottom => "bottom",
-            Self::Right => "right",
+            Self::Left => "Left",
+            Self::Bottom => "Bottom",
+            Self::Right => "Right",
         }
     }
 
@@ -864,7 +864,7 @@ impl Render for PanelButtons {
                     let action = dock.toggle_action();
 
                     let tooltip: SharedString =
-                        format!("Close {} dock", dock.position.label()).into();
+                        format!("Close {} Dock", dock.position.label()).into();
 
                     (action, tooltip)
                 } else {
@@ -923,6 +923,7 @@ impl Render for PanelButtons {
             .collect();
 
         let has_buttons = !buttons.is_empty();
+
         h_flex()
             .gap_1()
             .children(buttons)

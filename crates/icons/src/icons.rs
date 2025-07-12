@@ -247,6 +247,7 @@ pub enum IconName {
     SwatchBook,
     Tab,
     Terminal,
+    TerminalAlt,
     TextSnippet,
     ThumbsDown,
     ThumbsUp,
