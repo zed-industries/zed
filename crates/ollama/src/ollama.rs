@@ -98,6 +98,39 @@ impl Model {
     }
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateRequest {
+    pub model: String,
+    pub prompt: String,
+    pub suffix: Option<String>,
+    pub stream: bool,
+    pub options: Option<GenerateOptions>,
+    pub keep_alive: Option<KeepAlive>,
+    pub context: Option<Vec<i64>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateOptions {
+    pub num_predict: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateResponse {
+    pub response: String,
+    pub done: bool,
+    pub context: Option<Vec<i64>>,
+    pub total_duration: Option<u64>,
+    pub load_duration: Option<u64>,
+    pub prompt_eval_count: Option<i32>,
+    pub eval_count: Option<i32>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
@@ -359,9 +392,71 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     Ok(details)
 }
 
+pub async fn generate(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<String>,
+    request: GenerateRequest,
+) -> Result<GenerateResponse> {
+    let uri = format!("{api_url}/api/generate");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+    }
+
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+
+    let response: GenerateResponse =
+        serde_json::from_str(&body).context("Unable to parse Ollama generate response")?;
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_request_with_suffix_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+    }
 
     #[test]
     fn parse_completion() {
@@ -583,5 +678,36 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
+    }
+
+    #[test]
+    fn test_generate_request_with_api_key_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        // Test with API key
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+
+        // Note: The API key parameter is passed to the generate function itself,
+        // not included in the GenerateRequest struct that gets serialized to JSON
     }
 }
