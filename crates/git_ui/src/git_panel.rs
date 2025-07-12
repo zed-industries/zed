@@ -1260,11 +1260,14 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
+        self.bulk_staging.take();
         let (stage, repo_paths) = match entry {
             GitListEntry::GitStatusEntry(status_entry) => {
                 if status_entry.status.staging().is_fully_staged() {
                     (false, vec![status_entry.clone()])
                 } else {
+                    self.set_bulk_staging_anchor(status_entry.repo_path.clone(), cx);
+
                     (true, vec![status_entry.clone()])
                 }
             }
@@ -1377,6 +1380,13 @@ impl GitPanel {
         if let Some(selected_entry) = self.get_selected_entry().cloned() {
             self.toggle_staged_for_entry(&selected_entry, window, cx);
         }
+    }
+
+    fn stage_range(&mut self, _: &git::StageRange, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.selected_entry else {
+            return;
+        };
+        self.stage_bulk(index, cx);
     }
 
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
@@ -4140,12 +4150,6 @@ impl GitPanel {
                     cx.stop_propagation();
                 },
             )
-            // .on_secondary_mouse_down(cx.listener(
-            //     move |this, event: &MouseDownEvent, window, cx| {
-            //         this.deploy_entry_context_menu(event.position, ix, window, cx);
-            //         cx.stop_propagation();
-            //     },
-            // ))
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -4165,18 +4169,9 @@ impl GitPanel {
                                         if !has_write_access {
                                             return;
                                         }
-                                        if click.modifiers().shift
-                                            && let Some(op) = this.bulk_staging.clone()
-                                        {
-                                            this.stage_bulk(op, entry.repo_path.clone(), cx);
+                                        if click.modifiers().shift {
+                                            this.stage_bulk(ix, cx);
                                         } else {
-                                            this.bulk_staging.take();
-                                            if !entry.staging.is_fully_staged() {
-                                                this.set_bulk_staging_anchor(
-                                                    entry.repo_path.clone(),
-                                                    cx,
-                                                );
-                                            }
                                             this.toggle_staged_for_entry(
                                                 &GitListEntry::GitStatusEntry(entry.clone()),
                                                 window,
@@ -4261,17 +4256,20 @@ impl GitPanel {
         })
     }
 
-    fn stage_bulk(&mut self, op: BulkStaging, path: RepoPath, cx: &mut Context<'_, Self>) {
-        let Some(mut start_ix) = self.entry_by_path(&op.anchor, cx) else {
+    fn stage_bulk(&mut self, mut index: usize, cx: &mut Context<'_, Self>) {
+        let Some(op) = self.bulk_staging.as_ref() else {
             return;
         };
-        let Some(mut end_ix) = self.entry_by_path(&path, cx) else {
+        let Some(mut anchor_index) = self.entry_by_path(&op.anchor, cx) else {
             return;
         };
-        if end_ix < start_ix {
-            std::mem::swap(&mut start_ix, &mut end_ix);
+        if index < anchor_index {
+            std::mem::swap(&mut index, &mut anchor_index);
         }
-        let entries = self.entries[start_ix..=end_ix]
+        let entries = self
+            .entries
+            .get(anchor_index..=index)
+            .unwrap_or_default()
             .iter()
             .filter_map(|entry| entry.status_entry().cloned())
             .collect::<Vec<_>>();
@@ -4326,6 +4324,7 @@ impl Render for GitPanel {
             .track_focus(&self.focus_handle)
             .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(Self::toggle_staged_for_selected))
+                    .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::commit))
                     .on_action(cx.listener(GitPanel::amend))
                     .on_action(cx.listener(GitPanel::cancel))
@@ -5111,54 +5110,6 @@ mod tests {
             ],
         );
 
-        // TODO(cole) restore this once repository deduplication is implemented properly.
-        //cx.update_window_entity(&panel, |panel, window, cx| {
-        //    panel.select_last(&Default::default(), window, cx);
-        //    assert_eq!(panel.selected_entry, Some(2));
-        //    panel.open_diff(&Default::default(), window, cx);
-        //});
-        //cx.run_until_parked();
-
-        //let worktree_roots = workspace.update(cx, |workspace, cx| {
-        //    workspace
-        //        .worktrees(cx)
-        //        .map(|worktree| worktree.read(cx).abs_path())
-        //        .collect::<Vec<_>>()
-        //});
-        //pretty_assertions::assert_eq!(
-        //    worktree_roots,
-        //    vec![
-        //        Path::new(path!("/root/zed/crates/gpui")).into(),
-        //        Path::new(path!("/root/zed/crates/util/util.rs")).into(),
-        //    ]
-        //);
-
-        //project.update(cx, |project, cx| {
-        //    let git_store = project.git_store().read(cx);
-        //    // The repo that comes from the single-file worktree can't be selected through the UI.
-        //    let filtered_entries = filtered_repository_entries(git_store, cx)
-        //        .iter()
-        //        .map(|repo| repo.read(cx).worktree_abs_path.clone())
-        //        .collect::<Vec<_>>();
-        //    assert_eq!(
-        //        filtered_entries,
-        //        [Path::new(path!("/root/zed/crates/gpui")).into()]
-        //    );
-        //    // But we can select it artificially here.
-        //    let repo_from_single_file_worktree = git_store
-        //        .repositories()
-        //        .values()
-        //        .find(|repo| {
-        //            repo.read(cx).worktree_abs_path.as_ref()
-        //                == Path::new(path!("/root/zed/crates/util/util.rs"))
-        //        })
-        //        .unwrap()
-        //        .clone();
-
-        //    // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
-        //    repo_from_single_file_worktree.update(cx, |repo, cx| repo.set_as_active_repository(cx));
-        //});
-
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
         });
@@ -5185,5 +5136,10 @@ mod tests {
                 },),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_bulk_staging(cx: &mut TestAppContext) {
+        todo!()
     }
 }
