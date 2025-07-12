@@ -25,7 +25,8 @@ use windows::{
 
 use crate::{Args, OpenListener, RawOpenRequest};
 
-pub fn is_first_instance() -> bool {
+#[inline]
+fn is_first_instance() -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -37,7 +38,8 @@ pub fn is_first_instance() -> bool {
     unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
 }
 
-pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
+pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
+    let is_first_instance = is_first_instance();
     if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || {

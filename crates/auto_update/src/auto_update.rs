@@ -23,7 +23,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -83,6 +82,8 @@ pub struct AutoUpdater {
     current_version: SemanticVersion,
     http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
+    #[cfg(target_os = "windows")]
+    exit_updater: Option<gpui::Subscription>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -158,18 +159,9 @@ impl Global for GlobalAutoUpdate {}
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
-
-        workspace.register_action(|_, action, _, cx| {
-            view_release_notes(action, cx);
-        });
-    })
-    .detach();
-
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
-        let updater = AutoUpdater::new(version, http_client);
+        let updater = AutoUpdater::new(version, http_client, cx);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
             .map(|channel| channel.poll_for_updates())
@@ -316,12 +308,23 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: SemanticVersion, http_client: Arc<HttpClientWithUrl>) -> Self {
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    fn new(
+        current_version: SemanticVersion,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &App,
+    ) -> Self {
+        // Check if there is a pending installer
+        // If there is, run the installer and exit
+        #[cfg(target_os = "windows")]
+        let exit_updater = cx.on_app_quit(|_| async move { check_pending_installation() });
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
             http_client,
             pending_poll: None,
+            #[cfg(target_os = "windows")]
+            exit_updater: Some(exit_updater),
         }
     }
 
@@ -702,6 +705,11 @@ impl AutoUpdater {
                 .is_some())
         })
     }
+
+    #[cfg(target_os = "windows")]
+    pub fn remove_exit_updater(&mut self) {
+        self.exit_updater.take();
+    }
 }
 
 async fn download_remote_server_binary(
@@ -921,29 +929,36 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBu
         "failed to start installer: {:?}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(std::env::current_exe()?)
+    // We return the path to the update helper program, because it will
+    // perform the final steps of the update process, copying the new binary,
+    // deleting the old one, and launching the new binary.
+    let helper_path = std::env::current_exe()?
+        .parent()
+        .context("No parent dir for Zed.exe")?
+        .join("tools\\auto_update_helper.exe");
+    Ok(helper_path)
 }
 
-pub fn check_pending_installation() -> bool {
+pub fn check_pending_installation() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
     else {
-        return false;
+        return;
     };
 
     // The installer will create a flag file after it finishes updating
     let flag_file = installer_path.join("versions.txt");
-    if flag_file.exists() {
-        if let Some(helper) = installer_path
+    if flag_file.exists()
+        && let Some(helper) = installer_path
             .parent()
             .map(|p| p.join("tools\\auto_update_helper.exe"))
-        {
-            let _ = std::process::Command::new(helper).spawn();
-            return true;
-        }
+    {
+        let mut command = std::process::Command::new(helper);
+        command.arg("--launch");
+        command.arg("false");
+        let _ = command.spawn();
     }
-    false
 }
 
 #[cfg(test)]

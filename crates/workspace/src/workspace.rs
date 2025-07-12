@@ -586,6 +586,17 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
             }
         }
     });
+
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_, action: &auto_update::Check, window, cx| {
+            auto_update::check(action, window, cx)
+        });
+
+        workspace.register_action(|_, action, _, cx| {
+            auto_update::view_release_notes(action, cx);
+        });
+    })
+    .detach();
 }
 
 type BuildProjectItemFn =
@@ -7545,10 +7556,34 @@ pub fn reload(reload: &Reload, cx: &mut App) {
                 }
             }
         }
-
-        cx.update(|cx| cx.restart(binary_path))
+        cx.update(|cx| perform_restart(binary_path, cx))
     })
     .detach_and_log_err(cx);
+}
+
+#[cfg(target_os = "windows")]
+fn perform_restart(reload_path: Option<PathBuf>, cx: &mut App) {
+    // If we are updating, we need to remove the exit updater.
+    let update_path = auto_update::AutoUpdater::get(cx).and_then(|updater| {
+        updater.update(cx, |updater, _| {
+            if let auto_update::AutoUpdateStatus::Updated { binary_path, .. } = updater.status() {
+                updater.remove_exit_updater();
+                Some(binary_path)
+            } else {
+                None
+            }
+        })
+    });
+    if update_path.is_some() {
+        cx.restart(update_path);
+    } else {
+        cx.restart(reload_path);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn perform_restart(reload_path: Option<PathBuf>, cx: &mut App) {
+    cx.restart(reload_path);
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
