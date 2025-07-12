@@ -35,7 +35,7 @@ use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_js
 use crate::PackageJsonData;
 
 const SERVER_PATH: &str =
-    "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
+    "node_modules/@zed-industries/vscode-langservers-extracted/bin/vscode-json-language-server";
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
@@ -141,7 +141,7 @@ pub struct JsonLspAdapter {
 }
 
 impl JsonLspAdapter {
-    const PACKAGE_NAME: &str = "vscode-langservers-extracted";
+    const PACKAGE_NAME: &str = "@zed-industries/vscode-langservers-extracted";
 
     pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
         Self {
