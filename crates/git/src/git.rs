@@ -31,8 +31,10 @@ actions!(
     git,
     [
         // per-hunk
-        /// Toggles the staged state of the hunk at cursor.
+        /// Toggles the staged state of the hunk or status entry at cursor.
         ToggleStaged,
+        /// Stage status entries between an anchor entry and the cursor.
+        StageRange,
         /// Stages the current hunk and moves to the next one.
         StageAndNext,
         /// Unstages the current hunk and moves to the next one.
