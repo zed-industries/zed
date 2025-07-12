@@ -304,11 +304,6 @@ impl TextSource {
                 .unwrap_or("untitled".into()),
         }
     }
-
-    fn selection_location(selection: Range<usize>) -> String {
-        // TODO - diff - implement
-        todo!()
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
