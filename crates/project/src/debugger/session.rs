@@ -52,7 +52,7 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
-use util::{ResultExt, debug_panic};
+use util::ResultExt;
 use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -933,7 +933,10 @@ impl Session {
                         task.take().unwrap().detach_and_log_err(cx);
                     }
                     _ => {
-                        debug_panic!("Booting debug session without a boot task");
+                        debug_assert!(
+                            this.parent_session.is_some(),
+                            "Booting a root debug session without a boot task"
+                        );
                     }
                 };
                 this.mode = SessionState::Running(mode);
