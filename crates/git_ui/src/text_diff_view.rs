@@ -11,16 +11,17 @@ use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer};
+use language::{self, Buffer, Point};
 use project::Project;
 use std::{
     any::{Any, TypeId},
+    ops::Range,
     pin::pin,
     sync::Arc,
     time::Duration,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
-use util::paths::PathExt;
+
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
@@ -48,34 +49,43 @@ impl TextDiffView {
         let old_text_source = diff_text_data.old_text_source.clone();
         let new_text_source = diff_text_data.new_text_source.clone();
 
-        let buffer = |text_source: &TextSource, cx: &mut App| match text_source {
-            TextSource::Clipboard(text) => Some(cx.new(|cx| language::Buffer::local(text, cx))),
-            TextSource::Editor(editor) => editor.update(cx, |editor, cx| {
-                let selections = editor.selections.all::<usize>(cx);
-                let buffer = editor.buffer().read(cx).as_singleton()?.read(cx);
-                let language = buffer.language().cloned();
-                let Some(first_selection) = selections.first() else {
-                    log::warn!(
-                        "There should always be at least one selection in Zed. This is a bug."
-                    );
-                    return None;
-                };
-                let selection_range = if first_selection.is_empty() {
-                    0..buffer.len()
-                } else {
-                    first_selection.range()
-                };
+        let buffer_and_selection_range = |text_source: &TextSource,
+                                          cx: &mut App|
+         -> Option<(Entity<Buffer>, Range<Point>)> {
+            match text_source {
+                TextSource::Clipboard(text) => {
+                    let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+                    let range = buffer.read(cx).max_point();
+                    Some((buffer, Point::new(0, 0)..range))
+                }
+                TextSource::Editor(editor) => {
+                    let editor_snapshot = editor.read(cx);
+                    let multibuffer = editor_snapshot.buffer().read(cx);
+                    let buffer = multibuffer.as_singleton()?.clone();
 
-                let text = buffer.text_for_range(selection_range).collect::<String>();
+                    editor.update(cx, |editor, cx| {
+                        let selections = editor.selections.all::<Point>(cx);
+                        let buffer_snapshot = buffer.read(cx);
+                        let Some(first_selection) = selections.first() else {
+                            log::warn!(
+                                "There should always be at least one selection in Zed. This is a bug."
+                            );
+                            return None;
+                        };
+                        let selection_range = if first_selection.is_empty() {
+                            Point::new(0, 0)..buffer_snapshot.max_point()
+                        } else {
+                            first_selection.start..first_selection.end
+                        };
 
-                let new_buffer = cx.new(|cx| language::Buffer::local(text, cx));
-                new_buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
-
-                Some(new_buffer)
-            }),
+                        Some((buffer.clone(), selection_range))
+                    })
+                }
+            }
         };
-        let old_buffer = buffer(&old_text_source, cx)?;
-        let new_buffer = buffer(&new_text_source, cx)?;
+
+        let (old_buffer, old_range) = buffer_and_selection_range(&old_text_source, cx)?;
+        let (new_buffer, new_range) = buffer_and_selection_range(&new_text_source, cx)?;
 
         let mut old_language = old_buffer.read_with(cx, |buffer, _| buffer.language().cloned());
         let mut new_language = new_buffer.read_with(cx, |buffer, _| buffer.language().cloned());
@@ -98,7 +108,15 @@ impl TextDiffView {
 
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-            let buffer_diff = build_buffer_diff(old_buffer.clone(), new_buffer.clone(), cx).await?;
+
+            let buffer_diff = build_range_based_diff(
+                old_buffer.clone(),
+                new_buffer.clone(),
+                old_range.clone(),
+                new_range.clone(),
+                cx,
+            )
+            .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
@@ -107,6 +125,8 @@ impl TextDiffView {
                         new_text_source,
                         old_buffer,
                         new_buffer,
+                        old_range,
+                        new_range,
                         buffer_diff,
                         project.clone(),
                         window,
@@ -126,7 +146,6 @@ impl TextDiffView {
         Some(task)
     }
 
-    // TODO - diff - match selections
     // TODO - diff - allow to be bidirectionally edited
     // TODO - diff - make sure breadcrumbs work
     // TODO - diff - make sure tabs have dynamic titles
@@ -137,13 +156,22 @@ impl TextDiffView {
         new_text_source: TextSource,
         old_buffer: Entity<Buffer>,
         new_buffer: Entity<Buffer>,
+        _old_range: Range<Point>,
+        new_range: Range<Point>,
         diff: Entity<BufferDiff>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(new_buffer.clone(), cx);
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+
+            multibuffer.push_excerpts(
+                new_buffer.clone(),
+                [editor::ExcerptRange::new(new_range.clone())],
+                cx,
+            );
+
             multibuffer.add_diff(diff.clone(), cx);
             multibuffer
         });
@@ -219,6 +247,55 @@ impl TextDiffView {
             }),
         }
     }
+}
+
+async fn build_range_based_diff(
+    old_buffer: Entity<Buffer>,
+    new_buffer: Entity<Buffer>,
+    old_range: Range<Point>,
+    new_range: Range<Point>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<BufferDiff>> {
+    let old_text = old_buffer.read_with(cx, |buffer, _| {
+        buffer.text_for_range(old_range.clone()).collect::<String>()
+    })?;
+
+    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+
+    let base_buffer = cx.update(|cx| {
+        cx.new(|cx| {
+            let mut buffer = language::Buffer::local(new_buffer_snapshot.text().to_string(), cx);
+            if let Some(language) = new_buffer.read(cx).language().cloned() {
+                buffer.set_language(Some(language), cx);
+            }
+
+            let range_start = new_buffer_snapshot.point_to_offset(new_range.start);
+            let range_end = new_buffer_snapshot.point_to_offset(new_range.end);
+            buffer.edit([(range_start..range_end, old_text.clone())], None, cx);
+
+            buffer
+        })
+    })?;
+
+    let base_buffer_snapshot = base_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let base_text = base_buffer_snapshot.text().to_string();
+
+    let diff_snapshot = cx
+        .update(|cx| {
+            BufferDiffSnapshot::new_with_base_buffer(
+                new_buffer_snapshot.text.clone(),
+                Some(Arc::new(base_text)),
+                base_buffer_snapshot,
+                cx,
+            )
+        })?
+        .await;
+
+    cx.new(|cx| {
+        let mut diff = BufferDiff::new(&new_buffer_snapshot.text, cx);
+        diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
+        diff
+    })
 }
 
 pub async fn build_buffer_diff(
