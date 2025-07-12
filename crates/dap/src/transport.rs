@@ -90,11 +90,57 @@ async fn start(
     }
 }
 
+pub(crate) struct PendingRequests {
+    inner: Option<HashMap<u64, oneshot::Sender<Result<Response>>>>,
+}
+
+impl PendingRequests {
+    fn new() -> Self {
+        Self {
+            inner: Some(HashMap::default()),
+        }
+    }
+
+    fn flush(&mut self, e: anyhow::Error) {
+        let Some(inner) = self.inner.as_mut() else {
+            return;
+        };
+        for (_, sender) in inner.drain() {
+            sender.send(Err(e.cloned())).ok();
+        }
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        sequence_id: u64,
+        callback_tx: oneshot::Sender<Result<Response>>,
+    ) -> anyhow::Result<()> {
+        let Some(inner) = self.inner.as_mut() else {
+            bail!("client is closed")
+        };
+        inner.insert(sequence_id, callback_tx);
+        Ok(())
+    }
+
+    pub(crate) fn remove(
+        &mut self,
+        sequence_id: u64,
+    ) -> anyhow::Result<Option<oneshot::Sender<Result<Response>>>> {
+        let Some(inner) = self.inner.as_mut() else {
+            bail!("client is closed");
+        };
+        Ok(inner.remove(&sequence_id))
+    }
+
+    pub(crate) fn shutdown(&mut self) {
+        self.flush(anyhow!("transport shutdown"));
+        self.inner = None;
+    }
+}
+
 pub(crate) struct TransportDelegate {
     log_handlers: LogHandlers,
-    // TODO this should really be some kind of associative channel
-    pub(crate) pending_requests:
-        Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Response>>>>>>,
+    pub(crate) pending_requests: Arc<Mutex<PendingRequests>>,
     pub(crate) transport: Mutex<Box<dyn Transport>>,
     pub(crate) server_tx: smol::lock::Mutex<Option<Sender<Message>>>,
     tasks: Mutex<Vec<Task<()>>>,
@@ -108,7 +154,7 @@ impl TransportDelegate {
             transport: Mutex::new(transport),
             log_handlers,
             server_tx: Default::default(),
-            pending_requests: Arc::new(Mutex::new(Some(HashMap::default()))),
+            pending_requests: Arc::new(Mutex::new(PendingRequests::new())),
             tasks: Default::default(),
         })
     }
@@ -151,24 +197,10 @@ impl TransportDelegate {
                     Ok(()) => {
                         pending_requests
                             .lock()
-                            .take()
-                            .into_iter()
-                            .flatten()
-                            .for_each(|(_, request)| {
-                                request
-                                    .send(Err(anyhow!("debugger shutdown unexpectedly")))
-                                    .ok();
-                            });
+                            .flush(anyhow!("debugger shutdown unexpectedly"));
                     }
                     Err(e) => {
-                        pending_requests
-                            .lock()
-                            .take()
-                            .into_iter()
-                            .flatten()
-                            .for_each(|(_, request)| {
-                                request.send(Err(e.cloned())).ok();
-                            });
+                        pending_requests.lock().flush(e);
                     }
                 }
             }));
@@ -286,7 +318,7 @@ impl TransportDelegate {
     async fn recv_from_server<Stdout>(
         server_stdout: Stdout,
         mut message_handler: DapMessageHandler,
-        pending_requests: Arc<Mutex<Option<HashMap<u64, oneshot::Sender<Result<Response>>>>>>,
+        pending_requests: Arc<Mutex<PendingRequests>>,
         log_handlers: Option<LogHandlers>,
     ) -> Result<()>
     where
@@ -306,11 +338,7 @@ impl TransportDelegate {
                     break Ok(());
                 }
                 ConnectionResult::Result(Ok(Message::Response(res))) => {
-                    let tx = pending_requests
-                        .lock()
-                        .as_mut()
-                        .context("client is closed")?
-                        .remove(&res.request_seq);
+                    let tx = pending_requests.lock().remove(res.request_seq)?;
                     if let Some(tx) = tx {
                         if let Err(e) = tx.send(Self::process_response(res)) {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);

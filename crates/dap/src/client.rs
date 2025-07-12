@@ -110,9 +110,7 @@ impl DebugAdapterClient {
         self.transport_delegate
             .pending_requests
             .lock()
-            .as_mut()
-            .context("client is closed")?
-            .insert(sequence_id, callback_tx);
+            .insert(sequence_id, callback_tx)?;
 
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
@@ -170,6 +168,7 @@ impl DebugAdapterClient {
     pub fn kill(&self) {
         log::debug!("Killing DAP process");
         self.transport_delegate.transport.lock().kill();
+        self.transport_delegate.pending_requests.lock().shutdown();
     }
 
     pub fn has_adapter_logs(&self) -> bool {
