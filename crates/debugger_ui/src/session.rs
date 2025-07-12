@@ -12,7 +12,6 @@ use rpc::proto;
 use running::RunningState;
 use std::cell::OnceCell;
 use ui::prelude::*;
-
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},

@@ -563,6 +563,11 @@ impl DapStore {
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
 
+            if let Some(index) = value.find("\n") {
+                value.truncate(index);
+                value.push_str("…");
+            }
+
             if value.len() > LIMIT {
                 let mut index = LIMIT;
                 // If index isn't a char boundary truncate will cause a panic
@@ -570,7 +575,7 @@ impl DapStore {
                     index -= 1;
                 }
                 value.truncate(index);
-                value.push_str("...");
+                value.push_str("…");
             }
 
             format!(": {}", value)
