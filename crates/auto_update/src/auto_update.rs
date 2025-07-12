@@ -309,7 +309,7 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     fn new(
         current_version: SemanticVersion,
         http_client: Arc<HttpClientWithUrl>,
