@@ -152,6 +152,12 @@ pub struct RunningMode {
     messages_tx: UnboundedSender<Message>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct SessionQuirks {
+    pub compact: bool,
+    pub prefer_thread_name: bool,
+}
+
 fn client_source(abs_path: &Path) -> dap::Source {
     dap::Source {
         name: abs_path
@@ -657,7 +663,7 @@ pub struct OutputToken(pub usize);
 pub struct Session {
     pub mode: SessionState,
     id: SessionId,
-    label: SharedString,
+    label: Option<SharedString>,
     adapter: DebugAdapterName,
     pub(super) capabilities: Capabilities,
     child_session_ids: HashSet<SessionId>,
@@ -680,6 +686,7 @@ pub struct Session {
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
+    quirks: SessionQuirks,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -793,9 +800,10 @@ impl Session {
         breakpoint_store: Entity<BreakpointStore>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
-        label: SharedString,
+        label: Option<SharedString>,
         adapter: DebugAdapterName,
         task_context: TaskContext,
+        quirks: SessionQuirks,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -848,6 +856,7 @@ impl Session {
                 label,
                 adapter,
                 task_context,
+                quirks,
             };
 
             this
@@ -1032,7 +1041,7 @@ impl Session {
         self.adapter.clone()
     }
 
-    pub fn label(&self) -> SharedString {
+    pub fn label(&self) -> Option<SharedString> {
         self.label.clone()
     }
 
@@ -2500,5 +2509,9 @@ impl Session {
 
     pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.thread_states.thread_state(thread_id)
+    }
+
+    pub fn quirks(&self) -> SessionQuirks {
+        self.quirks
     }
 }

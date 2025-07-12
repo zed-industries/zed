@@ -930,6 +930,7 @@
       "enter": "menu::Confirm",
       "cmd-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
+      "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
       "alt-down": "git_panel::FocusEditor",
