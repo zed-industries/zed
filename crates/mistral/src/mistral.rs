@@ -60,6 +60,8 @@ pub enum Model {
     OpenCodestralMamba,
     #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
     DevstralSmallLatest,
+    #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
+    DevstralMediumLatest,
     #[serde(rename = "pixtral-12b-latest", alias = "pixtral-12b-latest")]
     Pixtral12BLatest,
     #[serde(rename = "pixtral-large-latest", alias = "pixtral-large-latest")]
@@ -92,6 +94,7 @@ impl Model {
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
             "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
+            "devstral-medium-latest" => Ok(Self::DevstralMediumLatest),
             "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
             "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
@@ -107,6 +110,7 @@ impl Model {
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
             Self::DevstralSmallLatest => "devstral-small-latest",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
             Self::Custom { name, .. } => name,
@@ -122,6 +126,7 @@ impl Model {
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
             Self::DevstralSmallLatest => "devstral-small-latest",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
             Self::Custom {
@@ -139,6 +144,7 @@ impl Model {
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
             Self::DevstralSmallLatest => 262144,
+            Self::DevstralMediumLatest => 128000,
             Self::Pixtral12BLatest => 128000,
             Self::PixtralLargeLatest => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -163,6 +169,7 @@ impl Model {
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
             | Self::DevstralSmallLatest
+            | Self::DevstralMediumLatest
             | Self::Pixtral12BLatest
             | Self::PixtralLargeLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
@@ -179,7 +186,8 @@ impl Model {
             | Self::MistralLargeLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
-            | Self::DevstralSmallLatest => false,
+            | Self::DevstralSmallLatest
+            | Self::DevstralMediumLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
