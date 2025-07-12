@@ -3961,8 +3961,14 @@ impl ProjectPanel {
                 linear_color_stop(shadow_color_bottom, 0.),
             ));
 
+        let id: ElementId = if is_sticky {
+            SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
+        } else {
+            (entry_id.to_proto() as usize).into()
+        };
+
         div()
-            .id(entry_id.to_proto() as usize)
+            .id(id.clone())
             .relative()
             .group(GROUP_NAME)
             .cursor_pointer()
@@ -4186,6 +4192,16 @@ impl ProjectPanel {
                                     .unwrap_or(ScrollStrategy::Top);
                                 this.scroll_handle.scroll_to_item(index, strategy);
                                 cx.notify();
+                                // move down by 1px so that clicked item
+                                // don't count as sticky anymore
+                                cx.on_next_frame(window, |_, window, cx| {
+                                    cx.on_next_frame(window, |this, _, cx| {
+                                        let mut offset = this.scroll_handle.offset();
+                                        offset.y += px(1.);
+                                        this.scroll_handle.set_offset(offset);
+                                        cx.notify();
+                                    });
+                                });
                                 return;
                             }
                         }
@@ -4204,7 +4220,7 @@ impl ProjectPanel {
                 }),
             )
             .child(
-                ListItem::new(entry_id.to_proto() as usize)
+                ListItem::new(id)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .spacing(match settings.entry_spacing {
