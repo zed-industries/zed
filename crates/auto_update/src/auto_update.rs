@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use workspace::Workspace;
+// use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -160,14 +160,14 @@ impl Global for GlobalAutoUpdate {}
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
+    // cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    //     workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
 
-        workspace.register_action(|_, action, _, cx| {
-            view_release_notes(action, cx);
-        });
-    })
-    .detach();
+    //     workspace.register_action(|_, action, _, cx| {
+    //         view_release_notes(action, cx);
+    //     });
+    // })
+    // .detach();
 
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
