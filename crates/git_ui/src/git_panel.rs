@@ -361,7 +361,6 @@ pub struct GitPanel {
 struct BulkStaging {
     repo_id: RepositoryId,
     anchor: RepoPath,
-    // FIXME remember the range of staged things?
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
