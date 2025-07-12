@@ -1,4 +1,4 @@
-use crate::{Capslock, xcb_flush};
+use crate::{Capslock, KeycodeSource, xcb_flush};
 use core::str;
 use std::{
     cell::RefCell,
@@ -1034,7 +1034,8 @@ impl X11Client {
                         xkb_state.latched_layout,
                         xkb_state.locked_layout,
                     );
-                    let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let mut keystroke =
+                        crate::Keystroke::from_xkb(&state.xkb, modifiers, code, KeycodeSource::X11);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1102,7 +1103,8 @@ impl X11Client {
                         xkb_state.latched_layout,
                         xkb_state.locked_layout,
                     );
-                    let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
+                    let keystroke =
+                        crate::Keystroke::from_xkb(&state.xkb, modifiers, code, KeycodeSource::X11);
                     let keysym = state.xkb.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1326,6 +1328,7 @@ impl X11Client {
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
+                    KeycodeSource::X11,
                 ));
                 let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);

@@ -13,6 +13,9 @@ pub struct Keystroke {
 
     /// key is the character printed on the key that was pressed
     /// e.g. for option-s, key is "s"
+    /// On layouts that do not have ascii keys (e.g. Thai)
+    /// this will be the ASCII-equivalent character (q instead of ๆ),
+    /// and the typed character will be present in key_char.
     pub key: String,
 
     /// key_char is the character that could have been typed when
