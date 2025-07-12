@@ -358,12 +358,19 @@ impl LanguageServer {
             workspace_folders,
             cx,
             move |notification| {
-                log::info!(
-                    "Language server with id {} sent unhandled notification {}:\n{}",
-                    server_id,
-                    notification.method,
-                    serde_json::to_string_pretty(&notification.params).unwrap(),
-                );
+                if notification.id.is_some() {
+                    log::debug!(
+                        "[LSP:{}] No handler for server request: {}",
+                        server_id,
+                        notification.method
+                    );
+                } else {
+                    log::debug!(
+                        "[LSP:{}] No handler for server notification: {}",
+                        server_id,
+                        notification.method
+                    );
+                }
             },
         );
 
@@ -411,6 +418,7 @@ impl LanguageServer {
                     notification_handlers,
                     response_handlers,
                     io_handlers,
+                    server_id,
                     cx,
                 )
                 .log_err()
@@ -485,6 +493,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        server_id: LanguageServerId,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
@@ -503,6 +512,7 @@ impl LanguageServer {
             stdout,
             response_handlers,
             io_handlers,
+            server_id,
             cx.background_executor().clone(),
         );
 
@@ -872,9 +882,11 @@ impl LanguageServer {
                 &response_handlers,
                 &outbound_tx,
                 &executor,
+                self.server_id,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
+            let exit =
+                Self::notify_internal::<notification::Exit>(&outbound_tx, self.server_id, &());
             outbound_tx.close();
 
             let server = self.server.clone();
@@ -1004,6 +1016,7 @@ impl LanguageServer {
         Res: Serialize,
     {
         let outbound_tx = self.outbound_tx.clone();
+        let server_id = self.server_id;
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |id, params, cx| {
@@ -1016,18 +1029,41 @@ impl LanguageServer {
                                     let outbound_tx = outbound_tx.clone();
                                     async move {
                                         let response = match response.await {
-                                            Ok(result) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Ok(Some(result)),
-                                            },
-                                            Err(error) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Error(Some(Error {
-                                                    message: error.to_string(),
-                                                })),
-                                            },
+                                            Ok(result) => {
+                                                let result_str =
+                                                    serde_json::to_string_pretty(&result)
+                                                        .unwrap_or_else(|_| "...".to_string());
+                                                log::info!(
+                                                    "[LSP:{}] Client Response #{} → {}\n{}",
+                                                    server_id,
+                                                    serde_json::to_string(&id)
+                                                        .unwrap_or_else(|_| "?".to_string()),
+                                                    method,
+                                                    result_str
+                                                );
+                                                Response {
+                                                    jsonrpc: JSON_RPC_VERSION,
+                                                    id,
+                                                    value: LspResult::Ok(Some(result)),
+                                                }
+                                            }
+                                            Err(error) => {
+                                                log::info!(
+                                                    "[LSP:{}] Client Response #{} → {} (ERROR)\n{}",
+                                                    server_id,
+                                                    serde_json::to_string(&id)
+                                                        .unwrap_or_else(|_| "?".to_string()),
+                                                    method,
+                                                    error
+                                                );
+                                                Response {
+                                                    jsonrpc: JSON_RPC_VERSION,
+                                                    id,
+                                                    value: LspResult::Error(Some(Error {
+                                                        message: error.to_string(),
+                                                    })),
+                                                }
+                                            }
                                         };
                                         if let Some(response) =
                                             serde_json::to_string(&response).log_err()
@@ -1041,6 +1077,13 @@ impl LanguageServer {
 
                         Err(error) => {
                             log::error!("error deserializing {} request: {:?}", method, error);
+                            log::info!(
+                                "[LSP:{}] Client Response #{} → {} (DESERIALIZE ERROR)\n{}",
+                                server_id,
+                                serde_json::to_string(&id).unwrap_or_else(|_| "?".to_string()),
+                                method,
+                                error
+                            );
                             let response = AnyResponse {
                                 jsonrpc: JSON_RPC_VERSION,
                                 id,
@@ -1122,6 +1165,7 @@ impl LanguageServer {
             &self.response_handlers,
             &self.outbound_tx,
             &self.executor,
+            self.server_id,
             params,
         )
     }
@@ -1131,6 +1175,7 @@ impl LanguageServer {
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
+        server_id: LanguageServerId,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
@@ -1138,6 +1183,18 @@ impl LanguageServer {
         T: request::Request,
     {
         let id = next_id.fetch_add(1, SeqCst);
+
+        // Log outgoing request with params
+        let params_str =
+            serde_json::to_string_pretty(&params).unwrap_or_else(|_| "...".to_string());
+        log::info!(
+            "[LSP:{}] Client Request #{id} → {method}\n{params}",
+            server_id,
+            id = id,
+            method = T::METHOD,
+            params = params_str
+        );
+
         let message = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
             id: RequestId::Int(id),
@@ -1194,6 +1251,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
+                        server_id,
                         &CancelParams {
                             id: NumberOrString::Number(id),
                         },
@@ -1205,11 +1263,11 @@ impl LanguageServer {
             let method = T::METHOD;
             select! {
                 response = rx.fuse() => {
-                    let elapsed = started.elapsed();
-                    log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
                     match response {
-                        Ok(response_result) => ConnectionResult::Result(response_result),
+                        Ok(response_result) => {
+                            ConnectionResult::Result(response_result)
+                        },
                         Err(Canceled) => {
                             log::error!("Server reset connection for a request {method:?} id {id}");
                             ConnectionResult::ConnectionReset
@@ -1229,13 +1287,24 @@ impl LanguageServer {
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
     pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
-        Self::notify_internal::<T>(&self.outbound_tx, params)
+        Self::notify_internal::<T>(&self.outbound_tx, self.server_id, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
+        server_id: LanguageServerId,
         params: &T::Params,
     ) -> Result<()> {
+        // Log outgoing notification with params
+        let params_str =
+            serde_json::to_string_pretty(&params).unwrap_or_else(|_| "...".to_string());
+        log::info!(
+            "[LSP:{server_id}] Client Notification → {method}\n{params}",
+            server_id = server_id,
+            method = T::METHOD,
+            params = params_str
+        );
+
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
             method: T::METHOD,

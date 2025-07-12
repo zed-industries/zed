@@ -13,7 +13,8 @@ use parking_lot::Mutex;
 use smol::io::BufReader;
 
 use crate::{
-    AnyNotification, AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, RequestId, ResponseHandler,
+    AnyNotification, AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, LanguageServerId,
+    RequestId, ResponseHandler,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
@@ -45,13 +46,20 @@ impl LspStdoutHandler {
         stdout: Input,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        server_id: LanguageServerId,
         cx: BackgroundExecutor,
     ) -> Self
     where
         Input: AsyncRead + Unpin + Send + 'static,
     {
         let (tx, notifications_channel) = unbounded();
-        let loop_handle = cx.spawn(Self::handler(stdout, tx, response_handlers, io_handlers));
+        let loop_handle = cx.spawn(Self::handler(
+            stdout,
+            tx,
+            response_handlers,
+            io_handlers,
+            server_id,
+        ));
         Self {
             loop_handle,
             notifications_channel,
@@ -63,6 +71,7 @@ impl LspStdoutHandler {
         notifications_sender: UnboundedSender<AnyNotification>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
+        server_id: LanguageServerId,
     ) -> anyhow::Result<()>
     where
         Input: AsyncRead + Unpin + Send + 'static,
@@ -97,11 +106,69 @@ impl LspStdoutHandler {
             }
 
             if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
+                // Check if this is a server-initiated request (has ID) or notification (no ID)
+                if let Some(id) = &msg.id {
+                    let params_str = msg
+                        .params
+                        .as_ref()
+                        .map(|p| {
+                            serde_json::to_string_pretty(p).unwrap_or_else(|_| "...".to_string())
+                        })
+                        .unwrap_or_else(|| "null".to_string());
+                    log::info!(
+                        "[LSP:{server_id}] Server Request #{id} ← {method}\n{params}",
+                        server_id = server_id,
+                        id = serde_json::to_string(id).unwrap_or_else(|_| "?".to_string()),
+                        method = msg.method,
+                        params = params_str
+                    );
+                } else {
+                    let params_str = msg
+                        .params
+                        .as_ref()
+                        .map(|p| {
+                            serde_json::to_string_pretty(p).unwrap_or_else(|_| "...".to_string())
+                        })
+                        .unwrap_or_else(|| "null".to_string());
+                    log::info!(
+                        "[LSP:{server_id}] Server Notification ← {method}\n{params}",
+                        server_id = server_id,
+                        method = msg.method,
+                        params = params_str
+                    );
+                }
                 notifications_sender.unbounded_send(msg)?;
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                // Log the response content
+                if let Some(error) = &error {
+                    log::info!(
+                        "[LSP:{server_id}] Server Response #{id} (ERROR)\n{error:?}",
+                        server_id = server_id,
+                        id = serde_json::to_string(&id).unwrap_or_else(|_| "?".to_string()),
+                        error = error
+                    );
+                } else if let Some(result) = &result {
+                    let result_str = serde_json::from_str::<serde_json::Value>(result.get())
+                        .ok()
+                        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                        .unwrap_or_else(|| result.get().to_string());
+                    log::info!(
+                        "[LSP:{server_id}] Server Response #{id}\n{result}",
+                        server_id = server_id,
+                        id = serde_json::to_string(&id).unwrap_or_else(|_| "?".to_string()),
+                        result = result_str
+                    );
+                } else {
+                    log::info!(
+                        "[LSP:{server_id}] Server Response #{id}\nnull",
+                        server_id = server_id,
+                        id = serde_json::to_string(&id).unwrap_or_else(|_| "?".to_string())
+                    );
+                }
+
                 let mut response_handlers = response_handlers.lock();
                 if let Some(handler) = response_handlers
                     .as_mut()
