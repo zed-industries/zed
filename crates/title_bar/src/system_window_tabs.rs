@@ -1,4 +1,5 @@
 use command_palette_hooks::CommandPaletteFilter;
+use settings::Settings;
 use std::any::TypeId;
 
 use gpui::{
@@ -9,7 +10,10 @@ use ui::{
     Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,
 };
-use workspace::{CloseWindow, Workspace};
+use workspace::{
+    CloseWindow, ItemSettings, Workspace,
+    item::{ClosePosition, ShowCloseButton},
+};
 
 actions!(
     window,
@@ -138,9 +142,9 @@ impl SystemWindowTabs {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        // let settings = ItemSettings::get_global(cx);
-        // let close_side = &settings.close_position;
-        // let show_close_button = &settings.show_close_button;
+        let settings = ItemSettings::get_global(cx);
+        let close_side = &settings.close_position;
+        let show_close_button = &settings.show_close_button;
 
         let rem_size = window.rem_size();
         let width = self.measured_tab_width.max(rem_size * 10);
@@ -203,18 +207,33 @@ impl SystemWindowTabs {
                         });
                     })
                     .child(label)
-                    .child(
-                        div().absolute().top_2().right_1().w_4().h_4().child(
-                            IconButton::new("close", IconName::Close)
-                                .visible_on_hover("tab")
-                                .shape(IconButtonShape::Square)
-                                .icon_color(Color::Muted)
-                                .icon_size(IconSize::XSmall)
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(CloseWindow), cx);
-                                }),
+                    .map(|this| match show_close_button {
+                        ShowCloseButton::Hidden => this,
+                        _ => this.child(
+                            div()
+                                .absolute()
+                                .top_2()
+                                .w_4()
+                                .h_4()
+                                .map(|this| match close_side {
+                                    ClosePosition::Left => this.left_1(),
+                                    ClosePosition::Right => this.right_1(),
+                                })
+                                .child(
+                                    IconButton::new("close", IconName::Close)
+                                        .shape(IconButtonShape::Square)
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::XSmall)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(CloseWindow), cx);
+                                        })
+                                        .map(|this| match show_close_button {
+                                            ShowCloseButton::Hover => this.visible_on_hover("tab"),
+                                            _ => this,
+                                        }),
+                                ),
                         ),
-                    ),
+                    }),
             )
             .into_any();
 
