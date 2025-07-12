@@ -196,6 +196,8 @@ impl Focusable for TerminalView {
     }
 }
 
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(8.);
+
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
@@ -965,10 +967,10 @@ impl TerminalView {
                 }))
                 .h_full()
                 .absolute()
-                .right_1()
-                .top_1()
+                .right_0()
+                .top_0()
                 .bottom_0()
-                .w(px(12.))
+                .w(TERMINAL_SCROLLBAR_WIDTH)
                 .cursor_default()
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
@@ -1503,6 +1505,17 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
+        // Calculate scrollbar width only when actually visible to prevent text overlap
+        let scrollbar_width = if Self::should_show_scrollbar(cx)
+            && (self.show_scrollbar || self.scrollbar_state.is_dragging())
+            && self.content_mode(window, cx).is_scrollable()
+            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
+        {
+            TERMINAL_SCROLLBAR_WIDTH
+        } else {
+            px(0.)
+        };
+
         div()
             .id("terminal-view")
             .size_full()
@@ -1552,6 +1565,7 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
                     .size_full()
+                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
