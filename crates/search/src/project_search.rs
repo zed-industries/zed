@@ -906,7 +906,7 @@ impl ProjectSearchView {
 
         let entity = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = cx.new(|cx| ProjectSearchView::new(weak_workspace, entity, window, cx, None));
-        workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, window, cx);
+        workspace.add_item_to_preferred_pane(Box::new(search.clone()), None, true, window, cx);
         search.update(cx, |search, cx| {
             search
                 .included_files_editor
@@ -963,7 +963,7 @@ impl ProjectSearchView {
                     entity
                 });
                 let weak_workspace = cx.entity().downgrade();
-                workspace.add_item_to_active_pane(
+                workspace.add_item_to_preferred_pane(
                     Box::new(cx.new(|cx| {
                         ProjectSearchView::new(weak_workspace, entity, window, cx, None)
                     })),
@@ -1021,7 +1021,7 @@ impl ProjectSearchView {
                 ProjectSearchView::new(weak_workspace, project_search, window, cx, settings)
             });
 
-            workspace.add_item_to_active_pane(
+            workspace.add_item_to_preferred_pane(
                 Box::new(project_search_view.clone()),
                 None,
                 true,
