@@ -1,7 +1,7 @@
-use crate::FakeFs;
+use crate::{FakeFs, Fs};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use futures::future::{self, BoxFuture};
+use futures::future::{self, BoxFuture, join_all};
 use git::{
     blame::Blame,
     repository::{
@@ -356,18 +356,46 @@ impl GitRepository for FakeGitRepository {
 
     fn stage_paths(
         &self,
-        _paths: Vec<RepoPath>,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        Box::pin(async move {
+            let contents = paths
+                .into_iter()
+                .map(|path| {
+                    let abs_path = self.dot_git_path.parent().unwrap().join(&path);
+                    Box::pin(async move { (path.clone(), self.fs.load(&abs_path).await.ok()) })
+                })
+                .collect::<Vec<_>>();
+            let contents = join_all(contents).await;
+            self.with_state_async(true, move |state| {
+                for (path, content) in contents {
+                    if let Some(content) = content {
+                        state.index_contents.insert(path, content);
+                    } else {
+                        state.index_contents.remove(&path);
+                    }
+                }
+                Ok(())
+            })
+            .await
+        })
     }
 
     fn unstage_paths(
         &self,
-        _paths: Vec<RepoPath>,
+        paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        self.with_state_async(true, move |state| {
+            for path in paths {
+                match state.head_contents.get(&path) {
+                    Some(content) => state.index_contents.insert(path, content.clone()),
+                    None => state.index_contents.remove(&path),
+                };
+            }
+            Ok(())
+        })
     }
 
     fn commit(
