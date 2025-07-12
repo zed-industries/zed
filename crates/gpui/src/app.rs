@@ -207,20 +207,6 @@ impl Application {
         self
     }
 
-    /// Register a callback to perform application updates after the app exits.
-    /// This is specifically designed for executing update operations that need to
-    /// happen after all windows are closed.
-    #[cfg(target_os = "windows")]
-    pub fn register_exit_updater<F>(&self, mut callback: F) -> &Self
-    where
-        F: 'static + FnMut(),
-    {
-        self.0.borrow_mut().exit_updater = Some(Box::new(move || {
-            callback();
-        }));
-        self
-    }
-
     /// Returns a handle to the [`BackgroundExecutor`] associated with this app, which can be used to spawn futures in the background.
     pub fn background_executor(&self) -> BackgroundExecutor {
         self.0.borrow().background_executor.clone()
@@ -305,8 +291,6 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     quitting: bool,
-    #[cfg(target_os = "windows")]
-    exit_updater: Option<Box<dyn FnMut()>>,
 }
 
 impl App {
@@ -374,8 +358,6 @@ impl App {
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
-                #[cfg(target_os = "windows")]
-                exit_updater: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -431,11 +413,6 @@ impl App {
         }
 
         self.quitting = false;
-
-        #[cfg(target_os = "windows")]
-        if let Some(mut exit_updater) = self.exit_updater.take() {
-            exit_updater();
-        }
     }
 
     /// Get the id of the current keyboard layout
@@ -1785,15 +1762,6 @@ impl App {
     /// These colors can be accessed through `cx.default_colors()`.
     pub fn init_colors(&mut self) {
         self.set_global(GlobalColors(Arc::new(Colors::default())));
-    }
-
-    /// Removes the previously registered exit updater callback.
-    ///
-    /// This function clears any exit updater that was set using [`Application::register_exit_updater`].
-    /// After calling this function, no update operations will be performed when the application exits.
-    #[cfg(target_os = "windows")]
-    pub fn remove_exit_updater(&mut self) {
-        self.exit_updater.take();
     }
 }
 
