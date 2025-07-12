@@ -3822,7 +3822,7 @@ impl GetDocumentDiagnostics {
             code,
             code_description: match diagnostic.code_description {
                 Some(code_description) => Some(CodeDescription {
-                    href: lsp::Url::parse(&code_description).unwrap(),
+                    href: Some(lsp::Url::parse(&code_description).unwrap()),
                 }),
                 None => None,
             },
@@ -3898,7 +3898,7 @@ impl GetDocumentDiagnostics {
             tags,
             code_description: diagnostic
                 .code_description
-                .map(|desc| desc.href.to_string()),
+                .and_then(|desc| desc.href.map(|url| url.to_string())),
             message: diagnostic.message,
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
