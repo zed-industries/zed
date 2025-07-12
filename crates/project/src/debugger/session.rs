@@ -42,7 +42,6 @@ use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
-use std::time::Duration;
 use std::u64;
 use std::{
     any::Any,
@@ -918,9 +917,7 @@ impl Session {
         let id = self.id;
         let parent_session = self.parent_session.clone();
 
-        let timer = cx.background_executor().timer(Duration::from_secs(10));
         cx.spawn(async move |this, cx| {
-            timer.await;
             let mode = RunningMode::new(
                 id,
                 parent_session,
