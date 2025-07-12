@@ -715,7 +715,7 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |term, _| term.copy());
+        self.terminal.update(cx, |term, _| term.copy(None));
         cx.notify();
     }
 
