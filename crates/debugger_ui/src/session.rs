@@ -122,7 +122,7 @@ impl DebugSession {
             .to_owned()
     }
 
-    pub(crate) fn running_state(&self) -> &Entity<RunningState> {
+    pub fn running_state(&self) -> &Entity<RunningState> {
         &self.running_state
     }
 
