@@ -7523,10 +7523,10 @@ pub fn join_in_room_project(
 
 pub fn reload(reload: &Reload, cx: &mut App) {
     #[cfg(not(target_os = "windows"))]
-    prepare_reload(reload, cx, |binary_path, cx| cx.restart(binary_path));
+    reload_impl(reload, cx, |binary_path, cx| cx.restart(binary_path));
 
     #[cfg(target_os = "windows")]
-    prepare_reload(reload, cx, |reload_path, cx| {
+    reload_impl(reload, cx, |reload_path, cx| {
         // If we are updating, we need to remove the exit updater.
         let update_path = auto_update::AutoUpdater::get(cx)
             .map(|updater| {
@@ -7550,7 +7550,7 @@ pub fn reload(reload: &Reload, cx: &mut App) {
     });
 }
 
-pub fn prepare_reload<F>(reload: &Reload, cx: &mut App, f: F)
+fn reload_impl<F>(reload: &Reload, cx: &mut App, f: F)
 where
     F: FnOnce(Option<PathBuf>, &mut App) + 'static,
 {
