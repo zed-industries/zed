@@ -54,11 +54,17 @@ impl TextDiffView {
                 let selections = editor.selections.all::<usize>(cx);
                 let buffer = editor.buffer().read(cx).as_singleton()?.read(cx);
                 let language = buffer.language().cloned();
-
-                let selection_range = selections
-                    .first()
-                    .map(|s| s.range())
-                    .unwrap_or_else(|| 0..buffer.len());
+                let Some(first_selection) = selections.first() else {
+                    log::warn!(
+                        "There should always be at least one selection in Zed. This is a bug."
+                    );
+                    return None;
+                };
+                let selection_range = if first_selection.is_empty() {
+                    0..buffer.len()
+                } else {
+                    first_selection.range()
+                };
 
                 let text = buffer.text_for_range(selection_range).collect::<String>();
 
@@ -122,7 +128,6 @@ impl TextDiffView {
 
     // TODO - diff - match selections
     // TODO - diff - allow to be bidirectionally edited
-    // TODO - diff - no selection = full buffer, or take first
     // TODO - diff - make sure breadcrumbs work
     // TODO - diff - make sure tabs have dynamic titles
     // TODO - diff - allow to be saved?
