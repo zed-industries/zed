@@ -589,9 +589,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> WasScrolled {
         hide_hover(self, cx);
-        let workspace_id = (!self.mode.is_minimap())
-            .then(|| self.workspace.as_ref().and_then(|workspace| workspace.1))
-            .flatten();
+        let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
         self.edit_prediction_preview
             .set_previous_scroll_position(None);
