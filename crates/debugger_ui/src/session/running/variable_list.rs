@@ -1,3 +1,5 @@
+use crate::session::running::{RunningState, memory_view::MemoryView};
+
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{
     ScopePresentationHint, StackFrameId, VariablePresentationHint, VariablePresentationHintKind,
@@ -7,13 +9,14 @@ use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
     FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
-    TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
+    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent, Watcher};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
-use util::debug_panic;
+use util::{debug_panic, maybe};
 
 actions!(
     variable_list,
@@ -32,6 +35,8 @@ actions!(
         AddWatch,
         /// Removes the selected variable from the watch list.
         RemoveWatch,
+        /// Jump to variable's memory location.
+        GoToMemory,
     ]
 );
 
@@ -86,30 +91,30 @@ impl EntryPath {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum EntryKind {
+enum DapEntry {
     Watcher(Watcher),
     Variable(dap::Variable),
     Scope(dap::Scope),
 }
 
-impl EntryKind {
+impl DapEntry {
     fn as_watcher(&self) -> Option<&Watcher> {
         match self {
-            EntryKind::Watcher(watcher) => Some(watcher),
+            DapEntry::Watcher(watcher) => Some(watcher),
             _ => None,
         }
     }
 
     fn as_variable(&self) -> Option<&dap::Variable> {
         match self {
-            EntryKind::Variable(dap) => Some(dap),
+            DapEntry::Variable(dap) => Some(dap),
             _ => None,
         }
     }
 
     fn as_scope(&self) -> Option<&dap::Scope> {
         match self {
-            EntryKind::Scope(dap) => Some(dap),
+            DapEntry::Scope(dap) => Some(dap),
             _ => None,
         }
     }
@@ -117,38 +122,38 @@ impl EntryKind {
     #[cfg(test)]
     fn name(&self) -> &str {
         match self {
-            EntryKind::Watcher(watcher) => &watcher.expression,
-            EntryKind::Variable(dap) => &dap.name,
-            EntryKind::Scope(dap) => &dap.name,
+            DapEntry::Watcher(watcher) => &watcher.expression,
+            DapEntry::Variable(dap) => &dap.name,
+            DapEntry::Scope(dap) => &dap.name,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ListEntry {
-    dap_kind: EntryKind,
+    entry: DapEntry,
     path: EntryPath,
 }
 
 impl ListEntry {
     fn as_watcher(&self) -> Option<&Watcher> {
-        self.dap_kind.as_watcher()
+        self.entry.as_watcher()
     }
 
     fn as_variable(&self) -> Option<&dap::Variable> {
-        self.dap_kind.as_variable()
+        self.entry.as_variable()
     }
 
     fn as_scope(&self) -> Option<&dap::Scope> {
-        self.dap_kind.as_scope()
+        self.entry.as_scope()
     }
 
     fn item_id(&self) -> ElementId {
         use std::fmt::Write;
-        let mut id = match &self.dap_kind {
-            EntryKind::Watcher(watcher) => format!("watcher-{}", watcher.expression),
-            EntryKind::Variable(dap) => format!("variable-{}", dap.name),
-            EntryKind::Scope(dap) => format!("scope-{}", dap.name),
+        let mut id = match &self.entry {
+            DapEntry::Watcher(watcher) => format!("watcher-{}", watcher.expression),
+            DapEntry::Variable(dap) => format!("variable-{}", dap.name),
+            DapEntry::Scope(dap) => format!("scope-{}", dap.name),
         };
         for name in self.path.indices.iter() {
             _ = write!(id, "-{}", name);
@@ -158,10 +163,10 @@ impl ListEntry {
 
     fn item_value_id(&self) -> ElementId {
         use std::fmt::Write;
-        let mut id = match &self.dap_kind {
-            EntryKind::Watcher(watcher) => format!("watcher-{}", watcher.expression),
-            EntryKind::Variable(dap) => format!("variable-{}", dap.name),
-            EntryKind::Scope(dap) => format!("scope-{}", dap.name),
+        let mut id = match &self.entry {
+            DapEntry::Watcher(watcher) => format!("watcher-{}", watcher.expression),
+            DapEntry::Variable(dap) => format!("variable-{}", dap.name),
+            DapEntry::Scope(dap) => format!("scope-{}", dap.name),
         };
         for name in self.path.indices.iter() {
             _ = write!(id, "-{}", name);
@@ -188,13 +193,17 @@ pub struct VariableList {
     focus_handle: FocusHandle,
     edited_path: Option<(EntryPath, Entity<Editor>)>,
     disabled: bool,
+    memory_view: Entity<MemoryView>,
+    weak_running: WeakEntity<RunningState>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl VariableList {
-    pub fn new(
+    pub(crate) fn new(
         session: Entity<Session>,
         stack_frame_list: Entity<StackFrameList>,
+        memory_view: Entity<MemoryView>,
+        weak_running: WeakEntity<RunningState>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -234,6 +243,8 @@ impl VariableList {
             edited_path: None,
             entries: Default::default(),
             entry_states: Default::default(),
+            weak_running,
+            memory_view,
         }
     }
 
@@ -284,7 +295,7 @@ impl VariableList {
                     scope.variables_reference,
                     scope.variables_reference,
                     EntryPath::for_scope(&scope.name),
-                    EntryKind::Scope(scope),
+                    DapEntry::Scope(scope),
                 )
             })
             .collect::<Vec<_>>();
@@ -298,7 +309,7 @@ impl VariableList {
                         watcher.variables_reference,
                         watcher.variables_reference,
                         EntryPath::for_watcher(watcher.expression.clone()),
-                        EntryKind::Watcher(watcher.clone()),
+                        DapEntry::Watcher(watcher.clone()),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -309,9 +320,9 @@ impl VariableList {
         while let Some((container_reference, variables_reference, mut path, dap_kind)) = stack.pop()
         {
             match &dap_kind {
-                EntryKind::Watcher(watcher) => path = path.with_child(watcher.expression.clone()),
-                EntryKind::Variable(dap) => path = path.with_name(dap.name.clone().into()),
-                EntryKind::Scope(dap) => path = path.with_child(dap.name.clone().into()),
+                DapEntry::Watcher(watcher) => path = path.with_child(watcher.expression.clone()),
+                DapEntry::Variable(dap) => path = path.with_name(dap.name.clone().into()),
+                DapEntry::Scope(dap) => path = path.with_child(dap.name.clone().into()),
             }
 
             let var_state = self
@@ -336,7 +347,7 @@ impl VariableList {
                 });
 
             entries.push(ListEntry {
-                dap_kind,
+                entry: dap_kind,
                 path: path.clone(),
             });
 
@@ -349,7 +360,7 @@ impl VariableList {
                         variables_reference,
                         child.variables_reference,
                         path.with_child(child.name.clone().into()),
-                        EntryKind::Variable(child),
+                        DapEntry::Variable(child),
                     )
                 }));
             }
@@ -380,9 +391,9 @@ impl VariableList {
     pub fn completion_variables(&self, _cx: &mut Context<Self>) -> Vec<dap::Variable> {
         self.entries
             .iter()
-            .filter_map(|entry| match &entry.dap_kind {
-                EntryKind::Variable(dap) => Some(dap.clone()),
-                EntryKind::Scope(_) | EntryKind::Watcher { .. } => None,
+            .filter_map(|entry| match &entry.entry {
+                DapEntry::Variable(dap) => Some(dap.clone()),
+                DapEntry::Scope(_) | DapEntry::Watcher { .. } => None,
             })
             .collect()
     }
@@ -400,12 +411,12 @@ impl VariableList {
                     .get(ix)
                     .and_then(|entry| Some(entry).zip(self.entry_states.get(&entry.path)))?;
 
-                match &entry.dap_kind {
-                    EntryKind::Watcher { .. } => {
+                match &entry.entry {
+                    DapEntry::Watcher { .. } => {
                         Some(self.render_watcher(entry, *state, window, cx))
                     }
-                    EntryKind::Variable(_) => Some(self.render_variable(entry, *state, window, cx)),
-                    EntryKind::Scope(_) => Some(self.render_scope(entry, *state, cx)),
+                    DapEntry::Variable(_) => Some(self.render_variable(entry, *state, window, cx)),
+                    DapEntry::Scope(_) => Some(self.render_scope(entry, *state, cx)),
                 }
             })
             .collect()
@@ -562,6 +573,51 @@ impl VariableList {
         }
     }
 
+    fn jump_to_variable_memory(
+        &mut self,
+        _: &GoToMemory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        _ = maybe!({
+            let selection = self.selection.as_ref()?;
+            let entry = self.entries.iter().find(|entry| &entry.path == selection)?;
+            let var = entry.entry.as_variable()?;
+            let memory_reference = var.memory_reference.as_deref()?;
+
+            let sizeof_expr = if var.type_.as_ref().is_some_and(|t| {
+                t.chars()
+                    .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+            }) {
+                var.type_.as_deref()
+            } else {
+                var.evaluate_name
+                    .as_deref()
+                    .map(|name| name.strip_prefix("/nat ").unwrap_or_else(|| name))
+            };
+            self.memory_view.update(cx, |this, cx| {
+                this.go_to_memory_reference(
+                    memory_reference,
+                    sizeof_expr,
+                    self.selected_stack_frame_id,
+                    cx,
+                );
+            });
+            let weak_panel = self.weak_running.clone();
+
+            window.defer(cx, move |window, cx| {
+                _ = weak_panel.update(cx, |this, cx| {
+                    this.activate_item(
+                        crate::persistence::DebuggerPaneItem::MemoryView,
+                        window,
+                        cx,
+                    );
+                });
+            });
+            Some(())
+        });
+    }
+
     fn deploy_list_entry_context_menu(
         &mut self,
         entry: ListEntry,
@@ -584,6 +640,7 @@ impl VariableList {
                         menu.action("Edit Value", EditVariable.boxed_clone())
                     })
                     .action("Watch Variable", AddWatch.boxed_clone())
+                    .action("Go To Memory", GoToMemory.boxed_clone())
             })
             .when(entry.as_watcher().is_some(), |menu| {
                 menu.action("Copy Name", CopyVariableName.boxed_clone())
@@ -628,10 +685,10 @@ impl VariableList {
             return;
         };
 
-        let variable_name = match &entry.dap_kind {
-            EntryKind::Variable(dap) => dap.name.clone(),
-            EntryKind::Watcher(watcher) => watcher.expression.to_string(),
-            EntryKind::Scope(_) => return,
+        let variable_name = match &entry.entry {
+            DapEntry::Variable(dap) => dap.name.clone(),
+            DapEntry::Watcher(watcher) => watcher.expression.to_string(),
+            DapEntry::Scope(_) => return,
         };
 
         cx.write_to_clipboard(ClipboardItem::new_string(variable_name));
@@ -651,10 +708,10 @@ impl VariableList {
             return;
         };
 
-        let variable_value = match &entry.dap_kind {
-            EntryKind::Variable(dap) => dap.value.clone(),
-            EntryKind::Watcher(watcher) => watcher.value.to_string(),
-            EntryKind::Scope(_) => return,
+        let variable_value = match &entry.entry {
+            DapEntry::Variable(dap) => dap.value.clone(),
+            DapEntry::Watcher(watcher) => watcher.value.to_string(),
+            DapEntry::Scope(_) => return,
         };
 
         cx.write_to_clipboard(ClipboardItem::new_string(variable_value));
@@ -669,10 +726,10 @@ impl VariableList {
             return;
         };
 
-        let variable_value = match &entry.dap_kind {
-            EntryKind::Watcher(watcher) => watcher.value.to_string(),
-            EntryKind::Variable(variable) => variable.value.clone(),
-            EntryKind::Scope(_) => return,
+        let variable_value = match &entry.entry {
+            DapEntry::Watcher(watcher) => watcher.value.to_string(),
+            DapEntry::Variable(variable) => variable.value.clone(),
+            DapEntry::Scope(_) => return,
         };
 
         let editor = Self::create_variable_editor(&variable_value, window, cx);
@@ -753,7 +810,7 @@ impl VariableList {
                 "{}{} {}{}",
                 INDENT.repeat(state.depth - 1),
                 if state.is_expanded { "v" } else { ">" },
-                entry.dap_kind.name(),
+                entry.entry.name(),
                 if self.selection.as_ref() == Some(&entry.path) {
                     " <=== selected"
                 } else {
@@ -770,8 +827,8 @@ impl VariableList {
     pub(crate) fn scopes(&self) -> Vec<dap::Scope> {
         self.entries
             .iter()
-            .filter_map(|entry| match &entry.dap_kind {
-                EntryKind::Scope(scope) => Some(scope),
+            .filter_map(|entry| match &entry.entry {
+                DapEntry::Scope(scope) => Some(scope),
                 _ => None,
             })
             .cloned()
@@ -785,10 +842,10 @@ impl VariableList {
         let mut idx = 0;
 
         for entry in self.entries.iter() {
-            match &entry.dap_kind {
-                EntryKind::Watcher { .. } => continue,
-                EntryKind::Variable(dap) => scopes[idx].1.push(dap.clone()),
-                EntryKind::Scope(scope) => {
+            match &entry.entry {
+                DapEntry::Watcher { .. } => continue,
+                DapEntry::Variable(dap) => scopes[idx].1.push(dap.clone()),
+                DapEntry::Scope(scope) => {
                     if scopes.len() > 0 {
                         idx += 1;
                     }
@@ -806,8 +863,8 @@ impl VariableList {
     pub(crate) fn variables(&self) -> Vec<dap::Variable> {
         self.entries
             .iter()
-            .filter_map(|entry| match &entry.dap_kind {
-                EntryKind::Variable(variable) => Some(variable),
+            .filter_map(|entry| match &entry.entry {
+                DapEntry::Variable(variable) => Some(variable),
                 _ => None,
             })
             .cloned()
@@ -1358,6 +1415,7 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::edit_variable))
             .on_action(cx.listener(Self::add_watcher))
             .on_action(cx.listener(Self::remove_watcher))
+            .on_action(cx.listener(Self::jump_to_variable_memory))
             .child(
                 uniform_list(
                     "variable-list",
