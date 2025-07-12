@@ -1,6 +1,6 @@
 use client::{Client, UserStore};
 use collections::HashMap;
-use copilot::{Copilot, CopilotCompletionProvider};
+use copilot::{Copilot, CopilotCompletionProvider, Status};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
@@ -43,7 +43,12 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
-            let provider = all_language_settings(None, cx).edit_predictions.provider;
+            let file = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .and_then(|buffer| buffer.read(cx).file());
+            let provider = all_language_settings(file, cx).edit_predictions.provider;
             assign_edit_prediction_provider(
                 editor,
                 provider,
@@ -68,13 +73,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             let mut status = client.status();
             while let Some(_status) = status.next().await {
                 cx.update(|cx| {
-                    assign_edit_prediction_providers(
-                        &editors,
-                        provider,
-                        &client,
-                        user_store.clone(),
-                        cx,
-                    );
+                    assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
                 })
                 .log_err();
             }
@@ -87,14 +86,18 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |cx| {
+            assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
+
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
-            if new_provider != provider {
-                let tos_accepted = user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false);
+            let provider_changed = new_provider != provider;
 
+            let tos_accepted = user_store
+                .read(cx)
+                .current_user_has_accepted_terms()
+                .unwrap_or(false);
+
+            if provider_changed {
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
                     from = provider,
@@ -103,35 +106,27 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 );
 
                 provider = new_provider;
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
+                assign_edit_prediction_providers(&editors, &client, user_store.clone(), cx);
 
-                if !tos_accepted {
-                    match provider {
-                        EditPredictionProvider::Zed => {
-                            let Some(window) = cx.active_window() else {
-                                return;
-                            };
-
-                            window
-                                .update(cx, |_, window, cx| {
-                                    window.dispatch_action(
-                                        Box::new(zed_actions::OpenZedPredictOnboarding),
-                                        cx,
-                                    );
-                                })
-                                .ok();
+                match provider {
+                    EditPredictionProvider::Zed => {
+                        if !tos_accepted {
+                            if let Some(window) = cx.active_window() {
+                                window
+                                    .update(cx, |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(zed_actions::OpenZedPredictOnboarding),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
                         }
-                        EditPredictionProvider::None
-                        | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
                     }
-                }
+                    EditPredictionProvider::None
+                    | EditPredictionProvider::Copilot
+                    | EditPredictionProvider::Supermaven => {}
+                };
             }
         }
     })
@@ -146,14 +141,22 @@ fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
 
 fn assign_edit_prediction_providers(
     editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
-    provider: EditPredictionProvider,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     cx: &mut App,
 ) {
+    // Iterate over editors and update only when the provider actually changes for that editor
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
+                let file = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .and_then(|buffer| buffer.read(cx).file());
+                let provider = all_language_settings(file, cx).edit_predictions.provider;
+
+                // Apply provider; Editor will ignore if unchanged internally
                 assign_edit_prediction_provider(
                     editor,
                     provider,
@@ -231,6 +234,17 @@ fn assign_edit_prediction_provider(
                         });
                     }
                 }
+
+                if matches!(
+                    copilot.read(cx).status(),
+                    Status::Disabled
+                        | Status::SignedOut {
+                            awaiting_signing_in: false
+                        }
+                ) {
+                    copilot::initiate_sign_in(window, cx);
+                }
+
                 let provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
