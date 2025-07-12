@@ -401,7 +401,7 @@ impl SerializedPaneGroup {
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.add_pane(window, cx).downgrade()
+                        workspace.add_pane(false, window, cx).downgrade()
                     })
                     .log_err()?;
                 let active = serialized_pane.active;

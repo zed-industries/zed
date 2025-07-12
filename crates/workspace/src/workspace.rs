@@ -3059,7 +3059,12 @@ impl Workspace {
         cx.notify();
     }
 
-    fn add_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
+    fn add_pane(
+        &mut self,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
@@ -3078,6 +3083,9 @@ impl Workspace {
         self.panes.push(pane.clone());
 
         window.focus(&pane.focus_handle(cx));
+        if activate {
+            self.set_active_pane(&pane, window, cx);
+        }
 
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
@@ -3156,6 +3164,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, window, cx);
+        self.set_active_pane(&new_pane, window, cx);
         self.add_item(new_pane, item, None, true, true, window, cx);
     }
 
@@ -3484,7 +3493,7 @@ impl Workspace {
                 let split_off_pane = self
                     .find_pane_in_direction(direction, cx)
                     .unwrap_or_else(|| self.active_pane.clone());
-                let new_pane = self.add_pane(window, cx);
+                let new_pane = self.add_pane(false, window, cx);
                 if self
                     .center
                     .split(&split_off_pane, &new_pane, direction)
@@ -3662,7 +3671,7 @@ impl Workspace {
                 if !action.clone && self.active_pane.read(cx).items_len() < 2 {
                     return;
                 }
-                let new_pane = self.add_pane(window, cx);
+                let new_pane = self.add_pane(false, window, cx);
                 if self
                     .center
                     .split(&self.active_pane, &new_pane, action.direction)
@@ -3922,7 +3931,22 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
-        let new_pane = self.add_pane(window, cx);
+        let new_pane = self.add_pane(false, window, cx);
+        self.center
+            .split(&pane_to_split, &new_pane, split_direction)
+            .unwrap();
+        cx.notify();
+        new_pane
+    }
+
+    pub fn split_and_activate(
+        &mut self,
+        pane_to_split: Entity<Pane>,
+        split_direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        let new_pane = self.add_pane(true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -3940,7 +3964,7 @@ impl Workspace {
         let item = pane.read(cx).active_item()?;
         let maybe_pane_handle =
             if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
-                let new_pane = self.add_pane(window, cx);
+                let new_pane = self.add_pane(true, window, cx);
                 new_pane.update(cx, |pane, cx| {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
@@ -3969,7 +3993,7 @@ impl Workspace {
             return;
         };
 
-        let new_pane = self.add_pane(window, cx);
+        let new_pane = self.add_pane(true, window, cx);
         move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
@@ -3986,7 +4010,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane_to_split = pane_to_split.upgrade()?;
-        let new_pane = self.add_pane(window, cx);
+        let new_pane = self.add_pane(true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
