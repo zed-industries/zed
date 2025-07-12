@@ -2601,7 +2601,7 @@ impl Pane {
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_inactive_items(
                                             &close_inactive_items_action,
-                                            Some(item_id.clone()),
+                                            Some(item_id),
                                             window,
                                             cx,
                                         )
