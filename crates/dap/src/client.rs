@@ -2,7 +2,7 @@ use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
@@ -183,11 +183,34 @@ impl DebugAdapterClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn on_request<R: dap_types::requests::Request, F>(&self, handler: F)
+    pub fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
+    {
+        use crate::transport::RequestHandling;
+
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_request::<R, _>(move |seq, request| {
+                RequestHandling::Respond(handler(seq, request))
+            });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn on_request_ext<R: dap_types::requests::Request, F>(&self, handler: F)
+    where
+        F: 'static
+            + Send
+            + FnMut(
+                u64,
+                R::Arguments,
+            ) -> crate::transport::RequestHandling<
+                Result<R::Response, dap_types::ErrorResponse>,
+            >,
     {
         self.transport_delegate
             .transport

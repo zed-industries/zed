@@ -1459,7 +1459,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
+    pub fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
