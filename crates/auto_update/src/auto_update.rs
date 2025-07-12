@@ -3,8 +3,7 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Subscription, Task,
-    Window, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -84,7 +83,7 @@ pub struct AutoUpdater {
     http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
     #[cfg(target_os = "windows")]
-    exit_updater: Option<Subscription>,
+    exit_updater: Option<gpui::Subscription>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
