@@ -13,7 +13,7 @@ use std::{
     cmp::{self, PartialOrd},
     fmt::{self, Display},
     hash::Hash,
-    ops::{Add, Div, Mul, MulAssign, Neg, Sub},
+    ops::{Add, Div, Mul, MulAssign, Neg, Rem, Sub},
 };
 
 use crate::{App, DisplayId};
@@ -1594,8 +1594,8 @@ impl Size<Pixels> {
     /// Converts the size from logical to physical pixels.
     pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
-            DevicePixels((self.width.0 * scale_factor).round() as i32),
-            DevicePixels((self.height.0 * scale_factor).round() as i32),
+            phypx((self.width.0 * scale_factor).round() as i32),
+            phypx((self.height.0 * scale_factor).round() as i32),
         )
     }
 }
@@ -1642,8 +1642,8 @@ impl Bounds<Pixels> {
     pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
-                DevicePixels((self.origin.x.0 * factor).round() as i32),
-                DevicePixels((self.origin.y.0 * factor).round() as i32),
+                phypx((self.origin.x.0 * factor).round() as i32),
+                phypx((self.origin.y.0 * factor).round() as i32),
             ),
             size: self.size.to_device_pixels(factor),
         }
@@ -2572,7 +2572,7 @@ impl std::ops::RemAssign for Pixels {
     }
 }
 
-impl std::ops::Rem for Pixels {
+impl Rem for Pixels {
     type Output = Self;
 
     fn rem(self, rhs: Self) -> Self {
@@ -2686,7 +2686,7 @@ impl Pixels {
     /// The resulting `ScaledPixels` represent the scaled value which can be used for rendering
     /// calculations where display scaling is considered.
     pub fn scale(&self, factor: f32) -> ScaledPixels {
-        ScaledPixels(self.0 * factor)
+        phypx(self.0 * factor)
     }
 
     /// Raises the `Pixels` value to a given power.
@@ -2808,18 +2808,24 @@ impl From<usize> for Pixels {
 
 /// Represents physical pixels on the display.
 ///
-/// `DevicePixels` is a unit of measurement that refers to the actual pixels on a device's screen.
+/// `PhysicalPixels` is a unit of measurement that refers to the actual pixels on a device's screen.
 /// This type is used when precise pixel manipulation is required, such as rendering graphics or
-/// interfacing with hardware that operates on the pixel level. Unlike logical pixels that may be
-/// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
+/// interfacing with hardware that operates on the pixel level. Unlike [logical pixels] that may be
+/// affected by the device's scale factor, `PhysicalPixels` always correspond to real pixels on the
 /// display.
+///
+/// For example, with a scale factor of 2, each [logical pixel] corresponds to 2 physical pixels.
+/// So, if you set the size of an UI element to 100 logical pixels, it will be the same as setting
+/// its size to 200 physical pixels.
+///
+/// [logical pixels]: Pixels
+/// [logical pixel]: Pixels
 #[derive(
     Add,
     AddAssign,
     Clone,
     Copy,
     Default,
-    Div,
     Eq,
     Hash,
     Ord,
@@ -2831,9 +2837,76 @@ impl From<usize> for Pixels {
     Deserialize,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub i32);
+pub struct PhysicalPixels<T>(pub T);
 
-impl DevicePixels {
+/// Deprecated alias to physical pixels.
+pub type DevicePixels = PhysicalPixels<i32>;
+/// Deprecated alias to physical pixels.
+pub type ScaledPixels = PhysicalPixels<f32>;
+
+/// Constructs a [`PhysicalPixels`] value representing a length in physical pixels.
+///
+/// # Arguments
+///
+/// * `physical_pixels` - The number of physical pixels for the length.
+///
+/// # Returns
+///
+/// A `PhysicalPixels` representing the specified number of pixels.
+pub const fn phypx<T>(physical_pixels: T) -> PhysicalPixels<T> {
+    PhysicalPixels(physical_pixels)
+}
+
+/// Deprecated alias for creating `PhysicalPixels`.
+#[expect(non_snake_case)]
+pub const fn DevicePixels(x: i32) -> DevicePixels {
+    PhysicalPixels(x)
+}
+
+/// Deprecated alias for creating `PhysicalPixels`.
+#[expect(non_snake_case)]
+pub const fn ScaledPixels(x: f32) -> ScaledPixels {
+    PhysicalPixels(x)
+}
+
+impl PhysicalPixels<i32> {
+    /// Creates `PhysicalPixels<i32>` from a `u32` amount of physical pixels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `physical_pixels` is greatrer than
+    /// [`i32::MAX`].
+    pub(crate) fn from_u32(physical_pixels: u32) -> Self {
+        debug_assert!(physical_pixels <= i32::MAX as u32);
+        Self(physical_pixels as _)
+    }
+
+    /// Returns the amount of physical pixels, in `u32`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `self.0` is negative.
+    pub fn as_u32(self) -> u32 {
+        debug_assert!(0 <= self.0);
+        self.0 as _
+    }
+
+    /// Converts `PhysicalPixels<i32>` into `PhysicalPixels<f32>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `self` is outside of the
+    /// range of integers exactly representable by `f32`
+    /// (i.e. `-2.pow(24)..=2.pow(24)`).
+    ///
+    /// # Returns
+    ///
+    /// The mapped value.
+    pub fn unquantize(self) -> PhysicalPixels<f32> {
+        debug_assert!(-2i32.pow(24) <= self.0 && self.0 <= 2i32.pow(24));
+        PhysicalPixels(self.0 as f32)
+    }
+
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
     ///
     /// This function is useful when working with graphical data that needs to be stored in a buffer,
@@ -2861,72 +2934,7 @@ impl DevicePixels {
     }
 }
 
-impl fmt::Debug for DevicePixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (device)", self.0)
-    }
-}
-
-impl From<DevicePixels> for i32 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0
-    }
-}
-
-impl From<i32> for DevicePixels {
-    fn from(device_pixels: i32) -> Self {
-        DevicePixels(device_pixels)
-    }
-}
-
-impl From<u32> for DevicePixels {
-    fn from(device_pixels: u32) -> Self {
-        DevicePixels(device_pixels as i32)
-    }
-}
-
-impl From<DevicePixels> for u32 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as u32
-    }
-}
-
-impl From<DevicePixels> for u64 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as u64
-    }
-}
-
-impl From<u64> for DevicePixels {
-    fn from(device_pixels: u64) -> Self {
-        DevicePixels(device_pixels as i32)
-    }
-}
-
-impl From<DevicePixels> for usize {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as usize
-    }
-}
-
-impl From<usize> for DevicePixels {
-    fn from(device_pixels: usize) -> Self {
-        DevicePixels(device_pixels as i32)
-    }
-}
-
-/// Represents scaled pixels that take into account the device's scale factor.
-///
-/// `ScaledPixels` are used to ensure that UI elements appear at the correct size on devices
-/// with different pixel densities. When a device has a higher scale factor (such as Retina displays),
-/// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
-/// dimensions and positions can be specified in a way that scales appropriately across different
-/// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
-#[repr(transparent)]
-pub struct ScaledPixels(pub(crate) f32);
-
-impl ScaledPixels {
+impl PhysicalPixels<f32> {
     /// Floors the `ScaledPixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -2944,115 +2952,87 @@ impl ScaledPixels {
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
     }
-}
 
-impl Eq for ScaledPixels {}
-
-impl PartialOrd for ScaledPixels {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
+    /// Converts `PhysicalPixels<f32>` into `PhysicalPixels<i32>`.
+    ///
+    /// This function rounds the value to the nearest integer.
+    /// Ties are resolved away from 0.
+    ///
+    /// In case you need different rounding, use rounding methods such as
+    /// [`floor`] before calling this function.
+    ///
+    /// [`floor`]: PhysicalPixels::floor
+    ///
+    /// # Panics
+    ///
+    /// When `cfg!(debug_assertions)` is true, panics if the `self` value is
+    /// outside the range of an `i32`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `PhysicalPixels` instance with the rounded and
+    /// converted value.
+    pub fn quantize(self) -> PhysicalPixels<i32> {
+        debug_assert!(i32::MIN as f32 <= self.0 && self.0 <= i32::MAX as f32);
+        PhysicalPixels(self.0 as i32)
     }
 }
 
-impl Ord for ScaledPixels {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
+impl From<i32> for DevicePixels {
+    fn from(device_pixels: i32) -> Self {
+        phypx(device_pixels)
     }
 }
 
-impl Debug for ScaledPixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}px (scaled)", self.0)
-    }
-}
-
-impl From<ScaledPixels> for DevicePixels {
-    fn from(scaled: ScaledPixels) -> Self {
-        DevicePixels(scaled.0.ceil() as i32)
-    }
-}
-
-impl From<DevicePixels> for ScaledPixels {
-    fn from(device: DevicePixels) -> Self {
-        ScaledPixels(device.0 as f32)
-    }
-}
-
-impl From<ScaledPixels> for f64 {
-    fn from(scaled_pixels: ScaledPixels) -> Self {
-        scaled_pixels.0 as f64
-    }
-}
-
-impl From<ScaledPixels> for u32 {
-    fn from(pixels: ScaledPixels) -> Self {
-        pixels.0 as u32
-    }
-}
-
-impl Div for ScaledPixels {
-    type Output = f32;
+impl<T: Div> Div for PhysicalPixels<T> {
+    type Output = T::Output;
 
     fn div(self, rhs: Self) -> Self::Output {
         self.0 / rhs.0
     }
 }
 
-impl std::ops::DivAssign for ScaledPixels {
-    fn div_assign(&mut self, rhs: Self) {
-        *self = Self(self.0 / rhs.0);
+impl<T: Div> Div<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
+
+    fn div(self, rhs: T) -> Self::Output {
+        phypx(self.0 / rhs)
     }
 }
 
-impl std::ops::RemAssign for ScaledPixels {
-    fn rem_assign(&mut self, rhs: Self) {
-        self.0 %= rhs.0;
+impl<T: Rem> Rem for PhysicalPixels<T> {
+    type Output = T::Output;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        self.0 % rhs.0
     }
 }
 
-impl std::ops::Rem for ScaledPixels {
-    type Output = Self;
+impl<T: Rem> Rem<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
 
-    fn rem(self, rhs: Self) -> Self {
-        Self(self.0 % rhs.0)
+    fn rem(self, rhs: T) -> Self::Output {
+        phypx(self.0 % rhs)
     }
 }
 
-impl Mul<f32> for ScaledPixels {
-    type Output = Self;
+impl<T: Mul> Mul<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
 
-    fn mul(self, rhs: f32) -> Self {
-        Self(self.0 * rhs)
+    fn mul(self, rhs: T) -> Self::Output {
+        phypx(self.0 * rhs)
     }
 }
 
-impl Mul<ScaledPixels> for f32 {
-    type Output = ScaledPixels;
-
-    fn mul(self, rhs: ScaledPixels) -> Self::Output {
-        rhs * self
-    }
-}
-
-impl Mul<usize> for ScaledPixels {
-    type Output = Self;
-
-    fn mul(self, rhs: usize) -> Self {
-        self * (rhs as f32)
-    }
-}
-
-impl Mul<ScaledPixels> for usize {
-    type Output = ScaledPixels;
-
-    fn mul(self, rhs: ScaledPixels) -> ScaledPixels {
-        rhs * self
-    }
-}
-
-impl MulAssign<f32> for ScaledPixels {
-    fn mul_assign(&mut self, rhs: f32) {
+impl<T: MulAssign> MulAssign<T> for PhysicalPixels<T> {
+    fn mul_assign(&mut self, rhs: T) {
         self.0 *= rhs;
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for PhysicalPixels<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} px (phy)", self.0)
     }
 }
 

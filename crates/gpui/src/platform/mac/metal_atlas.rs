@@ -1,6 +1,6 @@
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Point, Size, platform::AtlasTextureList,
+    Point, Size, phypx, platform::AtlasTextureList,
 };
 use anyhow::{Context as _, Result};
 use collections::FxHashMap;
@@ -141,18 +141,18 @@ impl MetalAtlasState {
         kind: AtlasTextureKind,
     ) -> &mut MetalAtlasTexture {
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: phypx(1024),
+            height: phypx(1024),
         };
         // Max texture size on all modern Apple GPUs. Anything bigger than that crashes in validateWithDevice.
         const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(16384),
-            height: DevicePixels(16384),
+            width: phypx(16384),
+            height: phypx(16384),
         };
         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
         let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_width(size.width.into());
-        texture_descriptor.set_height(size.height.into());
+        texture_descriptor.set_width(size.width.as_u32().into());
+        texture_descriptor.set_height(size.height.as_u32().into());
         let pixel_format;
         let usage;
         match kind {
@@ -233,10 +233,10 @@ impl MetalAtlasTexture {
 
     fn upload(&self, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
         let region = metal::MTLRegion::new_2d(
-            bounds.origin.x.into(),
-            bounds.origin.y.into(),
-            bounds.size.width.into(),
-            bounds.size.height.into(),
+            bounds.origin.x.as_u32().into(),
+            bounds.origin.y.as_u32().into(),
+            bounds.size.width.as_u32().into(),
+            bounds.size.height.as_u32().into(),
         );
         self.metal_texture.replace_region(
             region,
@@ -266,7 +266,7 @@ impl MetalAtlasTexture {
 
 impl From<Size<DevicePixels>> for etagere::Size {
     fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(size.width.into(), size.height.into())
+        etagere::Size::new(size.width.0, size.height.0)
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    DevicePixels, ForegroundExecutor, Size,
+    DevicePixels, ForegroundExecutor, Size, phypx,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     size,
 };
@@ -55,10 +55,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
             CGDisplayModeRelease(display_mode_ref);
 
-            Ok(size(
-                DevicePixels(width as i32),
-                DevicePixels(height as i32),
-            ))
+            Ok(size(phypx(width as i32), phypx(height as i32)))
         }
     }
 

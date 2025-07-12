@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
+    GlyphId, LineLayout, PhysicalPixels, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
+    SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size, phypx, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -298,7 +298,10 @@ impl CosmicTextSystemState {
             .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(image.placement.width.into(), image.placement.height.into()),
+            size: size(
+                PhysicalPixels::from_u32(image.placement.width),
+                PhysicalPixels::from_u32(image.placement.height),
+            ),
         })
     }
 
@@ -491,8 +494,8 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+            origin: point(phypx(rect.origin_x()), phypx(rect.origin_y())),
+            size: size(phypx(rect.width()), phypx(rect.height())),
         }
     }
 }
