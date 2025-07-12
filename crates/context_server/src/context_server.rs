@@ -87,7 +87,7 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
+    pub async fn start(self: Arc<Self>, request_timeout: std::time::Duration, cx: &AsyncApp) -> Result<()> {
         let client = match &self.configuration {
             ContextServerTransport::Stdio(command) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
@@ -96,12 +96,14 @@ impl ContextServer {
                     args: command.args.clone(),
                     env: command.env.clone(),
                 },
+                request_timeout,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
                 transport.clone(),
+                request_timeout,
                 cx.clone(),
             )?,
         };
