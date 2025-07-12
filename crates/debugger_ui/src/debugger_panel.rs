@@ -27,7 +27,7 @@ use text::ToPoint as _;
 
 use itertools::Itertools as _;
 use language::Buffer;
-use project::debugger::session::{Session, SessionQuirks, SessionStateEvent};
+use project::debugger::session::{Session, SessionQuirks, SessionState, SessionStateEvent};
 use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
@@ -36,7 +36,7 @@ use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
@@ -278,22 +278,34 @@ impl DebugPanel {
             }
         });
 
-        cx.spawn(async move |_, cx| {
-            if let Err(error) = task.await {
-                log::error!("{error}");
-                session
-                    .update(cx, |session, cx| {
-                        session
-                            .console_output(cx)
-                            .unbounded_send(format!("error: {}", error))
-                            .ok();
-                        session.shutdown(cx)
-                    })?
-                    .await;
+        let boot_task = cx.spawn({
+            let session = session.clone();
+
+            async move |_, cx| {
+                if let Err(error) = task.await {
+                    log::error!("{error}");
+                    session
+                        .update(cx, |session, cx| {
+                            session
+                                .console_output(cx)
+                                .unbounded_send(format!("error: {}", error))
+                                .ok();
+                            session.shutdown(cx)
+                        })?
+                        .await;
+                }
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+
+        session.update(cx, |session, _| match &mut session.mode {
+            SessionState::Building(state_task) => {
+                *state_task = Some(boot_task);
+            }
+            SessionState::Running(_) => {
+                debug_panic!("Session state should be in building because we are just starting it");
+            }
+        });
     }
 
     pub(crate) fn rerun_last_session(
@@ -826,13 +838,24 @@ impl DebugPanel {
                                             .on_click(window.listener_for(
                                                 &running_state,
                                                 |this, _, _window, cx| {
-                                                    this.stop_thread(cx);
+                                                    if this.session().read(cx).is_building() {
+                                                        this.session().update(cx, |session, cx| {
+                                                            session.shutdown(cx).detach()
+                                                        });
+                                                    } else {
+                                                        this.stop_thread(cx);
+                                                    }
                                                 },
                                             ))
-                                            .disabled(
-                                                thread_status != ThreadStatus::Stopped
-                                                    && thread_status != ThreadStatus::Running,
-                                            )
+                                            .disabled(active_session.as_ref().is_none_or(
+                                                |session| {
+                                                    session
+                                                        .read(cx)
+                                                        .session(cx)
+                                                        .read(cx)
+                                                        .is_terminated()
+                                                },
+                                            ))
                                             .tooltip({
                                                 let focus_handle = focus_handle.clone();
                                                 let label = if capabilities
