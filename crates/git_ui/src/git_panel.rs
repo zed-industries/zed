@@ -47,7 +47,7 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
-use project::git_store::RepositoryEvent;
+use project::git_store::{RepositoryEvent, RepositoryId};
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository},
@@ -353,8 +353,15 @@ pub struct GitPanel {
     show_placeholders: bool,
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
-    last_staged_path: Option<RepoPath>,
+    bulk_staging: Option<BulkStaging>,
     _settings_subscription: Subscription,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BulkStaging {
+    repo_id: RepositoryId,
+    anchor: RepoPath,
+    // FIXME remember the range of staged things?
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
@@ -527,7 +534,7 @@ impl GitPanel {
                 entry_count: 0,
                 horizontal_scrollbar,
                 vertical_scrollbar,
-                last_staged_path: None,
+                bulk_staging: None,
                 _settings_subscription,
             };
 
@@ -2446,12 +2453,10 @@ impl GitPanel {
     }
 
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
-        let last_staged_path = self.last_staged_path.take();
-        let last_staged_path_prev_index = last_staged_path
+        let bulk_staging = self.bulk_staging.take();
+        let last_staged_path_prev_index = bulk_staging
             .as_ref()
-            .and_then(|path| self.entry_by_path(path, cx));
-
-        // FIXME check if we changed repos
+            .and_then(|op| self.entry_by_path(&op.anchor, cx));
 
         self.entries.clear();
         self.single_staged_entry.take();
@@ -2612,16 +2617,17 @@ impl GitPanel {
 
         self.update_counts(repo);
 
-        let last_staged_path_new_index = last_staged_path
+        let bulk_staging_anchor_new_index = bulk_staging
             .as_ref()
-            .and_then(|path| self.entry_by_path(path, cx));
-        if last_staged_path_new_index == last_staged_path_prev_index
-            && let Some(index) = last_staged_path_new_index
+            .filter(|op| op.repo_id == repo.id)
+            .and_then(|op| self.entry_by_path(&op.anchor, cx));
+        if bulk_staging_anchor_new_index == last_staged_path_prev_index
+            && let Some(index) = bulk_staging_anchor_new_index
             && let Some(entry) = self.entries.get(index)
             && let Some(entry) = entry.status_entry()
             && self.entry_staging(entry) == StageStatus::Staged
         {
-            self.last_staged_path = last_staged_path;
+            self.bulk_staging = bulk_staging;
         }
 
         self.select_first_entry_if_none(cx);
@@ -4160,32 +4166,16 @@ impl GitPanel {
                                             return;
                                         }
                                         if click.modifiers().shift
-                                            && let Some(last_staged_path) =
-                                                this.last_staged_path.clone()
+                                            && let Some(op) = this.bulk_staging.clone()
                                         {
-                                            let Some(mut start_ix) =
-                                                this.entry_by_path(&last_staged_path, cx)
-                                            else {
-                                                return;
-                                            };
-                                            let Some(mut end_ix) =
-                                                this.entry_by_path(&entry.repo_path, cx)
-                                            else {
-                                                return;
-                                            };
-                                            if end_ix < start_ix {
-                                                std::mem::swap(&mut start_ix, &mut end_ix);
-                                            }
-                                            let entries = this.entries[start_ix..=end_ix]
-                                                .iter()
-                                                .filter_map(|entry| entry.status_entry().cloned())
-                                                .collect::<Vec<_>>();
-                                            this.change_file_stage(true, entries, cx);
+                                            this.stage_bulk(op, entry.repo_path.clone(), cx);
                                         } else {
-                                            this.last_staged_path.take();
+                                            this.bulk_staging.take();
                                             if !entry.staging.is_fully_staged() {
-                                                this.last_staged_path =
-                                                    Some(entry.repo_path.clone());
+                                                this.set_bulk_staging_anchor(
+                                                    entry.repo_path.clone(),
+                                                    cx,
+                                                );
                                             }
                                             this.toggle_staged_for_entry(
                                                 &GitListEntry::GitStatusEntry(entry.clone()),
@@ -4269,6 +4259,33 @@ impl GitPanel {
 
             panel
         })
+    }
+
+    fn stage_bulk(&mut self, op: BulkStaging, path: RepoPath, cx: &mut Context<'_, Self>) {
+        let Some(mut start_ix) = self.entry_by_path(&op.anchor, cx) else {
+            return;
+        };
+        let Some(mut end_ix) = self.entry_by_path(&path, cx) else {
+            return;
+        };
+        if end_ix < start_ix {
+            std::mem::swap(&mut start_ix, &mut end_ix);
+        }
+        let entries = self.entries[start_ix..=end_ix]
+            .iter()
+            .filter_map(|entry| entry.status_entry().cloned())
+            .collect::<Vec<_>>();
+        self.change_file_stage(true, entries, cx);
+    }
+
+    fn set_bulk_staging_anchor(&mut self, path: RepoPath, cx: &mut Context<'_, GitPanel>) {
+        let Some(repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        self.bulk_staging = Some(BulkStaging {
+            repo_id: repo.read(cx).id,
+            anchor: path,
+        });
     }
 }
 
