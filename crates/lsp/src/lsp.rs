@@ -633,7 +633,7 @@ impl LanguageServer {
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
-                    diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                    diagnostics: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
