@@ -298,6 +298,7 @@ message Commit {
 
     message CommitOptions {
         bool amend = 1;
+        bool signoff = 2;
     }
 }
 
