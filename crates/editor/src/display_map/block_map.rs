@@ -193,7 +193,6 @@ pub struct CustomBlock {
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
-    pub(crate) render_in_minimap: bool,
 }
 
 #[derive(Clone)]
@@ -205,7 +204,6 @@ pub struct BlockProperties<P> {
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub priority: usize,
-    pub render_in_minimap: bool,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -1044,7 +1042,6 @@ impl BlockMapWriter<'_> {
                 render: Arc::new(Mutex::new(block.render)),
                 style: block.style,
                 priority: block.priority,
-                render_in_minimap: block.render_in_minimap,
             });
             self.0.custom_blocks.insert(block_ix, new_block.clone());
             self.0.custom_blocks_by_id.insert(id, new_block);
@@ -1079,7 +1076,6 @@ impl BlockMapWriter<'_> {
                         style: block.style,
                         render: block.render.clone(),
                         priority: block.priority,
-                        render_in_minimap: block.render_in_minimap,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -1976,7 +1972,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1984,7 +1979,6 @@ mod tests {
                 height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1992,7 +1986,6 @@ mod tests {
                 height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2217,7 +2210,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2225,7 +2217,6 @@ mod tests {
                 height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2233,7 +2224,6 @@ mod tests {
                 height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2322,7 +2312,6 @@ mod tests {
                 render: Arc::new(|_| div().into_any()),
                 height: Some(1),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2330,7 +2319,6 @@ mod tests {
                 render: Arc::new(|_| div().into_any()),
                 height: Some(1),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2370,7 +2358,6 @@ mod tests {
             height: Some(4),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -2424,7 +2411,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2432,7 +2418,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2440,7 +2425,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2455,7 +2439,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2463,7 +2446,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2471,7 +2453,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2571,7 +2552,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2579,7 +2559,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2587,7 +2566,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let excerpt_blocks_3 = writer.insert(vec![
@@ -2597,7 +2575,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2605,7 +2582,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2653,7 +2629,6 @@ mod tests {
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }]);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -3011,7 +2986,6 @@ mod tests {
                                 height: Some(height),
                                 render: Arc::new(|_| div().into_any()),
                                 priority: 0,
-                                render_in_minimap: true,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -3032,7 +3006,6 @@ mod tests {
                             style: props.style,
                             render: Arc::new(|_| div().into_any()),
                             priority: 0,
-                            render_in_minimap: true,
                         }));
 
                     for (block_properties, block_id) in block_properties.iter().zip(block_ids) {
@@ -3557,7 +3530,6 @@ mod tests {
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
