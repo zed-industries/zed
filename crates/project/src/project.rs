@@ -18,11 +18,11 @@ pub mod terminals;
 pub mod toolchain_store;
 pub mod worktree_store;
 
+mod direnv;
+mod environment;
 #[cfg(test)]
 mod project_tests;
 
-mod direnv;
-mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
@@ -49,7 +49,7 @@ use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
 
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
@@ -145,6 +145,28 @@ pub use toolchain_store::ToolchainStore;
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+const MAX_FS_OPERATIONS: usize = 100;
+
+#[derive(Clone, Debug)]
+enum FsOperation {
+    Move {
+        old_path: Arc<Path>,
+        new_path: Arc<Path>,
+    },
+    Remove {
+        worktree_id: WorktreeId,
+        path: Arc<Path>,
+    },
+    Copy {
+        worktree_id: WorktreeId,
+        copied_to_path: Arc<Path>,
+    },
+    Create {
+        worktree_id: WorktreeId,
+        created_path: Arc<Path>,
+        is_directory: bool,
+    },
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -176,7 +198,6 @@ pub struct Project {
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     dap_store: Entity<DapStore>,
-
     breakpoint_store: Entity<BreakpointStore>,
     client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -199,6 +220,10 @@ pub struct Project {
     remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
     terminals: Terminals,
     node: Option<NodeRuntime>,
+    fs_operations: VecDeque<FsOperation>,
+    performing_undo: bool,
+    undo_operation_counter: u64,
+    current_undo_id: Option<u64>,
     search_history: SearchHistory,
     search_included_history: SearchHistory,
     search_excluded_history: SearchHistory,
@@ -1128,6 +1153,10 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
+                fs_operations: VecDeque::new(),
+                performing_undo: false,
+                undo_operation_counter: 0,
+                current_undo_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -1294,6 +1323,10 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
+                fs_operations: VecDeque::new(),
+                performing_undo: false,
+                undo_operation_counter: 0,
+                current_undo_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -1553,6 +1586,10 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: None,
+                fs_operations: VecDeque::new(),
+                performing_undo: false,
+                undo_operation_counter: 0,
+                current_undo_id: None,
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -2046,8 +2083,29 @@ impl Project {
                 "No worktree for path {project_path:?}"
             ))));
         };
-        worktree.update(cx, |worktree, cx| {
+
+        let should_record = self.should_record_fs_operations();
+        let worktree_id = project_path.worktree_id;
+        let entry_path = project_path.path.clone();
+
+        let create_task = worktree.update(cx, |worktree, cx| {
             worktree.create_entry(project_path.path, is_directory, None, cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = create_task.await;
+
+            if result.is_ok() && should_record {
+                this.update(cx, |this, _| {
+                    this.record_fs_operation(FsOperation::Create {
+                        worktree_id,
+                        created_path: entry_path,
+                        is_directory,
+                    });
+                })?;
+            }
+
+            result
         })
     }
 
@@ -2061,8 +2119,32 @@ impl Project {
         let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Ok(None));
         };
-        worktree.update(cx, |worktree, cx| {
-            worktree.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+        let new_path = new_path.into();
+        let should_record = self.should_record_fs_operations();
+        let worktree_id = worktree.read(cx).id();
+
+        let copy_task = worktree.update(cx, |worktree, cx| {
+            worktree.copy_entry(
+                entry_id,
+                relative_worktree_source_path,
+                new_path.clone(),
+                cx,
+            )
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = copy_task.await;
+
+            if result.is_ok() && should_record {
+                this.update(cx, |this, _| {
+                    this.record_fs_operation(FsOperation::Copy {
+                        worktree_id,
+                        copied_to_path: new_path,
+                    });
+                })?;
+            }
+
+            result
         })
     }
 
@@ -2087,9 +2169,10 @@ impl Project {
 
         let worktree_id = worktree.read(cx).id();
         let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
+        let should_record_fs_operations = self.should_record_fs_operations();
 
         let lsp_store = self.lsp_store().downgrade();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
@@ -2114,6 +2197,15 @@ impl Project {
                     worktree.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
+
+            if should_record_fs_operations {
+                this.update(cx, |this, _| {
+                    this.record_fs_operation(FsOperation::Move {
+                        old_path: old_path.clone(),
+                        new_path,
+                    });
+                })?;
+            }
 
             lsp_store
                 .read_with(cx, |this, _| {
@@ -2141,10 +2233,33 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
+        let worktree_id = worktree.read(cx).id();
+        let entry_path = {
+            let worktree_store = self.worktree_store.read(cx);
+            worktree_store
+                .worktree_and_entry_for_id(entry_id, cx)
+                .map(|(_, entry)| entry.path.clone())
+        };
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
-        worktree.update(cx, |worktree, cx| {
+
+        let should_record_fs_operations = self.should_record_fs_operations();
+        let delete_task = worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
-        })
+        })?;
+
+        Some(cx.spawn(async move |this, cx| {
+            delete_task.await?;
+
+            if trash && should_record_fs_operations {
+                if let Some(path) = entry_path {
+                    this.update(cx, |this, _| {
+                        this.record_fs_operation(FsOperation::Remove { worktree_id, path });
+                    })?;
+                }
+            }
+
+            Ok(())
+        }))
     }
 
     pub fn expand_entry(
@@ -2442,6 +2557,221 @@ impl Project {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
             ProjectClientState::Remote { .. } => true,
+        }
+    }
+
+    fn should_record_fs_operations(&self) -> bool {
+        !self.performing_undo
+            && match &self.client_state {
+                ProjectClientState::Local | ProjectClientState::Shared { .. } => true,
+                ProjectClientState::Remote { .. } => false,
+            }
+    }
+
+    fn record_fs_operation(&mut self, op: FsOperation) {
+        if self.fs_operations.len() >= MAX_FS_OPERATIONS {
+            self.fs_operations.pop_front();
+        }
+        self.fs_operations.push_back(op);
+    }
+
+    pub fn undo_fs_operation(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if self.performing_undo {
+            return Task::ready(Err(anyhow!("Undo operation already in progress")));
+        }
+
+        let Some(op) = self.fs_operations.back().cloned() else {
+            return Task::ready(Ok(()));
+        };
+
+        self.undo_operation_counter += 1;
+        let op_id = self.undo_operation_counter;
+
+        self.performing_undo = true;
+        self.current_undo_id = Some(op_id);
+
+        let handle_undo_result = |this: &mut Project,
+                                  result: Result<()>,
+                                  op_id: u64,
+                                  error_message: Option<String>,
+                                  cx: &mut Context<Project>|
+         -> Result<()> {
+            this.performing_undo = false;
+
+            match result {
+                Ok(_) => {
+                    if this.current_undo_id == Some(op_id) {
+                        this.fs_operations.pop_back();
+                    }
+                    this.current_undo_id = None;
+                    Ok(())
+                }
+                Err(e) => {
+                    let error_chain = format!("{:?}", e).to_lowercase();
+                    if error_chain.contains("does not exist")
+                        || error_chain.contains("no such file")
+                        || error_chain.contains("not found")
+                        || error_chain.contains("cannot find")
+                    {
+                        // File doesn't exist, treat as successful
+                        if this.current_undo_id == Some(op_id) {
+                            this.fs_operations.pop_back();
+                        }
+                        this.current_undo_id = None;
+                        Ok(())
+                    } else {
+                        this.current_undo_id = None;
+                        if let Some(msg) = error_message {
+                            cx.emit(Event::Toast {
+                                notification_id: "filesystem-undo-error".into(),
+                                message: format!("{}: {}", msg, e),
+                            });
+                        } else {
+                            cx.emit(Event::Toast {
+                                notification_id: "filesystem-undo-error".into(),
+                                message: format!("Failed to undo filesystem change: {}", e),
+                            });
+                        }
+                        Err(e)
+                    }
+                }
+            }
+        };
+
+        match op {
+            FsOperation::Move { old_path, new_path } => {
+                let entry = self
+                    .find_project_path(&new_path, cx)
+                    .and_then(|p| self.entry_for_path(&p, cx).map(|e| e.id));
+
+                let Some(id) = entry else {
+                    // File doesn't exist, treat as successful
+                    self.performing_undo = false;
+                    self.current_undo_id = None;
+                    self.fs_operations.pop_back();
+                    return Task::ready(Ok(()));
+                };
+
+                cx.spawn(async move |this, cx| {
+                    let rename_result = this
+                        .update(cx, |this, cx| this.rename_entry(id, old_path.as_ref(), cx))?
+                        .await
+                        .map(|_| ());
+
+                    this.update(cx, |this, cx| {
+                        handle_undo_result(this, rename_result, op_id, None, cx)
+                    })?
+                })
+            }
+            FsOperation::Remove { worktree_id, path } => {
+                let fs = self.fs.clone();
+                let abs_path = self.worktree_for_id(worktree_id, cx).and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    let abs_path = worktree.absolutize(&path).ok();
+                    abs_path
+                });
+
+                let Some(abs_path) = abs_path else {
+                    self.performing_undo = false;
+                    self.current_undo_id = None;
+                    cx.emit(Event::Toast {
+                        notification_id: "filesystem-undo-error".into(),
+                        message: format!("Cannot restore '{}': worktree not found", path.display()),
+                    });
+                    return Task::ready(Err(anyhow!("Worktree not found")));
+                };
+
+                let path_display = path.display().to_string();
+                cx.spawn(async move |this, cx| {
+                    let restore_result = fs.restore_from_trash(&abs_path).await;
+
+                    this.update(cx, |this, cx| {
+                        handle_undo_result(
+                            this,
+                            restore_result,
+                            op_id,
+                            Some(format!("Failed to restore '{}'", path_display)),
+                            cx,
+                        )
+                    })?
+                })
+            }
+            FsOperation::Copy {
+                worktree_id,
+                copied_to_path,
+            } => {
+                let entry_id = self.worktree_for_id(worktree_id, cx).and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.entry_for_path(&copied_to_path).map(|e| e.id)
+                });
+
+                let Some(id) = entry_id else {
+                    // File doesn't exist, treat as successful
+                    self.performing_undo = false;
+                    self.current_undo_id = None;
+                    self.fs_operations.pop_back();
+                    return Task::ready(Ok(()));
+                };
+
+                cx.spawn(async move |this, cx| {
+                    let delete_result = this
+                        .update(cx, |this, cx| this.delete_entry(id, false, cx))?
+                        .unwrap_or_else(|| Task::ready(Ok(())))
+                        .await;
+
+                    this.update(cx, |this, cx| {
+                        handle_undo_result(
+                            this,
+                            delete_result,
+                            op_id,
+                            Some(format!(
+                                "Failed to delete copied file '{}'",
+                                copied_to_path.display()
+                            )),
+                            cx,
+                        )
+                    })?
+                })
+            }
+            FsOperation::Create {
+                worktree_id,
+                created_path,
+                is_directory,
+            } => {
+                let entry_id = self.worktree_for_id(worktree_id, cx).and_then(|worktree| {
+                    let worktree = worktree.read(cx);
+                    worktree.entry_for_path(&created_path).map(|e| e.id)
+                });
+
+                let Some(id) = entry_id else {
+                    // File doesn't exist, treat as successful
+                    self.performing_undo = false;
+                    self.current_undo_id = None;
+                    self.fs_operations.pop_back();
+                    return Task::ready(Ok(()));
+                };
+
+                cx.spawn(async move |this, cx| {
+                    let delete_result = this
+                        .update(cx, |this, cx| this.delete_entry(id, true, cx))?
+                        .unwrap_or_else(|| Task::ready(Ok(())))
+                        .await;
+
+                    this.update(cx, |this, cx| {
+                        handle_undo_result(
+                            this,
+                            delete_result,
+                            op_id,
+                            Some(format!(
+                                "Failed to delete created {} '{}'",
+                                if is_directory { "directory" } else { "file" },
+                                created_path.display()
+                            )),
+                            cx,
+                        )
+                    })?
+                })
+            }
         }
     }
 
