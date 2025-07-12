@@ -8,5 +8,6 @@ pub mod lmstudio;
 pub mod mistral;
 pub mod ollama;
 pub mod open_ai;
+pub mod open_ai_compatible;
 pub mod open_router;
 pub mod vercel;
