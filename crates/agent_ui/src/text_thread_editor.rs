@@ -2589,7 +2589,7 @@ impl Render for TextThreadEditor {
 
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
-                provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
+                provider.render_accept_terms(LanguageModelProviderTosView::TextThreadPopup, cx)
             })
         } else {
             None

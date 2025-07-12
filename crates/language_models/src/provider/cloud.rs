@@ -507,7 +507,7 @@ fn render_accept_terms(
             )
             .child({
                 match view_kind {
-                    LanguageModelProviderTosView::PromptEditorPopup => {
+                    LanguageModelProviderTosView::TextThreadPopup => {
                         button_container.w_full().justify_end()
                     }
                     LanguageModelProviderTosView::Configuration => {
