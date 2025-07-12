@@ -728,7 +728,8 @@ impl ActivityIndicator {
                         let reload = workspace::Reload {
                             binary_path: Some(binary_path.clone()),
                         };
-                        move |_, _, cx| workspace::reload_updating(&reload, cx)
+                        move |_, _, cx| workspace::reload(&reload, cx)
+                        // move |_, _, cx| workspace::reload_updating(&reload, cx)
                     })),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
