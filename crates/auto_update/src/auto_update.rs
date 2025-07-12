@@ -3,7 +3,8 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Subscription, Task,
+    Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -83,6 +84,7 @@ pub struct AutoUpdater {
     current_version: SemanticVersion,
     http_client: Arc<HttpClientWithUrl>,
     pending_poll: Option<Task<Option<()>>>,
+    exit_updater: Option<Subscription>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -169,7 +171,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
-        let updater = AutoUpdater::new(version, http_client);
+        let updater = AutoUpdater::new(version, http_client, cx);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
             .map(|channel| channel.poll_for_updates())
@@ -316,12 +318,20 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    fn new(current_version: SemanticVersion, http_client: Arc<HttpClientWithUrl>) -> Self {
+    fn new(
+        current_version: SemanticVersion,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &App,
+    ) -> Self {
+        // Check if there is a pending installer
+        // If there is, run the installer and exit
+        let exit_updater = cx.on_app_quit(|_| async move { check_pending_installation() });
         Self {
             status: AutoUpdateStatus::Idle,
             current_version,
             http_client,
             pending_poll: None,
+            exit_updater: Some(exit_updater),
         }
     }
 
@@ -701,6 +711,10 @@ impl AutoUpdater {
                 .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
                 .is_some())
         })
+    }
+
+    pub fn remove_exit_updater(&mut self) {
+        self.exit_updater.take();
     }
 }
 
