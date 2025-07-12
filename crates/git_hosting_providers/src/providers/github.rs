@@ -159,7 +159,11 @@ impl GitHostingProvider for Github {
         }
 
         let mut path_segments = url.path_segments()?;
-        let owner = path_segments.next()?;
+        let mut owner = path_segments.next()?;
+        if owner.is_empty() {
+            owner = path_segments.next()?;
+        }
+
         let repo = path_segments.next()?.trim_end_matches(".git");
 
         Some(ParsedGitRemote {
@@ -243,6 +247,22 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_remote_url_with_root_slash() {
+        let remote_url = "git@github.com:/zed-industries/zed";
+        let parsed_remote = Github::public_instance()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
 
     #[test]
     fn test_invalid_self_hosted_remote_url() {
