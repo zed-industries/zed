@@ -12377,6 +12377,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "which 6.0.3",
  "workspace-hack",
  "worktree",

@@ -134,7 +134,7 @@ impl DiagnosticIndicator {
                 cx.notify();
             }
 
-            project::Event::DiagnosticsUpdated { .. } => {
+            project::Event::DiagnosticsBatchUpdated => {
                 this.summary = project.read(cx).diagnostic_summary(false, cx);
                 cx.notify();
             }

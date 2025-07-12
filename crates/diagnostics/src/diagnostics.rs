@@ -179,7 +179,6 @@ impl ProjectDiagnosticsEditor {
                     path,
                 } => {
                     this.paths_to_update.insert(path.clone());
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(EditorEvent::TitleChanged);
 
                     if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
@@ -188,6 +187,9 @@ impl ProjectDiagnosticsEditor {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
                         this.update_stale_excerpts(window, cx);
                     }
+                }
+                project::Event::DiagnosticsBatchUpdated => {
+                    this.summary = project.read(cx).diagnostic_summary(false, cx);
                 }
                 _ => {}
             });
