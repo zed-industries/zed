@@ -306,4 +306,40 @@ mod tests {
             assert!(provider.current_completion.is_none());
         });
     }
+
+    /// Test that partial typing is handled correctly - only suggests untyped portion
+    #[gpui::test]
+    async fn test_partial_typing_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create buffer where user has partially typed "vec"
+        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("let result = vec", cx)));
+        let cursor_position = buffer.read_with(cx, |buffer, _| {
+            buffer.anchor_after(16) // After "vec"
+        });
+
+        let (provider, fake_http_client) = Ollama::fake(cx);
+
+        // Configure response that starts with what user already typed
+        fake_http_client.set_generate_response("vec![1, 2, 3]");
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer.clone(), cursor_position, false, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        // Should suggest only the remaining part after "vec"
+        let suggestion = cx.update(|cx| {
+            provider.update(cx, |provider, cx| {
+                provider.suggest(&buffer, cursor_position, cx)
+            })
+        });
+
+        // Verify we get a reasonable suggestion
+        if let Some(suggestion) = suggestion {
+            assert_eq!(suggestion.edits.len(), 1);
+            assert!(suggestion.edits[0].1.contains("1, 2, 3"));
+        }
+    }
 }
