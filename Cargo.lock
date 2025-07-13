@@ -3091,6 +3091,7 @@ dependencies = [
  "http_client",
  "inline_completion",
  "language",
+ "log",
  "postage",
  "project",
  "serde",

@@ -9,7 +9,7 @@ use project::Project;
 use std::{
     path::Path,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use text::{ToOffset, ToPoint};
 
@@ -40,10 +40,32 @@ impl CodestralCompletionProvider {
         api_key: String,
         prompt: String,
         suffix: String,
-        _file_extension: Option<String>,
+        file_extension: Option<String>,
         model: String,
         max_tokens: Option<u32>,
     ) -> Result<String> {
+        let start_time = Instant::now();
+        
+        // Log request details
+        log::debug!(
+            "Codestral: Requesting completion (model: {}, max_tokens: {:?}, file_type: {:?})",
+            model, max_tokens, file_extension
+        );
+        
+        // Log truncated prompt and suffix for debugging
+        let prompt_preview = if prompt.len() > 200 {
+            format!("{}...", &prompt[..200])
+        } else {
+            prompt.clone()
+        };
+        let suffix_preview = if suffix.len() > 200 {
+            format!("{}...", &suffix[..200])
+        } else {
+            suffix.clone()
+        };
+        
+        log::debug!("Codestral: Prompt preview: {:?}", prompt_preview);
+        log::debug!("Codestral: Suffix preview: {:?}", suffix_preview);
         let request = CodestralRequest {
             model,
             prompt,
@@ -58,6 +80,13 @@ impl CodestralCompletionProvider {
         };
 
         let request_body = serde_json::to_string(&request)?;
+        
+        log::debug!(
+            "Codestral: Sending request to {} with body: {}",
+            CODESTRAL_API_URL,
+            request_body
+        );
+        
         let http_request = http_client::Request::builder()
             .method(http_client::Method::POST)
             .uri(CODESTRAL_API_URL)
@@ -66,20 +95,44 @@ impl CodestralCompletionProvider {
             .body(http_client::AsyncBody::from(request_body))?;
         
         let mut response = http_client.send(http_request).await?;
+        let status = response.status();
+        
+        log::debug!("Codestral: Response status: {}", status);
 
-        if !response.status().is_success() {
+        if !status.is_success() {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            return Err(anyhow::anyhow!("Codestral API error: {} - {}", response.status(), body));
+            log::error!("Codestral API error: {} - {}", status, body);
+            return Err(anyhow::anyhow!("Codestral API error: {} - {}", status, body));
         }
 
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+        
+        log::debug!("Codestral: Raw response: {}", body);
+        
         let codestral_response: CodestralResponse = serde_json::from_str(&body)?;
         
+        let elapsed = start_time.elapsed();
+        
         if let Some(choice) = codestral_response.choices.first() {
-            Ok(choice.message.content.clone())
+            let completion = &choice.message.content;
+            let completion_preview = if completion.len() > 200 {
+                format!("{}...", &completion[..200])
+            } else {
+                completion.clone()
+            };
+            
+            log::info!(
+                "Codestral: Completion received ({} tokens, {:.2}s): {:?}",
+                codestral_response.usage.completion_tokens,
+                elapsed.as_secs_f64(),
+                completion_preview
+            );
+            
+            Ok(completion.clone())
         } else {
+            log::error!("Codestral: No completion returned in response");
             Err(anyhow::anyhow!("No completion returned from Codestral"))
         }
     }
@@ -99,7 +152,9 @@ impl EditPredictionProvider for CodestralCompletionProvider {
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
-        self.codestral.read(cx).is_enabled()
+        let enabled = self.codestral.read(cx).is_enabled();
+        log::debug!("Codestral: Provider enabled: {}", enabled);
+        enabled
     }
 
     fn is_refreshing(&self) -> bool {
@@ -114,7 +169,10 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         debounce: bool,
         cx: &mut Context<Self>,
     ) {
+        log::debug!("Codestral: Refresh called (debounce: {})", debounce);
+        
         let Some(api_key) = self.codestral.read(cx).api_key().map(|k| k.to_string()) else {
+            log::warn!("Codestral: No API key configured, skipping refresh");
             return;
         };
 
@@ -145,10 +203,11 @@ impl EditPredictionProvider for CodestralCompletionProvider {
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
+                log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
                 smol::Timer::after(DEBOUNCE_TIMEOUT).await;
             }
 
-            let completion = Self::fetch_completion(
+            let completion = match Self::fetch_completion(
                 http_client,
                 api_key,
                 prompt,
@@ -156,7 +215,13 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 file_extension,
                 model,
                 max_tokens,
-            ).await?;
+            ).await {
+                Ok(completion) => completion,
+                Err(e) => {
+                    log::error!("Codestral: Failed to fetch completion: {}", e);
+                    return Err(e);
+                }
+            };
 
             this.update(cx, |this, cx| {
                 this.last_completion = Some(completion);
@@ -179,11 +244,13 @@ impl EditPredictionProvider for CodestralCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut Context<Self>) {
+        log::debug!("Codestral: Completion accepted");
         self.pending_request = None;
         self.last_completion = None;
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
+        log::debug!("Codestral: Completion discarded");
         self.pending_request = None;
         self.last_completion = None;
     }
@@ -197,8 +264,11 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         let completion_text = self.last_completion.as_ref()?;
         
         if completion_text.trim().is_empty() {
+            log::debug!("Codestral: Empty completion text, not suggesting");
             return None;
         }
+        
+        log::debug!("Codestral: Suggesting completion of {} chars", completion_text.len());
 
         let snapshot = buffer.read(cx).snapshot();
         let _cursor_point = cursor_position.to_point(&snapshot);

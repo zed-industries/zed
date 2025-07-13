@@ -19,11 +19,13 @@ actions!(
 );
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
+    log::info!("Codestral: Initializing...");
     let codestral = cx.new(|_| Codestral::Starting);
     Codestral::set_global(codestral.clone(), cx);
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     if provider == language::language_settings::EditPredictionProvider::Codestral {
+        log::info!("Codestral: Provider selected, starting...");
         codestral.update(cx, |codestral, cx| codestral.start(client.clone(), cx));
     }
 
@@ -32,8 +34,10 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
         if new_provider != provider {
             provider = new_provider;
             if provider == language::language_settings::EditPredictionProvider::Codestral {
+                log::info!("Codestral: Provider selected, starting...");
                 codestral.update(cx, |codestral, cx| codestral.start(client.clone(), cx));
             } else {
+                log::info!("Codestral: Provider deselected, stopping...");
                 codestral.update(cx, |codestral, _cx| codestral.stop());
             }
         }
@@ -47,6 +51,7 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     });
 }
 
+#[derive(Debug)]
 pub enum Codestral {
     Starting,
     Authenticating,
@@ -71,6 +76,7 @@ impl Codestral {
 
     pub fn start(&mut self, _client: Arc<Client>, cx: &mut Context<Self>) {
         if let Self::Starting = self {
+            log::debug!("Codestral: Transitioning from Starting to Authenticating");
             *self = Self::Authenticating;
             
             cx.spawn(async move |this, cx| {
@@ -81,14 +87,17 @@ impl Codestral {
                 })?;
 
                 if let Some(api_key) = api_key {
+                    log::info!("Codestral: API key configured, transitioning to Ready");
                     this.update(cx, |this, cx| {
                         *this = Self::Ready { api_key };
                         cx.notify();
                     })?;
                 } else {
+                    let error_msg = "No API key configured. Please add your Codestral API key to settings.";
+                    log::error!("Codestral: {}", error_msg);
                     this.update(cx, |this, cx| {
                         *this = Self::Error { 
-                            error: anyhow::anyhow!("No API key configured. Please add your Codestral API key to settings.") 
+                            error: anyhow::anyhow!(error_msg) 
                         };
                         cx.notify();
                     })?;
@@ -96,10 +105,13 @@ impl Codestral {
                 Ok::<(), anyhow::Error>(())
             })
             .detach_and_log_err(cx)
+        } else {
+            log::debug!("Codestral: Start called but already in state: {:?}", self);
         }
     }
 
     pub fn stop(&mut self) {
+        log::info!("Codestral: Stopping...");
         *self = Self::Starting;
     }
 
@@ -115,6 +127,7 @@ impl Codestral {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+        log::info!("Codestral: Signing out...");
         *self = Self::Starting;
         cx.notify();
     }
