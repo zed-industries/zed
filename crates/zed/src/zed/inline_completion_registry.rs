@@ -1,6 +1,7 @@
 use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
+use codestral::{Codestral, CodestralCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
@@ -129,7 +130,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         }
                         EditPredictionProvider::None
                         | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        | EditPredictionProvider::Supermaven
+                        | EditPredictionProvider::Codestral => {}
                     }
                 }
             }
@@ -238,6 +240,13 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            }
+        }
+        EditPredictionProvider::Codestral => {
+            if let Some(codestral) = Codestral::global(cx) {
+                let http_client = client.http_client();
+                let provider = cx.new(|_| CodestralCompletionProvider::new(codestral, http_client));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }

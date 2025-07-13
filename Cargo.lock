@@ -3080,6 +3080,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "codestral"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "inline_completion",
+ "language",
+ "postage",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "text",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "collab"
 version = "0.44.0"
 dependencies = [
@@ -8292,6 +8315,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "codestral",
  "copilot",
  "editor",
  "feature_flags",
@@ -20069,6 +20093,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "codestral",
  "collab_ui",
  "collections",
  "command_palette",
