@@ -32,6 +32,30 @@ struct Hsla {
     float a;
 };
 
+struct LinearColorStop {
+    Hsla color;
+    float percentage;
+};
+
+struct Background {
+    // 0u is Solid
+    // 1u is LinearGradient
+    uint tag;
+    // 0u is sRGB linear color
+    // 1u is Oklab color
+    uint color_space;
+    Hsla solid;
+    float angle;
+    LinearColorStop colors[2];
+    uint pad;
+};
+
+struct GradientColor {
+  float4 solid;
+  float4 color0;
+  float4 color1;
+};
+
 struct AtlasTextureId {
     uint index;
     uint kind;
@@ -71,6 +95,17 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bo
                     clip_bounds.origin.y + clip_bounds.size.y - position.y);
 }
 
+// Convert linear RGB to sRGB
+float3 linear_to_srgb(float3 color) {
+    return pow(color, float3(2.2));
+}
+
+// Convert sRGB to linear RGB
+float3 srgb_to_linear(float3 color) {
+    return pow(color, float3(1.0 / 2.2));
+}
+
+/// Hsla to linear RGBA conversion.
 float4 hsla_to_rgba(Hsla hsla) {
     float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     float s = hsla.s;
@@ -117,6 +152,48 @@ float4 hsla_to_rgba(Hsla hsla) {
     rgba.z = (b + m);
     rgba.w = a;
     return rgba;
+}
+
+// Converts a sRGB color to the Oklab color space.
+// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+float4 srgb_to_oklab(float4 color) {
+    // Convert non-linear sRGB to linear sRGB
+    color = float4(srgb_to_linear(color.rgb), color.a);
+
+    float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+    float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+    float s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+
+    float l_ = pow(l, 1.0/3.0);
+    float m_ = pow(m, 1.0/3.0);
+    float s_ = pow(s, 1.0/3.0);
+
+    return float4(
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+        color.a
+    );
+}
+
+// Converts an Oklab color to the sRGB color space.
+float4 oklab_to_srgb(float4 color) {
+    float l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
+    float m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
+    float s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
+
+    float l = l_ * l_ * l_;
+    float m = m_ * m_ * m_;
+    float s = s_ * s_ * s_;
+
+    float3 linear_rgb = float3(
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    );
+
+    // Convert linear sRGB to non-linear sRGB
+    return float4(linear_to_srgb(linear_rgb), color.a);
 }
 
 // This approximates the error function, needed for the gaussian integral
@@ -188,6 +265,83 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
         corner_radius;
 
     return distance;
+}
+
+GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1) {
+    GradientColor res;
+    if (tag == 0) {
+        res.solid = hsla_to_rgba(solid);
+    } else if (tag == 1) {
+        res.color0 = hsla_to_rgba(color0);
+        res.color1 = hsla_to_rgba(color1);
+
+        // Prepare color space in vertex for avoid conversion
+        // in fragment shader for performance reasons
+        if (color_space == 1) {
+        // Oklab
+        res.color0 = srgb_to_oklab(res.color0);
+        res.color1 = srgb_to_oklab(res.color1);
+        }
+    }
+
+    return res;
+}
+
+float4 gradient_color(Background background,
+                      float2 position,
+                      Bounds bounds,
+                      float4 solid_color, float4 color0, float4 color1) {
+    float4 color;
+
+    switch (background.tag) {
+        case 0:
+            color = solid_color;
+            break;
+        case 1: {
+            // -90 degrees to match the CSS gradient angle.
+            float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+            float2 direction = float2(cos(radians), sin(radians));
+
+            // Expand the short side to be the same as the long side
+            if (bounds.size.x > bounds.size.y) {
+                direction.y *= bounds.size.y / bounds.size.x;
+            } else {
+                direction.x *=  bounds.size.x / bounds.size.y;
+            }
+
+            // Get the t value for the linear gradient with the color stop percentages.
+            float2 half_size = float2(bounds.size.x, bounds.size.y) / 2.;
+            float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+            float2 center_to_point = position - center;
+            float t = dot(center_to_point, direction) / length(direction);
+            // Check the direct to determine the use x or y
+            if (abs(direction.x) > abs(direction.y)) {
+                t = (t + half_size.x) / bounds.size.x;
+            } else {
+                t = (t + half_size.y) / bounds.size.y;
+            }
+
+            // Adjust t based on the stop percentages
+            t = (t - background.colors[0].percentage)
+                / (background.colors[1].percentage
+                - background.colors[0].percentage);
+            t = clamp(t, 0.0, 1.0);
+
+            switch (background.color_space) {
+                case 0:
+                    color = lerp(color0, color1, t);
+                    break;
+                case 1: {
+                    float4 oklab_color = lerp(color0, color1, t);
+                    color = oklab_to_srgb(oklab_color);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    return color;
 }
 
 /*
@@ -294,7 +448,7 @@ struct Quad {
     uint pad;
     Bounds bounds;
     Bounds content_mask;
-    Hsla background;
+    Background background;
     Hsla border_color;
     Corners corner_radii;
     Edges border_widths;
@@ -302,17 +456,22 @@ struct Quad {
 
 struct QuadVertexOutput {
     float4 position: SV_Position;
-    float4 background_color: COLOR0;
-    float4 border_color: COLOR1;
+    // float4 border_color: COLOR0;
+    float4 border_color: FLAT;
     uint quad_id: FLAT;
+    float4 background_solid: FLAT;
+    float4 background_color0: FLAT;
+    float4 background_color1: FLAT;
     float4 clip_distance: SV_ClipDistance;
 };
 
 struct QuadFragmentInput {
-    float4 position: SV_Position;
-    float4 background_color: COLOR0;
-    float4 border_color: COLOR1;
     uint quad_id: FLAT;
+    float4 position: SV_Position;
+    float4 border_color: FLAT;
+    float4 background_solid: FLAT;
+    float4 background_color0: FLAT;
+    float4 background_color1: FLAT;
 };
 
 StructuredBuffer<Quad> quads: register(t1);
@@ -322,20 +481,34 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
     Quad quad = quads[quad_id];
     float4 device_position = to_device_position(unit_vertex, quad.bounds);
     float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
-    float4 background_color = hsla_to_rgba(quad.background);
     float4 border_color = hsla_to_rgba(quad.border_color);
+
+    GradientColor gradient = prepare_gradient_color(
+        quad.background.tag,
+        quad.background.color_space,
+        quad.background.solid,
+        quad.background.colors[0].color,
+        quad.background.colors[1].color
+    );
 
     QuadVertexOutput output;
     output.position = device_position;
-    output.background_color = background_color;
     output.border_color = border_color;
     output.quad_id = quad_id;
+    output.background_solid = gradient.solid;
+    output.background_color0 = gradient.color0;
+    output.background_color1 = gradient.color1;
     output.clip_distance = clip_distance;
     return output;
 }
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
     Quad quad = quads[input.quad_id];
+    float2 half_size = quad.bounds.size / 2.;
+    float2 center = quad.bounds.origin + half_size;
+    float2 center_to_point = input.position.xy - center;
+    float4 color = gradient_color(quad.background, input.position.xy, quad.bounds,
+    input.background_solid, input.background_color0, input.background_color1);
 
     // Fast path when the quad is not rounded and doesn't have any border.
     if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
@@ -343,12 +516,9 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
         quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
         quad.border_widths.bottom == 0.) {
-        return input.background_color;
+        return color;
     }
 
-    float2 half_size = quad.bounds.size / 2.;
-    float2 center = quad.bounds.origin + half_size;
-    float2 center_to_point = input.position.xy - center;
     float corner_radius;
     if (center_to_point.x < 0.) {
         if (center_to_point.y < 0.) {
@@ -385,16 +555,12 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         border_width = vertical_border;
     }
 
-    float4 color;
-    if (border_width == 0.) {
-        color = input.background_color;
-    } else {
+    if (border_width != 0.) {
         float inset_distance = distance + border_width;
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
-        float4 blended_border = over(input.background_color, input.border_color);
-        color = lerp(blended_border, input.background_color,
-                    saturate(0.5 - inset_distance));
+        float4 blended_border = over(color, input.border_color);
+        color = lerp(blended_border, color, saturate(0.5 - inset_distance));
     }
 
     return color * float4(1., 1., 1., saturate(0.5 - distance));
@@ -457,14 +623,17 @@ float4 path_rasterization_fragment(PathRasterizationInput input): SV_Target {
 
 struct PathSprite {
     Bounds bounds;
-    Hsla color;
+    Background color;
     AtlasTile tile;
 };
 
 struct PathVertexOutput {
     float4 position: SV_Position;
     float2 tile_position: POSITION1;
-    float4 color: COLOR;
+    uint sprite_id: FLAT;
+    float4 solid_color: FLAT;
+    float4 color0: FLAT;
+    float4 color1: FLAT;
 };
 
 StructuredBuffer<PathSprite> path_sprites: register(t1);
@@ -473,18 +642,32 @@ PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     PathSprite sprite = path_sprites[instance_id];
     // Don't apply content mask because it was already accounted for when rasterizing the path.
-
     PathVertexOutput output;
     output.position = to_device_position(unit_vertex, sprite.bounds);
     output.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    output.color = hsla_to_rgba(sprite.color);
+    output.sprite_id = instance_id;
+
+    GradientColor gradient = prepare_gradient_color(
+        sprite.color.tag,
+        sprite.color.color_space,
+        sprite.color.solid,
+        sprite.color.colors[0].color,
+        sprite.color.colors[1].color
+    );
+
+    output.solid_color = gradient.solid;
+    output.color0 = gradient.color0;
+    output.color1 = gradient.color1;
     return output;
 }
 
 float4 paths_fragment(PathVertexOutput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float mask = 1.0 - abs(1.0 - sample % 2.0);
-    float4 color = input.color;
+    PathSprite sprite = path_sprites[input.sprite_id];
+    Background background = sprite.color;
+    float4 color = gradient_color(background, input.position.xy, sprite.bounds,
+        input.solid_color, input.color0, input.color1);
     color.a *= mask;
     return color;
 }
