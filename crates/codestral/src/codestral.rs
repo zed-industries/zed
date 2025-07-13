@@ -8,7 +8,6 @@ use language::language_settings::all_language_settings;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
-use util::ResultExt;
 
 actions!(
     codestral,

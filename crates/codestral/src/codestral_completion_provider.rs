@@ -1,37 +1,41 @@
 use crate::{Codestral, CodestralRequest, CodestralResponse};
 use anyhow::Result;
-use http_client::HttpClient;
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, Task};
+use http_client::HttpClient;
 use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
-use language::{Anchor, Buffer, language_settings::all_language_settings};
+use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset};
 use project::Project;
 use std::{
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{ToOffset, ToPoint};
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai/v1/fim/completions";
 
+#[derive(Clone)]
+struct CurrentCompletion {
+    completion: String,
+    snapshot: BufferSnapshot,
+    cursor_offset: usize,
+}
+
 pub struct CodestralCompletionProvider {
     codestral: Entity<Codestral>,
-    buffer_id: Option<gpui::EntityId>,
-    pending_request: Option<Task<Result<()>>>,
-    last_completion: Option<String>,
     http_client: Arc<dyn HttpClient>,
+    pending_request: Option<Task<Result<()>>>,
+    current_completion: Option<CurrentCompletion>,
 }
 
 impl CodestralCompletionProvider {
     pub fn new(codestral: Entity<Codestral>, http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             codestral,
-            buffer_id: None,
-            pending_request: None,
-            last_completion: None,
             http_client,
+            pending_request: None,
+            current_completion: None,
         }
     }
 
@@ -192,7 +196,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 .map(|s| s.to_string())
         });
 
-        self.buffer_id = Some(buffer_handle.entity_id());
         let http_client = self.http_client.clone();
         
         // Get settings for model and max_tokens
@@ -224,7 +227,11 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             };
 
             this.update(cx, |this, cx| {
-                this.last_completion = Some(completion);
+                this.current_completion = Some(CurrentCompletion {
+                    completion,
+                    snapshot,
+                    cursor_offset,
+                });
                 this.pending_request = None;
                 cx.notify();
             })?;
@@ -246,46 +253,78 @@ impl EditPredictionProvider for CodestralCompletionProvider {
     fn accept(&mut self, _cx: &mut Context<Self>) {
         log::debug!("Codestral: Completion accepted");
         self.pending_request = None;
-        self.last_completion = None;
+        self.current_completion = None;
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
         log::debug!("Codestral: Completion discarded");
         self.pending_request = None;
-        self.last_completion = None;
+        self.current_completion = None;
     }
 
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
-        cursor_position: Anchor,
+        _cursor_position: Anchor,
         cx: &mut Context<Self>,
     ) -> Option<InlineCompletion> {
-        let completion_text = self.last_completion.as_ref()?;
-        
+        let current_completion = self.current_completion.as_ref()?;
+        let completion_text = &current_completion.completion;
+
         if completion_text.trim().is_empty() {
             log::debug!("Codestral: Empty completion text, not suggesting");
             return None;
         }
-        
-        log::debug!("Codestral: Suggesting completion of {} chars", completion_text.len());
 
         let snapshot = buffer.read(cx).snapshot();
-        let _cursor_point = cursor_position.to_point(&snapshot);
-        let _cursor_offset = cursor_position.to_offset(&snapshot);
-        
-        // For now, we'll treat the completion as a simple insertion at the cursor
-        // In the future, we could implement more sophisticated diff logic like Supermaven
+        let (completion_text, delete_range) = interpolate(
+            &current_completion.snapshot,
+            &snapshot,
+            current_completion.cursor_offset,
+            completion_text,
+        )?;
+
+        if completion_text.trim().is_empty() {
+            return None;
+        }
+
+        log::debug!(
+            "Codestral: Suggesting completion of {} chars",
+            completion_text.len()
+        );
+
         let mut edits = Vec::new();
-        
-        // Create insertion at cursor position
-        let edit_range = cursor_position..cursor_position;
-        edits.push((edit_range, completion_text.clone()));
+        let start = snapshot.anchor_at(delete_range.start, text::Bias::Left);
+        let end = snapshot.anchor_at(delete_range.end, text::Bias::Right);
+
+        edits.push((start..end, completion_text.to_string()));
 
         Some(InlineCompletion {
             id: None,
             edits,
             edit_preview: None,
         })
+    }
+}
+
+fn interpolate<'a>(
+    old_snapshot: &BufferSnapshot,
+    new_snapshot: &BufferSnapshot,
+    completion_cursor_offset: usize,
+    completion_text: &'a str,
+) -> Option<(&'a str, std::ops::Range<usize>)> {
+    let mut new_cursor_offset = completion_cursor_offset;
+    for edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        new_cursor_offset = edit.new.end;
+    }
+
+    let text_inserted = new_snapshot
+        .text_for_range(completion_cursor_offset..new_cursor_offset)
+        .collect::<String>();
+
+    if let Some(stripped) = completion_text.strip_prefix(&text_inserted) {
+        Some((stripped, completion_cursor_offset..new_cursor_offset))
+    } else {
+        None
     }
 }
