@@ -410,16 +410,6 @@ impl Render for InlineCompletionButton {
                                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
                                     menu.entry(
-                                        "Configure API Key",
-                                        None,
-                                        move |_, cx| {
-                                            // Open settings to configure API key
-                                            cx.dispatch_action(
-                                                &zed_actions::OpenSettings,
-                                            );
-                                        },
-                                    )
-                                    .entry(
                                         "Use Copilot",
                                         None,
                                         move |_, cx| {
