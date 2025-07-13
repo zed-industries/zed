@@ -10,7 +10,10 @@ use gpui::{
     TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::debugger::session::{Session, SessionEvent, Watcher};
+use project::debugger::{
+    dap_command::DataBreakpointContext,
+    session::{Session, SessionEvent, Watcher},
+};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::debug_panic;
@@ -32,6 +35,9 @@ actions!(
         AddWatch,
         /// Removes the selected variable from the watch list.
         RemoveWatch,
+        /// Set a data breakpoint on the selected variable
+        // todo! filter this action based on selected entry and if it's supported
+        ToggleDataBreakpoint,
     ]
 );
 
@@ -569,21 +575,57 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let supports_set_variable = self
-            .session
-            .read(cx)
-            .capabilities()
-            .supports_set_variable
-            .unwrap_or_default();
+        let (supports_set_variable, supports_data_breakpoints) =
+            self.session.read_with(cx, |session, _| {
+                (
+                    session
+                        .capabilities()
+                        .supports_set_variable
+                        .unwrap_or_default(),
+                    session
+                        .capabilities()
+                        .supports_data_breakpoints
+                        .unwrap_or_default(),
+                )
+            });
 
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.when(entry.as_variable().is_some(), |menu| {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
+            menu.when_some(entry.as_variable(), |menu, variable| {
                 menu.action("Copy Name", CopyVariableName.boxed_clone())
                     .action("Copy Value", CopyVariableValue.boxed_clone())
                     .when(supports_set_variable, |menu| {
                         menu.action("Edit Value", EditVariable.boxed_clone())
                     })
                     .action("Watch Variable", AddWatch.boxed_clone())
+                    .when_some(
+                        supports_data_breakpoints
+                            .then(|| {
+                                self.entry_states
+                                    .get(&entry.path)
+                                    .map(|state| state.parent_reference)
+                            })
+                            .flatten(),
+                        |menu, variables_reference| {
+                            if let Some(_) = self.session.update(cx, |session, cx| {
+                                session.data_breakpoint_info(
+                                    DataBreakpointContext::Variable {
+                                        variables_reference,
+                                        name: variable.name.clone(),
+                                        bytes: None,
+                                    },
+                                    None,
+                                    cx,
+                                )
+                            }) {
+                                menu.action(
+                                    "Toggle Data Breakpoint",
+                                    ToggleDataBreakpoint.boxed_clone(),
+                                )
+                            } else {
+                                menu
+                            }
+                        },
+                    )
             })
             .when(entry.as_watcher().is_some(), |menu| {
                 menu.action("Copy Name", CopyVariableName.boxed_clone())
@@ -612,6 +654,58 @@ impl VariableList {
         );
 
         self.open_context_menu = Some((context_menu, position, subscription));
+    }
+
+    fn toggle_data_breakpoint(
+        &mut self,
+        _: &ToggleDataBreakpoint,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| self.entries.iter().find(|entry| &entry.path == selection))
+        else {
+            return;
+        };
+
+        let Some((name, var_ref)) = entry.as_variable().map(|var| &var.name).zip(
+            self.entry_states
+                .get(&entry.path)
+                .map(|state| state.parent_reference),
+        ) else {
+            return;
+        };
+
+        let Some(data_id) = self.session.update(cx, |session, cx| {
+            session
+                .data_breakpoint_info(
+                    DataBreakpointContext::Variable {
+                        variables_reference: var_ref,
+                        name: name.clone(),
+                        bytes: None,
+                    },
+                    None,
+                    cx,
+                )
+                .and_then(|info| info.data_id)
+        }) else {
+            return;
+        };
+
+        self.session.update(cx, |session, cx| {
+            session.toggle_data_breakpoint(
+                data_id.clone(),
+                dap::DataBreakpoint {
+                    data_id,
+                    access_type: None,
+                    condition: None,
+                    hit_condition: None,
+                },
+                cx,
+            )
+        })
     }
 
     fn copy_variable_name(
@@ -1358,6 +1452,7 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::edit_variable))
             .on_action(cx.listener(Self::add_watcher))
             .on_action(cx.listener(Self::remove_watcher))
+            .on_action(cx.listener(Self::toggle_data_breakpoint))
             .child(
                 uniform_list(
                     "variable-list",

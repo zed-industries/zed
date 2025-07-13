@@ -1,15 +1,16 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_command::DataBreakpointContext;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
 };
 use super::dap_command::{
-    self, Attach, ConfigurationDone, ContinueCommand, DisconnectCommand, EvaluateCommand,
-    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
-    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
-    SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand, StepBackCommand,
-    StepCommand, StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand,
-    ThreadsCommand, VariablesCommand,
+    self, Attach, ConfigurationDone, ContinueCommand, DataBreakpointInfoCommand, DisconnectCommand,
+    EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
+    ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
+    ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand,
+    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
@@ -675,6 +676,7 @@ pub struct Session {
     thread_states: ThreadStates,
     watchers: HashMap<SharedString, Watcher>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
+    data_breakpoint_info: HashMap<DataBreakpointContext, dap::DataBreakpointInfoResponse>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
@@ -682,6 +684,7 @@ pub struct Session {
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
+    data_breakpoints: BTreeMap<String, dap::DataBreakpoint>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
@@ -851,6 +854,8 @@ impl Session {
                 is_session_terminated: false,
                 ignore_breakpoints: false,
                 breakpoint_store,
+                data_breakpoint_info: Default::default(),
+                data_breakpoints: Default::default(),
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
@@ -1664,6 +1669,7 @@ impl Session {
         self.invalidate_command_type::<ModulesCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
+        self.invalidate_command_type::<DataBreakpointInfoCommand>();
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
@@ -1797,6 +1803,26 @@ impl Session {
         } else {
             debug_assert!(false, "Not implemented");
         }
+    }
+
+    fn send_data_breakpoints(&mut self, cx: &mut Context<Self>) {
+        if let Some(mode) = self.as_running() {
+            let breakpoints = self.data_breakpoints.values().cloned().collect();
+            let command = SetDataBreakpointsCommand { breakpoints };
+            mode.request(command).detach_and_log_err(cx);
+        }
+    }
+
+    pub fn toggle_data_breakpoint(
+        &mut self,
+        data_id: String,
+        breakpoint: dap::DataBreakpoint,
+        cx: &mut Context<Self>,
+    ) {
+        if self.data_breakpoints.remove(&data_id).is_none() {
+            self.data_breakpoints.insert(data_id, breakpoint);
+        }
+        self.send_data_breakpoints(cx);
     }
 
     pub fn breakpoints_enabled(&self) -> bool {
@@ -2358,6 +2384,35 @@ impl Session {
             .get(&variables_reference)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn data_breakpoint_info(
+        &mut self,
+        context: DataBreakpointContext,
+        mode: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<dap::DataBreakpointInfoResponse> {
+        let command = DataBreakpointInfoCommand {
+            context: context.clone(),
+            mode,
+        };
+
+        let res = self.data_breakpoint_info.get(&context).cloned();
+
+        self.fetch(
+            command,
+            move |this, response, cx| {
+                let Some(response) = response.log_err() else {
+                    return;
+                };
+
+                this.data_breakpoint_info.insert(context, response);
+                cx.notify();
+            },
+            cx,
+        );
+
+        res
     }
 
     pub fn set_variable_value(

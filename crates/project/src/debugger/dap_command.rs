@@ -1668,8 +1668,8 @@ impl LocalDapCommand for SetBreakpoints {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
-pub(crate) enum DataBreakpointContext {
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum DataBreakpointContext {
     Variable {
         variables_reference: u64,
         name: String,
@@ -1685,7 +1685,7 @@ pub(crate) enum DataBreakpointContext {
     },
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct DataBreakpointInfoCommand {
     pub context: DataBreakpointContext,
     pub mode: Option<String>,
@@ -1853,7 +1853,7 @@ impl DapCommand for DataBreakpointInfoCommand {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct SetDataBreakpointsCommand {
     pub breakpoints: Vec<dap::DataBreakpoint>,
 }
