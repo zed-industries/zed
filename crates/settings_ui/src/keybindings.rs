@@ -11,9 +11,9 @@ use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, KeyContext, KeyDownEvent, Keystroke,
-    ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, StyledText, Subscription,
-    WeakEntity, actions, anchored, deferred, div,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, KeyDownEvent, Keystroke,
+    ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, StyledText,
+    Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -1182,9 +1182,13 @@ impl Render for KeymapEditor {
                         }),
                     ),
             )
-            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
-                this.context_menu.take();
-                cx.notify();
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                // This ensures that the menu is not dismissed in cases where scroll events
+                // with a delta of zero are emitted
+                if !event.delta.pixel_delta(px(1.)).y.is_zero() {
+                    this.context_menu.take();
+                    cx.notify();
+                }
             }))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
