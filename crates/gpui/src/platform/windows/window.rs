@@ -49,7 +49,7 @@ pub struct WindowsWindowState {
     pub system_key_handled: bool,
     pub hovered: bool,
 
-    pub renderer: BladeRenderer,
+    pub renderer: DirectXRenderer,
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
@@ -84,7 +84,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
-        gpu_context: &BladeContext,
+        gpu_context: &DirectXDevices,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
     ) -> Result<Self> {
@@ -103,7 +103,8 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
+        // let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
+        let renderer = DirectXRenderer::new(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -343,7 +344,7 @@ struct WindowCreateContext<'a> {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    gpu_context: &'a BladeContext,
+    gpu_context: &'a DirectXDevices,
     main_thread_id_win32: u32,
     appearance: WindowAppearance,
 }
@@ -353,7 +354,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         creation_info: WindowCreationInfo,
-        gpu_context: &BladeContext,
+        gpu_context: &DirectXDevices,
     ) -> Result<Self> {
         let WindowCreationInfo {
             icon,
@@ -485,7 +486,7 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        self.0.state.borrow_mut().renderer.destroy();
+        // self.0.state.borrow_mut().renderer.destroy();
         // clone this `Rc` to prevent early release of the pointer
         let this = self.0.clone();
         self.0
@@ -706,9 +707,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut window_state = self.0.state.borrow_mut();
-        window_state
-            .renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        // todo(zjk)
+        // window_state
+        //     .renderer
+        //     .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
@@ -794,11 +796,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.0.state.borrow_mut().renderer.draw(scene)
+        self.0.state.borrow_mut().renderer.draw(scene).log_err();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.state.borrow().renderer.sprite_atlas().clone()
+        self.0.state.borrow().renderer.sprite_atlas()
     }
 
     fn get_raw_handle(&self) -> HWND {
@@ -806,7 +808,9 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(self.0.state.borrow().renderer.gpu_specs())
+        // todo(zjk)
+        // Some(self.0.state.borrow().renderer.gpu_specs())
+        None
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {

@@ -84,7 +84,7 @@ impl DirectXAtlas {
         let textures = match texture_kind {
             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-            AtlasTextureKind::Path => &mut lock.path_textures,
+            // AtlasTextureKind::Path => &mut lock.path_textures,
         };
         for texture in textures {
             texture.clear();
@@ -131,7 +131,7 @@ impl DirectXAtlasState {
         let textures = match texture_kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            AtlasTextureKind::Path => &mut self.path_textures,
+            // AtlasTextureKind::Path => &mut self.path_textures,
         };
 
         textures
@@ -173,12 +173,11 @@ impl DirectXAtlasState {
                 pixel_format = DXGI_FORMAT_B8G8R8A8_UNORM;
                 bind_flag = D3D11_BIND_SHADER_RESOURCE;
                 bytes_per_pixel = 4;
-            }
-            AtlasTextureKind::Path => {
-                pixel_format = DXGI_FORMAT_R16_FLOAT;
-                bind_flag = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-                bytes_per_pixel = 2;
-            }
+            } // AtlasTextureKind::Path => {
+              //     pixel_format = DXGI_FORMAT_R16_FLOAT;
+              //     bind_flag = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+              //     bytes_per_pixel = 2;
+              // }
         }
         let texture_desc = D3D11_TEXTURE2D_DESC {
             Width: size.width.0 as u32,
@@ -206,16 +205,16 @@ impl DirectXAtlasState {
         let textures = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            AtlasTextureKind::Path => &mut self.path_textures,
+            // AtlasTextureKind::Path => &mut self.path_textures,
         };
         let rtv = match kind {
-            AtlasTextureKind::Path => unsafe {
-                let mut view: Option<ID3D11RenderTargetView> = None;
-                self.device
-                    .CreateRenderTargetView(&texture, None, Some(&mut view))
-                    .unwrap();
-                [view]
-            },
+            // AtlasTextureKind::Path => unsafe {
+            //     let mut view: Option<ID3D11RenderTargetView> = None;
+            //     self.device
+            //         .CreateRenderTargetView(&texture, None, Some(&mut view))
+            //         .unwrap();
+            //     [view]
+            // },
             _ => [None],
         };
         let view = unsafe {
@@ -244,7 +243,7 @@ impl DirectXAtlasState {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-            crate::AtlasTextureKind::Path => &self.path_textures,
+            // crate::AtlasTextureKind::Path => &self.path_textures,
         };
         &textures[id.index as usize]
     }
