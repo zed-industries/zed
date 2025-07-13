@@ -49,6 +49,7 @@ struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
     paths_pipeline: PipelineState,
+    paths_indirect_draw_buffer: ID3D11Buffer,
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
     poly_sprites: PipelineState,
@@ -59,6 +60,14 @@ struct DirectXGlobalElements {
     sampler: [Option<ID3D11SamplerState>; 1],
     blend_state: ID3D11BlendState,
     blend_state_for_pr: ID3D11BlendState,
+}
+
+#[repr(C)]
+struct DrawInstancedIndirectArgs {
+    vertex_count_per_instance: u32,
+    instance_count: u32,
+    start_vertex_location: u32,
+    start_instance_location: u32,
 }
 
 // #[cfg(not(feature = "enable-renderdoc"))]
@@ -122,6 +131,7 @@ impl DirectXRenderer {
             [0.0, 0.0, 0.0, 0.0],
             &self.globals.blend_state,
         )?;
+        println!("--> Drawing scene");
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -273,41 +283,64 @@ impl DirectXRenderer {
         if paths.is_empty() {
             return Ok(());
         }
+        println!("Drawing {} paths", paths.len());
         let mut vertices = Vec::new();
         let mut sprites = Vec::with_capacity(paths.len());
-        for path in paths {
-            let tile = &path_tiles[&path.id];
-            let texture_view = self.atlas.get_texture_view(tile.texture_id);
-            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
-            let sprites = [PathSprite {
-                bounds: Bounds {
-                    origin: origin.map(|p| p.floor()),
-                    size: tile.bounds.size.map(Into::into),
+        let mut draw_indirect_commands = Vec::with_capacity(paths.len());
+        let mut start_vertex_location = 0;
+        for (i, path) in paths.iter().enumerate() {
+            draw_indirect_commands.push(DrawInstancedIndirectArgs {
+                vertex_count_per_instance: path.vertices.len() as u32,
+                instance_count: 1,
+                start_vertex_location,
+                start_instance_location: i as u32,
+            });
+            start_vertex_location += path.vertices.len() as u32;
+
+            vertices.extend(path.vertices.iter().map(|v| PathVertex {
+                xy_position: v.xy_position,
+                content_mask: ContentMask {
+                    bounds: path.content_mask.bounds,
                 },
+            }));
+
+            sprites.push(PathSprite {
+                bounds: path.bounds,
                 color: path.color,
-                tile: (*tile).clone(),
-            }];
-            update_buffer_capacity(
-                &self.pipelines.paths_pipeline,
-                std::mem::size_of::<PathSprite>(),
-                1,
-                &self.devices.device,
-            )
-            .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
-            update_buffer(
+            });
+        }
+
+        update_buffer_capacity(
+            &self.pipelines.paths_pipeline,
+            std::mem::size_of::<PathSprite>(),
+            sprites.len(),
+            &self.devices.device,
+        )
+        .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
+        update_buffer(
+            &self.devices.device_context,
+            &self.pipelines.paths_pipeline.buffer,
+            &sprites,
+        )?;
+        update_indirect_buffer(
+            &self.devices.device_context,
+            &self.pipelines.paths_indirect_draw_buffer,
+            &draw_indirect_commands,
+        )?;
+        prepare_indirect_draws(
+            &self.devices.device_context,
+            &self.pipelines.paths_pipeline,
+            &self.context.viewport,
+            &self.globals.global_params_buffer,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+        )?;
+
+        for i in 0..paths.len() {
+            draw_indirect(
                 &self.devices.device_context,
-                &self.pipelines.paths_pipeline.buffer,
-                &sprites,
-            )?;
-            draw_with_texture(
-                &self.devices.device_context,
-                &self.pipelines.paths_pipeline,
-                &texture_view,
-                &self.context.viewport,
-                &self.globals.global_params_buffer,
-                &self.globals.sampler,
-                1,
-            )?;
+                &self.pipelines.paths_indirect_draw_buffer,
+                (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
+            );
         }
         Ok(())
     }
@@ -484,11 +517,13 @@ impl DirectXRenderPipelines {
             std::mem::size_of::<PolychromeSprite>(),
             32,
         )?;
+        let paths_indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
 
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
             paths_pipeline,
+            paths_indirect_draw_buffer,
             underline_pipeline,
             mono_sprites,
             poly_sprites,
@@ -884,6 +919,27 @@ fn create_buffer_view(
     Ok([view])
 }
 
+fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: u32) -> Result<ID3D11Buffer> {
+    // let desc = D3D11_BUFFER_DESC {
+    //     ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
+    //     Usage: D3D11_USAGE_DYNAMIC,
+    //     BindFlags: D3D11_BIND_INDIRECT_DRAW.0 as u32,
+    //     MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
+    //     ..Default::default()
+    // };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: D3D11_BIND_INDEX_BUFFER.0 as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+        MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
+        StructureByteStride: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32,
+    };
+    let mut buffer = None;
+    unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
+    Ok(buffer.unwrap())
+}
+
 fn update_global_params(
     device_context: &ID3D11DeviceContext,
     buffer: &[Option<ID3D11Buffer>; 1],
@@ -964,6 +1020,50 @@ fn update_buffer<T>(
     Ok(())
 }
 
+fn update_indirect_buffer(
+    device_context: &ID3D11DeviceContext,
+    buffer: &ID3D11Buffer,
+    data: &[DrawInstancedIndirectArgs],
+) -> Result<()> {
+    unsafe {
+        let mut dest = std::mem::zeroed();
+        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+        std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
+        device_context.Unmap(buffer, 0);
+    }
+    Ok(())
+}
+
+fn prepare_indirect_draws(
+    device_context: &ID3D11DeviceContext,
+    pipeline: &PipelineState,
+    viewport: &[D3D11_VIEWPORT],
+    global_params: &[Option<ID3D11Buffer>],
+    topology: D3D_PRIMITIVE_TOPOLOGY,
+) -> Result<()> {
+    unsafe {
+        device_context.VSSetShaderResources(1, Some(&pipeline.view));
+        device_context.PSSetShaderResources(1, Some(&pipeline.view));
+        device_context.IASetPrimitiveTopology(topology);
+        device_context.RSSetViewports(Some(viewport));
+        device_context.VSSetShader(&pipeline.vertex, None);
+        device_context.PSSetShader(&pipeline.fragment, None);
+        device_context.VSSetConstantBuffers(0, Some(global_params));
+        device_context.PSSetConstantBuffers(0, Some(global_params));
+    }
+    Ok(())
+}
+
+fn draw_indirect(
+    device_context: &ID3D11DeviceContext,
+    indirect_draw_buffer: &ID3D11Buffer,
+    offset: u32,
+) {
+    unsafe {
+        device_context.DrawInstancedIndirect(indirect_draw_buffer, offset);
+    }
+}
+
 fn draw_normal(
     device_context: &ID3D11DeviceContext,
     pipeline: &PipelineState,
@@ -1026,6 +1126,7 @@ mod shader_resources {
     use windows_core::{HSTRING, PCSTR};
 
     pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
+        println!("Building shader: {}", entry);
         unsafe {
             let mut entry = entry.to_owned();
             let mut target = target.to_owned();
@@ -1039,6 +1140,11 @@ mod shader_resources {
             target.push_str("\0");
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
+            println!(
+                "Compiling shader: {} with target: {}",
+                entry_point.display(),
+                target_cstr.display()
+            );
             #[cfg(debug_assertions)]
             let compile_flag = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
             #[cfg(not(debug_assertions))]
@@ -1054,6 +1160,7 @@ mod shader_resources {
                 &mut compile_blob,
                 Some(&mut error_blob),
             );
+            println!("Shader compile result: {:?}", ret);
             if ret.is_err() {
                 let Some(error_blob) = error_blob else {
                     return Err(anyhow::anyhow!("{ret:?}"));
@@ -1064,10 +1171,9 @@ mod shader_resources {
                     string_len,
                     string_len,
                 );
-                return Err(anyhow::anyhow!(
-                    "Compile error: {}",
-                    String::from_utf8_lossy(&error_string_encode)
-                ));
+                let error_string = String::from_utf8_lossy(&error_string_encode);
+                println!("Shader compile error: {}", error_string);
+                return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
             Ok(compile_blob.unwrap())
         }
