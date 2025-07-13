@@ -427,6 +427,127 @@ pub async fn generate(
     Ok(response)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake {
+    use super::*;
+    use crate::ollama_completion_provider::OllamaCompletionProvider;
+    use gpui::AppContext;
+    use http_client::{AsyncBody, Response, Url};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    pub struct FakeHttpClient {
+        responses: Arc<Mutex<HashMap<String, String>>>,
+        requests: Arc<Mutex<Vec<(String, String)>>>, // (path, body)
+    }
+
+    impl FakeHttpClient {
+        pub fn new() -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(HashMap::new())),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn set_response(&self, path: &str, response: String) {
+            self.responses
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), response);
+        }
+
+        pub fn set_generate_response(&self, completion_text: &str) {
+            let response = serde_json::json!({
+                "response": completion_text,
+                "done": true,
+                "context": [],
+                "total_duration": 1000000_u64,
+                "load_duration": 1000000_u64,
+                "prompt_eval_count": 10,
+                "prompt_eval_duration": 1000000_u64,
+                "eval_count": 20,
+                "eval_duration": 1000000_u64
+            });
+            self.set_response("/api/generate", response.to_string());
+        }
+
+        pub fn set_error(&self, path: &str) {
+            // Remove any existing response to force an error
+            self.responses.lock().unwrap().remove(path);
+        }
+
+        pub fn get_requests(&self) -> Vec<(String, String)> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        pub fn clear_requests(&self) {
+            self.requests.lock().unwrap().clear();
+        }
+    }
+
+    impl HttpClient for FakeHttpClient {
+        fn type_name(&self) -> &'static str {
+            "FakeHttpClient"
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            req: http_client::Request<AsyncBody>,
+        ) -> futures::future::BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>
+        {
+            let path = req.uri().path().to_string();
+            let responses = Arc::clone(&self.responses);
+            let requests = Arc::clone(&self.requests);
+
+            Box::pin(async move {
+                // Store the request
+                requests.lock().unwrap().push((path.clone(), String::new()));
+
+                let responses = responses.lock().unwrap();
+
+                if let Some(response_body) = responses.get(&path).cloned() {
+                    let response = Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response_body))
+                        .unwrap();
+                    Ok(response)
+                } else {
+                    Err(anyhow::anyhow!("No mock response set for {}", path))
+                }
+            })
+        }
+    }
+
+    pub struct Ollama;
+
+    impl Ollama {
+        pub fn fake(
+            cx: &mut gpui::TestAppContext,
+        ) -> (
+            gpui::Entity<OllamaCompletionProvider>,
+            std::sync::Arc<FakeHttpClient>,
+        ) {
+            let fake_client = std::sync::Arc::new(FakeHttpClient::new());
+
+            let provider = cx.new(|_| {
+                OllamaCompletionProvider::new(
+                    fake_client.clone(),
+                    "http://localhost:11434".to_string(),
+                    "qwencoder".to_string(),
+                    None,
+                )
+            });
+
+            (provider, fake_client)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
