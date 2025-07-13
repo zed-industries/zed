@@ -284,27 +284,19 @@ impl SystemWindowTabController {
     }
 
     /// Add a window to a tab group.
-    pub fn add_window(
-        cx: &mut App,
-        tab_group: usize,
-        handle: AnyWindowHandle,
-        title: SharedString,
-    ) {
+    pub fn add_window(cx: &mut App, window: &Window) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let id = handle.window_id();
 
-        for (existing_group, windows) in controller.tabs.iter_mut() {
-            if *existing_group != tab_group {
-                if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
-                    windows.remove(pos);
-                }
+        let tab_group = window.tab_group();
+        let title = SharedString::from(window.window_title());
+        let handle = window.window_handle();
+        let id = handle.id;
+
+        if let Some(tab_group) = tab_group {
+            let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
+            if !windows.iter().any(|tab| tab.id == id) {
+                windows.push(SystemWindowTab::new(id, title, handle));
             }
-        }
-
-        controller.tabs.retain(|_, windows| !windows.is_empty());
-        let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
-        if !windows.iter().any(|tab| tab.id == id) {
-            windows.push(SystemWindowTab::new(id, title, handle));
         }
     }
 
@@ -356,6 +348,23 @@ impl SystemWindowTabController {
         controller.tabs.clear();
         if !all_windows.is_empty() {
             controller.tabs.insert(tab_group, all_windows);
+        }
+    }
+
+    /// Sync the system window tab groups with the application's tab groups.
+    pub fn sync_system_window_tab_groups(cx: &mut App, window: &Window) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.tabs.clear();
+
+        let windows = cx.windows();
+        for w in windows {
+            if w.id == window.window_handle().id {
+                SystemWindowTabController::add_window(cx, &window);
+            } else {
+                let _ = w.update(cx, |_, window, cx| {
+                    SystemWindowTabController::add_window(cx, &window);
+                });
+            }
         }
     }
 

@@ -371,6 +371,11 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             merge_all_windows as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_method(
+            sel!(moveTabToNewWindow:),
+            move_tab_to_new_window as extern "C" fn(&Object, Sel, id),
+        );
+
         decl.register()
     }
 }
@@ -406,6 +411,7 @@ struct MacWindowState {
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
+    move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
 }
 
 impl MacWindowState {
@@ -700,6 +706,7 @@ impl MacWindow {
                 select_next_tab_callback: None,
                 select_previous_tab_callback: None,
                 merge_all_windows_callback: None,
+                move_tab_to_new_window_callback: None,
             })));
 
             (*native_window).set_ivar(
@@ -1361,6 +1368,10 @@ impl PlatformWindow for MacWindow {
 
     fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().merge_all_windows_callback = Some(_callback);
+    }
+
+    fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().move_tab_to_new_window_callback = Some(_callback);
     }
 
     fn draw(&self, scene: &crate::Scene) {
@@ -2476,5 +2487,19 @@ extern "C" fn merge_all_windows(this: &Object, _sel: Sel, _id: id) {
         drop(lock);
         callback();
         window_state.lock().merge_all_windows_callback = Some(callback);
+    }
+}
+
+extern "C" fn move_tab_to_new_window(this: &Object, _sel: Sel, _id: id) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), moveTabToNewWindow:nil];
+    }
+
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
+        drop(lock);
+        callback();
+        window_state.lock().move_tab_to_new_window_callback = Some(callback);
     }
 }

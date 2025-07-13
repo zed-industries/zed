@@ -1089,16 +1089,6 @@ impl Window {
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
 
-                        let tab_group = window.tab_group();
-                        if let Some(tab_group) = tab_group {
-                            SystemWindowTabController::add_window(
-                                cx,
-                                tab_group,
-                                handle,
-                                SharedString::from(window.window_title()),
-                            );
-                        }
-
                         window.bounds_changed(cx);
                         window.refresh();
                     })
@@ -1181,23 +1171,24 @@ impl Window {
                     .log_err();
             })
         });
+        platform_window.on_move_tab_to_new_window({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        SystemWindowTabController::sync_system_window_tab_groups(cx, window);
+                    })
+                    .log_err();
+            })
+        });
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
         }
 
         platform_window.map_window().unwrap();
-        let tab_group = platform_window.tab_group();
-        if let Some(tab_group) = tab_group {
-            SystemWindowTabController::add_window(
-                cx,
-                tab_group,
-                handle,
-                SharedString::from(platform_window.get_title()),
-            );
-        }
 
-        Ok(Window {
+        let window = Window {
             handle,
             invalidator,
             removed: false,
@@ -1251,7 +1242,10 @@ impl Window {
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-        })
+        };
+
+        SystemWindowTabController::add_window(cx, &window);
+        Ok(window)
     }
 
     pub(crate) fn new_focus_listener(
