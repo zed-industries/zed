@@ -3,8 +3,9 @@ use settings::Settings;
 use std::any::TypeId;
 
 use gpui::{
-    Context, InteractiveElement, ParentElement, ScrollHandle, Styled, Subscription,
-    SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled, Subscription,
+    SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, black, canvas, div,
+    white,
 };
 use ui::{
     Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
@@ -31,6 +32,8 @@ pub struct DraggedWindowTab {
     pub title: String,
     pub width: Pixels,
     pub is_active: bool,
+    pub active_background_color: Hsla,
+    pub inactive_background_color: Hsla,
 }
 
 pub struct SystemWindowTabs {
@@ -139,6 +142,8 @@ impl SystemWindowTabs {
         &self,
         ix: usize,
         item: SystemWindowTab,
+        active_background_color: Hsla,
+        inactive_background_color: Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -165,7 +170,7 @@ impl SystemWindowTabs {
             .w(width)
             .border_t_1()
             .border_color(if is_active {
-                cx.theme().colors().title_bar_background
+                active_background_color
             } else {
                 cx.theme().colors().border
             })
@@ -180,9 +185,7 @@ impl SystemWindowTabs {
                     .justify_center()
                     .border_l_1()
                     .border_color(cx.theme().colors().border)
-                    .when(is_active, |this| {
-                        this.bg(cx.theme().colors().title_bar_background)
-                    })
+                    .when(is_active, |this| this.bg(active_background_color))
                     .cursor_pointer()
                     .on_drag(
                         DraggedWindowTab {
@@ -190,6 +193,8 @@ impl SystemWindowTabs {
                             title: item.title.to_string(),
                             width,
                             is_active,
+                            active_background_color,
+                            inactive_background_color,
                         },
                         |tab, _, _, cx| cx.new(|_| tab.clone()),
                     )
@@ -273,26 +278,38 @@ impl SystemWindowTabs {
 
 impl Render for SystemWindowTabs {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_background_color = cx.theme().colors().title_bar_background;
+        let inactive_background_color = cx.theme().colors().tab_bar_background;
+
         let entity = cx.entity();
         let number_of_tabs = self.tabs.len();
         let tab_items = self
             .tabs
             .iter()
             .enumerate()
-            .map(|(ix, item)| self.render_tab(ix, item.clone(), window, cx))
+            .map(|(ix, item)| {
+                self.render_tab(
+                    ix,
+                    item.clone(),
+                    active_background_color,
+                    inactive_background_color,
+                    window,
+                    cx,
+                )
+            })
             .collect::<Vec<_>>();
 
         h_flex()
             .w_full()
             .h(Tab::container_height(cx))
-            .bg(cx.theme().colors().editor_background)
+            .bg(inactive_background_color)
             .child(
                 h_flex()
                     .id("window tabs")
                     .w_full()
                     .h_full()
                     .h(Tab::container_height(cx))
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(inactive_background_color)
                     .overflow_x_scroll()
                     .w_full()
                     .track_scroll(&self.tab_bar_scroll_handle)
@@ -361,9 +378,9 @@ impl Render for DraggedWindowTab {
             .px(DynamicSpacing::Base16.px(cx))
             .justify_center()
             .bg(if self.is_active {
-                cx.theme().colors().title_bar_background
+                self.active_background_color
             } else {
-                cx.theme().colors().editor_background
+                self.inactive_background_color
             })
             .border_1()
             .border_color(cx.theme().colors().border)
