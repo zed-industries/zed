@@ -81,28 +81,36 @@ struct TransformationMatrix {
 static const float M_PI_F = 3.141592653f;
 static const float3 GRAYSCALE_FACTORS = float3(0.2126f, 0.7152f, 0.0722f);
 
-float4 to_device_position(float2 unit_vertex, Bounds bounds) {
-    float2 position = unit_vertex * bounds.size + bounds.origin;
+float4 to_device_position_impl(float2 position) {
     float2 device_position = position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
     return float4(device_position, 0., 1.);
 }
 
-float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bounds) {
+float4 to_device_position(float2 unit_vertex, Bounds bounds) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
+    return to_device_position_impl(position);
+}
+
+float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     return float4(position.x - clip_bounds.origin.x,
                     clip_bounds.origin.x + clip_bounds.size.x - position.x,
                     position.y - clip_bounds.origin.y,
                     clip_bounds.origin.y + clip_bounds.size.y - position.y);
 }
 
+float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bounds) {
+    float2 position = unit_vertex * bounds.size + bounds.origin;
+    return distance_from_clip_rect_impl(position, clip_bounds);
+}
+
 // Convert linear RGB to sRGB
 float3 linear_to_srgb(float3 color) {
-    return pow(color, float3(2.2));
+    return pow(color, float3(2.2, 2.2, 2.2));
 }
 
 // Convert sRGB to linear RGB
 float3 srgb_to_linear(float3 color) {
-    return pow(color, float3(1.0 / 2.2));
+    return pow(color, float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
 }
 
 /// Hsla to linear RGBA conversion.
@@ -268,23 +276,23 @@ float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
 }
 
 GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1) {
-    GradientColor res;
+    GradientColor output;
     if (tag == 0) {
-        res.solid = hsla_to_rgba(solid);
+        output.solid = hsla_to_rgba(solid);
     } else if (tag == 1) {
-        res.color0 = hsla_to_rgba(color0);
-        res.color1 = hsla_to_rgba(color1);
+        output.color0 = hsla_to_rgba(color0);
+        output.color1 = hsla_to_rgba(color1);
 
         // Prepare color space in vertex for avoid conversion
         // in fragment shader for performance reasons
         if (color_space == 1) {
         // Oklab
-        res.color0 = srgb_to_oklab(res.color0);
-        res.color1 = srgb_to_oklab(res.color1);
+        output.color0 = srgb_to_oklab(output.color0);
+        output.color1 = srgb_to_oklab(output.color1);
         }
     }
 
-    return res;
+    return output;
 }
 
 float4 gradient_color(Background background,
@@ -456,22 +464,21 @@ struct Quad {
 
 struct QuadVertexOutput {
     float4 position: SV_Position;
-    // float4 border_color: COLOR0;
-    float4 border_color: FLAT;
-    uint quad_id: FLAT;
-    float4 background_solid: FLAT;
-    float4 background_color0: FLAT;
-    float4 background_color1: FLAT;
+    nointerpolation float4 border_color: COLOR0;
+    nointerpolation uint quad_id: TEXCOORD0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
     float4 clip_distance: SV_ClipDistance;
 };
 
 struct QuadFragmentInput {
-    uint quad_id: FLAT;
+    nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
-    float4 border_color: FLAT;
-    float4 background_solid: FLAT;
-    float4 background_color0: FLAT;
-    float4 background_color1: FLAT;
+    nointerpolation float4 border_color: COLOR0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
 };
 
 StructuredBuffer<Quad> quads: register(t1);
@@ -566,54 +573,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     return color * float4(1., 1., 1., saturate(0.5 - distance));
 }
 
-/*
-**
-**              Path raster
-**
-*/
-
 struct PathVertex {
     float2 xy_position;
-    float2 st_position;
     Bounds content_mask;
 };
-
-struct PathRasterizationOutput {
-    float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-    float4 clip_distances: SV_ClipDistance;
-};
-
-struct PathRasterizationInput {
-    float4 position: SV_Position;
-    float2 st_position: TEXCOORD0;
-};
-
-StructuredBuffer<PathVertex> path_vertices: register(t1);
-
-PathRasterizationOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
-    PathVertex vertex = path_vertices[vertex_id];
-    PathRasterizationOutput output;
-    float2 device_position = vertex.xy_position / global_viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
-    float2 tl = vertex.xy_position - vertex.content_mask.origin;
-    float2 br = vertex.content_mask.origin + vertex.content_mask.size - vertex.xy_position;
-
-    output.position = float4(device_position, 0.0, 1.0);
-    output.st_position = vertex.st_position;
-    output.clip_distances = float4(tl.x, br.x, tl.y, br.y);
-    return output;
-}
-
-float4 path_rasterization_fragment(PathRasterizationInput input): SV_Target {
-    float2 dx = ddx(input.st_position);
-    float2 dy = ddy(input.st_position);
-    float2 gradient = float2((2. * input.st_position.x) * dx.x - dx.y,
-                            (2. * input.st_position.x) * dy.x - dy.y);
-    float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
-    float distance = f / length(gradient);
-    float alpha = saturate(0.5 - distance);
-    return float4(alpha, 0., 0., 1.);
-}
 
 /*
 **
@@ -624,27 +587,27 @@ float4 path_rasterization_fragment(PathRasterizationInput input): SV_Target {
 struct PathSprite {
     Bounds bounds;
     Background color;
-    AtlasTile tile;
 };
 
 struct PathVertexOutput {
     float4 position: SV_Position;
-    float2 tile_position: POSITION1;
-    uint sprite_id: FLAT;
-    float4 solid_color: FLAT;
-    float4 color0: FLAT;
-    float4 color1: FLAT;
+    float4 clip_distance: SV_ClipDistance;
+    nointerpolation uint sprite_id: TEXCOORD0;
+    nointerpolation float4 solid_color: COLOR0;
+    nointerpolation float4 color0: COLOR1;
+    nointerpolation float4 color1: COLOR2;
 };
 
-StructuredBuffer<PathSprite> path_sprites: register(t1);
+StructuredBuffer<PathVertex> path_vertices: register(t1);
+StructuredBuffer<PathSprite> path_sprites: register(t2);
 
 PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
-    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PathVertex v = path_vertices[vertex_id];
     PathSprite sprite = path_sprites[instance_id];
-    // Don't apply content mask because it was already accounted for when rasterizing the path.
+
     PathVertexOutput output;
-    output.position = to_device_position(unit_vertex, sprite.bounds);
-    output.tile_position = to_tile_position(unit_vertex, sprite.tile);
+    output.position = to_device_position_impl(v.xy_position);
+    output.clip_distance = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
     output.sprite_id = instance_id;
 
     GradientColor gradient = prepare_gradient_color(
@@ -662,13 +625,15 @@ PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_
 }
 
 float4 paths_fragment(PathVertexOutput input): SV_Target {
-    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    float mask = 1.0 - abs(1.0 - sample % 2.0);
+    float4 zero = 0.0;
+    if (any(input.clip_distance < zero)) {
+        return zero;
+    }
+    
     PathSprite sprite = path_sprites[input.sprite_id];
     Background background = sprite.color;
     float4 color = gradient_color(background, input.position.xy, sprite.bounds,
         input.solid_color, input.color0, input.color1);
-    color.a *= mask;
     return color;
 }
 
