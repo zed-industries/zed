@@ -10,6 +10,7 @@ use dap::{
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
 };
+
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
@@ -1666,6 +1667,219 @@ impl LocalDapCommand for SetBreakpoints {
         Ok(message.breakpoints)
     }
 }
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(crate) enum DataBreakpointContext {
+    Variable {
+        variables_reference: u64,
+        name: String,
+        bytes: Option<u64>,
+    },
+    Expression {
+        expression: String,
+        frame_id: Option<u64>,
+    },
+    Address {
+        address: String,
+        bytes: Option<u64>,
+    },
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(crate) struct DataBreakpointInfoCommand {
+    pub context: DataBreakpointContext,
+    pub mode: Option<String>,
+}
+
+impl LocalDapCommand for DataBreakpointInfoCommand {
+    type Response = dap::DataBreakpointInfoResponse;
+    type DapRequest = dap::requests::DataBreakpointInfo;
+    const CACHEABLE: bool = true;
+
+    // todo(debugger): We should expand this trait in the future to take a &self
+    // Depending on this command is_supported could be differentb
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        let (variables_reference, name, frame_id, as_address, bytes) = match &self.context {
+            DataBreakpointContext::Variable {
+                variables_reference,
+                name,
+                bytes,
+            } => (
+                Some(*variables_reference),
+                name.clone(),
+                None,
+                Some(false),
+                *bytes,
+            ),
+            DataBreakpointContext::Expression {
+                expression,
+                frame_id,
+            } => (None, expression.clone(), *frame_id, Some(false), None),
+            DataBreakpointContext::Address { address, bytes } => {
+                (None, address.clone(), None, Some(true), *bytes)
+            }
+        };
+
+        dap::DataBreakpointInfoArguments {
+            variables_reference,
+            name,
+            frame_id,
+            bytes,
+            as_address,
+            mode: self.mode.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+impl DapCommand for DataBreakpointInfoCommand {
+    type ProtoRequest = proto::DapDataBreakpointInfoRequest;
+    type ProtoResponse = proto::DapDataBreakpointInfoResponse;
+
+    fn client_id_from_proto(message: &Self::ProtoRequest) -> SessionId {
+        SessionId::from_proto(message.session_id)
+    }
+
+    fn from_proto(message: &Self::ProtoRequest) -> Self {
+        let context = match (message.variables_reference, message.as_address) {
+            (Some(variables_reference), _) => DataBreakpointContext::Variable {
+                variables_reference,
+                name: message.name.clone(),
+                bytes: message.bytes,
+            },
+            (None, Some(true)) => DataBreakpointContext::Address {
+                address: message.name.clone(),
+                bytes: message.bytes,
+            },
+            (None, _) => DataBreakpointContext::Expression {
+                expression: message.name.clone(),
+                frame_id: message.frame_id,
+            },
+        };
+
+        Self {
+            context,
+            mode: message.mode.clone(),
+        }
+    }
+
+    fn to_proto(&self, client_id: SessionId, _upstream_project_id: u64) -> Self::ProtoRequest {
+        let (variables_reference, name, frame_id, as_address, bytes) = match &self.context {
+            DataBreakpointContext::Variable {
+                variables_reference,
+                name,
+                bytes,
+            } => (
+                Some(*variables_reference),
+                name.clone(),
+                None,
+                Some(false),
+                *bytes,
+            ),
+            DataBreakpointContext::Expression {
+                expression,
+                frame_id,
+            } => (None, expression.clone(), *frame_id, Some(false), None),
+            DataBreakpointContext::Address { address, bytes } => {
+                (None, address.clone(), None, Some(true), *bytes)
+            }
+        };
+
+        proto::DapDataBreakpointInfoRequest {
+            project_id: _upstream_project_id,
+            session_id: client_id.to_proto(),
+            variables_reference,
+            name,
+            frame_id,
+            as_address,
+            bytes,
+            mode: self.mode.clone(),
+        }
+    }
+
+    fn response_to_proto(_client_id: SessionId, response: Self::Response) -> Self::ProtoResponse {
+        proto::DapDataBreakpointInfoResponse {
+            data_id: response.data_id,
+            description: response.description,
+            access_types: response
+                .access_types
+                .map(|types| {
+                    types
+                        .into_iter()
+                        .map(|t| match t {
+                            dap::DataBreakpointAccessType::Read => "read".to_string(),
+                            dap::DataBreakpointAccessType::Write => "write".to_string(),
+                            dap::DataBreakpointAccessType::ReadWrite => "readWrite".to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            can_persist: response.can_persist,
+        }
+    }
+
+    fn response_from_proto(&self, message: Self::ProtoResponse) -> Result<Self::Response> {
+        Ok(dap::DataBreakpointInfoResponse {
+            data_id: message.data_id.clone(),
+            description: message.description.clone(),
+            access_types: if message.access_types.is_empty() {
+                None
+            } else {
+                Some(
+                    message
+                        .access_types
+                        .iter()
+                        .filter_map(|t| match t.as_str() {
+                            "read" => Some(dap::DataBreakpointAccessType::Read),
+                            "write" => Some(dap::DataBreakpointAccessType::Write),
+                            "readWrite" => Some(dap::DataBreakpointAccessType::ReadWrite),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            },
+            can_persist: message.can_persist,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(crate) struct SetDataBreakpointsCommand {
+    pub breakpoints: Vec<dap::DataBreakpoint>,
+}
+
+impl LocalDapCommand for SetDataBreakpointsCommand {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetDataBreakpoints;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SetDataBreakpointsArguments {
+            breakpoints: self.breakpoints.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub(super) enum SetExceptionBreakpoints {
     Plain {
