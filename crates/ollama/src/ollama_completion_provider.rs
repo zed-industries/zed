@@ -231,3 +231,79 @@ impl EditPredictionProvider for OllamaCompletionProvider {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake::Ollama;
+    use gpui::{AppContext, TestAppContext};
+    use language::Buffer;
+    use project::Project;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    /// Test the complete Ollama completion flow from refresh to suggestion
+    #[gpui::test]
+    async fn test_full_completion_flow(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Create a buffer with realistic code content
+        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("fn test() {\n    \n}", cx)));
+        let cursor_position = buffer.read_with(cx, |buffer, _| {
+            buffer.anchor_before(11) // Position in the middle of the function
+        });
+
+        // Create Ollama provider with fake HTTP client
+        let (provider, fake_http_client) = Ollama::fake(cx);
+
+        // Configure mock HTTP response
+        fake_http_client.set_generate_response("println!(\"Hello\");");
+
+        // Trigger completion refresh (no debounce for test speed)
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer.clone(), cursor_position, false, cx);
+        });
+
+        // Wait for completion task to complete
+        cx.background_executor.run_until_parked();
+
+        // Verify completion was processed and stored
+        provider.read_with(cx, |provider, _cx| {
+            assert!(provider.current_completion.is_some());
+            assert_eq!(
+                provider.current_completion.as_ref().unwrap(),
+                "println!(\"Hello\");"
+            );
+            assert!(!provider.is_refreshing());
+        });
+
+        // Test suggestion logic returns the completion
+        let suggestion = cx.update(|cx| {
+            provider.update(cx, |provider, cx| {
+                provider.suggest(&buffer, cursor_position, cx)
+            })
+        });
+
+        assert!(suggestion.is_some());
+        let suggestion = suggestion.unwrap();
+        assert_eq!(suggestion.edits.len(), 1);
+        assert_eq!(suggestion.edits[0].1, "println!(\"Hello\");");
+
+        // Verify acceptance clears the completion
+        provider.update(cx, |provider, cx| {
+            provider.accept(cx);
+        });
+
+        provider.read_with(cx, |provider, _cx| {
+            assert!(provider.current_completion.is_none());
+        });
+    }
+}
