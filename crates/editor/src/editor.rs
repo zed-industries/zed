@@ -11837,11 +11837,23 @@ impl Editor {
                     let (comment_prefix, rewrap_prefix) =
                         if let Some(language_scope) = &language_scope {
                             let indent_end = Point::new(row, indent.len);
-                            let comment_prefix = language_scope
-                                .line_comment_prefixes()
-                                .iter()
-                                .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                                .map(|prefix| prefix.to_string());
+
+                            let start_point = selection.start.to_point(&buffer);
+                            let is_within_block_comment = buffer
+                                .language_scope_at(start_point)
+                                .is_some_and(|scope| scope.override_name() == Some("comment"));
+                            let comment_prefix = if is_within_block_comment {
+                                language_scope
+                                    .documentation()
+                                    .map(|doc_config| doc_config.prefix.to_string())
+                            } else {
+                                language_scope
+                                    .line_comment_prefixes()
+                                    .iter()
+                                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                                    .map(|prefix| prefix.to_string())
+                            };
+
                             let line_end = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                             let line_text_after_indent = buffer
                                 .text_for_range(indent_end..line_end)

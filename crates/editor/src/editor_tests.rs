@@ -5885,6 +5885,118 @@ async fn test_rewrap(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "Rust".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language_with_doc_comments = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                line_comments: vec!["// ".into()],
+                block_comment: Some(("/*".into(), "*/".into())),
+                documentation: Some(DocumentationConfig {
+                    start: "/**".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: NonZeroU32::new(1).unwrap(),
+                }),
+
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
+
+    // regular block comment
+    assert_rewrap(
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Praesent semper egestas tellus id dignissim.
+             */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+             * purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
+             * dignissim.
+             */
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    // block comment still respects paragraph bounds
+    assert_rewrap(
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Praesent semper egestas tellus id dignissim.
+             *
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Praesent semper egestas tellus id dignissim.
+             */
+        "},
+        indoc! {"
+            /*
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+             * purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
+             * dignissim.
+             *
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Praesent semper egestas tellus id dignissim.
+             */
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    // documentation comment
+    assert_rewrap(
+        indoc! {"
+            /**
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Praesent semper egestas tellus id dignissim.
+             */
+        "},
+        indoc! {"
+            /**
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+             * purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id
+             * dignissim.
+             */
+        "},
+        language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    #[track_caller]
+    fn assert_rewrap(
+        unwrapped_text: &str,
+        wrapped_text: &str,
+        language: Arc<Language>,
+        cx: &mut EditorTestContext,
+    ) {
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
 async fn test_hard_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
