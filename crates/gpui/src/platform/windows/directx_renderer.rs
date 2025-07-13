@@ -115,12 +115,12 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
-        let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
-            return Err(anyhow::anyhow!(
-                "failed to rasterize {} paths",
-                scene.paths().len()
-            ));
-        };
+        // let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
+        //     return Err(anyhow::anyhow!(
+        //         "failed to rasterize {} paths",
+        //         scene.paths().len()
+        //     ));
+        // };
         pre_draw(
             &self.devices.device_context,
             &self.globals.global_params_buffer,
