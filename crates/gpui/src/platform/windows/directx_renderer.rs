@@ -131,7 +131,6 @@ impl DirectXRenderer {
             [0.0, 0.0, 0.0, 0.0],
             &self.globals.blend_state,
         )?;
-        println!("--> Drawing scene");
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -332,7 +331,7 @@ impl DirectXRenderer {
             &self.pipelines.paths_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
         )?;
 
         for i in 0..paths.len() {
@@ -494,7 +493,7 @@ impl DirectXRenderPipelines {
             "paths_vertex",
             "paths_fragment",
             std::mem::size_of::<PathSprite>(),
-            1,
+            32,
         )?;
         let underline_pipeline = create_pipieline(
             device,
