@@ -1,7 +1,7 @@
 use assets::SoundRegistry;
 use derive_more::{Deref, DerefMut};
 use gpui::{App, AssetSource, BorrowAppContext, Global};
-use rodio::{OutputStream, OutputStreamHandle};
+use rodio::{OutputStream, OutputStreamBuilder};
 use util::ResultExt;
 
 mod assets;
@@ -37,8 +37,7 @@ impl Sound {
 
 #[derive(Default)]
 pub struct Audio {
-    _output_stream: Option<OutputStream>,
-    output_handle: Option<OutputStreamHandle>,
+    output_handle: Option<OutputStream>,
 }
 
 #[derive(Deref, DerefMut)]
@@ -51,11 +50,9 @@ impl Audio {
         Self::default()
     }
 
-    fn ensure_output_exists(&mut self) -> Option<&OutputStreamHandle> {
+    fn ensure_output_exists(&mut self) -> Option<&OutputStream> {
         if self.output_handle.is_none() {
-            let (_output_stream, output_handle) = OutputStream::try_default().log_err().unzip();
-            self.output_handle = output_handle;
-            self._output_stream = _output_stream;
+            self.output_handle = OutputStreamBuilder::open_default_stream().log_err();
         }
 
         self.output_handle.as_ref()
@@ -69,7 +66,7 @@ impl Audio {
         cx.update_global::<GlobalAudio, _>(|this, cx| {
             let output_handle = this.ensure_output_exists()?;
             let source = SoundRegistry::global(cx).get(sound.file()).log_err()?;
-            output_handle.play_raw(source).log_err()?;
+            output_handle.mixer().add(source);
             Some(())
         });
     }
@@ -80,7 +77,6 @@ impl Audio {
         }
 
         cx.update_global::<GlobalAudio, _>(|this, _| {
-            this._output_stream.take();
             this.output_handle.take();
         });
     }
