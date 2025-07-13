@@ -3,11 +3,11 @@ use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 use collections::FxHasher;
-#[cfg(not(feature = "enable-renderdoc"))]
-use windows::Win32::Graphics::DirectComposition::*;
+// #[cfg(not(feature = "enable-renderdoc"))]
+// use windows::Win32::Graphics::DirectComposition::*;
 use windows::{
     Win32::{
-        Foundation::HWND,
+        Foundation::{HMODULE, HWND},
         Graphics::{
             Direct3D::*,
             Direct3D11::*,
@@ -41,8 +41,8 @@ struct DirectXContext {
     swap_chain: IDXGISwapChain1,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
-    #[cfg(not(feature = "enable-renderdoc"))]
-    direct_composition: DirectComposition,
+    // #[cfg(not(feature = "enable-renderdoc"))]
+    // direct_composition: DirectComposition,
 }
 
 struct DirectXRenderPipelines {
@@ -62,12 +62,12 @@ struct DirectXGlobalElements {
     blend_state_for_pr: ID3D11BlendState,
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
-struct DirectComposition {
-    comp_device: IDCompositionDevice,
-    comp_target: IDCompositionTarget,
-    comp_visual: IDCompositionVisual,
-}
+// #[cfg(not(feature = "enable-renderdoc"))]
+// struct DirectComposition {
+//     comp_device: IDCompositionDevice,
+//     comp_target: IDCompositionTarget,
+//     comp_visual: IDCompositionVisual,
+// }
 
 impl DirectXDevices {
     pub(crate) fn new() -> Result<Self> {
@@ -91,17 +91,17 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(devices: DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
+    pub(crate) fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
         let atlas = Arc::new(DirectXAtlas::new(
             devices.device.clone(),
             devices.device_context.clone(),
         ));
-        let context = DirectXContext::new(&devices, hwnd, transparent)?;
+        let context = DirectXContext::new(devices, hwnd, transparent)?;
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
         Ok(DirectXRenderer {
             atlas,
-            devices,
+            devices: devices.clone(),
             context,
             globals,
             pipelines,
@@ -110,7 +110,7 @@ impl DirectXRenderer {
         })
     }
 
-    pub(crate) fn spirite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+    pub(crate) fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         self.atlas.clone()
     }
 
@@ -153,7 +153,7 @@ impl DirectXRenderer {
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),))?;
         }
-        unsafe { self.context.swap_chain.Present(0, 0) }.ok()?;
+        unsafe { self.context.swap_chain.Present(0, DXGI_PRESENT(0)) }.ok()?;
         Ok(())
     }
 
@@ -166,7 +166,7 @@ impl DirectXRenderer {
                 new_size.width.0 as u32,
                 new_size.height.0 as u32,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
-                0,
+                DXGI_SWAP_CHAIN_FLAG(0),
             )?;
         }
         let backbuffer = set_render_target_view(
@@ -183,32 +183,32 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    #[cfg(not(feature = "enable-renderdoc"))]
-    pub(crate) fn update_transparency(
-        &mut self,
-        background_appearance: WindowBackgroundAppearance,
-    ) -> Result<()> {
-        // We only support setting `Transparent` and `Opaque` for now.
-        match background_appearance {
-            WindowBackgroundAppearance::Opaque => {
-                if self.transparent {
-                    return Err(anyhow::anyhow!(
-                        "Set opaque backgroud from transparent background, a restart is required. Or, you can open a new window."
-                    ));
-                }
-            }
-            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
-                if !self.transparent {
-                    return Err(anyhow::anyhow!(
-                        "Set transparent backgroud from opaque background, a restart is required. Or, you can open a new window."
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
+    // #[cfg(not(feature = "enable-renderdoc"))]
+    // pub(crate) fn update_transparency(
+    //     &mut self,
+    //     background_appearance: WindowBackgroundAppearance,
+    // ) -> Result<()> {
+    //     // We only support setting `Transparent` and `Opaque` for now.
+    //     match background_appearance {
+    //         WindowBackgroundAppearance::Opaque => {
+    //             if self.transparent {
+    //                 return Err(anyhow::anyhow!(
+    //                     "Set opaque backgroud from transparent background, a restart is required. Or, you can open a new window."
+    //                 ));
+    //             }
+    //         }
+    //         WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
+    //             if !self.transparent {
+    //                 return Err(anyhow::anyhow!(
+    //                     "Set transparent backgroud from opaque background, a restart is required. Or, you can open a new window."
+    //                 ));
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
-    #[cfg(feature = "enable-renderdoc")]
+    // #[cfg(feature = "enable-renderdoc")]
     pub(crate) fn update_transparency(
         &mut self,
         background_appearance: WindowBackgroundAppearance,
@@ -280,77 +280,78 @@ impl DirectXRenderer {
         &mut self,
         paths: &[Path<ScaledPixels>],
     ) -> Option<HashMap<PathId, AtlasTile>> {
-        self.atlas.clear_textures(AtlasTextureKind::Path);
+        // self.atlas.clear_textures(AtlasTextureKind::Path);
 
-        let mut tiles = HashMap::default();
-        let mut vertices_by_texture_id: HashMap<
-            AtlasTextureId,
-            Vec<PathVertex<ScaledPixels>>,
-            BuildHasherDefault<FxHasher>,
-        > = HashMap::default();
-        for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+        // let mut tiles = HashMap::default();
+        // let mut vertices_by_texture_id: HashMap<
+        //     AtlasTextureId,
+        //     Vec<PathVertex<ScaledPixels>>,
+        //     BuildHasherDefault<FxHasher>,
+        // > = HashMap::default();
+        // for path in paths {
+        //     let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
 
-            let tile = self
-                .atlas
-                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
-            vertices_by_texture_id
-                .entry(tile.texture_id)
-                .or_insert(Vec::new())
-                .extend(path.vertices.iter().map(|vertex| PathVertex {
-                    xy_position: vertex.xy_position - clipped_bounds.origin
-                        + tile.bounds.origin.map(Into::into),
-                    content_mask: ContentMask {
-                        bounds: tile.bounds.map(Into::into),
-                    },
-                }));
-            tiles.insert(path.id, tile);
-        }
+        //     let tile = self
+        //         .atlas
+        //         .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
+        //     vertices_by_texture_id
+        //         .entry(tile.texture_id)
+        //         .or_insert(Vec::new())
+        //         .extend(path.vertices.iter().map(|vertex| PathVertex {
+        //             xy_position: vertex.xy_position - clipped_bounds.origin
+        //                 + tile.bounds.origin.map(Into::into),
+        //             content_mask: ContentMask {
+        //                 bounds: tile.bounds.map(Into::into),
+        //             },
+        //         }));
+        //     tiles.insert(path.id, tile);
+        // }
 
-        for (texture_id, vertices) in vertices_by_texture_id {
-            let (texture_size, rtv) = self.atlas.get_texture_drawing_info(texture_id);
-            let viewport = [D3D11_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: texture_size.width,
-                Height: texture_size.height,
-                MinDepth: 0.0,
-                MaxDepth: 1.0,
-            }];
-            pre_draw(
-                &self.devices.device_context,
-                &self.globals.global_params_buffer,
-                &viewport,
-                &rtv,
-                [0.0, 0.0, 0.0, 1.0],
-                &self.globals.blend_state_for_pr,
-            )
-            .log_err()?;
-            update_buffer_capacity(
-                &self.pipelines.path_raster_pipeline,
-                std::mem::size_of::<PathVertex<ScaledPixels>>(),
-                vertices.len(),
-                &self.devices.device,
-            )
-            .map(|input| update_pipeline(&mut self.pipelines.path_raster_pipeline, input));
-            update_buffer(
-                &self.devices.device_context,
-                &self.pipelines.path_raster_pipeline.buffer,
-                &vertices,
-            )
-            .log_err()?;
-            draw_normal(
-                &self.devices.device_context,
-                &self.pipelines.path_raster_pipeline,
-                &viewport,
-                &self.globals.global_params_buffer,
-                D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-                vertices.len() as u32,
-                1,
-            )
-            .log_err()?;
-        }
-        Some(tiles)
+        // for (texture_id, vertices) in vertices_by_texture_id {
+        //     let (texture_size, rtv) = self.atlas.get_texture_drawing_info(texture_id);
+        //     let viewport = [D3D11_VIEWPORT {
+        //         TopLeftX: 0.0,
+        //         TopLeftY: 0.0,
+        //         Width: texture_size.width,
+        //         Height: texture_size.height,
+        //         MinDepth: 0.0,
+        //         MaxDepth: 1.0,
+        //     }];
+        //     pre_draw(
+        //         &self.devices.device_context,
+        //         &self.globals.global_params_buffer,
+        //         &viewport,
+        //         &rtv,
+        //         [0.0, 0.0, 0.0, 1.0],
+        //         &self.globals.blend_state_for_pr,
+        //     )
+        //     .log_err()?;
+        //     update_buffer_capacity(
+        //         &self.pipelines.path_raster_pipeline,
+        //         std::mem::size_of::<PathVertex<ScaledPixels>>(),
+        //         vertices.len(),
+        //         &self.devices.device,
+        //     )
+        //     .map(|input| update_pipeline(&mut self.pipelines.path_raster_pipeline, input));
+        //     update_buffer(
+        //         &self.devices.device_context,
+        //         &self.pipelines.path_raster_pipeline.buffer,
+        //         &vertices,
+        //     )
+        //     .log_err()?;
+        //     draw_normal(
+        //         &self.devices.device_context,
+        //         &self.pipelines.path_raster_pipeline,
+        //         &viewport,
+        //         &self.globals.global_params_buffer,
+        //         D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+        //         vertices.len() as u32,
+        //         1,
+        //     )
+        //     .log_err()?;
+        // }
+        // Some(tiles)
+        None
     }
 
     fn draw_paths(
@@ -358,43 +359,43 @@ impl DirectXRenderer {
         paths: &[Path<ScaledPixels>],
         path_tiles: &HashMap<PathId, AtlasTile>,
     ) -> Result<()> {
-        if paths.is_empty() {
-            return Ok(());
-        }
-        for path in paths {
-            let tile = &path_tiles[&path.id];
-            let texture_view = self.atlas.get_texture_view(tile.texture_id);
-            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
-            let sprites = [PathSprite {
-                bounds: Bounds {
-                    origin: origin.map(|p| p.floor()),
-                    size: tile.bounds.size.map(Into::into),
-                },
-                color: path.color,
-                tile: (*tile).clone(),
-            }];
-            update_buffer_capacity(
-                &self.pipelines.paths_pipeline,
-                std::mem::size_of::<PathSprite>(),
-                1,
-                &self.devices.device,
-            )
-            .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
-            update_buffer(
-                &self.devices.device_context,
-                &self.pipelines.paths_pipeline.buffer,
-                &sprites,
-            )?;
-            draw_with_texture(
-                &self.devices.device_context,
-                &self.pipelines.paths_pipeline,
-                &texture_view,
-                &self.context.viewport,
-                &self.globals.global_params_buffer,
-                &self.globals.sampler,
-                1,
-            )?;
-        }
+        // if paths.is_empty() {
+        //     return Ok(());
+        // }
+        // for path in paths {
+        //     let tile = &path_tiles[&path.id];
+        //     let texture_view = self.atlas.get_texture_view(tile.texture_id);
+        //     let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
+        //     let sprites = [PathSprite {
+        //         bounds: Bounds {
+        //             origin: origin.map(|p| p.floor()),
+        //             size: tile.bounds.size.map(Into::into),
+        //         },
+        //         color: path.color,
+        //         tile: (*tile).clone(),
+        //     }];
+        //     update_buffer_capacity(
+        //         &self.pipelines.paths_pipeline,
+        //         std::mem::size_of::<PathSprite>(),
+        //         1,
+        //         &self.devices.device,
+        //     )
+        //     .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
+        //     update_buffer(
+        //         &self.devices.device_context,
+        //         &self.pipelines.paths_pipeline.buffer,
+        //         &sprites,
+        //     )?;
+        //     draw_with_texture(
+        //         &self.devices.device_context,
+        //         &self.pipelines.paths_pipeline,
+        //         &texture_view,
+        //         &self.context.viewport,
+        //         &self.globals.global_params_buffer,
+        //         &self.globals.sampler,
+        //         1,
+        //     )?;
+        // }
         Ok(())
     }
 
@@ -489,7 +490,7 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_surfaces(&mut self, surfaces: &[Surface]) -> Result<()> {
+    fn draw_surfaces(&mut self, surfaces: &[PaintSurface]) -> Result<()> {
         if surfaces.is_empty() {
             return Ok(());
         }
@@ -499,15 +500,15 @@ impl DirectXRenderer {
 
 impl DirectXContext {
     pub fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
-        #[cfg(feature = "enable-renderdoc")]
+        // #[cfg(not(feature = "enable-renderdoc"))]
+        // let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
+        // #[cfg(feature = "enable-renderdoc")]
         let swap_chain =
             create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
-        #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition.set_swap_chain(&swap_chain)?;
+        // #[cfg(not(feature = "enable-renderdoc"))]
+        // let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
+        // #[cfg(not(feature = "enable-renderdoc"))]
+        // direct_composition.set_swap_chain(&swap_chain)?;
         let back_buffer = [Some(set_render_target_view(
             &swap_chain,
             &devices.device,
@@ -520,8 +521,8 @@ impl DirectXContext {
             swap_chain,
             back_buffer,
             viewport,
-            #[cfg(not(feature = "enable-renderdoc"))]
-            direct_composition,
+            // #[cfg(not(feature = "enable-renderdoc"))]
+            // direct_composition,
         })
     }
 }
@@ -590,29 +591,29 @@ impl DirectXRenderPipelines {
     }
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
-impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+// #[cfg(not(feature = "enable-renderdoc"))]
+// impl DirectComposition {
+//     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+//         let comp_device = get_comp_device(&dxgi_device)?;
+//         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+//         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
-        Ok(Self {
-            comp_device,
-            comp_target,
-            comp_visual,
-        })
-    }
+//         Ok(Self {
+//             comp_device,
+//             comp_target,
+//             comp_visual,
+//         })
+//     }
 
-    pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
-        unsafe {
-            self.comp_visual.SetContent(swap_chain)?;
-            self.comp_target.SetRoot(&self.comp_visual)?;
-            self.comp_device.Commit()?;
-        }
-        Ok(())
-    }
-}
+//     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
+//         unsafe {
+//             self.comp_visual.SetContent(swap_chain)?;
+//             self.comp_target.SetRoot(&self.comp_visual)?;
+//             self.comp_device.Commit()?;
+//         }
+//         Ok(())
+//     }
+// }
 
 impl DirectXGlobalElements {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
@@ -726,7 +727,7 @@ fn get_device(
         D3D11CreateDevice(
             adapter,
             D3D_DRIVER_TYPE_UNKNOWN,
-            None,
+            HMODULE::default(),
             device_flags,
             Some(&[D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1]),
             D3D11_SDK_VERSION,
@@ -737,10 +738,10 @@ fn get_device(
     })
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
-fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
-    Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
-}
+// #[cfg(not(feature = "enable-renderdoc"))]
+// fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
+//     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
+// }
 
 fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
@@ -772,7 +773,7 @@ fn create_swap_chain(
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
 }
 
-#[cfg(feature = "enable-renderdoc")]
+// #[cfg(feature = "enable-renderdoc")]
 fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
