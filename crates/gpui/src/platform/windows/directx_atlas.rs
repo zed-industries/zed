@@ -21,7 +21,7 @@ struct DirectXAtlasState {
     device_context: ID3D11DeviceContext,
     monochrome_textures: Vec<DirectXAtlasTexture>,
     polychrome_textures: Vec<DirectXAtlasTexture>,
-    path_textures: Vec<DirectXAtlasTexture>,
+    // path_textures: Vec<DirectXAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
 }
 
@@ -41,7 +41,7 @@ impl DirectXAtlas {
             device_context,
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
-            path_textures: Default::default(),
+            // path_textures: Default::default(),
             tiles_by_key: Default::default(),
         }))
     }

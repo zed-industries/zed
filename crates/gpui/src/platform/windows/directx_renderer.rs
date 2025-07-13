@@ -48,7 +48,6 @@ struct DirectXContext {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState,
     quad_pipeline: PipelineState,
-    path_raster_pipeline: PipelineState,
     paths_pipeline: PipelineState,
     underline_pipeline: PipelineState,
     mono_sprites: PipelineState,
@@ -115,12 +114,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
-        // let Some(path_tiles) = self.rasterize_paths(scene.paths()) else {
-        //     return Err(anyhow::anyhow!(
-        //         "failed to rasterize {} paths",
-        //         scene.paths().len()
-        //     ));
-        // };
         pre_draw(
             &self.devices.device_context,
             &self.globals.global_params_buffer,
@@ -133,7 +126,7 @@ impl DirectXRenderer {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
-                PrimitiveBatch::Paths(paths) => self.draw_paths(paths, &path_tiles),
+                PrimitiveBatch::Paths(paths) => self.draw_paths(paths),
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -276,126 +269,46 @@ impl DirectXRenderer {
         )
     }
 
-    fn rasterize_paths(
-        &mut self,
-        paths: &[Path<ScaledPixels>],
-    ) -> Option<HashMap<PathId, AtlasTile>> {
-        // self.atlas.clear_textures(AtlasTextureKind::Path);
-
-        // let mut tiles = HashMap::default();
-        // let mut vertices_by_texture_id: HashMap<
-        //     AtlasTextureId,
-        //     Vec<PathVertex<ScaledPixels>>,
-        //     BuildHasherDefault<FxHasher>,
-        // > = HashMap::default();
-        // for path in paths {
-        //     let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
-
-        //     let tile = self
-        //         .atlas
-        //         .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path)?;
-        //     vertices_by_texture_id
-        //         .entry(tile.texture_id)
-        //         .or_insert(Vec::new())
-        //         .extend(path.vertices.iter().map(|vertex| PathVertex {
-        //             xy_position: vertex.xy_position - clipped_bounds.origin
-        //                 + tile.bounds.origin.map(Into::into),
-        //             content_mask: ContentMask {
-        //                 bounds: tile.bounds.map(Into::into),
-        //             },
-        //         }));
-        //     tiles.insert(path.id, tile);
-        // }
-
-        // for (texture_id, vertices) in vertices_by_texture_id {
-        //     let (texture_size, rtv) = self.atlas.get_texture_drawing_info(texture_id);
-        //     let viewport = [D3D11_VIEWPORT {
-        //         TopLeftX: 0.0,
-        //         TopLeftY: 0.0,
-        //         Width: texture_size.width,
-        //         Height: texture_size.height,
-        //         MinDepth: 0.0,
-        //         MaxDepth: 1.0,
-        //     }];
-        //     pre_draw(
-        //         &self.devices.device_context,
-        //         &self.globals.global_params_buffer,
-        //         &viewport,
-        //         &rtv,
-        //         [0.0, 0.0, 0.0, 1.0],
-        //         &self.globals.blend_state_for_pr,
-        //     )
-        //     .log_err()?;
-        //     update_buffer_capacity(
-        //         &self.pipelines.path_raster_pipeline,
-        //         std::mem::size_of::<PathVertex<ScaledPixels>>(),
-        //         vertices.len(),
-        //         &self.devices.device,
-        //     )
-        //     .map(|input| update_pipeline(&mut self.pipelines.path_raster_pipeline, input));
-        //     update_buffer(
-        //         &self.devices.device_context,
-        //         &self.pipelines.path_raster_pipeline.buffer,
-        //         &vertices,
-        //     )
-        //     .log_err()?;
-        //     draw_normal(
-        //         &self.devices.device_context,
-        //         &self.pipelines.path_raster_pipeline,
-        //         &viewport,
-        //         &self.globals.global_params_buffer,
-        //         D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-        //         vertices.len() as u32,
-        //         1,
-        //     )
-        //     .log_err()?;
-        // }
-        // Some(tiles)
-        None
-    }
-
-    fn draw_paths(
-        &mut self,
-        paths: &[Path<ScaledPixels>],
-        path_tiles: &HashMap<PathId, AtlasTile>,
-    ) -> Result<()> {
-        // if paths.is_empty() {
-        //     return Ok(());
-        // }
-        // for path in paths {
-        //     let tile = &path_tiles[&path.id];
-        //     let texture_view = self.atlas.get_texture_view(tile.texture_id);
-        //     let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
-        //     let sprites = [PathSprite {
-        //         bounds: Bounds {
-        //             origin: origin.map(|p| p.floor()),
-        //             size: tile.bounds.size.map(Into::into),
-        //         },
-        //         color: path.color,
-        //         tile: (*tile).clone(),
-        //     }];
-        //     update_buffer_capacity(
-        //         &self.pipelines.paths_pipeline,
-        //         std::mem::size_of::<PathSprite>(),
-        //         1,
-        //         &self.devices.device,
-        //     )
-        //     .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
-        //     update_buffer(
-        //         &self.devices.device_context,
-        //         &self.pipelines.paths_pipeline.buffer,
-        //         &sprites,
-        //     )?;
-        //     draw_with_texture(
-        //         &self.devices.device_context,
-        //         &self.pipelines.paths_pipeline,
-        //         &texture_view,
-        //         &self.context.viewport,
-        //         &self.globals.global_params_buffer,
-        //         &self.globals.sampler,
-        //         1,
-        //     )?;
-        // }
+    fn draw_paths(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut vertices = Vec::new();
+        let mut sprites = Vec::with_capacity(paths.len());
+        for path in paths {
+            let tile = &path_tiles[&path.id];
+            let texture_view = self.atlas.get_texture_view(tile.texture_id);
+            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
+            let sprites = [PathSprite {
+                bounds: Bounds {
+                    origin: origin.map(|p| p.floor()),
+                    size: tile.bounds.size.map(Into::into),
+                },
+                color: path.color,
+                tile: (*tile).clone(),
+            }];
+            update_buffer_capacity(
+                &self.pipelines.paths_pipeline,
+                std::mem::size_of::<PathSprite>(),
+                1,
+                &self.devices.device,
+            )
+            .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
+            update_buffer(
+                &self.devices.device_context,
+                &self.pipelines.paths_pipeline.buffer,
+                &sprites,
+            )?;
+            draw_with_texture(
+                &self.devices.device_context,
+                &self.pipelines.paths_pipeline,
+                &texture_view,
+                &self.context.viewport,
+                &self.globals.global_params_buffer,
+                &self.globals.sampler,
+                1,
+            )?;
+        }
         Ok(())
     }
 
@@ -543,13 +456,6 @@ impl DirectXRenderPipelines {
             std::mem::size_of::<Quad>(),
             32,
         )?;
-        let path_raster_pipeline = create_pipieline(
-            device,
-            "path_rasterization_vertex",
-            "path_rasterization_fragment",
-            std::mem::size_of::<PathVertex<ScaledPixels>>(),
-            32,
-        )?;
         let paths_pipeline = create_pipieline(
             device,
             "paths_vertex",
@@ -582,7 +488,6 @@ impl DirectXRenderPipelines {
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
-            path_raster_pipeline,
             paths_pipeline,
             underline_pipeline,
             mono_sprites,
@@ -679,8 +584,7 @@ struct PipelineState {
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
-    color: Hsla,
-    tile: AtlasTile,
+    color: Background,
 }
 
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
@@ -743,35 +647,35 @@ fn get_device(
 //     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 // }
 
-fn create_swap_chain(
-    dxgi_factory: &IDXGIFactory6,
-    device: &ID3D11Device,
-    transparent: bool,
-) -> Result<IDXGISwapChain1> {
-    let alpha_mode = if transparent {
-        DXGI_ALPHA_MODE_PREMULTIPLIED
-    } else {
-        DXGI_ALPHA_MODE_IGNORE
-    };
-    let desc = DXGI_SWAP_CHAIN_DESC1 {
-        Width: 1,
-        Height: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-        Stereo: false.into(),
-        SampleDesc: DXGI_SAMPLE_DESC {
-            Count: 1,
-            Quality: 0,
-        },
-        BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-        BufferCount: BUFFER_COUNT as u32,
-        // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
-        Scaling: DXGI_SCALING_STRETCH,
-        SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-        AlphaMode: alpha_mode,
-        Flags: 0,
-    };
-    Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
-}
+// fn create_swap_chain(
+//     dxgi_factory: &IDXGIFactory6,
+//     device: &ID3D11Device,
+//     transparent: bool,
+// ) -> Result<IDXGISwapChain1> {
+//     let alpha_mode = if transparent {
+//         DXGI_ALPHA_MODE_PREMULTIPLIED
+//     } else {
+//         DXGI_ALPHA_MODE_IGNORE
+//     };
+//     let desc = DXGI_SWAP_CHAIN_DESC1 {
+//         Width: 1,
+//         Height: 1,
+//         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+//         Stereo: false.into(),
+//         SampleDesc: DXGI_SAMPLE_DESC {
+//             Count: 1,
+//             Quality: 0,
+//         },
+//         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+//         BufferCount: BUFFER_COUNT as u32,
+//         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
+//         Scaling: DXGI_SCALING_STRETCH,
+//         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+//         AlphaMode: alpha_mode,
+//         Flags: 0,
+//     };
+//     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
+// }
 
 // #[cfg(feature = "enable-renderdoc")]
 fn create_swap_chain_default(
