@@ -1087,7 +1087,7 @@ impl Render for KeymapEditor {
                                     let icon = (this.filter_state != FilterState::Conflicts
                                         && this.has_conflict(index))
                                     .then(|| {
-                                        base_button_style(("keymap-icon", index), IconName::Warning)
+                                        base_button_style(index, IconName::Warning)
                                             .tooltip(|window, cx| {
                                                 Tooltip::with_meta(
                                                     "Click to edit keybind",
@@ -1115,7 +1115,7 @@ impl Render for KeymapEditor {
                                             ))
                                     })
                                     .unwrap_or_else(|| {
-                                        base_button_style(("keymap-icon", index), IconName::Pencil)
+                                        base_button_style(index, IconName::Pencil)
                                             .visible_on_hover(row_group_id(index))
                                             .tooltip(Tooltip::text("Click to edit keybind"))
                                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1264,8 +1264,8 @@ fn row_group_id(row_index: usize) -> SharedString {
     SharedString::new(format!("keymap-table-row-{}", row_index))
 }
 
-fn base_button_style(button_id: impl Into<ElementId>, icon: IconName) -> IconButton {
-    IconButton::new(button_id, icon)
+fn base_button_style(row_index: usize, icon: IconName) -> IconButton {
+    IconButton::new(("keymap-icon", row_index), icon)
         .shape(IconButtonShape::Square)
         .size(ButtonSize::Compact)
 }
