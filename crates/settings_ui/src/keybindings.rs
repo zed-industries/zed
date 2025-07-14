@@ -266,7 +266,6 @@ struct KeymapEditor {
     filter_editor: Entity<Editor>,
     keystroke_editor: Entity<KeystrokeInput>,
     selected_index: Option<usize>,
-    hovered_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
@@ -328,7 +327,6 @@ impl KeymapEditor {
             filter_editor,
             keystroke_editor,
             selected_index: None,
-            hovered_index: None,
             context_menu: None,
         };
 
@@ -616,20 +614,6 @@ impl KeymapEditor {
         if self.selected_index != Some(index) {
             self.selected_index = Some(index);
             cx.notify();
-        }
-    }
-
-    fn update_hover_index(&mut self, index: usize, hovered: bool, cx: &mut Context<Self>) {
-        if hovered {
-            if self.hovered_index != Some(index) {
-                self.hovered_index = Some(index);
-                cx.notify();
-            }
-        } else {
-            if self.hovered_index == Some(index) {
-                self.hovered_index = None;
-                cx.notify();
-            }
         }
     }
 
@@ -1130,17 +1114,17 @@ impl Render for KeymapEditor {
                                                 },
                                             ))
                                     })
-                                    .or((this.hovered_index == Some(index)).then(|| {
+                                    .unwrap_or_else(|| {
                                         base_button_style(("keymap-icon", index), IconName::Pencil)
+                                            .visible_on_hover(row_group_id(index))
                                             .tooltip(Tooltip::text("Click to edit keybind"))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
                                                 cx.stop_propagation();
                                             }))
-                                    }))
-                                    .map(IntoElement::into_any_element)
-                                    .unwrap_or_else(|| gpui::Empty.into_any_element());
+                                    })
+                                    .into_any_element();
 
                                     let action = div()
                                         .child(binding.action_name.clone())
@@ -1213,8 +1197,10 @@ impl Render for KeymapEditor {
                             let is_conflict = this.has_conflict(row_index);
                             let is_selected = this.selected_index == Some(row_index);
 
+                            let row_id = row_group_id(row_index);
+
                             let row = row
-                                .id(("keymap-table-row", row_index))
+                                .id(row_id.clone())
                                 .on_any_mouse_down(cx.listener(
                                     move |this,
                                           mouse_down_event: &gpui::MouseDownEvent,
@@ -1241,9 +1227,7 @@ impl Render for KeymapEditor {
                                         }
                                     },
                                 ))
-                                .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
-                                    this.update_hover_index(row_index, *hovered, cx);
-                                }))
+                                .group(row_id)
                                 .border_2()
                                 .when(is_conflict, |row| {
                                     row.bg(cx.theme().status().error_background)
@@ -1274,6 +1258,10 @@ impl Render for KeymapEditor {
                 .with_priority(1)
             }))
     }
+}
+
+fn row_group_id(row_index: usize) -> SharedString {
+    SharedString::new(format!("keymap-table-row-{}", row_index))
 }
 
 fn base_button_style(button_id: impl Into<ElementId>, icon: IconName) -> IconButton {
