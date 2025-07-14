@@ -369,7 +369,7 @@ fn eval_disable_cursor_blinking() {
     //  claude-sonnet-4                |  0.81 (2025-07-14)
     //  gemini-2.5-pro                 |  0.95 (2025-07-14)
     //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
-    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literaly)
+    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
