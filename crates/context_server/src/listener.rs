@@ -31,7 +31,7 @@ pub struct McpServer {
     _server_task: Task<()>,
 }
 
-type McpHandler = Box<dyn Fn(RequestId, Box<RawValue>, &App) -> Task<String>>;
+type McpHandler = Box<dyn Fn(RequestId, Option<Box<RawValue>>, &App) -> Task<String>>;
 
 impl McpServer {
     pub fn new(cx: &App) -> Result<Self> {
@@ -65,9 +65,13 @@ impl McpServer {
         let f = Box::new(f);
         self.handlers.borrow_mut().insert(
             R::METHOD,
-            Box::new(move |req_id, v, cx| {
-                // todo! should allow undefined as ()
-                let params: R::Params = match serde_json::from_str(v.get()) {
+            Box::new(move |req_id, opt_params, cx| {
+                let result = match opt_params {
+                    Some(params) => serde_json::from_str(params.get()),
+                    None => serde_json::from_value(serde_json::Value::Null),
+                };
+
+                let params: R::Params = match result {
                     Ok(params) => params,
                     Err(e) => {
                         return Task::ready(
@@ -210,7 +214,8 @@ struct RawRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<RequestId>,
     method: String,
-    params: Box<serde_json::value::RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Box<serde_json::value::RawValue>>,
 }
 
 #[derive(Serialize, Deserialize)]
