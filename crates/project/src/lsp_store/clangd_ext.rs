@@ -6,7 +6,7 @@ use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
-use crate::{LspStore, LspStoreEvent};
+use crate::LspStore;
 
 pub const CLANGD_SERVER_NAME: &str = "clangd";
 const INACTIVE_REGION_MESSAGE: &str = "inactive region";
@@ -91,7 +91,6 @@ pub fn register_notifications(
                         cx,
                     )
                     .log_err();
-                    cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
                 })
                 .ok();
             }

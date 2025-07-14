@@ -29,7 +29,7 @@ use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
-    future::{Shared, join_all},
+    future::{Either, Shared, join_all, pending, select},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -85,9 +85,11 @@ use std::{
     cmp::{Ordering, Reverse},
     convert::TryInto,
     ffi::OsStr,
+    future::ready,
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
+    pin::pin,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -508,8 +510,6 @@ impl LocalLspStore {
                                 cx,
                             )
                             .log_err();
-
-                            cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
                         })
                         .ok();
                     }
@@ -3600,7 +3600,6 @@ pub enum LspStoreEvent {
         language_server_id: LanguageServerId,
         path: ProjectPath,
     },
-    DiagnosticsBatchUpdated,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -6594,8 +6593,6 @@ impl LspStore {
                         }
                     }
                 }
-
-                cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
             })
         })
     }
@@ -7591,7 +7588,6 @@ impl LspStore {
             |_, _, _| false,
             cx,
         )?;
-        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
         Ok(())
     }
 
@@ -8665,7 +8661,6 @@ impl LspStore {
                     language_server_id: LanguageServerId(message.language_server_id as usize),
                     path: project_path,
                 });
-                cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
             }
             Ok(())
         })?
@@ -9199,8 +9194,17 @@ impl LspStore {
                     }
                 }
             }
-            lsp::ProgressParamsValue::WorkspaceDiagnostics(report) => {
-                self.apply_workspace_diagnostic_report(language_server_id, report, cx)
+            lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
+                if let Some(LanguageServerState::Running {
+                    workspace_refresh_task: Some((_, progress_tx, ..)),
+                    ..
+                }) = self
+                    .as_local_mut()
+                    .and_then(|local| local.language_servers.get_mut(&language_server_id))
+                {
+                    progress_tx.try_send(()).ok();
+                    self.apply_workspace_diagnostic_report(language_server_id, report, cx)
+                }
             }
         }
     }
@@ -10451,11 +10455,7 @@ impl LspStore {
             disk_based_sources,
             |_, _, _| false,
             cx,
-        )?;
-
-        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
-
-        Ok(())
+        )
     }
 
     pub fn merge_diagnostics(
@@ -11310,7 +11310,7 @@ impl LspStore {
 
     pub fn pull_workspace_diagnostics(&mut self, server_id: LanguageServerId) {
         if let Some(LanguageServerState::Running {
-            workspace_refresh_task: Some((tx, _)),
+            workspace_refresh_task: Some((tx, ..)),
             ..
         }) = self
             .as_local_mut()
@@ -11332,7 +11332,7 @@ impl LspStore {
             local.language_server_ids_for_buffer(buffer, cx)
         }) {
             if let Some(LanguageServerState::Running {
-                workspace_refresh_task: Some((tx, _)),
+                workspace_refresh_task: Some((tx, ..)),
                 ..
             }) = local.language_servers.get_mut(&server_id)
             {
@@ -11411,7 +11411,6 @@ impl LspStore {
                 }
             }
         }
-        cx.emit(LspStoreEvent::DiagnosticsBatchUpdated);
     }
 }
 
@@ -11465,7 +11464,7 @@ fn subscribe_to_binary_statuses(
 fn lsp_workspace_diagnostics_refresh(
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
-) -> Option<(mpsc::Sender<()>, Task<()>)> {
+) -> Option<(mpsc::Sender<()>, mpsc::Sender<()>, Task<()>)> {
     let identifier = match server.capabilities().diagnostic_provider? {
         lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
             if !diagnostic_options.workspace_diagnostics {
@@ -11482,6 +11481,7 @@ fn lsp_workspace_diagnostics_refresh(
         }
     };
 
+    let (progress_tx, mut progress_rx) = mpsc::channel(1);
     let (mut tx, mut rx) = mpsc::channel(1);
     tx.try_send(()).ok();
 
@@ -11525,10 +11525,14 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
-                let token = format!("workspace-diagnostic-{}-{}", server.server_id(), requests);
+                let token = format!("workspace/diagnostic-{}-{}", server.server_id(), requests);
 
+                progress_rx.try_recv().ok();
+                let timer =
+                    LanguageServer::default_request_timer(cx.background_executor().clone()).fuse();
+                let progress = pin!(progress_rx.recv().fuse());
                 let response_result = server
-                    .request_no_timeout::<lsp::WorkspaceDiagnosticRequest>(
+                    .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
                         lsp::WorkspaceDiagnosticParams {
                             previous_result_ids,
                             identifier: identifier.clone(),
@@ -11537,6 +11541,10 @@ fn lsp_workspace_diagnostics_refresh(
                                 partial_result_token: Some(lsp::ProgressToken::String(token)),
                             },
                         },
+                        select(timer, progress).then(|either| match either {
+                            Either::Left((message, ..)) => ready(message).left_future(),
+                            Either::Right(..) => pending::<String>().right_future(),
+                        }),
                     )
                     .await;
 
@@ -11576,7 +11584,7 @@ fn lsp_workspace_diagnostics_refresh(
         }
     });
 
-    Some((tx, workspace_query_language_server))
+    Some((tx, progress_tx, workspace_query_language_server))
 }
 
 fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completion) {
@@ -11957,7 +11965,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
-        workspace_refresh_task: Option<(mpsc::Sender<()>, Task<()>)>,
+        workspace_refresh_task: Option<(mpsc::Sender<()>, mpsc::Sender<()>, Task<()>)>,
     },
 }
 

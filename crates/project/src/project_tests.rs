@@ -1621,7 +1621,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
             path: (worktree_id, Path::new("a.rs")).into()
         }
     );
-    assert_eq!(events.next().await.unwrap(), Event::DiagnosticsBatchUpdated);
 
     fake_server.end_progress(format!("{}/0", progress_token));
     assert_eq!(
@@ -1670,7 +1669,6 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
             path: (worktree_id, Path::new("a.rs")).into()
         }
     );
-    assert_eq!(events.next().await.unwrap(), Event::DiagnosticsBatchUpdated);
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path(path!("/dir/a.rs")).unwrap(),
@@ -1678,10 +1676,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         diagnostics: Default::default(),
     });
     cx.executor().run_until_parked();
-    assert_eq!(
-        futures::poll!(events.next()),
-        Poll::Ready(Some(Event::DiagnosticsBatchUpdated))
-    );
+    assert_eq!(futures::poll!(events.next()), Poll::Pending);
 }
 
 #[gpui::test]
