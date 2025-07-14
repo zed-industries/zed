@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "acp"
+name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "agent_servers",
@@ -182,7 +182,7 @@ dependencies = [
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
- "acp",
+ "acp_thread",
  "agent",
  "agent_servers",
  "agent_settings",

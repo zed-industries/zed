@@ -1,5 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use acp::{AcpThread, AcpThreadEvent};
+use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
@@ -81,7 +81,7 @@ impl AgentDiffThread {
         match self {
             AgentDiffThread::Native(thread) => thread.read(cx).is_generating(),
             AgentDiffThread::AcpThread(thread) => {
-                thread.read(cx).status() == acp::ThreadStatus::Generating
+                thread.read(cx).status() == acp_thread::ThreadStatus::Generating
             }
         }
     }
