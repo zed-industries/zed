@@ -778,6 +778,7 @@ pub enum SessionEvent {
         request: RunInTerminalRequestArguments,
         sender: mpsc::Sender<Result<u32>>,
     },
+    DataBreakpointInfo,
     ConsoleOutput,
 }
 
@@ -2407,7 +2408,7 @@ impl Session {
                 };
 
                 this.data_breakpoint_info.insert(context, response);
-                cx.notify();
+                cx.emit(SessionEvent::DataBreakpointInfo);
             },
             cx,
         );

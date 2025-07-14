@@ -217,6 +217,12 @@ impl VariableList {
                 SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
+                SessionEvent::DataBreakpointInfo => {
+                    // todo! Refresh the context menu to show the new entry if it exists
+                    // if let Some((context_menu, _, _)) = this.open_context_menu {
+                    //     context_menu.update(cx, |menu, cx| menu.rebuild(window, cx))
+                    // }
+                }
                 _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
