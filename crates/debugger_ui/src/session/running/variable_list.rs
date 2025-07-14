@@ -13,7 +13,10 @@ use gpui::{
     uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::debugger::session::{Session, SessionEvent, Watcher};
+use project::debugger::{
+    dap_command::DataBreakpointContext,
+    session::{Session, SessionEvent, Watcher},
+};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::{debug_panic, maybe};
@@ -220,6 +223,7 @@ impl VariableList {
                 SessionEvent::Variables | SessionEvent::Watchers => {
                     this.build_entries(cx);
                 }
+
                 _ => {}
             }),
             cx.on_focus_out(&focus_handle, window, |this, _, _, cx| {
@@ -625,50 +629,156 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let supports_set_variable = self
-            .session
-            .read(cx)
-            .capabilities()
-            .supports_set_variable
-            .unwrap_or_default();
+        let (supports_set_variable, supports_data_breakpoints, supports_go_to_memory) =
+            self.session.read_with(cx, |session, _| {
+                (
+                    session
+                        .capabilities()
+                        .supports_set_variable
+                        .unwrap_or_default(),
+                    session
+                        .capabilities()
+                        .supports_data_breakpoints
+                        .unwrap_or_default(),
+                    session
+                        .capabilities()
+                        .supports_read_memory_request
+                        .unwrap_or_default(),
+                )
+            });
+        let can_toggle_data_breakpoint = entry
+            .as_variable()
+            .filter(|_| supports_data_breakpoints)
+            .and_then(|variable| {
+                let variables_reference = self
+                    .entry_states
+                    .get(&entry.path)
+                    .map(|state| state.parent_reference)?;
+                Some(self.session.update(cx, |session, cx| {
+                    session.data_breakpoint_info(
+                        Arc::new(DataBreakpointContext::Variable {
+                            variables_reference,
+                            name: variable.name.clone(),
+                            bytes: None,
+                        }),
+                        None,
+                        cx,
+                    )
+                }))
+            });
 
-        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.when(entry.as_variable().is_some(), |menu| {
-                menu.action("Copy Name", CopyVariableName.boxed_clone())
-                    .action("Copy Value", CopyVariableValue.boxed_clone())
-                    .when(supports_set_variable, |menu| {
-                        menu.action("Edit Value", EditVariable.boxed_clone())
+        let focus_handle = self.focus_handle.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let can_toggle_data_breakpoint = if let Some(task) = can_toggle_data_breakpoint {
+                task.await.is_some()
+            } else {
+                true
+            };
+            cx.update(|window, cx| {
+                let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+                    menu.when_some(entry.as_variable(), |menu, _| {
+                        menu.action("Copy Name", CopyVariableName.boxed_clone())
+                            .action("Copy Value", CopyVariableValue.boxed_clone())
+                            .when(supports_set_variable, |menu| {
+                                menu.action("Edit Value", EditVariable.boxed_clone())
+                            })
+                            .when(supports_go_to_memory, |menu| {
+                                menu.action("Go To Memory", GoToMemory.boxed_clone())
+                            })
+                            .action("Watch Variable", AddWatch.boxed_clone())
+                            .when(can_toggle_data_breakpoint, |menu| {
+                                menu.action(
+                                    "Toggle Data Breakpoint",
+                                    crate::ToggleDataBreakpoint.boxed_clone(),
+                                )
+                            })
                     })
-                    .action("Watch Variable", AddWatch.boxed_clone())
-                    .action("Go To Memory", GoToMemory.boxed_clone())
-            })
-            .when(entry.as_watcher().is_some(), |menu| {
-                menu.action("Copy Name", CopyVariableName.boxed_clone())
-                    .action("Copy Value", CopyVariableValue.boxed_clone())
-                    .when(supports_set_variable, |menu| {
-                        menu.action("Edit Value", EditVariable.boxed_clone())
+                    .when(entry.as_watcher().is_some(), |menu| {
+                        menu.action("Copy Name", CopyVariableName.boxed_clone())
+                            .action("Copy Value", CopyVariableValue.boxed_clone())
+                            .when(supports_set_variable, |menu| {
+                                menu.action("Edit Value", EditVariable.boxed_clone())
+                            })
+                            .action("Remove Watch", RemoveWatch.boxed_clone())
                     })
-                    .action("Remove Watch", RemoveWatch.boxed_clone())
+                    .context(focus_handle.clone())
+                });
+
+                _ = this.update(cx, |this, cx| {
+                    cx.focus_view(&context_menu, window);
+                    let subscription = cx.subscribe_in(
+                        &context_menu,
+                        window,
+                        |this, _, _: &DismissEvent, window, cx| {
+                            if this.open_context_menu.as_ref().is_some_and(|context_menu| {
+                                context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                            }) {
+                                cx.focus_self(window);
+                            }
+                            this.open_context_menu.take();
+                            cx.notify();
+                        },
+                    );
+
+                    this.open_context_menu = Some((context_menu, position, subscription));
+                });
             })
-            .context(self.focus_handle.clone())
+        })
+        .detach();
+    }
+
+    fn toggle_data_breakpoint(
+        &mut self,
+        _: &crate::ToggleDataBreakpoint,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .selection
+            .as_ref()
+            .and_then(|selection| self.entries.iter().find(|entry| &entry.path == selection))
+        else {
+            return;
+        };
+
+        let Some((name, var_ref)) = entry.as_variable().map(|var| &var.name).zip(
+            self.entry_states
+                .get(&entry.path)
+                .map(|state| state.parent_reference),
+        ) else {
+            return;
+        };
+
+        let context = Arc::new(DataBreakpointContext::Variable {
+            variables_reference: var_ref,
+            name: name.clone(),
+            bytes: None,
+        });
+        let data_breakpoint = self.session.update(cx, |session, cx| {
+            session.data_breakpoint_info(context.clone(), None, cx)
         });
 
-        cx.focus_view(&context_menu, window);
-        let subscription = cx.subscribe_in(
-            &context_menu,
-            window,
-            |this, _, _: &DismissEvent, window, cx| {
-                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
-                }) {
-                    cx.focus_self(window);
-                }
-                this.open_context_menu.take();
+        let session = self.session.downgrade();
+        cx.spawn(async move |_, cx| {
+            let Some(data_id) = data_breakpoint.await.and_then(|info| info.data_id) else {
+                return;
+            };
+            _ = session.update(cx, |session, cx| {
+                session.create_data_breakpoint(
+                    context,
+                    data_id.clone(),
+                    dap::DataBreakpoint {
+                        data_id,
+                        access_type: None,
+                        condition: None,
+                        hit_condition: None,
+                    },
+                    cx,
+                );
                 cx.notify();
-            },
-        );
-
-        self.open_context_menu = Some((context_menu, position, subscription));
+            });
+        })
+        .detach();
     }
 
     fn copy_variable_name(
@@ -1415,6 +1525,7 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::edit_variable))
             .on_action(cx.listener(Self::add_watcher))
             .on_action(cx.listener(Self::remove_watcher))
+            .on_action(cx.listener(Self::toggle_data_breakpoint))
             .on_action(cx.listener(Self::jump_to_variable_memory))
             .child(
                 uniform_list(
