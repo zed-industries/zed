@@ -1250,11 +1250,7 @@ impl App {
                         .downcast::<T>()
                         .unwrap()
                         .update(cx, |entity_state, cx| {
-                            if let Some(window) = window {
-                                on_new(entity_state, Some(window), cx);
-                            } else {
-                                on_new(entity_state, None, cx);
-                            }
+                            on_new(entity_state, window.as_deref_mut(), cx)
                         })
                 },
             ),
