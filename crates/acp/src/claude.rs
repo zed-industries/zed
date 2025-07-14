@@ -1,6 +1,9 @@
+mod permission_mcp_server;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -20,9 +23,11 @@ use futures::{
 };
 use gpui::{AppContext, AsyncApp, Task};
 use serde::{Deserialize, Serialize};
+use ui::App;
 use util::ResultExt;
 
 use crate::AcpClientDelegate;
+use crate::claude::permission_mcp_server::PermissionMcpServer;
 use crate::connection::AgentConnection;
 
 impl AgentConnection for ClaudeAgentConnection {
@@ -86,15 +91,31 @@ impl AgentConnection for ClaudeAgentConnection {
 }
 
 pub struct ClaudeAgentConnection {
-    child: smol::process::Child,
     outgoing_tx: UnboundedSender<SdkMessage>,
     cx: AsyncApp,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+    _permissions_mcp_server: PermissionMcpServer,
     _handler_task: Task<()>,
 }
 
 impl ClaudeAgentConnection {
-    pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &ui::App) -> Result<Self> {
+    pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &App) -> Result<Self> {
+        let permission_mcp_server = PermissionMcpServer::new(cx)?;
+
+        let mcp_config = McpConfig {
+            mcp_servers: [(
+                permission_mcp_server::SERVER_NAME.to_string(),
+                permission_mcp_server.server_config()?,
+            )]
+            .into(),
+        };
+
+        let mut mcp_config_file = tempfile::Builder::new().tempfile()?;
+        // todo! async
+        mcp_config_file.write_all(serde_json::to_string(&mcp_config)?.as_bytes())?;
+        mcp_config_file.flush()?;
+        let mcp_config_path = mcp_config_file.into_temp_path();
+
         let command = which::which("claude")?;
         let mut child = util::command::new_smol_command(&command)
             .args([
@@ -104,6 +125,14 @@ impl ClaudeAgentConnection {
                 "stream-json",
                 "--print",
                 "--verbose",
+                "--mcp-config",
+                &mcp_config_path.to_string_lossy().to_string(),
+                "--permission-prompt-tool",
+                &format!(
+                    "mcp__{}__{}",
+                    permission_mcp_server::SERVER_NAME,
+                    permission_mcp_server::TOOL_NAME
+                ),
             ])
             .current_dir(cwd)
             .stdin(std::process::Stdio::piped())
@@ -121,6 +150,7 @@ impl ClaudeAgentConnection {
         let io_task = Self::handle_io(outgoing_rx, incoming_message_tx, stdin, stdout);
         cx.background_spawn(async move {
             io_task.await.log_err();
+            drop(mcp_config_path);
         })
         .detach();
         let end_turn_tx = Rc::new(RefCell::new(None));
@@ -143,10 +173,10 @@ impl ClaudeAgentConnection {
 
         Ok(Self {
             outgoing_tx,
-            child,
-            _handler_task: handler_task,
             end_turn_tx,
             cx: cx.to_async(),
+            _handler_task: handler_task,
+            _permissions_mcp_server: permission_mcp_server,
         })
     }
 
@@ -394,4 +424,19 @@ enum PermissionMode {
     AcceptEdits,
     BypassPermissions,
     Plan,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpConfig {
+    mcp_servers: HashMap<String, McpServerConfig>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpServerConfig {
+    command: String,
+    args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<HashMap<String, String>>,
 }
