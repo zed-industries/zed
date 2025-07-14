@@ -1,5 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
+    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
+    prelude::*,
 };
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ pub struct Checkbox {
     toggle_state: ToggleState,
     disabled: bool,
     placeholder: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
     filled: bool,
     style: ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -83,6 +84,16 @@ impl Checkbox {
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(move |state, _, window, cx| {
+            handler(state, window, cx)
+        }));
+        self
+    }
+
+    pub fn on_click_ext(
+        mut self,
+        handler: impl Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -226,8 +237,8 @@ impl RenderOnce for Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, window, cx| {
-                        on_click(&self.toggle_state.inverse(), window, cx)
+                    this.on_click(move |click, window, cx| {
+                        on_click(&self.toggle_state.inverse(), click, window, cx)
                     })
                 },
             )

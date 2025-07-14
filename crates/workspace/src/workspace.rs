@@ -2777,6 +2777,7 @@ impl Workspace {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    None,
                     window,
                     cx,
                 )
@@ -6657,6 +6658,10 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
+
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+        &self.workspaces
+    }
 }
 
 impl ViewId {
@@ -9448,6 +9453,7 @@ mod tests {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },
+                None,
                 window,
                 cx,
             )

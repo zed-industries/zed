@@ -2,14 +2,19 @@ pub use acp::ToolCallId;
 use agent_servers::AgentServer;
 use agentic_coding_protocol::{self as acp, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
-use language::{Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _};
+use language::{
+    Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
+    text_diff,
+};
 use markdown::Markdown;
-use project::Project;
+use project::{AgentLocation, Project};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
 use std::{
@@ -28,15 +33,15 @@ pub struct UserMessage {
 
 impl UserMessage {
     pub fn from_acp(
-        message: acp::UserMessage,
+        message: &acp::SendUserMessageParams,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         let mut md_source = String::new();
 
-        for chunk in message.chunks {
+        for chunk in &message.chunks {
             match chunk {
-                UserMessageChunk::Text { chunk } => md_source.push_str(&chunk),
+                UserMessageChunk::Text { text } => md_source.push_str(&text),
                 UserMessageChunk::Path { path } => {
                     write!(&mut md_source, "{}", MentionPath(&path)).unwrap()
                 }
@@ -116,11 +121,12 @@ impl AssistantMessageChunk {
         cx: &mut App,
     ) -> Self {
         match chunk {
-            acp::AssistantMessageChunk::Text { chunk } => Self::Text {
-                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            acp::AssistantMessageChunk::Text { text } => Self::Text {
+                chunk: cx.new(|cx| Markdown::new(text.into(), Some(language_registry), None, cx)),
             },
-            acp::AssistantMessageChunk::Thought { chunk } => Self::Thought {
-                chunk: cx.new(|cx| Markdown::new(chunk.into(), Some(language_registry), None, cx)),
+            acp::AssistantMessageChunk::Thought { thought } => Self::Thought {
+                chunk: cx
+                    .new(|cx| Markdown::new(thought.into(), Some(language_registry), None, cx)),
             },
         }
     }
@@ -158,6 +164,26 @@ impl AgentThreadEntry {
             Self::ToolCall(too_call) => too_call.to_markdown(cx),
         }
     }
+
+    pub fn diff(&self) -> Option<&Diff> {
+        if let AgentThreadEntry::ToolCall(ToolCall {
+            content: Some(ToolCallContent::Diff { diff }),
+            ..
+        }) = self
+        {
+            Some(&diff)
+        } else {
+            None
+        }
+    }
+
+    pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
+        if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
+            Some(locations)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -167,6 +193,7 @@ pub struct ToolCall {
     pub icon: IconName,
     pub content: Option<ToolCallContent>,
     pub status: ToolCallStatus,
+    pub locations: Vec<acp::ToolCallLocation>,
 }
 
 impl ToolCall {
@@ -327,6 +354,8 @@ impl ToolCallContent {
 pub struct Diff {
     pub multibuffer: Entity<MultiBuffer>,
     pub path: PathBuf,
+    pub new_buffer: Entity<Buffer>,
+    pub old_buffer: Entity<Buffer>,
     _task: Task<Result<()>>,
 }
 
@@ -361,6 +390,7 @@ impl Diff {
         let task = cx.spawn({
             let multibuffer = multibuffer.clone();
             let path = path.clone();
+            let new_buffer = new_buffer.clone();
             async move |cx| {
                 diff_task.await?;
 
@@ -400,6 +430,8 @@ impl Diff {
         Self {
             multibuffer,
             path,
+            new_buffer,
+            old_buffer,
             _task: task,
         }
     }
@@ -420,6 +452,8 @@ pub struct AcpThread {
     entries: Vec<AgentThreadEntry>,
     title: SharedString,
     project: Entity<Project>,
+    action_log: Entity<ActionLog>,
+    shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
     connection: Arc<acp::AgentConnection>,
     child_status: Option<Task<Result<()>>>,
@@ -521,7 +555,11 @@ impl AcpThread {
                 }
             });
 
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
             Self {
+                action_log,
+                shared_buffers: Default::default(),
                 entries: Default::default(),
                 title: "ACP Thread".into(),
                 project,
@@ -531,6 +569,14 @@ impl AcpThread {
                 _io_task: io_task,
             }
         })
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     #[cfg(test)]
@@ -557,7 +603,11 @@ impl AcpThread {
             }
         });
 
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
         Self {
+            action_log,
+            shared_buffers: Default::default(),
             entries: Default::default(),
             title: "ACP Thread".into(),
             project,
@@ -588,6 +638,26 @@ impl AcpThread {
         }
     }
 
+    pub fn has_pending_edit_tool_calls(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(_) => return false,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status:
+                        ToolCallStatus::Allowed {
+                            status: acp::ToolCallStatus::Running,
+                            ..
+                        },
+                    content: Some(ToolCallContent::Diff { .. }),
+                    ..
+                }) => return true,
+                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
     pub fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
@@ -607,11 +677,11 @@ impl AcpThread {
             match (chunks.last_mut(), &chunk) {
                 (
                     Some(AssistantMessageChunk::Text { chunk: old_chunk }),
-                    acp::AssistantMessageChunk::Text { chunk: new_chunk },
+                    acp::AssistantMessageChunk::Text { text: new_chunk },
                 )
                 | (
                     Some(AssistantMessageChunk::Thought { chunk: old_chunk }),
-                    acp::AssistantMessageChunk::Thought { chunk: new_chunk },
+                    acp::AssistantMessageChunk::Thought { thought: new_chunk },
                 ) => {
                     old_chunk.update(cx, |old_chunk, cx| {
                         old_chunk.append(&new_chunk, cx);
@@ -643,65 +713,63 @@ impl AcpThread {
 
     pub fn request_tool_call(
         &mut self,
-        label: String,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
-        confirmation: acp::ToolCallConfirmation,
+        tool_call: acp::RequestToolCallConfirmationParams,
         cx: &mut Context<Self>,
     ) -> ToolCallRequest {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
             confirmation: ToolCallConfirmation::from_acp(
-                confirmation,
+                tool_call.confirmation,
                 self.project.read(cx).languages().clone(),
                 cx,
             ),
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(label, status, icon, content, cx);
+        let id = self.insert_tool_call(tool_call.tool_call, status, cx);
         ToolCallRequest { id, outcome: rx }
     }
 
     pub fn push_tool_call(
         &mut self,
-        label: String,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
+        request: acp::PushToolCallParams,
         cx: &mut Context<Self>,
     ) -> acp::ToolCallId {
         let status = ToolCallStatus::Allowed {
             status: acp::ToolCallStatus::Running,
         };
 
-        self.insert_tool_call(label, status, icon, content, cx)
+        self.insert_tool_call(request, status, cx)
     }
 
     fn insert_tool_call(
         &mut self,
-        label: String,
+        tool_call: acp::PushToolCallParams,
         status: ToolCallStatus,
-        icon: acp::Icon,
-        content: Option<acp::ToolCallContent>,
         cx: &mut Context<Self>,
     ) -> acp::ToolCallId {
         let language_registry = self.project.read(cx).languages().clone();
         let id = acp::ToolCallId(self.entries.len() as u64);
-
-        self.push_entry(
-            AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                label: cx.new(|cx| {
-                    Markdown::new(label.into(), Some(language_registry.clone()), None, cx)
-                }),
-                icon: acp_icon_to_ui_icon(icon),
-                content: content
-                    .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
-                status,
+        let call = ToolCall {
+            id,
+            label: cx.new(|cx| {
+                Markdown::new(
+                    tool_call.label.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
             }),
-            cx,
-        );
+            icon: acp_icon_to_ui_icon(tool_call.icon),
+            content: tool_call
+                .content
+                .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
+            locations: tool_call.locations,
+            status,
+        };
+
+        self.push_entry(AgentThreadEntry::ToolCall(call), cx);
 
         id
     }
@@ -803,26 +871,43 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+    pub fn initialize(
+        &self,
+    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
         let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::InitializeParams).await?) }
+        async move { connection.request(acp::InitializeParams).await }
     }
 
-    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
         let connection = self.connection.clone();
-        async move { Ok(connection.request(acp::AuthenticateParams).await?) }
+        async move { connection.request(acp::AuthenticateParams).await }
+    }
+
+    #[cfg(test)]
+    pub fn send_raw(
+        &mut self,
+        message: &str,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<(), acp::Error>> {
+        self.send(
+            acp::SendUserMessageParams {
+                chunks: vec![acp::UserMessageChunk::Text {
+                    text: message.to_string(),
+                }],
+            },
+            cx,
+        )
     }
 
     pub fn send(
         &mut self,
-        message: impl Into<acp::UserMessage>,
+        message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'static, Result<(), acp::Error>> {
         let agent = self.connection.clone();
-        let message = message.into();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
-                message.clone(),
+                &message,
                 self.project.read(cx).languages().clone(),
                 cx,
             )),
@@ -835,7 +920,7 @@ impl AcpThread {
         self.send_task = Some(cx.spawn(async move |this, cx| {
             cancel.await.log_err();
 
-            let result = agent.request(acp::SendUserMessageParams { message }).await;
+            let result = agent.request(message).await;
             tx.send(result).log_err();
             this.update(cx, |this, _cx| this.send_task.take()).log_err();
         }));
@@ -849,7 +934,7 @@ impl AcpThread {
         .boxed()
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<(), acp::Error>> {
         let agent = self.connection.clone();
 
         if self.send_task.take().is_some() {
@@ -882,11 +967,121 @@ impl AcpThread {
                             }
                         }
                     }
-                })
+                })?;
+                Ok(())
             })
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    pub fn read_text_file(
+        &self,
+        request: acp::ReadTextFileParams,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String>> {
+        let project = self.project.clone();
+        let action_log = self.action_log.clone();
+        cx.spawn(async move |this, cx| {
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&request.path, cx)
+                    .context("invalid path")?;
+                anyhow::Ok(project.open_buffer(path, cx))
+            });
+            let buffer = load??.await?;
+
+            action_log.update(cx, |action_log, cx| {
+                action_log.buffer_read(buffer.clone(), cx);
+            })?;
+            project.update(cx, |project, cx| {
+                let position = buffer
+                    .read(cx)
+                    .snapshot()
+                    .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position,
+                    }),
+                    cx,
+                );
+            })?;
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            this.update(cx, |this, _| {
+                let text = snapshot.text();
+                this.shared_buffers.insert(buffer.clone(), snapshot);
+                text
+            })
+        })
+    }
+
+    pub fn write_text_file(
+        &self,
+        path: PathBuf,
+        content: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let project = self.project.clone();
+        let action_log = self.action_log.clone();
+        cx.spawn(async move |this, cx| {
+            let load = project.update(cx, |project, cx| {
+                let path = project
+                    .project_path_for_absolute_path(&path, cx)
+                    .context("invalid path")?;
+                anyhow::Ok(project.open_buffer(path, cx))
+            });
+            let buffer = load??.await?;
+            let snapshot = this.update(cx, |this, cx| {
+                this.shared_buffers
+                    .get(&buffer)
+                    .cloned()
+                    .unwrap_or_else(|| buffer.read(cx).snapshot())
+            })?;
+            let edits = cx
+                .background_executor()
+                .spawn(async move {
+                    let old_text = snapshot.text();
+                    text_diff(old_text.as_str(), &content)
+                        .into_iter()
+                        .map(|(range, replacement)| {
+                            (
+                                snapshot.anchor_after(range.start)
+                                    ..snapshot.anchor_before(range.end),
+                                replacement,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            cx.update(|cx| {
+                project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: edits
+                                .last()
+                                .map(|(range, _)| range.end)
+                                .unwrap_or(Anchor::MIN),
+                        }),
+                        cx,
+                    );
+                });
+
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_read(buffer.clone(), cx);
+                });
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit(edits, None, cx);
+                });
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_edited(buffer.clone(), cx);
+                });
+            })?;
+            project
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .await
+        })
     }
 
     pub fn child_status(&mut self) -> Option<Task<Result<()>>> {
@@ -914,7 +1109,7 @@ impl acp::Client for AcpClientDelegate {
     async fn stream_assistant_message_chunk(
         &self,
         params: acp::StreamAssistantMessageChunkParams,
-    ) -> Result<()> {
+    ) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -931,45 +1126,37 @@ impl acp::Client for AcpClientDelegate {
     async fn request_tool_call_confirmation(
         &self,
         request: acp::RequestToolCallConfirmationParams,
-    ) -> Result<acp::RequestToolCallConfirmationResponse> {
+    ) -> Result<acp::RequestToolCallConfirmationResponse, acp::Error> {
         let cx = &mut self.cx.clone();
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
-                self.thread.update(cx, |thread, cx| {
-                    thread.request_tool_call(
-                        request.label,
-                        request.icon,
-                        request.content,
-                        request.confirmation,
-                        cx,
-                    )
-                })
+                self.thread
+                    .update(cx, |thread, cx| thread.request_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
         Ok(acp::RequestToolCallConfirmationResponse {
             id,
-            outcome: outcome.await?,
+            outcome: outcome.await.map_err(acp::Error::into_internal_error)?,
         })
     }
 
     async fn push_tool_call(
         &self,
         request: acp::PushToolCallParams,
-    ) -> Result<acp::PushToolCallResponse> {
+    ) -> Result<acp::PushToolCallResponse, acp::Error> {
         let cx = &mut self.cx.clone();
         let id = cx
             .update(|cx| {
-                self.thread.update(cx, |thread, cx| {
-                    thread.push_tool_call(request.label, request.icon, request.content, cx)
-                })
+                self.thread
+                    .update(cx, |thread, cx| thread.push_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
         Ok(acp::PushToolCallResponse { id })
     }
 
-    async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<()> {
+    async fn update_tool_call(&self, request: acp::UpdateToolCallParams) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
@@ -978,6 +1165,34 @@ impl acp::Client for AcpClientDelegate {
             })
         })?
         .context("Failed to update thread")??;
+
+        Ok(())
+    }
+
+    async fn read_text_file(
+        &self,
+        request: acp::ReadTextFileParams,
+    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
+        let content = self
+            .cx
+            .update(|cx| {
+                self.thread
+                    .update(cx, |thread, cx| thread.read_text_file(request, cx))
+            })?
+            .context("Failed to update thread")?
+            .await?;
+        Ok(acp::ReadTextFileResponse { content })
+    }
+
+    async fn write_text_file(&self, request: acp::WriteTextFileParams) -> Result<(), acp::Error> {
+        self.cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.write_text_file(request.path, request.content, cx)
+                })
+            })?
+            .context("Failed to update thread")?
+            .await?;
 
         Ok(())
     }
@@ -1030,8 +1245,6 @@ mod tests {
     async fn test_thinking_concatenation(cx: &mut TestAppContext) {
         init_test(cx);
 
-        cx.executor().allow_parking();
-
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (thread, fake_server) = fake_acp_thread(project, cx);
@@ -1042,7 +1255,7 @@ mod tests {
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
                             chunk: acp::AssistantMessageChunk::Thought {
-                                chunk: "Thinking ".into(),
+                                thought: "Thinking ".into(),
                             },
                         })
                     })?
@@ -1052,7 +1265,7 @@ mod tests {
                     .update(&mut cx, |server, _| {
                         server.send_to_zed(acp::StreamAssistantMessageChunkParams {
                             chunk: acp::AssistantMessageChunk::Thought {
-                                chunk: "hard!".into(),
+                                thought: "hard!".into(),
                             },
                         })
                     })?
@@ -1064,7 +1277,7 @@ mod tests {
         });
 
         thread
-            .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
             .await
             .unwrap();
 
@@ -1084,6 +1297,80 @@ mod tests {
 
             "#}
         );
+    }
+
+    #[gpui::test]
+    async fn test_edits_concurrently_to_user(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (thread, fake_server) = fake_acp_thread(project.clone(), cx);
+        let (worktree, pathbuf) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree.read(cx).id(), pathbuf), cx)
+            })
+            .await
+            .unwrap();
+
+        let (read_file_tx, read_file_rx) = oneshot::channel::<()>();
+        let read_file_tx = Rc::new(RefCell::new(Some(read_file_tx)));
+
+        fake_server.update(cx, |fake_server, _| {
+            fake_server.on_user_message(move |_, server, mut cx| {
+                let read_file_tx = read_file_tx.clone();
+                async move {
+                    let content = server
+                        .update(&mut cx, |server, _| {
+                            server.send_to_zed(acp::ReadTextFileParams {
+                                path: path!("/tmp/foo").into(),
+                                line: None,
+                                limit: None,
+                            })
+                        })?
+                        .await
+                        .unwrap();
+                    assert_eq!(content.content, "one\ntwo\nthree\n");
+                    read_file_tx.take().unwrap().send(()).unwrap();
+                    server
+                        .update(&mut cx, |server, _| {
+                            server.send_to_zed(acp::WriteTextFileParams {
+                                path: path!("/tmp/foo").into(),
+                                content: "one\ntwo\nthree\nfour\nfive\n".to_string(),
+                            })
+                        })?
+                        .await
+                        .unwrap();
+                    Ok(())
+                }
+            })
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.send_raw("Extend the count in /tmp/foo", cx)
+        });
+        read_file_rx.await.ok();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "zero\n".to_string())], None, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "zero\none\ntwo\nthree\nfour\nfive\n"
+        );
+        assert_eq!(
+            String::from_utf8(fs.read_file_sync(path!("/tmp/foo")).unwrap()).unwrap(),
+            "zero\none\ntwo\nthree\nfour\nfive\n"
+        );
+        request.await.unwrap();
     }
 
     #[gpui::test]
@@ -1110,6 +1397,7 @@ mod tests {
                                 label: "Fetch".to_string(),
                                 icon: acp::Icon::Globe,
                                 content: None,
+                                locations: vec![],
                             })
                         })?
                         .await
@@ -1123,7 +1411,7 @@ mod tests {
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.send("Fetch https://example.com", cx)
+            thread.send_raw("Fetch https://example.com", cx)
         });
 
         run_until_first_tool_call(&thread, cx).await;
@@ -1197,7 +1485,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
-            .update(cx, |thread, cx| thread.send("Hello from Zed!", cx))
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
             .await
             .unwrap();
 
@@ -1235,11 +1523,17 @@ mod tests {
         thread
             .update(cx, |thread, cx| {
                 thread.send(
-                    acp::UserMessage {
+                    acp::SendUserMessageParams {
                         chunks: vec![
-                            "Read the file ".into(),
-                            Path::new("foo.rs").into(),
-                            " and tell me what the content of the println! is".into(),
+                            acp::UserMessageChunk::Text {
+                                text: "Read the file ".into(),
+                            },
+                            acp::UserMessageChunk::Path {
+                                path: Path::new("foo.rs").into(),
+                            },
+                            acp::UserMessageChunk::Text {
+                                text: " and tell me what the content of the println! is".into(),
+                            },
                         ],
                     },
                     cx,
@@ -1283,7 +1577,7 @@ mod tests {
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         thread
             .update(cx, |thread, cx| {
-                thread.send(
+                thread.send_raw(
                     "Read the '/private/tmp/foo' file and tell me what you see.",
                     cx,
                 )
@@ -1317,7 +1611,7 @@ mod tests {
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
-            thread.send(r#"Run `echo "Hello, world!"`"#, cx)
+            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
         run_until_first_tool_call(&thread, cx).await;
@@ -1386,7 +1680,7 @@ mod tests {
         let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
         let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
         let full_turn = thread.update(cx, |thread, cx| {
-            thread.send(r#"Run `echo "Hello, world!"`"#, cx)
+            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
         });
 
         let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
@@ -1427,7 +1721,7 @@ mod tests {
 
         thread
             .update(cx, |thread, cx| {
-                thread.send(r#"Stop running and say goodbye to me."#, cx)
+                thread.send_raw(r#"Stop running and say goodbye to me."#, cx)
             })
             .await
             .unwrap();
@@ -1533,7 +1827,7 @@ mod tests {
                     acp::SendUserMessageParams,
                     Entity<FakeAcpServer>,
                     AsyncApp,
-                ) -> LocalBoxFuture<'static, Result<()>>,
+                ) -> LocalBoxFuture<'static, Result<(), acp::Error>>,
             >,
         >,
     }
@@ -1545,21 +1839,24 @@ mod tests {
     }
 
     impl acp::Agent for FakeAgent {
-        async fn initialize(&self) -> Result<acp::InitializeResponse> {
+        async fn initialize(&self) -> Result<acp::InitializeResponse, acp::Error> {
             Ok(acp::InitializeResponse {
                 is_authenticated: true,
             })
         }
 
-        async fn authenticate(&self) -> Result<()> {
+        async fn authenticate(&self) -> Result<(), acp::Error> {
             Ok(())
         }
 
-        async fn cancel_send_message(&self) -> Result<()> {
+        async fn cancel_send_message(&self) -> Result<(), acp::Error> {
             Ok(())
         }
 
-        async fn send_user_message(&self, request: acp::SendUserMessageParams) -> Result<()> {
+        async fn send_user_message(
+            &self,
+            request: acp::SendUserMessageParams,
+        ) -> Result<(), acp::Error> {
             let mut cx = self.cx.clone();
             let handler = self
                 .server
@@ -1569,7 +1866,7 @@ mod tests {
             if let Some(handler) = handler {
                 handler(request, self.server.clone(), self.cx.clone()).await
             } else {
-                anyhow::bail!("No handler for on_user_message")
+                Err(anyhow::anyhow!("No handler for on_user_message").into())
             }
         }
     }
@@ -1604,7 +1901,7 @@ mod tests {
             handler: impl for<'a> Fn(acp::SendUserMessageParams, Entity<FakeAcpServer>, AsyncApp) -> F
             + 'static,
         ) where
-            F: Future<Output = Result<()>> + 'static,
+            F: Future<Output = Result<(), acp::Error>> + 'static,
         {
             self.on_user_message
                 .replace(Rc::new(move |request, server, cx| {

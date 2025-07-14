@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
@@ -475,9 +476,12 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(diff) =
-            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
-        {
+        if let Ok(diff) = AgentDiffPane::deploy(
+            AgentDiffThread::Native(self.thread.clone()),
+            self.workspace.clone(),
+            window,
+            cx,
+        ) {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
         }
@@ -1622,6 +1626,7 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })

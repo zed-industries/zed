@@ -371,7 +371,8 @@
     "bindings": {
       "enter": "agent::Chat",
       "up": "agent::PreviousHistoryMessage",
-      "down": "agent::NextHistoryMessage"
+      "down": "agent::NextHistoryMessage",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -929,6 +930,7 @@
       "enter": "menu::Confirm",
       "cmd-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
+      "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
       "alt-down": "git_panel::FocusEditor",
@@ -1211,7 +1213,8 @@
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-f": "search::FocusSearch"
+      "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      "cmd-alt-c": "keymap_editor::ToggleConflictFilter"
     }
   }
 ]
