@@ -19646,6 +19646,7 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
+ "scap",
  "schemars",
  "scopeguard",
  "sea-orm",
