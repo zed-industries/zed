@@ -607,14 +607,24 @@ impl KeymapFile {
         mut keymap_contents: String,
         tab_size: usize,
     ) -> Result<String> {
-        // if trying to replace a keybinding that is not user-defined, treat it as an add operation
         match operation {
+            // if trying to replace a keybinding that is not user-defined, treat it as an add operation
             KeybindUpdateOperation::Replace {
                 target_keybind_source: target_source,
                 source,
                 ..
             } if target_source != KeybindSource::User => {
                 operation = KeybindUpdateOperation::Add(source);
+            }
+            // if trying to remove a keybinding that is not user-defined, treat it as creating a binding
+            // that binds it to `zed::NoAction`
+            KeybindUpdateOperation::Remove {
+                mut target,
+                target_keybind_source,
+            } if target_keybind_source != KeybindSource::User => {
+                target.action_name = gpui::NoAction.name();
+                target.input.take();
+                operation = KeybindUpdateOperation::Add(target);
             }
             _ => {}
         }
@@ -623,14 +633,7 @@ impl KeymapFile {
         // We don't want to modify the file if it's invalid.
         let keymap = Self::parse(&keymap_contents).context("Failed to parse keymap")?;
 
-        if let KeybindUpdateOperation::Remove {
-            target,
-            target_keybind_source,
-        } = operation
-        {
-            if target_keybind_source != KeybindSource::User {
-                anyhow::bail!("Cannot remove non-user created keybinding. Not implemented yet");
-            }
+        if let KeybindUpdateOperation::Remove { target, .. } = operation {
             let target_action_value = target
                 .action_value()
                 .context("Failed to generate target action JSON value")?;
@@ -783,8 +786,12 @@ impl KeymapFile {
             target: &KeybindUpdateTarget<'a>,
             target_action_value: &Value,
         ) -> Option<(usize, &'b str)> {
+            let target_context_parsed =
+                KeyBindingContextPredicate::parse(target.context.unwrap_or("")).ok();
             for (index, section) in keymap.sections().enumerate() {
-                if section.context != target.context.unwrap_or("") {
+                let section_context_parsed =
+                    KeyBindingContextPredicate::parse(&section.context).ok();
+                if section_context_parsed != target_context_parsed {
                     continue;
                 }
                 if section.use_key_equivalents != target.use_key_equivalents {
@@ -835,6 +842,7 @@ pub enum KeybindUpdateOperation<'a> {
     },
 }
 
+#[derive(Debug)]
 pub struct KeybindUpdateTarget<'a> {
     pub context: Option<&'a str>,
     pub keystrokes: &'a [Keystroke],

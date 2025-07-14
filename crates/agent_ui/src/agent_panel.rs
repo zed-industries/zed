@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
@@ -8,6 +9,7 @@ use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
 use crate::NewAcpThread;
+use crate::agent_diff::AgentDiffThread;
 use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
@@ -432,6 +434,8 @@ pub struct AgentPanel {
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
+    acp_message_history:
+        Rc<RefCell<crate::acp::MessageHistory<agentic_coding_protocol::SendUserMessageParams>>>,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
@@ -624,7 +628,7 @@ impl AgentPanel {
             }
         };
 
-        AgentDiff::set_active_thread(&workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
         let weak_panel = weak_self.clone();
 
@@ -698,6 +702,7 @@ impl AgentPanel {
             .unwrap(),
             inline_assist_context_store,
             previous_view: None,
+            acp_message_history: Default::default(),
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             hovered_recent_history_item: None,
@@ -845,7 +850,7 @@ impl AgentPanel {
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
 
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
     }
 
     fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -887,14 +892,30 @@ impl AgentPanel {
     fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
+        let message_history = self.acp_message_history.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let thread_view = cx.new_window_entity(|window, cx| {
-                crate::acp::AcpThreadView::new(workspace, project, window, cx)
+                crate::acp::AcpThreadView::new(
+                    workspace.clone(),
+                    project,
+                    message_history,
+                    window,
+                    cx,
+                )
             })?;
             this.update_in(cx, |this, window, cx| {
-                this.set_active_view(ActiveView::AcpThread { thread_view }, window, cx);
+                this.set_active_view(
+                    ActiveView::AcpThread {
+                        thread_view: thread_view.clone(),
+                    },
+                    window,
+                    cx,
+                );
             })
+            .log_err();
+
+            anyhow::Ok(())
         })
         .detach();
     }
@@ -1050,7 +1071,7 @@ impl AgentPanel {
 
         let thread_view = ActiveView::thread(active_thread.clone(), message_editor, window, cx);
         self.set_active_view(thread_view, window, cx);
-        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
+        AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
@@ -1181,7 +1202,12 @@ impl AgentPanel {
                 let thread = thread.read(cx).thread().clone();
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
+                        AgentDiffPane::deploy_in_workspace(
+                            AgentDiffThread::Native(thread),
+                            workspace,
+                            window,
+                            cx,
+                        )
                     })
                     .log_err();
             }
@@ -1416,6 +1442,8 @@ impl AgentPanel {
             }
             self.active_view = new_view;
         }
+
+        self.acp_message_history.borrow_mut().reset_position();
 
         self.focus_handle(cx).focus(window);
     }

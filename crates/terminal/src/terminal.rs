@@ -1824,6 +1824,14 @@ impl Terminal {
         }
     }
 
+    pub fn kill_active_task(&mut self) {
+        if let Some(task) = self.task() {
+            if task.status == TaskStatus::Running {
+                self.pty_info.kill_current_process();
+            }
+        }
+    }
+
     pub fn task(&self) -> Option<&TaskState> {
         self.task.as_ref()
     }
