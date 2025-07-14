@@ -444,7 +444,6 @@ impl MemoryView {
                         .capabilities()
                         .supports_write_memory_request
                         .unwrap_or_default()
-                        || true
                     {
                         let adapter_name = session.adapter();
                         // We cannot write memory with this adapter.
