@@ -410,6 +410,8 @@ actions!(
         ToggleFold,
         /// Toggles recursive folding at the current position.
         ToggleFoldRecursive,
+        /// Toggles all folds in a buffer or all excerpts in multibuffer.
+        ToggleFoldAll,
         /// Formats the entire document.
         Format,
         /// Formats only the selected text.
