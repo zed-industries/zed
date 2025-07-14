@@ -707,11 +707,80 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
+pub(crate) enum KeycodeSource {
+    X11,
+    Wayland,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl KeycodeSource {
+    fn guess_ascii(&self, keycode: Keycode, shift: bool) -> Option<char> {
+        let raw = match self {
+            // For historical reasons X11 adds 8 to keycodes
+            Self::X11 => keycode.raw() - 8,
+            // For no particular reason, wayland doesn't.
+            Self::Wayland => keycode.raw(),
+        };
+        let c = match (raw, shift) {
+            (16, _) => 'q',
+            (17, _) => 'w',
+            (18, _) => 'e',
+            (19, _) => 'r',
+            (20, _) => 't',
+            (21, _) => 'y',
+            (22, _) => 'u',
+            (23, _) => 'i',
+            (24, _) => 'o',
+            (25, _) => 'p',
+            (26, false) => '[',
+            (26, true) => '{',
+            (27, false) => ']',
+            (27, true) => '}',
+            (30, _) => 'a',
+            (31, _) => 's',
+            (32, _) => 'd',
+            (33, _) => 'f',
+            (34, _) => 'g',
+            (35, _) => 'h',
+            (36, _) => 'j',
+            (37, _) => 'k',
+            (38, _) => 'l',
+            (39, false) => ';',
+            (39, true) => ':',
+            (40, false) => '\'',
+            (40, true) => '"',
+            (41, false) => '`',
+            (41, true) => '~',
+            (43, false) => '\\',
+            (43, true) => '|',
+            (44, _) => 'z',
+            (45, _) => 'x',
+            (46, _) => 'c',
+            (47, _) => 'v',
+            (48, _) => 'b',
+            (49, _) => 'n',
+            (50, _) => 'm',
+            (51, false) => ',',
+            (51, true) => '>',
+            (52, false) => '.',
+            (52, true) => '<',
+            (53, false) => '/',
+            (53, true) => '?',
+
+            _ => return None,
+        };
+
+        Some(c)
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
         state: &State,
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
+        source: KeycodeSource,
     ) -> Self {
         let key_utf32 = state.key_get_utf32(keycode);
         let key_utf8 = state.key_get_utf8(keycode);
@@ -773,6 +842,8 @@ impl crate::Keystroke {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if let Some(key_en) = source.guess_ascii(keycode, modifiers.shift) {
+                    String::from(key_en)
                 } else {
                     name
                 }
