@@ -531,7 +531,7 @@ impl MemoryView {
     fn jump_to_expression(&mut self, expr: String, cx: &mut Context<Self>) {
         let Ok(selected_frame) = self
             .stack_frame_list
-            .update(cx, |this, cx| this.opened_stack_frame_id())
+            .update(cx, |this, _| this.opened_stack_frame_id())
         else {
             return;
         };
