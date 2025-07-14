@@ -281,7 +281,6 @@ impl DirectXRenderer {
         if paths.is_empty() {
             return Ok(());
         }
-        println!("Drawing {} paths", paths.len());
         let mut vertices = Vec::new();
         let mut sprites = Vec::with_capacity(paths.len());
         let mut draw_indirect_commands = Vec::with_capacity(paths.len());
@@ -850,6 +849,7 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     let desc = D3D11_RASTERIZER_DESC {
         FillMode: D3D11_FILL_SOLID,
         CullMode: D3D11_CULL_NONE,
+        // CullMode: D3D11_CULL_BACK,
         FrontCounterClockwise: false.into(),
         DepthBias: 0,
         DepthBiasClamp: 0.0,
@@ -1080,7 +1080,7 @@ fn update_paths_buffer_capacity(
     );
     let buffer_size = data_size.next_power_of_two();
     println!("Paths New size: {}", buffer_size);
-    let buffer = create_buffer(device, std::mem::align_of::<PathSprite>(), buffer_size).unwrap();
+    let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), buffer_size).unwrap();
     let view = create_buffer_view(device, &buffer).unwrap();
     Some((buffer, buffer_size, view))
 }
