@@ -1,16 +1,17 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use context_server::{
     listener::McpServer,
     types::{
         CallToolParams, CallToolResponse, Implementation, InitializeParams, InitializeResponse,
-        ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolsCapabilities, requests,
+        ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolResponseContent,
+        ToolsCapabilities, requests,
     },
 };
-use gpui::{App, Task};
+use gpui::{App, AsyncApp, Task};
 use schemars::JsonSchema;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
-use crate::claude::McpServerConfig;
+use crate::{AcpClientDelegate, claude::McpServerConfig};
 
 pub struct PermissionMcpServer {
     server: McpServer,
@@ -19,19 +20,35 @@ pub struct PermissionMcpServer {
 pub const SERVER_NAME: &str = "zed";
 pub const TOOL_NAME: &str = "request_confirmation";
 
-#[derive(JsonSchema)]
-struct PermissionToolSchema {
+#[derive(Deserialize, JsonSchema, Debug)]
+struct PermissionToolInput {
     tool_name: String,
     input: serde_json::Value,
     tool_use_id: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionToolOutput {
+    behavior: PermissionToolBehavior,
+    updated_input: serde_json::Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PermissionToolBehavior {
+    Allow,
+    Deny,
+}
+
 impl PermissionMcpServer {
-    pub fn new(cx: &App) -> Result<Self> {
+    pub fn new(cx: &App, delegate: AcpClientDelegate) -> Result<Self> {
         let mut mcp_server = McpServer::new(cx)?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
-        mcp_server.handle_request::<requests::CallTool>(Self::handle_call_tool);
+        mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
+            Self::handle_call_tool(request, delegate.clone(), cx)
+        });
 
         Ok(Self { server: mcp_server })
     }
@@ -77,7 +94,7 @@ impl PermissionMcpServer {
             Ok(ListToolsResponse {
                 tools: vec![Tool {
                     name: TOOL_NAME.into(),
-                    input_schema: schemars::schema_for!(PermissionToolSchema).into(),
+                    input_schema: schemars::schema_for!(PermissionToolInput).into(),
                     description: None,
                     annotations: None,
                 }],
@@ -87,14 +104,40 @@ impl PermissionMcpServer {
         })
     }
 
-    fn handle_call_tool(request: CallToolParams, cx: &App) -> Task<Result<CallToolResponse>> {
-        dbg!(&request);
-        cx.spawn(async move |_cx| {
-            Ok(CallToolResponse {
-                content: vec![],
-                is_error: None,
-                meta: None,
-            })
+    fn handle_call_tool(
+        request: CallToolParams,
+        delegate: AcpClientDelegate,
+        cx: &App,
+    ) -> Task<Result<CallToolResponse>> {
+        cx.spawn(async move |cx| {
+            if request.name.as_str() == TOOL_NAME {
+                let input = serde_json::from_value::<PermissionToolInput>(
+                    request.arguments.context("Arguments required")?,
+                )?;
+
+                let result = Self::handle_permissions_tool_call(input, delegate, cx).await?;
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&result)?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            } else {
+                anyhow::bail!("Unsupported tool");
+            }
         })
+    }
+
+    fn handle_permissions_tool_call(
+        input: PermissionToolInput,
+        delegate: AcpClientDelegate,
+        cx: &AsyncApp,
+    ) -> Task<Result<PermissionToolOutput>> {
+        dbg!(&input);
+        return Task::ready(Ok(PermissionToolOutput {
+            behavior: PermissionToolBehavior::Allow,
+            updated_input: input.input,
+        }));
     }
 }

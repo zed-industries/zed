@@ -100,7 +100,7 @@ pub struct ClaudeAgentConnection {
 
 impl ClaudeAgentConnection {
     pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &App) -> Result<Self> {
-        let permission_mcp_server = PermissionMcpServer::new(cx)?;
+        let permission_mcp_server = PermissionMcpServer::new(cx, delegate.clone())?;
 
         let mcp_config = McpConfig {
             mcp_servers: [(
