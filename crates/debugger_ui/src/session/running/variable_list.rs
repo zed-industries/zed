@@ -39,7 +39,6 @@ actions!(
         /// Removes the selected variable from the watch list.
         RemoveWatch,
         /// Set a data breakpoint on the selected variable
-        // todo! filter this action based on selected entry and if it's supported
         ToggleDataBreakpoint,
         /// Jump to variable's memory location.
         GoToMemory,
