@@ -2133,6 +2133,7 @@ impl Window {
         );
 
         if reused_subtree.contains_focus() {
+            println!("setting focus for next frame");
             self.next_frame.focus = self.focus;
         }
 
@@ -3132,6 +3133,7 @@ impl Window {
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, _: &App) {
         self.invalidator.debug_assert_prepaint();
         if focus_handle.is_focused(self) {
+            println!("setting focus for next frame");
             self.next_frame.focus = Some(focus_handle.id);
         }
         self.next_frame.dispatch_tree.set_focus_id(focus_handle.id);
