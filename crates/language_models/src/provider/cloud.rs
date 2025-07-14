@@ -1167,12 +1167,14 @@ impl RenderOnce for ZedAiConfiguration {
         } else {
             v_flex()
                 .gap_2()
-                .child(Label::new("Use Zed AI to access hosted language models."))
+                .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
-                    Button::new("sign_in", "Sign In")
+                    Button::new("sign_in", "Sign In to use Zed AI")
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
+                        .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
+                        .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();
                             move |_, window, cx| (callback)(window, cx)

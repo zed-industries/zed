@@ -193,13 +193,13 @@ impl Render for InlineCompletionButton {
                                         cx.open_url(activate_url.as_str())
                                     })
                                     .entry(
-                                        "Use Copilot",
+                                        "Use Zed AI",
                                         None,
                                         move |_, cx| {
                                             set_completion_provider(
                                                 fs.clone(),
                                                 cx,
-                                                EditPredictionProvider::Copilot,
+                                                EditPredictionProvider::Zed,
                                             )
                                         },
                                     )
@@ -403,15 +403,16 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In", None, copilot::initiate_sign_in)
+            menu.entry("Sign In to Copilot", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |_window, cx| hide_copilot(fs.clone(), cx)
                 })
-                .entry("Use Supermaven", None, {
+                .separator()
+                .entry("Use Zed AI", None, {
                     let fs = fs.clone();
                     move |_window, cx| {
-                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Supermaven)
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
                     }
                 })
         })
@@ -672,6 +673,13 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, window, cx| {
             self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Use Zed AI instead", None, {
+                    let fs = self.fs.clone();
+                    move |_window, cx| {
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                    }
+                })
                 .separator()
                 .link(
                     "Go to Copilot Settings",

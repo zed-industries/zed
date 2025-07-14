@@ -20479,6 +20479,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot",
  "ctor",
  "db",
  "editor",

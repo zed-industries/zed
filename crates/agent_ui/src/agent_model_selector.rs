@@ -96,22 +96,18 @@ impl Render for AgentModelSelector {
         let model_name = model
             .as_ref()
             .map(|model| model.model.name().0)
-            .unwrap_or_else(|| SharedString::from("No model selected"));
-        let provider_icon = model
-            .as_ref()
-            .map(|model| model.provider.icon())
-            .unwrap_or_else(|| IconName::Ai);
+            .unwrap_or_else(|| SharedString::from("Select a Model"));
+
+        let provider_icon = model.as_ref().map(|model| model.provider.icon());
 
         let focus_handle = self.focus_handle.clone();
 
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
-                .child(
-                    Icon::new(provider_icon)
-                        .color(Color::Muted)
-                        .size(IconSize::XSmall),
-                )
+                .when_some(provider_icon, |this, icon| {
+                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                })
                 .child(
                     Label::new(model_name)
                         .color(Color::Muted)

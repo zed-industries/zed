@@ -39,6 +39,16 @@ enum SignInStatus {
     SignedIn,
 }
 
+pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
+    let fs = <dyn Fs>::global(cx);
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _| {
+        settings
+            .features
+            .get_or_insert(Default::default())
+            .edit_prediction_provider = Some(provider);
+    });
+}
+
 impl ZedPredictModal {
     pub fn toggle(
         workspace: &mut Workspace,
@@ -48,17 +58,42 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        workspace.toggle_modal(window, cx, |_window, cx| Self {
-            onboarding: cx
-                .new(|cx| EditPredictionOnboarding::new(user_store.clone(), client.clone(), cx)),
-            user_store,
-            client,
-            fs,
-            focus_handle: cx.focus_handle(),
-            sign_in_status: SignInStatus::Idle,
-            terms_of_service: false,
-            data_collection_expanded: false,
-            data_collection_opted_in: false,
+        workspace.toggle_modal(window, cx, |_window, cx| {
+            let weak_entity = cx.weak_entity();
+            Self {
+                onboarding: cx.new(|cx| {
+                    EditPredictionOnboarding::new(
+                        user_store.clone(),
+                        client.clone(),
+                        copilot::Copilot::global(cx)
+                            .map_or(false, |copilot| copilot.read(cx).status().is_configured()),
+                        Arc::new({
+                            let this = weak_entity.clone();
+                            move |_window, cx| {
+                                set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
+                                this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            }
+                        }),
+                        Arc::new({
+                            let this = weak_entity.clone();
+                            move |window, cx| {
+                                set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
+                                this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                                copilot::initiate_sign_in(window, cx);
+                            }
+                        }),
+                        cx,
+                    )
+                }),
+                user_store,
+                client,
+                fs,
+                focus_handle: cx.focus_handle(),
+                sign_in_status: SignInStatus::Idle,
+                terms_of_service: false,
+                data_collection_expanded: false,
+                data_collection_opted_in: false,
+            }
         });
     }
 

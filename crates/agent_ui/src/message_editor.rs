@@ -609,7 +609,11 @@ impl MessageEditor {
         )
     }
 
-    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_follow_toggle(
+        &self,
+        is_model_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let following = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -618,6 +622,7 @@ impl MessageEditor {
             .unwrap_or(false);
 
         IconButton::new("follow-agent", IconName::Crosshair)
+            .disabled(is_model_selected)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
@@ -786,7 +791,7 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.render_follow_toggle(is_model_selected, cx))
                                     .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
