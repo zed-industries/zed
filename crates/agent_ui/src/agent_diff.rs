@@ -215,11 +215,7 @@ impl AgentDiffPane {
                 },
             ]
             .into_iter()
-<<<<<<< HEAD
-            .filter_map(|subscription| subscription)
-=======
             .flatten()
->>>>>>> main
             .collect(),
             title: SharedString::default(),
             multibuffer,

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::rc::Rc;
@@ -62,11 +63,7 @@ pub struct AcpThreadView {
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
-<<<<<<< HEAD
-    message_history: MessageHistory<acp::SendUserMessageParams>,
-=======
     message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
->>>>>>> main
 }
 
 enum ThreadState {
@@ -175,11 +172,7 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             edits_expanded: false,
-<<<<<<< HEAD
-            message_history: MessageHistory::new(),
-=======
             message_history,
->>>>>>> main
         }
     }
 
@@ -517,33 +510,6 @@ impl AcpThreadView {
         }
 
         true
-    }
-
-    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(thread) = self.thread() {
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
-        }
-    }
-
-    fn open_edited_buffer(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(thread) = self.thread() else {
-            return;
-        };
-
-        let Some(diff) =
-            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
-        else {
-            return;
-        };
-
-        diff.update(cx, |diff, cx| {
-            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
-        })
     }
 
     fn handle_thread_event(

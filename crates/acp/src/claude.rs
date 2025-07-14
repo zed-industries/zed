@@ -5,16 +5,16 @@ use std::path::Path;
 use std::rc::Rc;
 
 use agentic_coding_protocol::{
-    self as acp, AnyAgentRequest, AnyAgentResult, AssistantMessageChunk, Client,
-    PushToolCallParams, StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
+    self as acp, AnyAgentRequest, AnyAgentResult, Client, PushToolCallParams,
+    StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
 };
 use anyhow::{Result, anyhow};
 use futures::channel::oneshot;
+use futures::future::LocalBoxFuture;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
 use futures::{
     AsyncRead, AsyncWrite, FutureExt, StreamExt,
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    future::LocalBoxFuture,
     io::BufReader,
     select_biased,
 };
@@ -23,19 +23,19 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 use crate::AcpClientDelegate;
+use crate::connection::AgentConnection;
 
-impl acp::AgentConnection for ClaudeAgentConnection {
+impl AgentConnection for ClaudeAgentConnection {
     /// Send a request to the agent and wait for a response.
 
-    fn request(
+    fn request_any(
         &self,
-        _method: &'static str,
         params: AnyAgentRequest,
     ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
         let end_turn_tx = self.end_turn_tx.clone();
         let outgoing_tx = self.outgoing_tx.clone();
-        self.cx
-            .spawn(async move |_cx| match params {
+        async move {
+            match params {
                 // todo: consider sending an empty request so we get the init response?
                 AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
                     acp::InitializeResponse {
@@ -79,8 +79,9 @@ impl acp::AgentConnection for ClaudeAgentConnection {
                 AnyAgentRequest::CancelSendMessageParams(_) => Ok(
                     AnyAgentResult::CancelSendMessageResponse(acp::CancelSendMessageResponse),
                 ),
-            })
-            .boxed_local()
+            }
+        }
+        .boxed_local()
     }
 }
 
@@ -93,7 +94,7 @@ pub struct ClaudeAgentConnection {
 }
 
 impl ClaudeAgentConnection {
-    pub fn new(mut delegate: AcpClientDelegate, cwd: &Path, cx: &ui::App) -> Result<Self> {
+    pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &ui::App) -> Result<Self> {
         let command = which::which("claude")?;
         let mut child = util::command::new_smol_command(&command)
             .args([

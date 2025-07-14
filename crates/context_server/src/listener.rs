@@ -3,10 +3,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt,
-    channel::{
-        mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
-        oneshot,
-    },
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
     io::BufReader,
     select_biased,
 };
@@ -37,9 +34,9 @@ pub struct McpServer {
 type McpHandler = Box<dyn Fn(RequestId, Box<RawValue>, &App) -> Task<String>>;
 
 #[cfg(not(target_os = "windows"))]
-const ZED_MCP_SCRIPT_NAME: &str = "askpass.sh";
+const ZED_MCP_SCRIPT_NAME: &str = "mcp.sh";
 #[cfg(target_os = "windows")]
-const ZED_MCP_SCRIPT_NAME: &str = "askpass.ps1";
+const ZED_MCP_SCRIPT_NAME: &str = "mcp.ps1";
 
 impl McpServer {
     pub fn new(cx: &App) -> Result<Self> {
@@ -209,8 +206,8 @@ impl McpConnection {
                 message = outgoing_rx.next().fuse() => {
                     if let Some(message) = message {
                         log::trace!("send: {}", &message);
-                        outgoing_bytes.write_all(message.as_bytes());
-                        outgoing_bytes.write_all(&[b'\n']);
+                        outgoing_bytes.write_all(message.as_bytes()).await?;
+                        outgoing_bytes.write_all(&[b'\n']).await?;
                     } else {
                         break;
                     }

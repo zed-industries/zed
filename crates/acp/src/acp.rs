@@ -1,11 +1,12 @@
+pub mod connection;
+
 pub use acp::ToolCallId;
 use agent_servers::AgentServer;
 use agentic_coding_protocol::{self as acp, AgentRequest, UserMessageChunk};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{MultiBuffer, PathKey};
-use futures::future::LocalBoxFuture;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -26,6 +27,8 @@ use std::{
 };
 use ui::{App, IconName};
 use util::ResultExt;
+
+use crate::connection::AgentConnection;
 mod claude;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -457,7 +460,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    connection: Arc<acp::AgentConnection>,
+    connection: Arc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
     _io_task: Task<()>,
 }
@@ -578,28 +581,19 @@ impl AcpThread {
         })
     }
 
-    // todo! remove
-    // <<<<<<< HEAD
-    //     /// Send a request to the agent and wait for a response.
-    //     pub fn request<R: AgentRequest + 'static>(
-    //         &self,
-    //         params: R,
-    //     ) -> impl use<R> + Future<Output = Result<R::Response>> {
-    //         let params = params.into_any();
-    //         let result = self.connection.request(params.method_name(), params);
-    //         async move {
-    //             let result = result.await?;
-    //             R::response_from_any(result).ok_or_else(|| {
-    //                 anyhow!(acp::Error {
-    //                     code: -32700,
-    //                     message: "Unexpected Response".to_string(),
-    //                 })
-    //             })
-    //         }
-    //     }
+    /// Send a request to the agent and wait for a response.
+    pub fn request<R: AgentRequest + 'static>(
+        &self,
+        params: R,
+    ) -> impl use<R> + Future<Output = Result<R::Response>> {
+        let params = params.into_any();
+        let result = self.connection.request_any(params);
+        async move {
+            let result = result.await?;
+            Ok(R::response_from_any(result)?)
+        }
+    }
 
-    // =======
-    // >>>>>>> main
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -617,7 +611,7 @@ impl AcpThread {
     ) -> Self {
         let foreground_executor = cx.foreground_executor().clone();
 
-        let (connection, io_fut) = acp::AcpAgentConnection::connect_to_agent(
+        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
             AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
             stdin,
             stdout,
@@ -900,16 +894,12 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(
-        &self,
-    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
-        let connection = self.connection.clone();
-        async move { connection.request(acp::InitializeParams).await }
+    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+        self.request(acp::InitializeParams)
     }
 
-    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
-        let connection = self.connection.clone();
-        async move { connection.request(acp::AuthenticateParams).await }
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
+        self.request(acp::AuthenticateParams)
     }
 
     #[cfg(test)]
@@ -947,12 +937,16 @@ impl AcpThread {
         let cancel = self.cancel(cx);
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
-            cancel.await.log_err();
+            async {
+                cancel.await.log_err();
 
-            let result = this.update(cx, |this, _| this.request(message))?.await;
-            tx.send(result).log_err();
-            this.update(cx, |this, _cx| this.send_task.take())?;
-            Ok(())
+                let result = this.update(cx, |this, _| this.request(message))?.await;
+                tx.send(result).log_err();
+                this.update(cx, |this, _cx| this.send_task.take())?;
+                anyhow::Ok(())
+            }
+            .await
+            .log_err();
         }));
 
         async move {
@@ -1850,7 +1844,7 @@ mod tests {
     }
 
     pub struct FakeAcpServer {
-        connection: acp::AcpClientConnection,
+        connection: acp::ClientConnection,
 
         _io_task: Task<()>,
         on_user_message: Option<
@@ -1911,7 +1905,7 @@ mod tests {
             };
             let foreground_executor = cx.foreground_executor().clone();
 
-            let (connection, io_fut) = acp::AcpClientConnection::connect_to_client(
+            let (connection, io_fut) = acp::ClientConnection::connect_to_client(
                 agent.clone(),
                 stdout,
                 stdin,
