@@ -1130,12 +1130,13 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
 
     float4 color = sample;
     if (sprite.grayscale) {
-
-    }
-    if ((sprite.grayscale & 0xFFu) != 0u) {
         float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = float4(grayscale, sample.a);
     }
+    // if ((sprite.grayscale & 0xFFu) != 0u) {
+    //     float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
+    //     color = float4(grayscale, sample.a);
+    // }
     color.a *= sprite.opacity * saturate(0.5 - distance);
     return color;
 }
