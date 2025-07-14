@@ -687,7 +687,7 @@ pub struct Session {
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
-    data_breakpoints: BTreeMap<String, dap::DataBreakpoint>,
+    data_breakpoints: BTreeMap<String, (dap::DataBreakpoint, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
@@ -1912,6 +1912,10 @@ impl Session {
         }
     }
 
+    pub fn data_breakpoints(&self) -> impl Iterator<Item = &(dap::DataBreakpoint, IsEnabled)> {
+        self.data_breakpoints.values()
+    }
+
     pub fn exception_breakpoints(
         &self,
     ) -> impl Iterator<Item = &(ExceptionBreakpointsFilter, IsEnabled)> {
@@ -1947,20 +1951,24 @@ impl Session {
 
     fn send_data_breakpoints(&mut self, cx: &mut Context<Self>) {
         if let Some(mode) = self.as_running() {
-            let breakpoints = self.data_breakpoints.values().cloned().collect();
+            let breakpoints = self
+                .data_breakpoints
+                .values()
+                .filter_map(|(dap, enabled)| enabled.then(|| dap.clone()))
+                .collect();
             let command = SetDataBreakpointsCommand { breakpoints };
             mode.request(command).detach_and_log_err(cx);
         }
     }
 
-    pub fn toggle_data_breakpoint(
+    pub fn create_data_breakpoint(
         &mut self,
         data_id: String,
         breakpoint: dap::DataBreakpoint,
         cx: &mut Context<Self>,
     ) {
         if self.data_breakpoints.remove(&data_id).is_none() {
-            self.data_breakpoints.insert(data_id, breakpoint);
+            self.data_breakpoints.insert(data_id, (breakpoint, true));
         }
         self.send_data_breakpoints(cx);
     }

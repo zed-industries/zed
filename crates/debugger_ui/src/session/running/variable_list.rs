@@ -764,7 +764,7 @@ impl VariableList {
         };
 
         self.session.update(cx, |session, cx| {
-            session.toggle_data_breakpoint(
+            session.create_data_breakpoint(
                 data_id.clone(),
                 dap::DataBreakpoint {
                     data_id,
