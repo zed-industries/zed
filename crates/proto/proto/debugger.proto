@@ -298,24 +298,6 @@ message DapModulesResponse {
     repeated DapModule modules = 2;
 }
 
-message DapDataBreakpointInfoRequest {
-    uint64 project_id = 1;
-    uint64 session_id = 2;
-    optional uint64 variables_reference = 3;
-    string name = 4;
-    optional uint64 frame_id = 5;
-    optional uint64 bytes = 6;
-    optional bool as_address = 7;
-    optional string mode = 8;
-}
-
-message DapDataBreakpointInfoResponse {
-    optional string data_id = 1;
-    string description = 2;
-    repeated string access_types = 3;
-    optional bool can_persist = 4;
-}
-
 message DapLoadedSourcesRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
