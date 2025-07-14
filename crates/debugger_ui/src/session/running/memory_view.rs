@@ -1,4 +1,9 @@
-use std::{fmt::Write, ops::RangeInclusive, sync::LazyLock, time::Duration};
+use std::{
+    fmt::Write,
+    ops::RangeInclusive,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -8,7 +13,7 @@ use gpui::{
     deferred, point, size, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
-use project::debugger::{MemoryCell, session::Session};
+use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -20,7 +25,7 @@ use ui::{
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::session::running::stack_frame_list::StackFrameList;
+use crate::{ToggleDataBreakpoint, session::running::stack_frame_list::StackFrameList};
 
 actions!(debugger, [GoToSelectedAddress]);
 
@@ -446,6 +451,51 @@ impl MemoryView {
         }
     }
 
+    fn toggle_data_breakpoint(
+        &mut self,
+        _: &crate::ToggleDataBreakpoint,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(SelectedMemoryRange::DragComplete(selection)) = self.view_state.selection.clone()
+        else {
+            return;
+        };
+        dbg!(&selection);
+        let range = selection.memory_range();
+        let context = Arc::new(DataBreakpointContext::Address {
+            address: range.start().to_string(),
+            bytes: Some(*range.end() - *range.start()),
+        });
+
+        self.session.update(cx, |this, cx| {
+            let data_breakpoint_info = this.data_breakpoint_info(context.clone(), None, cx);
+            cx.spawn(async move |this, cx| {
+                if let Some(info) = data_breakpoint_info.await {
+                    dbg!(&info);
+                    let Some(data_id) = info.data_id.clone() else {
+                        return;
+                    };
+                    _ = this.update(cx, |this, cx| {
+                        dbg!(&data_id);
+                        this.create_data_breakpoint(
+                            context,
+                            data_id.clone(),
+                            dap::DataBreakpoint {
+                                data_id,
+                                access_type: None,
+                                condition: None,
+                                hit_condition: None,
+                            },
+                            cx,
+                        );
+                    });
+                }
+            })
+            .detach();
+        })
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
             // Go into memory writing mode.
@@ -605,12 +655,18 @@ impl MemoryView {
                         .any(|cell| cell.0.is_none())
                 })
             };
-            menu.action_disabled_when(
+            let mut menu = menu.action_disabled_when(
                 range_too_large || memory_unreadable(cx),
                 "Go To Selected Address",
                 GoToSelectedAddress.boxed_clone(),
-            )
-            .context(self.focus_handle.clone())
+            );
+            let caps = session.read(cx).capabilities();
+            if caps.supports_data_breakpoints.unwrap_or_default()
+                && caps.supports_data_breakpoint_bytes.unwrap_or_default()
+            {
+                menu = menu.action("Set Data Breakpoint", ToggleDataBreakpoint.boxed_clone());
+            }
+            menu.context(self.focus_handle.clone())
         });
 
         cx.focus_view(&context_menu, window);
@@ -834,6 +890,7 @@ impl Render for MemoryView {
             .on_action(cx.listener(Self::go_to_address))
             .p_1()
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::toggle_data_breakpoint))
             .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::page_up))
             .size_full()
