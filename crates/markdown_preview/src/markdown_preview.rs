@@ -18,7 +18,9 @@ actions!(
         /// Opens a markdown preview in a split pane.
         OpenPreviewToTheSide,
         /// Opens a following markdown preview that syncs with the editor.
-        OpenFollowingPreview
+        OpenFollowingPreview,
+        /// Opens a following markdown preview in a split pane.
+        OpenFollowingPreviewToTheSide,
     ]
 );
 

@@ -19,7 +19,8 @@ use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
 use crate::{
-    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    MovePageDown, MovePageUp, OpenFollowingPreview, OpenFollowingPreviewToTheSide, OpenPreview,
+    OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -123,6 +124,58 @@ impl MarkdownPreviewView {
                 cx.notify();
             }
         });
+        workspace.register_action(
+            move |workspace, _: &OpenFollowingPreviewToTheSide, window, cx| {
+                if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
+                    // Check if there's already a following preview
+                    let existing_follow_view_idx = {
+                        let active_pane = workspace.active_pane().read(cx);
+                        active_pane
+                            .items_of_type::<MarkdownPreviewView>()
+                            .find(|view| view.read(cx).mode == MarkdownPreviewMode::Follow)
+                            .and_then(|view| active_pane.index_for_item(&view))
+                    };
+
+                    if let Some(existing_follow_view_idx) = existing_follow_view_idx {
+                        workspace.active_pane().update(cx, |pane, cx| {
+                            pane.activate_item(existing_follow_view_idx, true, true, window, cx);
+                        });
+                    } else {
+                        let view =
+                            Self::create_markdown_view(workspace, editor.clone(), window, cx);
+                        let pane = workspace
+                            .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                            .unwrap_or_else(|| {
+                                workspace.split_pane(
+                                    workspace.active_pane().clone(),
+                                    workspace::SplitDirection::Right,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        pane.update(cx, |pane, cx| {
+                            if let Some(existing_view_idx) =
+                                Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
+                            {
+                                pane.activate_item(existing_view_idx, true, true, window, cx);
+                            } else {
+                                pane.add_item(
+                                    Box::new(view.clone()),
+                                    false,
+                                    false,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        });
+                        editor.focus_handle(cx).focus(window);
+                        cx.notify();
+                    }
+                    cx.notify();
+                }
+            },
+        );
     }
 
     fn find_existing_independent_preview_item_idx(
