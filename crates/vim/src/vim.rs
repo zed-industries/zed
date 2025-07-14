@@ -1046,7 +1046,7 @@ impl Vim {
                 }
 
                 s.move_with(|map, selection| {
-                    if mode == Mode::HelixNormal || (last_mode.is_visual() && !mode.is_visual()) {
+                    if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());

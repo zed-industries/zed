@@ -10,7 +10,7 @@ actions!(
     vim,
     [
         /// Switches to normal mode after the cursor (Helix-style).
-        HelixNormalAfter
+        HelixNormalAfter,
     ]
 );
 
