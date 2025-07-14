@@ -1,10 +1,11 @@
-use std::{ops::RangeInclusive, sync::LazyLock, time::Duration};
+use std::{fmt::Write, ops::RangeInclusive, sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
-    ScrollStrategy, ScrollWheelEvent, Stateful, Task, TextStyle, UniformList,
-    UniformListScrollHandle, WeakEntity, bounds, point, size, uniform_list,
+    Action, AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, MouseButton,
+    MouseMoveEvent, Point, ScrollStrategy, ScrollWheelEvent, Stateful, Subscription, Task,
+    TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, bounds,
+    deferred, point, size, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, session::Session};
@@ -13,11 +14,13 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
     FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
-    ParentElement, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
+    ParentElement, Pixels, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
     StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
+
+actions!(debugger, [GoToSelectedAddress]);
 
 pub(crate) struct MemoryView {
     workspace: WeakEntity<Workspace>,
@@ -31,6 +34,7 @@ pub(crate) struct MemoryView {
     session: Entity<Session>,
     width_picker_handle: PopoverMenuHandle<ContextMenu>,
     is_writing_memory: bool,
+    open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 impl Focusable for MemoryView {
@@ -73,6 +77,12 @@ impl SelectedMemoryRange {
     }
     fn is_dragging(&self) -> bool {
         matches!(self, SelectedMemoryRange::DragUnderway(_))
+    }
+    fn drag(&self) -> &Drag {
+        match self {
+            SelectedMemoryRange::DragUnderway(drag) => drag,
+            SelectedMemoryRange::DragComplete(drag) => drag,
+        }
     }
 }
 
@@ -135,6 +145,7 @@ impl MemoryView {
             session,
             width_picker_handle: Default::default(),
             is_writing_memory: true,
+            open_context_menu: None,
         };
         this.change_query_bar_mode(false, window, cx);
         this
@@ -436,8 +447,9 @@ impl MemoryView {
         }
     }
 
-    fn change_address(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
+            // Go into memory writing mode.
             if !self.is_writing_memory {
                 let should_return = self.session.update(cx, |session, cx| {
                     if !session
@@ -492,9 +504,14 @@ impl MemoryView {
             cx.notify();
             return;
         }
+        // Just change the currently viewed address.
         if !self.query_editor.focus_handle(cx).is_focused(window) {
             return;
         }
+        self.jump_to_typed_address(cx);
+    }
+
+    fn jump_to_typed_address(&mut self, cx: &mut Context<Self>) {
         use parse_int::parse;
         let text = self.query_editor.read(cx).text(cx);
 
@@ -502,12 +519,90 @@ impl MemoryView {
             return;
         };
         self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
+        let line_ix = (as_address & 0xfff) / self.view_state.line_width.width as u64;
+        self.scroll_handle
+            .scroll_to_item(line_ix as usize, ScrollStrategy::Center);
         cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.view_state.selection = None;
         cx.notify();
+    }
+
+    /// Jump to memory pointed to by selected memory range.
+    fn go_to_address(
+        &mut self,
+        _: &GoToSelectedAddress,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(SelectedMemoryRange::DragComplete(drag)) = self.view_state.selection.clone()
+        else {
+            return;
+        };
+        let range = drag.memory_range();
+        let Some(memory): Option<Vec<u8>> = self.session.update(cx, |this, cx| {
+            this.read_memory(range, cx).map(|cell| cell.0).collect()
+        }) else {
+            return;
+        };
+        if memory.len() > 8 {
+            return;
+        }
+        let zeros_to_write = 8 - memory.len();
+        let mut acc = String::from("0x");
+        acc.extend(std::iter::repeat("00").take(zeros_to_write));
+        let as_query = memory.into_iter().rev().fold(acc, |mut acc, byte| {
+            _ = write!(&mut acc, "{:02x}", byte);
+            acc
+        });
+        self.query_editor.update(cx, |this, cx| {
+            this.set_text(as_query, window, cx);
+        });
+        self.jump_to_typed_address(cx);
+    }
+
+    fn deploy_memory_context_menu(
+        &mut self,
+        range: RangeInclusive<u64>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.session.clone();
+        let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
+            let range_too_large = range.end() - range.start() > std::mem::size_of::<u64>() as u64;
+            let memory_unreadable = |cx| {
+                session.update(cx, |this, cx| {
+                    this.read_memory(range.clone(), cx)
+                        .any(|cell| cell.0.is_none())
+                })
+            };
+            menu.action_disabled_when(
+                range_too_large || memory_unreadable(cx),
+                "Go To Selected Address",
+                GoToSelectedAddress.boxed_clone(),
+            )
+            .context(self.focus_handle.clone())
+        });
+
+        cx.focus_view(&context_menu, window);
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.open_context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.open_context_menu.take();
+                cx.notify();
+            },
+        );
+
+        self.open_context_menu = Some((context_menu, position, subscription));
     }
 }
 
@@ -580,15 +675,27 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx)).child(
-                                    h_flex()
-                                        .absolute()
-                                        .bottom_0p5()
-                                        .left_0()
-                                        .right_0()
-                                        .p_0p5()
-                                        .border_b_1()
-                                        .border_color(gpui::red()),
+                                let weak = weak.clone();
+
+                                this.bg(Color::Accent.color(cx)).when(
+                                    !selection.is_dragging(),
+                                    |this| {
+                                        let selection = selection.drag().memory_range();
+                                        this.on_mouse_down(
+                                            MouseButton::Right,
+                                            move |click, window, cx| {
+                                                _ = weak.update(cx, |this, cx| {
+                                                    this.deploy_memory_context_menu(
+                                                        selection.clone(),
+                                                        click.position,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                                cx.stop_propagation();
+                                            },
+                                        )
+                                    },
                                 )
                             })
                         })
@@ -698,8 +805,9 @@ impl Render for MemoryView {
         v_flex()
             .id("Memory-view")
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::go_to_address))
             .p_1()
-            .on_action(cx.listener(Self::change_address))
+            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::page_up))
             .size_full()
@@ -753,6 +861,15 @@ impl Render for MemoryView {
                         this.handle_drag(evt);
                     }))
                     .child(self.render_memory(cx).size_full())
+                    .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
+                        deferred(
+                            anchored()
+                                .position(*position)
+                                .anchor(gpui::Corner::TopLeft)
+                                .child(menu.clone()),
+                        )
+                        .with_priority(1)
+                    }))
                     .children(self.render_vertical_scrollbar(cx)),
             )
     }
