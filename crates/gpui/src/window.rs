@@ -3133,6 +3133,7 @@ impl Window {
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, _: &App) {
         self.invalidator.debug_assert_prepaint();
+        println!("set_focus_handle called");
         if focus_handle.is_focused(self) {
             println!("setting focus for next frame");
             self.next_frame.focus = Some(focus_handle.id);
