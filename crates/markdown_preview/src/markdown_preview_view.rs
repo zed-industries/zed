@@ -380,16 +380,16 @@ impl MarkdownPreviewView {
 
             this.set_editor(active_editor, window, cx);
 
-            if mode == MarkdownPreviewMode::Follow {
-                if let Some(workspace) = &workspace.upgrade() {
-                    cx.observe_in(workspace, window, |this, workspace, window, cx| {
-                        let item = workspace.read(cx).active_item(cx);
-                        this.workspace_updated(item, window, cx);
-                    })
-                    .detach();
-                } else {
-                    log::error!("Failed to listen to workspace updates");
-                }
+            // Always subscribe so that whenever the user switches the active editor,
+            // our preview will re‐parse the new file (and scroll appropriately).
+            if let Some(ws) = &workspace.upgrade() {
+                cx.observe_in(ws, window, |this, workspace, window, cx| {
+                    let item = workspace.read(cx).active_item(cx);
+                    this.workspace_updated(item, window, cx);
+                })
+                .detach();
+            } else {
+                log::error!("Failed to listen to workspace updates");
             }
 
             this
