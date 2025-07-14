@@ -17082,7 +17082,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.buffer.read(cx).is_singleton() {
-            // For singleton buffers, delegate to existing fold_all/unfold_all
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let has_folds = display_map
                 .folds_in_range(0..display_map.buffer_snapshot.len())
@@ -17095,7 +17094,6 @@ impl Editor {
                 self.fold_all(&actions::FoldAll, window, cx);
             }
         } else {
-            // For multibuffers, check if any buffers are folded
             let buffer_ids = self.buffer.read(cx).excerpt_buffer_ids();
             let should_unfold = buffer_ids
                 .iter()
