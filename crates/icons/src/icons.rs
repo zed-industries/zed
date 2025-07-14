@@ -163,6 +163,7 @@ pub enum IconName {
     ListTree,
     ListX,
     LoadCircle,
+    LocationEdit,
     LockOutlined,
     LspDebug,
     LspRestart,

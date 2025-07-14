@@ -1,4 +1,6 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_command::ReadMemory;
+use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -13,6 +15,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
+use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -26,7 +29,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint, WriteMemoryArguments,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
@@ -42,6 +45,7 @@ use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use std::u64;
 use std::{
     any::Any,
@@ -52,7 +56,7 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -685,6 +689,7 @@ pub struct Session {
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
+    memory: memory::Memory,
     quirks: SessionQuirks,
 }
 
@@ -855,6 +860,7 @@ impl Session {
                 label,
                 adapter,
                 task_context,
+                memory: memory::Memory::new(),
                 quirks,
             };
 
@@ -1664,6 +1670,11 @@ impl Session {
         self.invalidate_command_type::<ModulesCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
+        self.invalidate_command_type::<ReadMemory>();
+        let executor = self.as_running().map(|running| running.executor.clone());
+        if let Some(executor) = executor {
+            self.memory.clear(&executor);
+        }
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
@@ -1734,6 +1745,135 @@ impl Session {
         );
 
         &self.modules
+    }
+
+    // CodeLLDB returns the size of a pointed-to-memory, which we can use to make the experience of go-to-memory better.
+    pub fn data_access_size(
+        &mut self,
+        frame_id: Option<u64>,
+        evaluate_name: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<u64>> {
+        let request = self.request(
+            EvaluateCommand {
+                expression: format!("?${{sizeof({evaluate_name})}}"),
+                frame_id,
+
+                context: Some(EvaluateArgumentsContext::Repl),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            result.result.parse().ok()
+        })
+    }
+
+    pub fn memory_reference_of_expr(
+        &mut self,
+        frame_id: Option<u64>,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+
+                context: Some(EvaluateArgumentsContext::Repl),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            result.memory_reference
+        })
+    }
+
+    pub fn write_memory(&mut self, address: u64, data: &[u8], cx: &mut Context<Self>) {
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        self.request(
+            WriteMemoryArguments {
+                memory_reference: address.to_string(),
+                data,
+                allow_partial: None,
+                offset: None,
+            },
+            |this, response, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
+                this.invalidate_command_type::<VariablesCommand>();
+                cx.emit(SessionEvent::Variables);
+                response.ok()
+            },
+            cx,
+        )
+        .detach();
+    }
+    pub fn read_memory(
+        &mut self,
+        range: RangeInclusive<u64>,
+        cx: &mut Context<Self>,
+    ) -> MemoryIterator {
+        // This function is a bit more involved when it comes to fetching data.
+        // Since we attempt to read memory in pages, we need to account for some parts
+        // of memory being unreadable. Therefore, we start off by fetching a page per request.
+        // In case that fails, we try to re-fetch smaller regions until we have the full range.
+        let page_range = Memory::memory_range_to_page_range(range.clone());
+        for page_address in PageAddress::iter_range(page_range) {
+            self.read_single_page_memory(page_address, cx);
+        }
+        self.memory.memory_range(range)
+    }
+
+    fn read_single_page_memory(&mut self, page_start: PageAddress, cx: &mut Context<Self>) {
+        _ = maybe!({
+            let builder = self.memory.build_page(page_start)?;
+
+            self.memory_read_fetch_page_recursive(builder, cx);
+            Some(())
+        });
+    }
+    fn memory_read_fetch_page_recursive(
+        &mut self,
+        mut builder: MemoryPageBuilder,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(next_request) = builder.next_request() else {
+            // We're done fetching. Let's grab the page and insert it into our memory store.
+            let (address, contents) = builder.build();
+            self.memory.insert_page(address, contents);
+
+            return;
+        };
+        let size = next_request.size;
+        self.fetch(
+            ReadMemory {
+                memory_reference: format!("0x{:X}", next_request.address),
+                offset: Some(0),
+                count: next_request.size,
+            },
+            move |this, memory, cx| {
+                if let Ok(memory) = memory {
+                    builder.known(memory.content);
+                    if let Some(unknown) = memory.unreadable_bytes {
+                        builder.unknown(unknown);
+                    }
+                    // This is the recursive bit: if we're not yet done with
+                    // the whole page, we'll kick off a new request with smaller range.
+                    // Note that this function is recursive only conceptually;
+                    // since it kicks off a new request with callback, we don't need to worry about stack overflow.
+                    this.memory_read_fetch_page_recursive(builder, cx);
+                } else {
+                    builder.unknown(size);
+                }
+            },
+            cx,
+        );
     }
 
     pub fn ignore_breakpoints(&self) -> bool {
@@ -2378,6 +2518,8 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
+                    this.invalidate_command_type::<ReadMemory>();
+                    this.memory.clear(cx.background_executor());
                     this.refresh_watchers(stack_frame_id, cx);
                     cx.emit(SessionEvent::Variables);
                     Some(response)
@@ -2417,6 +2559,8 @@ impl Session {
         cx.spawn(async move |this, cx| {
             let response = request.await;
             this.update(cx, |this, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
                 match response {
                     Ok(response) => {
                         let event = dap::OutputEvent {

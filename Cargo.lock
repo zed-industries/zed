@@ -4393,12 +4393,15 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "hex",
  "indoc",
  "itertools 0.14.0",
  "language",
  "log",
  "menu",
+ "notifications",
  "parking_lot",
+ "parse_int",
  "paths",
  "picker",
  "pretty_assertions",
@@ -11277,6 +11280,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse_int"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c464266693329dd5a8715098c7f86e6c5fd5d985018b8318f53d9c6c2b21a31"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "partial-json-fixer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12319,6 +12331,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "buffer_diff",
  "circular-buffer",
  "client",
@@ -12364,6 +12377,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "shlex",
+ "smallvec",
  "smol",
  "snippet",
  "snippet_provider",
