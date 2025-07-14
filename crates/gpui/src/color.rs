@@ -63,14 +63,14 @@ impl Rgba {
         if other.a >= 1.0 {
             other
         } else if other.a <= 0.0 {
-            return *self;
+            *self
         } else {
-            return Rgba {
+            Rgba {
                 r: (self.r * (1.0 - other.a)) + (other.r * other.a),
                 g: (self.g * (1.0 - other.a)) + (other.g * other.a),
                 b: (self.b * (1.0 - other.a)) + (other.b * other.a),
                 a: self.a,
-            };
+            }
         }
     }
 }
@@ -494,12 +494,12 @@ impl Hsla {
         if alpha >= 1.0 {
             other
         } else if alpha <= 0.0 {
-            return self;
+            self
         } else {
             let converted_self = Rgba::from(self);
             let converted_other = Rgba::from(other);
             let blended_rgb = converted_self.blend(converted_other);
-            return Hsla::from(blended_rgb);
+            Hsla::from(blended_rgb)
         }
     }
 
