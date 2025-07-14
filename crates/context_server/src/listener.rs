@@ -66,6 +66,7 @@ impl McpServer {
         self.handlers.borrow_mut().insert(
             R::METHOD,
             Box::new(move |req_id, v, cx| {
+                // todo! should allow undefined as ()
                 let params: R::Params = match serde_json::from_str(v.get()) {
                     Ok(params) => params,
                     Err(e) => {

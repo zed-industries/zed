@@ -35,7 +35,7 @@ impl PermissionMcpServer {
             command: zed_path,
             args: vec![
                 "--nc".into(),
-                self.server.socket_path().display().to_string(),
+                dbg!(self.server.socket_path().display().to_string()),
             ],
             env: None,
         })

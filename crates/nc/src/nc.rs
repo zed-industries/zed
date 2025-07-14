@@ -23,20 +23,16 @@ pub fn main(socket: &str) -> Result<()> {
                     if bytes_read? == 0 {
                         break
                     }
-
                     stdout.write_all(&socket_line).await?;
                     stdout.flush().await?;
-
                     socket_line.clear();
                 }
                 bytes_read = stdin_reader.read_until(b'\n', &mut stdin_line).fuse() => {
                     if bytes_read? == 0 {
                         break
                     }
-
                     socket_write.write_all(&stdin_line).await?;
                     socket_write.flush().await?;
-
                     stdin_line.clear();
                 }
             }
