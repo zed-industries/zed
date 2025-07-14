@@ -1264,6 +1264,12 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle) {
+        println!(
+            "Setting focus to {:?} on platform {:?}",
+            handle.id,
+            std::env::consts::OS
+        );
+
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
