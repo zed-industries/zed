@@ -1,4 +1,5 @@
 use std::{
+    cell::LazyCell,
     fmt::Write,
     ops::RangeInclusive,
     sync::{Arc, LazyLock},
@@ -461,7 +462,6 @@ impl MemoryView {
         else {
             return;
         };
-        dbg!(&selection);
         let range = selection.memory_range();
         let context = Arc::new(DataBreakpointContext::Address {
             address: range.start().to_string(),
@@ -472,12 +472,10 @@ impl MemoryView {
             let data_breakpoint_info = this.data_breakpoint_info(context.clone(), None, cx);
             cx.spawn(async move |this, cx| {
                 if let Some(info) = data_breakpoint_info.await {
-                    dbg!(&info);
                     let Some(data_id) = info.data_id.clone() else {
                         return;
                     };
                     _ = this.update(cx, |this, cx| {
-                        dbg!(&data_id);
                         this.create_data_breakpoint(
                             context,
                             data_id.clone(),
@@ -649,22 +647,28 @@ impl MemoryView {
         let session = self.session.clone();
         let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
             let range_too_large = range.end() - range.start() > std::mem::size_of::<u64>() as u64;
-            let memory_unreadable = |cx| {
+            let caps = session.read(cx).capabilities();
+            let supports_data_breakpoints = caps.supports_data_breakpoints.unwrap_or_default()
+                && caps.supports_data_breakpoint_bytes.unwrap_or_default();
+            let memory_unreadable = LazyCell::new(|| {
                 session.update(cx, |this, cx| {
                     this.read_memory(range.clone(), cx)
                         .any(|cell| cell.0.is_none())
                 })
-            };
+            });
+
             let mut menu = menu.action_disabled_when(
-                range_too_large || memory_unreadable(cx),
+                range_too_large || *memory_unreadable,
                 "Go To Selected Address",
                 GoToSelectedAddress.boxed_clone(),
             );
-            let caps = session.read(cx).capabilities();
-            if caps.supports_data_breakpoints.unwrap_or_default()
-                && caps.supports_data_breakpoint_bytes.unwrap_or_default()
-            {
-                menu = menu.action("Set Data Breakpoint", ToggleDataBreakpoint.boxed_clone());
+
+            if supports_data_breakpoints {
+                menu = menu.action_disabled_when(
+                    *memory_unreadable,
+                    "Set Data Breakpoint",
+                    ToggleDataBreakpoint.boxed_clone(),
+                );
             }
             menu.context(self.focus_handle.clone())
         });

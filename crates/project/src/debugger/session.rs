@@ -686,7 +686,6 @@ pub struct Session {
     thread_states: ThreadStates,
     watchers: HashMap<SharedString, Watcher>,
     variables: HashMap<VariableReference, Vec<dap::Variable>>,
-    data_breakpoint_info: HashMap<Arc<DataBreakpointContext>, dap::DataBreakpointInfoResponse>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
@@ -866,7 +865,6 @@ impl Session {
                 is_session_terminated: false,
                 ignore_breakpoints: false,
                 breakpoint_store,
-                data_breakpoint_info: Default::default(),
                 data_breakpoints: Default::default(),
                 exception_breakpoints: Default::default(),
                 label,
@@ -2561,28 +2559,13 @@ impl Session {
         context: Arc<DataBreakpointContext>,
         mode: Option<String>,
         cx: &mut Context<Self>,
-    ) -> Option<dap::DataBreakpointInfoResponse> {
+    ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
         let command = DataBreakpointInfoCommand {
             context: context.clone(),
             mode,
         };
 
-        let res = self.data_breakpoint_info.get(&context).cloned();
-
-        self.fetch(
-            command,
-            move |this, response, cx| {
-                let Some(response) = response.log_err() else {
-                    return;
-                };
-
-                this.data_breakpoint_info.insert(context, response);
-                cx.emit(SessionEvent::DataBreakpointInfo);
-            },
-            cx,
-        );
-
-        res
+        self.request(command, |_, response, _| response.ok(), cx)
     }
 
     pub fn set_variable_value(

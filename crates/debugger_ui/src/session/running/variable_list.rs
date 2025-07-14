@@ -674,7 +674,6 @@ impl VariableList {
             } else {
                 true
             };
-            dbg!(can_toggle_data_breakpoint);
             cx.update(|window, cx| {
                 let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                     menu.when_some(entry.as_variable(), |menu, _| {
