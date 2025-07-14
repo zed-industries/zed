@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
-use ui::{Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
+use ui::{Banner, Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
 
 pub struct BulletItem {
     label: SharedString,
@@ -107,10 +107,6 @@ impl ZedAiOnboarding {
         cx.open_url("https://zed.dev/account/upgrade");
     }
 
-    fn view_terms_of_service(_: &ClickEvent, _: &mut Window, cx: &mut App) {
-        cx.open_url("https://zed.dev/terms-of-service");
-    }
-
     fn render_free_plan_section(&self, cx: &mut App) -> impl IntoElement {
         v_flex()
             .mt_2()
@@ -187,24 +183,13 @@ impl ZedAiOnboarding {
     }
 
     fn render_accept_terms_of_service(&self) -> Div {
-        let terms_link = Button::new("terms_of_service", "Terms of Service")
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::ArrowUpRight)
-            .icon_color(Color::Muted)
-            .icon_size(IconSize::XSmall)
-            .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
-
         v_flex()
             .w_full()
             .gap_1()
             .child(Headline::new("Before starting…"))
-            .child(
-                h_flex()
-                    .child(Label::new(
-                        "Make sure you have read and accepted Zed's AI terms of service.",
-                    ))
-                    .child(terms_link),
-            )
+            .child(Label::new(
+                "Make sure you have read and accepted Zed's AI terms of service.",
+            ))
             .child(
                 Button::new("terms_of_service", "View and Read the Terms of Service")
                     .full_width()
@@ -221,6 +206,7 @@ impl ZedAiOnboarding {
                     .full_width()
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .icon(IconName::Check)
+                    .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
@@ -228,30 +214,18 @@ impl ZedAiOnboarding {
                     }),
             )
     }
+    fn render_young_account_disclaimer(cx: &mut App) -> impl IntoElement {
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we cannot put you in the Free plan or offer you a free trial of the Pro plan. To continue, upgrade to Pro or use your own API keys.";
 
-    fn render_terms_or_service_disclaimer() -> impl IntoElement {
-        h_flex()
-            .child(
-                Label::new("By using any Zed plans, you accept the")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                Button::new("view-tos", "terms of service.")
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Indicator)
-                    .icon_color(Color::Muted)
-                    .label_size(LabelSize::Small)
-                    .on_click(Self::view_terms_of_service),
-            )
-    }
+        let label = div()
+            .w_full()
+            .text_sm()
+            .text_color(cx.theme().colors().text_muted)
+            .child(YOUNG_ACCOUNT_DISCLAIMER);
 
-    fn render_young_account_disclaimer() -> impl IntoElement {
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we can't offer your a free Pro plan trial.";
-
-        Label::new(YOUNG_ACCOUNT_DISCLAIMER)
-            .size(LabelSize::Small)
-            .color(Color::Muted)
+        div()
+            .my_1()
+            .child(Banner::new().severity(ui::Severity::Warning).child(label))
     }
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
@@ -289,17 +263,11 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mt_1(),
             )
+            .when(self.account_too_young, |this| {
+                this.child(Self::render_young_account_disclaimer(cx))
+            })
             .child(self.render_free_plan_section(cx))
             .child(self.render_pro_plan_section(cx))
-            .child(
-                v_flex()
-                    .gap_1()
-                    .mt_2()
-                    .when(self.account_too_young, |this| {
-                        this.child(Self::render_young_account_disclaimer())
-                    })
-                    .child(Self::render_terms_or_service_disclaimer()),
-            )
     }
 
     fn render_trial_onboarding(&self, _cx: &mut App) -> Div {
