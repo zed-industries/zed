@@ -14111,7 +14111,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=28dd306ff2e3374404936dec778fc1e975b8dd12#28dd306ff2e3374404936dec778fc1e975b8dd12"
+source = "git+https://github.com/zed-industries/scap?rev=270538dc780f5240723233ff901e1054641ed318#270538dc780f5240723233ff901e1054641ed318"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -19660,6 +19660,7 @@ dependencies = [
  "rustix 1.0.7",
  "rustls 0.23.26",
  "rustls-webpki 0.103.1",
+ "scap",
  "schemars",
  "scopeguard",
  "sea-orm",
