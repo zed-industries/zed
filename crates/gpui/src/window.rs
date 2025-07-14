@@ -705,6 +705,7 @@ impl Frame {
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+        println!("clearing focus 1");
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
@@ -751,6 +752,8 @@ impl Frame {
     }
 
     pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
+        dbg!("focus path");
+        dbg!(self.focus.is_some());
         self.focus
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
             .unwrap_or_default()
@@ -1286,6 +1289,7 @@ impl Window {
         }
 
         self.focus = None;
+        println!("clearing focus 2");
         self.refresh();
     }
 

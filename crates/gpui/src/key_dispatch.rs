@@ -570,6 +570,7 @@ impl DispatchTree {
     }
 
     pub fn focus_path(&self, focus_id: FocusId) -> SmallVec<[FocusId; 8]> {
+        println!("focus path requested for focus id: {:?}", focus_id);
         let mut focus_path: SmallVec<[FocusId; 8]> = SmallVec::new();
         let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied();
         while let Some(node_id) = current_node_id {
