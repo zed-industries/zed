@@ -186,7 +186,6 @@ struct EntryDetails {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct StickyDetails {
     sticky_index: usize,
-    is_last: bool,
 }
 
 /// Permanently deletes the selected file or directory.
@@ -3938,29 +3937,6 @@ impl ProjectPanel {
             }
         };
 
-        let show_sticky_shadow = details.sticky.as_ref().map_or(false, |item| {
-            if item.is_last {
-                let is_scrollable = self.scroll_handle.is_scrollable();
-                let is_scrolled = self.scroll_handle.offset().y < px(0.);
-                is_scrollable && is_scrolled
-            } else {
-                false
-            }
-        });
-        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
-        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
-        let sticky_shadow = div()
-            .absolute()
-            .left_0()
-            .bottom_neg_1p5()
-            .h_1p5()
-            .w_full()
-            .bg(linear_gradient(
-                0.,
-                linear_color_stop(shadow_color_top, 1.),
-                linear_color_stop(shadow_color_bottom, 0.),
-            ));
-
         let id: ElementId = if is_sticky {
             SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
         } else {
@@ -3978,7 +3954,6 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .when(show_sticky_shadow, |this| this.child(sticky_shadow))
             .when(is_sticky, |this| {
                 this.block_mouse_except_scroll()
             })
@@ -4944,7 +4919,6 @@ impl ProjectPanel {
                     .unwrap_or_default();
                 let sticky_details = Some(StickyDetails {
                     sticky_index: index,
-                    is_last: index == last_item_index,
                 });
                 let details = self.details_for_entry(
                     entry,
@@ -4956,7 +4930,24 @@ impl ProjectPanel {
                     window,
                     cx,
                 );
-                self.render_entry(entry.id, details, window, cx).into_any()
+                self.render_entry(entry.id, details, window, cx)
+                    .when(index == last_item_index, |this| {
+                        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
+                        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
+                        let sticky_shadow = div()
+                            .absolute()
+                            .left_0()
+                            .bottom_neg_1p5()
+                            .h_1p5()
+                            .w_full()
+                            .bg(linear_gradient(
+                                0.,
+                                linear_color_stop(shadow_color_top, 1.),
+                                linear_color_stop(shadow_color_bottom, 0.),
+                            ));
+                        this.child(sticky_shadow)
+                    })
+                    .into_any()
             })
             .collect()
     }
@@ -4990,7 +4981,16 @@ impl Render for ProjectPanel {
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
         let show_indent_guides =
             ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
-        let show_sticky_scroll = ProjectPanelSettings::get_global(cx).sticky_scroll;
+        let show_sticky_entries = {
+            if ProjectPanelSettings::get_global(cx).sticky_scroll {
+                let is_scrollable = self.scroll_handle.is_scrollable();
+                let is_scrolled = self.scroll_handle.offset().y < px(0.);
+                is_scrollable && is_scrolled
+            } else {
+                false
+            }
+        };
+
         let is_local = project.is_local();
 
         if has_worktree {
@@ -5282,7 +5282,7 @@ impl Render for ProjectPanel {
                                 }),
                         )
                     })
-                    .when(show_sticky_scroll, |list| {
+                    .when(show_sticky_entries, |list| {
                         let sticky_items = ui::sticky_items(
                             cx.entity().clone(),
                             |this, range, window, cx| {
