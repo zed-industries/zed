@@ -12,18 +12,13 @@ use std::{
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
-    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let b = (hex & 0xFF) as f32 / 255.0;
+    let [_, r, g, b] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
-    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex & 0xFF) as f32 / 255.0;
+    let [r, g, b, a] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a }
 }
 
