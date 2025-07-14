@@ -7147,12 +7147,14 @@ impl LspStore {
     /// Returns a summary of all diagnostics for files that match the given path matcher.
     pub fn diagnostic_summary_for_paths(
         &self,
-        path_matcher: Option<&PathMatcher>,
+        path_matcher: &PathMatcher,
         include_ignored: bool,
         cx: &App,
     ) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
-        for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, path_matcher, cx) {
+        for (_, _, path_summary) in
+            self.diagnostic_summaries(include_ignored, Some(path_matcher), cx)
+        {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
         }
@@ -7180,7 +7182,7 @@ impl LspStore {
                     .iter()
                     .filter(move |(path, _)| {
                         if let Some(path_matcher) = path_matcher {
-                            (*path_matcher).is_match(path.clone())
+                            (*path_matcher).is_match((*path).clone())
                         } else {
                             include_ignored
                                 || worktree

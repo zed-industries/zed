@@ -32,6 +32,7 @@ use std::{
     any::{Any, TypeId},
     cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -198,7 +199,7 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let project_event_subscription =
-            cx.subscribe_in(&project_handle, window, |this, project, event, window, cx| match event {
+            cx.subscribe_in(&project_handle, window, |this, _project, event, window, cx| match event {
                 project::Event::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
@@ -210,24 +211,13 @@ impl ProjectDiagnosticsEditor {
                     language_server_id,
                     path,
                 } => {
-                    // TODO: Double-check if we really need this. Would it be problematic to process this event as usual?
-                    if this.path_matcher_enabled && this.path_matcher.is_match(path.path.clone()) {
-                        log::debug!("diagnostics ignored for server {language_server_id}, path {path:?}. path filter mismatch");
-                        return;
-                    };
-
                     this.paths_to_update.insert(path.clone());
-                    let project = project.clone();
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
                             .timer(Duration::from_millis(30))
                             .await;
                         this.update(cx, |this, cx| {
-
-                            this.summary = match this.path_matcher_enabled {
-                                true => project.read(cx).diagnostic_summary_for_paths(Some(&this.path_matcher), false, cx),
-                                false => project.read(cx).diagnostic_summary(false, cx),
-                            };
+                            this.update_diagnostic_summary(cx);
                         })
                         .log_err();
                     });
@@ -314,7 +304,7 @@ impl ProjectDiagnosticsEditor {
         let mut this = Self {
             project: project_handle.clone(),
             summary: match path_matcher_enabled {
-                true => project.diagnostic_summary_for_paths(Some(&path_matcher), false, cx),
+                true => project.diagnostic_summary_for_paths(&path_matcher, false, cx),
                 false => project.diagnostic_summary(false, cx),
             },
             diagnostics: Default::default(),
@@ -388,6 +378,13 @@ impl ProjectDiagnosticsEditor {
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
+
+            // Ensure that the path filter is disabled when deploying the
+            // diagnostics without a specific path.
+            existing.update(cx, |diagnostics, cx| {
+                diagnostics.set_path_matcher_enabled(false, window, cx);
+            });
+
             workspace.activate_item(&existing, true, !is_active, window, cx);
         } else {
             let workspace_handle = cx.entity().downgrade();
@@ -425,15 +422,13 @@ impl ProjectDiagnosticsEditor {
             .map_or(None, |editor| editor.project_path(cx));
 
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
-            // TODO: If the project's diagnostics editor is already open, ensure
-            // that we start filtering by the active file again.
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
 
             existing.update(cx, |diagnostics, cx| {
                 diagnostics.set_path_filter(path.clone());
-                diagnostics.update_all_diagnostics(false, window, cx);
+                diagnostics.set_path_matcher_enabled(true, window, cx);
             });
 
             workspace.activate_item(&existing, true, !is_active, window, cx);
@@ -473,10 +468,18 @@ impl ProjectDiagnosticsEditor {
         cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
-    fn toggle_path_matcher_enabled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.path_matcher_enabled = !self.path_matcher_enabled;
+    fn set_path_matcher_enabled(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.path_matcher_enabled = enabled;
         self.diagnostics.clear();
         self.update_all_diagnostics(false, window, cx);
+        if enabled {
+            self.update_diagnostic_summary(cx);
+        }
     }
 
     fn toggle_diagnostics_refresh(
@@ -592,11 +595,6 @@ impl ProjectDiagnosticsEditor {
             let mut project_paths = project
                 .diagnostic_summaries(false, cx)
                 .map(|(project_path, _, _)| project_path)
-                .filter(|project_path| {
-                    !self.path_matcher_enabled
-                        || self.path_matcher_enabled
-                            && self.path_matcher.is_match(project_path.path.clone())
-                })
                 .collect::<BTreeSet<_>>();
 
             self.multibuffer.update(cx, |multibuffer, cx| {
@@ -640,11 +638,13 @@ impl ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let was_empty = self.multibuffer.read(cx).is_empty();
-        let path_matcher_enabled = self.path_matcher_enabled;
-        let path_matcher = self.path_matcher.clone();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
-        let buffer_path = buffer.read(cx).project_path(cx);
+        let should_include_path = match buffer.read(cx).project_path(cx) {
+            None => true,
+            Some(project_path) => self.should_include_path(&project_path.path),
+        };
+
         let max_severity = if self.include_warnings {
             lsp::DiagnosticSeverity::WARNING
         } else {
@@ -670,6 +670,32 @@ impl ProjectDiagnosticsEditor {
             })?;
             if unchanged {
                 return Ok(());
+            }
+
+            // Double-check that the buffer's path should be included in the
+            // diagnostics. If it shouldn't, avoid doing any work at all and
+            // simply remove diagnostics blocks from the display map and its
+            // excerpts from the multibuffer.
+            if !should_include_path {
+                return this.update_in(cx, |this, _window, cx| {
+                    if let Some(block_ids) = this.blocks.remove(&buffer_id) {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.remove_blocks(block_ids.into_iter().collect(), cx)
+                            });
+                        })
+                    }
+
+                    this.multibuffer.update(cx, |multi_buffer, cx| {
+                        multi_buffer.set_excerpt_ranges_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer.clone(),
+                            &buffer_snapshot,
+                            vec![],
+                            cx,
+                        )
+                    });
+                });
             }
 
             let mut grouped: HashMap<usize, Vec<_>> = HashMap::default();
@@ -753,14 +779,6 @@ impl ProjectDiagnosticsEditor {
                     })
                 }
                 let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
-                    // TODO: Instead of doing the check here, just avoid pushing to `excertp_ranges`.
-                    if path_matcher_enabled
-                        && let Some(project_path) = buffer_path.clone()
-                        && !path_matcher.is_match(project_path.path.clone())
-                    {
-                        excerpt_ranges = vec![];
-                    }
-
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
@@ -805,17 +823,7 @@ impl ProjectDiagnosticsEditor {
 
                 let block_ids = this.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
-                        // Prevent blocks from being inserted if the path
-                        // matcher filter is enabled and the buffer's path does
-                        // not match the path matcher.
-                        if path_matcher_enabled
-                            && let Some(project_path) = buffer_path.clone()
-                            && !path_matcher.is_match(project_path.path.clone())
-                        {
-                            vec![]
-                        } else {
-                            display_map.insert_blocks(editor_blocks, cx)
-                        }
+                        display_map.insert_blocks(editor_blocks, cx)
                     })
                 });
 
@@ -844,13 +852,32 @@ impl ProjectDiagnosticsEditor {
         })
     }
 
+    fn update_diagnostic_summary(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.read(cx);
+
+        self.summary = match self.path_matcher_enabled {
+            true => project.diagnostic_summary_for_paths(&self.path_matcher, false, cx),
+            false => project.diagnostic_summary(false, cx),
+        };
+    }
+
     fn set_path_filter(&mut self, path_filter: Option<ProjectPath>) {
         if let Some(project_path) = path_filter
             && let Some(path) = project_path.path.to_str()
             && let Ok(path_matcher) = PathMatcher::new([path])
         {
             self.path_matcher = path_matcher;
+            // TODO: Do we need to udpdate `self.summary` after updating this?
+            // When toggling between enabled and disabled, the number seems to
+            // be stuck after all files are shown.
         };
+    }
+
+    /// Determines whether the provided path should be included in diagnostics.
+    /// This is always true if the path filter is disabled or if the path filter
+    /// is enabled and it matches one of the filtered paths.
+    fn should_include_path(&self, path: &Path) -> bool {
+        !self.path_matcher_enabled || self.path_matcher.is_match(path)
     }
 
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {

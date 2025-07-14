@@ -4274,7 +4274,7 @@ impl Project {
 
     pub fn diagnostic_summary_for_paths(
         &self,
-        path_matcher: Option<&PathMatcher>,
+        path_matcher: &PathMatcher,
         include_ignored: bool,
         cx: &App,
     ) -> DiagnosticSummary {

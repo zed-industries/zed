@@ -138,7 +138,11 @@ impl Render for ToolbarControls {
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {
-                                editor.toggle_path_matcher_enabled(window, cx);
+                                editor.set_path_matcher_enabled(
+                                    !editor.path_matcher_enabled,
+                                    window,
+                                    cx,
+                                );
                             });
                         }
                     })),
