@@ -14,7 +14,6 @@ path = "src/web_search_providers.rs"
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true

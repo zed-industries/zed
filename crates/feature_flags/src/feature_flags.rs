@@ -98,17 +98,6 @@ impl FeatureFlag for AcpFeatureFlag {
     const NAME: &'static str = "acp";
 }
 
-pub struct ZedCloudFeatureFlag {}
-
-impl FeatureFlag for ZedCloudFeatureFlag {
-    const NAME: &'static str = "zed-cloud";
-
-    fn enabled_for_staff() -> bool {
-        // Require individual opt-in, for now.
-        false
-    }
-}
-
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
