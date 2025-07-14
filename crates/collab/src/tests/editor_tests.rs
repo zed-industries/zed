@@ -2821,7 +2821,7 @@ async fn test_lsp_pull_diagnostics(
             let all_diagnostics = snapshot
                 .diagnostics_in_range(0..snapshot.len())
                 .collect::<Vec<_>>();
-            let mut expected_messages = [
+            let expected_messages = [
                 expected_workspace_pull_diagnostics_lib_message,
                 // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
                 // expected_push_diagnostic_lib_message,
