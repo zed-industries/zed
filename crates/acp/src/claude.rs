@@ -1,7 +1,7 @@
 mod permission_mcp_server;
 
+use collections::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::io::Write;
 use std::path::Path;
@@ -100,7 +100,9 @@ pub struct ClaudeAgentConnection {
 
 impl ClaudeAgentConnection {
     pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &App) -> Result<Self> {
-        let permission_mcp_server = PermissionMcpServer::new(cx, delegate.clone())?;
+        let mut tool_id_map = Rc::new(RefCell::new(HashMap::default()));
+        let permission_mcp_server =
+            PermissionMcpServer::new(cx, delegate.clone(), tool_id_map.clone())?;
 
         let mcp_config = McpConfig {
             mcp_servers: [(
@@ -158,14 +160,14 @@ impl ClaudeAgentConnection {
 
         let handler_task = cx.foreground_executor().spawn({
             let end_turn_tx = end_turn_tx.clone();
+            let tool_id_map = tool_id_map.clone();
             async move {
-                let mut tool_id_map = HashMap::new();
                 while let Some(message) = incoming_message_rx.next().await {
                     Self::handle_message(
                         delegate.clone(),
                         message,
                         end_turn_tx.clone(),
-                        &mut tool_id_map,
+                        tool_id_map.clone(),
                     )
                     .await
                 }
@@ -185,7 +187,7 @@ impl ClaudeAgentConnection {
         delegate: AcpClientDelegate,
         message: SdkMessage,
         end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
-        tool_id_map: &mut HashMap<String, acp::ToolCallId>,
+        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
     ) {
         match message {
             SdkMessage::Assistant { message, .. } | SdkMessage::User { message, .. } => {
@@ -212,14 +214,14 @@ impl ClaudeAgentConnection {
                                 .await
                                 .log_err()
                             {
-                                tool_id_map.insert(id, resp.id);
+                                tool_id_map.borrow_mut().insert(id, resp.id);
                             }
                         }
                         MessageContent::ToolResult {
                             content,
                             tool_use_id,
                         } => {
-                            if let Some(id) = tool_id_map.remove(&tool_use_id) {
+                            if let Some(id) = tool_id_map.borrow_mut().remove(&tool_use_id) {
                                 delegate
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,

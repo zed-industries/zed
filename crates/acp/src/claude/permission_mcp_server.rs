@@ -1,4 +1,8 @@
+use std::{cell::RefCell, rc::Rc};
+
+use agentic_coding_protocol::{self as acp, Client};
 use anyhow::{Context, Result};
+use collections::HashMap;
 use context_server::{
     listener::McpServer,
     types::{
@@ -42,12 +46,16 @@ enum PermissionToolBehavior {
 }
 
 impl PermissionMcpServer {
-    pub fn new(cx: &App, delegate: AcpClientDelegate) -> Result<Self> {
+    pub fn new(
+        cx: &App,
+        delegate: AcpClientDelegate,
+        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+    ) -> Result<Self> {
         let mut mcp_server = McpServer::new(cx)?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
-            Self::handle_call_tool(request, delegate.clone(), cx)
+            Self::handle_call_tool(request, delegate.clone(), tool_id_map.clone(), cx)
         });
 
         Ok(Self { server: mcp_server })
@@ -107,6 +115,7 @@ impl PermissionMcpServer {
     fn handle_call_tool(
         request: CallToolParams,
         delegate: AcpClientDelegate,
+        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
@@ -115,7 +124,8 @@ impl PermissionMcpServer {
                     request.arguments.context("Arguments required")?,
                 )?;
 
-                let result = Self::handle_permissions_tool_call(input, delegate, cx).await?;
+                let result =
+                    Self::handle_permissions_tool_call(input, delegate, tool_id_map, cx).await?;
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text {
                         text: serde_json::to_string(&result)?,
@@ -132,12 +142,53 @@ impl PermissionMcpServer {
     fn handle_permissions_tool_call(
         input: PermissionToolInput,
         delegate: AcpClientDelegate,
+        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolOutput>> {
-        dbg!(&input);
-        return Task::ready(Ok(PermissionToolOutput {
-            behavior: PermissionToolBehavior::Allow,
-            updated_input: input.input,
-        }));
+        match input.tool_use_id {
+            Some(tool_use_id) => {
+                let Some(tool_call_id) = tool_id_map.borrow().get(&tool_use_id).cloned() else {
+                    // todo!
+                    return Task::ready(Err(anyhow::anyhow!("Tool call ID not found")));
+                };
+
+                cx.spawn(async move |_cx| {
+                    let outcome = delegate
+                        .request_existing_tool_call_confirmation(
+                            tool_call_id,
+                            // todo!
+                            acp::ToolCallConfirmation::Edit { description: None },
+                        )
+                        .await?;
+
+                    match outcome {
+                        acp::ToolCallConfirmationOutcome::Allow |
+                        // todo! remove these from UI
+                        acp::ToolCallConfirmationOutcome::AlwaysAllow |
+                        acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer |
+                        acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
+                            Ok(PermissionToolOutput {
+                                behavior: PermissionToolBehavior::Allow,
+                                updated_input: input.input,
+                            })
+                        },
+                        acp::ToolCallConfirmationOutcome::Reject|
+                        acp::ToolCallConfirmationOutcome::Cancel =>{
+                            Ok(PermissionToolOutput {
+                                behavior: PermissionToolBehavior::Deny,
+                                updated_input: input.input,
+                            })
+                        }
+                    }
+                })
+            }
+            None => {
+                // todo!
+                Task::ready(Ok(PermissionToolOutput {
+                    behavior: PermissionToolBehavior::Allow,
+                    updated_input: input.input,
+                }))
+            }
+        }
     }
 }

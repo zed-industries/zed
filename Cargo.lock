@@ -12,6 +12,7 @@ dependencies = [
  "assistant_tool",
  "async-pipe",
  "buffer_diff",
+ "collections",
  "context_server",
  "editor",
  "env_logger 0.11.8",

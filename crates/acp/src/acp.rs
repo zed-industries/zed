@@ -2,7 +2,9 @@ pub mod connection;
 
 pub use acp::ToolCallId;
 use agent_servers::AgentServer;
-use agentic_coding_protocol::{self as acp, AgentRequest, UserMessageChunk};
+use agentic_coding_protocol::{
+    self as acp, AgentRequest, ToolCallConfirmationOutcome, UserMessageChunk,
+};
 use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
@@ -734,7 +736,7 @@ impl AcpThread {
         }
     }
 
-    pub fn request_tool_call(
+    pub fn request_new_tool_call(
         &mut self,
         tool_call: acp::RequestToolCallConfirmationParams,
         cx: &mut Context<Self>,
@@ -752,6 +754,30 @@ impl AcpThread {
 
         let id = self.insert_tool_call(tool_call.tool_call, status, cx);
         ToolCallRequest { id, outcome: rx }
+    }
+
+    pub fn request_tool_call_confirmation(
+        &mut self,
+        tool_call_id: ToolCallId,
+        confirmation: acp::ToolCallConfirmation,
+        cx: &mut Context<Self>,
+    ) -> Result<ToolCallRequest> {
+        let project = self.project.read(cx).languages().clone();
+        let Some((_, call)) = self.tool_call_mut(tool_call_id) else {
+            anyhow::bail!("Tool call not found");
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        call.status = ToolCallStatus::WaitingForConfirmation {
+            confirmation: ToolCallConfirmation::from_acp(confirmation, project, cx),
+            respond_tx: tx,
+        };
+
+        Ok(ToolCallRequest {
+            id: tool_call_id,
+            outcome: rx,
+        })
     }
 
     pub fn push_tool_call(
@@ -1128,6 +1154,24 @@ impl AcpClientDelegate {
     fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
         Self { thread, cx }
     }
+
+    // todo! allow this via ACP?
+    async fn request_existing_tool_call_confirmation(
+        &self,
+        tool_call_id: ToolCallId,
+        confirmation: acp::ToolCallConfirmation,
+    ) -> Result<ToolCallConfirmationOutcome> {
+        let cx = &mut self.cx.clone();
+        let ToolCallRequest { outcome, .. } = cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.request_tool_call_confirmation(tool_call_id, confirmation, cx)
+                })
+            })?
+            .context("Failed to update thread")??;
+
+        Ok(outcome.await?)
+    }
 }
 
 impl acp::Client for AcpClientDelegate {
@@ -1156,7 +1200,7 @@ impl acp::Client for AcpClientDelegate {
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
                 self.thread
-                    .update(cx, |thread, cx| thread.request_tool_call(request, cx))
+                    .update(cx, |thread, cx| thread.request_new_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
