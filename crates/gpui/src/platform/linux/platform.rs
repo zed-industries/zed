@@ -715,12 +715,10 @@ pub(crate) enum KeycodeSource {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl KeycodeSource {
     fn guess_ascii(&self, keycode: Keycode, shift: bool) -> Option<char> {
-        let raw = match self {
-            // For historical reasons X11 adds 8 to keycodes
-            Self::X11 => keycode.raw() - 8,
-            // For no particular reason, wayland doesn't.
-            Self::Wayland => keycode.raw(),
-        };
+        // For historical reasons, X11 adds 8 to keycodes.
+        // Wayland doesn't, but by this point, our own Wayland client
+        // has added 8 for X11 compatibility.
+        let raw = keycode.raw() - 8;
         let c = match (raw, shift) {
             (16, _) => 'q',
             (17, _) => 'w',
