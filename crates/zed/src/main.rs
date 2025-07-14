@@ -1391,7 +1391,6 @@ fn dump_all_gpui_actions() {
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
