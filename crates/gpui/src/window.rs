@@ -1333,12 +1333,13 @@ impl Window {
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
         let focus_id = self.focused(cx).map(|handle| handle.id);
-
+        dbg!(&focus_id);
         let window = self.handle;
         cx.defer(move |cx| {
             window
                 .update(cx, |_, window, cx| {
                     let node_id = window.focus_node_id_in_rendered_frame(focus_id);
+                    dbg!(&node_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
                 .log_err();
@@ -3757,7 +3758,10 @@ impl Window {
                     .dispatch_tree
                     .focusable_node_id(focus_id)
             })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id())
+            .unwrap_or_else(|| {
+                println!("root node id");
+                self.rendered_frame.dispatch_tree.root_node_id()
+            })
     }
 
     fn dispatch_action_on_node(
@@ -3766,7 +3770,11 @@ impl Window {
         action: &dyn Action,
         cx: &mut App,
     ) {
+        dbg!("dispatch_action_on_node");
+        dbg!(action.name());
+        dbg!(action.as_any().type_id());
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        dbg!(&dispatch_path);
 
         // Capture phase for global actions.
         cx.propagate_event = true;
@@ -3774,9 +3782,15 @@ impl Window {
             .global_action_listeners
             .remove(&action.as_any().type_id())
         {
+            dbg!(
+                "Found global listeners for capture phase",
+                global_listeners.len()
+            );
             for listener in &global_listeners {
+                dbg!("Executing global listener in capture phase");
                 listener(action.as_any(), DispatchPhase::Capture, cx);
                 if !cx.propagate_event {
+                    dbg!("Event propagation stopped in global capture phase");
                     break;
                 }
             }
@@ -3805,9 +3819,11 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
+                    dbg!("Found window action listener in capture phase", node_id);
                     listener(any_action, DispatchPhase::Capture, self, cx);
 
                     if !cx.propagate_event {
+                        dbg!("Event propagation stopped in window capture phase");
                         return;
                     }
                 }
@@ -3824,10 +3840,12 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
+                    dbg!("Found window action listener in bubble phase", node_id);
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     listener(any_action, DispatchPhase::Bubble, self, cx);
 
                     if !cx.propagate_event {
+                        dbg!("Event propagation stopped in window bubble phase");
                         return;
                     }
                 }
@@ -3839,11 +3857,17 @@ impl Window {
             .global_action_listeners
             .remove(&action.as_any().type_id())
         {
+            dbg!(
+                "Found global listeners for bubble phase",
+                global_listeners.len()
+            );
             for listener in global_listeners.iter().rev() {
+                dbg!("Executing global listener in bubble phase");
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 if !cx.propagate_event {
+                    dbg!("Event propagation stopped in global bubble phase");
                     break;
                 }
             }

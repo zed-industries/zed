@@ -288,6 +288,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            println!("this must run");
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
 
