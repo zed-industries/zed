@@ -221,6 +221,8 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
+To use Copilot Enterprise with Zed (for both agent and inline completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use

@@ -34,7 +34,7 @@ use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
-    debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
@@ -770,6 +770,15 @@ impl RunningState {
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 this.serialize_layout(window, cx);
             }),
+            cx.subscribe(
+                &session,
+                |this, session, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown if session.read(cx).is_building() => {
+                        this.shutdown(cx);
+                    }
+                    _ => {}
+                },
+            ),
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
@@ -884,6 +893,7 @@ impl RunningState {
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
         let is_local = project.read(cx).is_local();
+
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -1459,7 +1469,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
+    pub fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
@@ -1599,9 +1609,21 @@ impl RunningState {
             })
             .log_err();
 
-        self.session.update(cx, |session, cx| {
+        let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-        })
+            matches!(session.mode, session::SessionState::Building(_))
+        });
+
+        if is_building {
+            self.debug_terminal.update(cx, |terminal, cx| {
+                if let Some(view) = terminal.terminal.as_ref() {
+                    view.update(cx, |view, cx| {
+                        view.terminal()
+                            .update(cx, |terminal, _| terminal.kill_active_task())
+                    })
+                }
+            })
+        }
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {

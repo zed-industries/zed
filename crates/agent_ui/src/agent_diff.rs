@@ -89,8 +89,7 @@ impl AgentDiffThread {
     fn has_pending_edit_tool_uses(&self, cx: &App) -> bool {
         match self {
             AgentDiffThread::Native(thread) => thread.read(cx).has_pending_edit_tool_uses(),
-            // todo!
-            AgentDiffThread::AcpThread(_) => false,
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).has_pending_edit_tool_calls(),
         }
     }
 
@@ -216,7 +215,11 @@ impl AgentDiffPane {
                 },
             ]
             .into_iter()
+<<<<<<< HEAD
             .filter_map(|subscription| subscription)
+=======
+            .flatten()
+>>>>>>> main
             .collect(),
             title: SharedString::default(),
             multibuffer,
@@ -1352,8 +1355,8 @@ impl AgentDiff {
             }),
             AgentDiffThread::AcpThread(thread) => cx.subscribe_in(&thread, window, {
                 let workspace = workspace.clone();
-                move |this, _thread, event, window, cx| {
-                    this.handle_acp_thread_event(&workspace, event, window, cx)
+                move |this, thread, event, window, cx| {
+                    this.handle_acp_thread_event(&workspace, thread, event, window, cx)
                 }
             }),
         };
@@ -1497,17 +1500,33 @@ impl AgentDiff {
     fn handle_acp_thread_event(
         &mut self,
         workspace: &WeakEntity<Workspace>,
+        thread: &Entity<AcpThread>,
         event: &AcpThreadEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // todo! only update if entry contains a diff
         match event {
             AcpThreadEvent::NewEntry => {
-                self.update_reviewing_editors(workspace, window, cx);
+                if thread
+                    .read(cx)
+                    .entries()
+                    .last()
+                    .and_then(|entry| entry.diff())
+                    .is_some()
+                {
+                    self.update_reviewing_editors(workspace, window, cx);
+                }
             }
-            AcpThreadEvent::EntryUpdated(_) => {
-                self.update_reviewing_editors(workspace, window, cx);
+            AcpThreadEvent::EntryUpdated(ix) => {
+                if thread
+                    .read(cx)
+                    .entries()
+                    .get(*ix)
+                    .and_then(|entry| entry.diff())
+                    .is_some()
+                {
+                    self.update_reviewing_editors(workspace, window, cx);
+                }
             }
         }
     }

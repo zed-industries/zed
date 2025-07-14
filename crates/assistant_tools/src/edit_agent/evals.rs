@@ -365,17 +365,23 @@ fn eval_disable_cursor_blinking() {
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  0.99 (2025-06-14)
-    //  claude-sonnet-4                |  0.85 (2025-06-14)
-    //  gemini-2.5-pro-preview-latest  |  0.97 (2025-06-16)
-    //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
+    //  claude-3.7-sonnet              |  0.59 (2025-07-14)
+    //  claude-sonnet-4                |  0.81 (2025-07-14)
+    //  gemini-2.5-pro                 |  0.95 (2025-07-14)
+    //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
+    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
+    let possible_diffs = vec![
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-01.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-02.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-03.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-04.diff"),
+    ];
     eval(
         100,
-        0.95,
+        0.51,
         0.05,
         EvalInput::from_conversation(
             vec![
@@ -433,11 +439,7 @@ fn eval_disable_cursor_blinking() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::judge_diff(indoc! {"
-                - Calls to BlinkManager in `observe_window_activation` were commented out
-                - The call to `blink_manager.enable` above the call to show_cursor_names was commented out
-                - All the edits have valid indentation
-            "}),
+            EvalAssertion::assert_diff_any(possible_diffs),
         ),
     );
 }

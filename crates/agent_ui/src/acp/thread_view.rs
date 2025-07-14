@@ -53,6 +53,8 @@ pub struct AcpThreadView {
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     message_editor: Entity<Editor>,
+    message_set_from_history: bool,
+    _message_editor_subscription: Subscription,
     mention_set: Arc<Mutex<MentionSet>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
@@ -60,7 +62,11 @@ pub struct AcpThreadView {
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
+<<<<<<< HEAD
     message_history: MessageHistory<acp::SendUserMessageParams>,
+=======
+    message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
+>>>>>>> main
 }
 
 enum ThreadState {
@@ -81,6 +87,7 @@ impl AcpThreadView {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -125,6 +132,17 @@ impl AcpThreadView {
             editor
         });
 
+        let message_editor_subscription = cx.subscribe(&message_editor, |this, _, event, _| {
+            if let editor::EditorEvent::BufferEdited = &event {
+                if !this.message_set_from_history {
+                    this.message_history.borrow_mut().reset_position();
+                }
+                this.message_set_from_history = false;
+            }
+        });
+
+        let mention_set = mention_set.clone();
+
         let list_state = ListState::new(
             0,
             gpui::ListAlignment::Bottom,
@@ -147,6 +165,8 @@ impl AcpThreadView {
             project: project.clone(),
             thread_state: Self::initial_state(workspace, project, window, cx),
             message_editor,
+            message_set_from_history: false,
+            _message_editor_subscription: message_editor_subscription,
             mention_set,
             diff_editors: Default::default(),
             list_state: list_state,
@@ -155,7 +175,11 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             edits_expanded: false,
+<<<<<<< HEAD
             message_history: MessageHistory::new(),
+=======
+            message_history,
+>>>>>>> main
         }
     }
 
@@ -358,7 +382,7 @@ impl AcpThreadView {
             editor.remove_creases(mention_set.lock().drain(), cx)
         });
 
-        self.message_history.push(message);
+        self.message_history.borrow_mut().push(message);
     }
 
     fn previous_history_message(
@@ -367,11 +391,11 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::set_draft_message(
+        self.message_set_from_history = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.prev(),
+            self.message_history.borrow_mut().prev(),
             window,
             cx,
         );
@@ -383,11 +407,11 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        Self::set_draft_message(
+        self.message_set_from_history = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.next(),
+            self.message_history.borrow_mut().next(),
             window,
             cx,
         );
@@ -427,15 +451,11 @@ impl AcpThreadView {
         message: Option<&acp::SendUserMessageParams>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         cx.notify();
 
         let Some(message) = message else {
-            message_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                editor.remove_creases(mention_set.lock().drain(), cx)
-            });
-            return;
+            return false;
         };
 
         let mut text = String::new();
@@ -495,6 +515,35 @@ impl AcpThreadView {
                 mention_set.lock().insert(crease_id, project_path);
             }
         }
+
+        true
+    }
+
+    fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err();
+        }
+    }
+
+    fn open_edited_buffer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+
+        let Some(diff) =
+            AgentDiffPane::deploy(thread.clone(), self.workspace.clone(), window, cx).log_err()
+        else {
+            return;
+        };
+
+        diff.update(cx, |diff, cx| {
+            diff.move_to_path(PathKey::for_buffer(&buffer, cx), window, cx)
+        })
     }
 
     fn handle_thread_event(
@@ -581,15 +630,7 @@ impl AcpThreadView {
 
     fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        if let AgentThreadEntry::ToolCall(ToolCall {
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        }) = &entry
-        {
-            Some(diff.multibuffer.clone())
-        } else {
-            None
-        }
+        entry.diff().map(|diff| diff.multibuffer.clone())
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -918,10 +959,43 @@ impl AcpThreadView {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(self.render_markdown(
-                                tool_call.label.clone(),
-                                default_markdown_style(needs_confirmation, window, cx),
-                            )),
+                            .child(if tool_call.locations.len() == 1 {
+                                let name = tool_call.locations[0]
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .display()
+                                    .to_string();
+
+                                h_flex()
+                                    .id(("open-tool-call-location", entry_ix))
+                                    .child(name)
+                                    .w_full()
+                                    .max_w_full()
+                                    .pr_1()
+                                    .gap_0p5()
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .opacity(0.8)
+                                    .hover(|label| {
+                                        label.opacity(1.).bg(cx
+                                            .theme()
+                                            .colors()
+                                            .element_hover
+                                            .opacity(0.5))
+                                    })
+                                    .tooltip(Tooltip::text("Jump to File"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_tool_call_location(entry_ix, 0, window, cx);
+                                    }))
+                                    .into_any_element()
+                            } else {
+                                self.render_markdown(
+                                    tool_call.label.clone(),
+                                    default_markdown_style(needs_confirmation, window, cx),
+                                )
+                                .into_any()
+                            }),
                     )
                     .child(
                         h_flex()
@@ -981,15 +1055,19 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::Markdown { markdown } => self
-                .render_markdown(markdown.clone(), default_markdown_style(false, window, cx))
-                .into_any_element(),
+            ToolCallContent::Markdown { markdown } => {
+                div()
+                    .p_2()
+                    .child(self.render_markdown(
+                        markdown.clone(),
+                        default_markdown_style(false, window, cx),
+                    ))
+                    .into_any_element()
+            }
             ToolCallContent::Diff {
-                diff: Diff {
-                    path, multibuffer, ..
-                },
+                diff: Diff { multibuffer, .. },
                 ..
-            } => self.render_diff_editor(multibuffer, path),
+            } => self.render_diff_editor(multibuffer),
         }
     }
 
@@ -1409,10 +1487,9 @@ impl AcpThreadView {
         }
     }
 
-    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>, path: &Path) -> AnyElement {
+    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>) -> AnyElement {
         v_flex()
             .h_full()
-            .child(path.to_string_lossy().to_string())
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
@@ -1576,11 +1653,12 @@ impl AcpThreadView {
 
     fn render_edits_bar(
         &self,
-        thread: &Entity<AcpThread>,
+        thread_entity: &Entity<AcpThread>,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let action_log = thread.read(cx).action_log();
+        let thread = thread_entity.read(cx);
+        let action_log = thread.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         if changed_buffers.is_empty() {
@@ -1591,8 +1669,7 @@ impl AcpThreadView {
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
-        // todo!
-        let pending_edits = false;
+        let pending_edits = thread.has_pending_edit_tool_calls();
         let expanded = self.edits_expanded;
 
         v_flex()
@@ -2067,6 +2144,64 @@ impl AcpThreadView {
         } else {
             cx.open_url(&url);
         }
+    }
+
+    fn open_tool_call_location(
+        &self,
+        entry_ix: usize,
+        location_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let location = self
+            .thread()?
+            .read(cx)
+            .entries()
+            .get(entry_ix)?
+            .locations()?
+            .get(location_ix)?;
+
+        let project_path = self
+            .project
+            .read(cx)
+            .find_project_path(&location.path, cx)?;
+
+        let open_task = self
+            .workspace
+            .update(cx, |worskpace, cx| {
+                worskpace.open_path(project_path, None, true, window, cx)
+            })
+            .log_err()?;
+
+        window
+            .spawn(cx, async move |cx| {
+                let item = open_task.await?;
+
+                let Some(active_editor) = item.downcast::<Editor>() else {
+                    return anyhow::Ok(());
+                };
+
+                active_editor.update_in(cx, |editor, window, cx| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    let first_hunk = editor
+                        .diff_hunks_in_ranges(
+                            &[editor::Anchor::min()..editor::Anchor::max()],
+                            &snapshot,
+                        )
+                        .next();
+                    if let Some(first_hunk) = first_hunk {
+                        let first_hunk_start = first_hunk.multi_buffer_range().start;
+                        editor.change_selections(Default::default(), window, cx, |selections| {
+                            selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                        })
+                    }
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+        None
     }
 
     pub fn open_thread_as_markdown(

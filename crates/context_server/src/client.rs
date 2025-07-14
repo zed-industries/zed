@@ -97,7 +97,7 @@ pub(crate) struct Response<T> {
     pub value: CspResult<T>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CspResult<T> {
     #[serde(rename = "result")]

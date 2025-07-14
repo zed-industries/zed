@@ -841,6 +841,7 @@
       "i": "git_panel::FocusEditor",
       "x": "git::ToggleStaged",
       "shift-x": "git::StageAll",
+      "g x": "git::StageRange",
       "shift-u": "git::UnstageAll"
     }
   },
