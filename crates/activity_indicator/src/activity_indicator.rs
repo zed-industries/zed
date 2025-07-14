@@ -448,7 +448,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
-                tooltip_message: Some(session.read(cx).label().to_string()),
+                tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
             });
         }

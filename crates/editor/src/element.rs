@@ -9,7 +9,7 @@ use crate::{
     LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
     PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -416,6 +416,7 @@ impl EditorElement {
         register_action(editor, window, Editor::fold_recursive);
         register_action(editor, window, Editor::toggle_fold);
         register_action(editor, window, Editor::toggle_fold_recursive);
+        register_action(editor, window, Editor::toggle_fold_all);
         register_action(editor, window, Editor::unfold_lines);
         register_action(editor, window, Editor::unfold_recursive);
         register_action(editor, window, Editor::unfold_all);
@@ -3620,24 +3621,37 @@ impl EditorElement {
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
                                             move |window, cx| {
-                                                Tooltip::for_action_in(
+                                                Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
-                                                    &ToggleFold,
+                                                    Some(&ToggleFold),
+                                                    "Alt+click to toggle all",
                                                     &focus_handle,
                                                     window,
                                                     cx,
                                                 )
                                             }
                                         })
-                                        .on_click(move |_, _, cx| {
-                                            if is_folded {
+                                        .on_click(move |event, window, cx| {
+                                            if event.modifiers().alt {
+                                                // Alt+click toggles all buffers
                                                 editor.update(cx, |editor, cx| {
-                                                    editor.unfold_buffer(buffer_id, cx);
+                                                    editor.toggle_fold_all(
+                                                        &ToggleFoldAll,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 });
                                             } else {
-                                                editor.update(cx, |editor, cx| {
-                                                    editor.fold_buffer(buffer_id, cx);
-                                                });
+                                                // Regular click toggles single buffer
+                                                if is_folded {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.unfold_buffer(buffer_id, cx);
+                                                    });
+                                                } else {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.fold_buffer(buffer_id, cx);
+                                                    });
+                                                }
                                             }
                                         }),
                                 ),
@@ -8035,23 +8049,25 @@ impl Element for EditorElement {
                         }
                     };
 
-                    // TODO: Autoscrolling for both axes
-                    let mut autoscroll_request = None;
-                    let mut autoscroll_containing_element = false;
-                    let mut autoscroll_horizontally = false;
-                    self.editor.update(cx, |editor, cx| {
-                        autoscroll_request = editor.autoscroll_request();
-                        autoscroll_containing_element =
+                    let (
+                        autoscroll_request,
+                        autoscroll_containing_element,
+                        needs_horizontal_autoscroll,
+                    ) = self.editor.update(cx, |editor, cx| {
+                        let autoscroll_request = editor.autoscroll_request();
+                        let autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();
-                        // TODO: Is this horizontal or vertical?!
-                        autoscroll_horizontally = editor.autoscroll_vertically(
-                            bounds,
-                            line_height,
-                            max_scroll_top,
-                            window,
-                            cx,
-                        );
-                        snapshot = editor.snapshot(window, cx);
+
+                        let (needs_horizontal_autoscroll, was_scrolled) = editor
+                            .autoscroll_vertically(bounds, line_height, max_scroll_top, window, cx);
+                        if was_scrolled.0 {
+                            snapshot = editor.snapshot(window, cx);
+                        }
+                        (
+                            autoscroll_request,
+                            autoscroll_containing_element,
+                            needs_horizontal_autoscroll,
+                        )
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
@@ -8460,10 +8476,12 @@ impl Element for EditorElement {
                     );
 
                     self.editor.update(cx, |editor, cx| {
-                        let clamped = editor.scroll_manager.clamp_scroll_left(scroll_max.x);
+                        if editor.scroll_manager.clamp_scroll_left(scroll_max.x) {
+                            scroll_position.x = scroll_position.x.min(scroll_max.x);
+                        }
 
-                        let autoscrolled = if autoscroll_horizontally {
-                            editor.autoscroll_horizontally(
+                        if needs_horizontal_autoscroll.0
+                            && let Some(new_scroll_position) = editor.autoscroll_horizontally(
                                 start_row,
                                 editor_content_width,
                                 scroll_width,
@@ -8472,13 +8490,8 @@ impl Element for EditorElement {
                                 window,
                                 cx,
                             )
-                        } else {
-                            false
-                        };
-
-                        if clamped || autoscrolled {
-                            snapshot = editor.snapshot(window, cx);
-                            scroll_position = snapshot.scroll_position();
+                        {
+                            scroll_position = new_scroll_position;
                         }
                     });
 
@@ -8593,7 +8606,9 @@ impl Element for EditorElement {
                                 }
                             } else {
                                 log::error!(
-                                    "bug: line_ix {} is out of bounds - row_infos.len(): {}, line_layouts.len(): {}, crease_trailers.len(): {}",
+                                    "bug: line_ix {} is out of bounds - row_infos.len(): {}, \
+                                    line_layouts.len(): {}, \
+                                    crease_trailers.len(): {}",
                                     line_ix,
                                     row_infos.len(),
                                     line_layouts.len(),
@@ -8839,7 +8854,7 @@ impl Element for EditorElement {
                             underline: None,
                             strikethrough: None,
                         }],
-                        None
+                        None,
                     );
                     let space_invisible = window.text_system().shape_line(
                         "•".into(),
@@ -8852,7 +8867,7 @@ impl Element for EditorElement {
                             underline: None,
                             strikethrough: None,
                         }],
-                        None
+                        None,
                     );
 
                     let mode = snapshot.mode.clone();

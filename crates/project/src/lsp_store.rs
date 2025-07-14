@@ -9130,7 +9130,13 @@ impl LspStore {
             }
         };
 
-        let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
+        let progress = match progress.value {
+            lsp::ProgressParamsValue::WorkDone(progress) => progress,
+            lsp::ProgressParamsValue::WorkspaceDiagnostic(_) => {
+                return;
+            }
+        };
+
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
                 status
@@ -9712,29 +9718,31 @@ impl LspStore {
             } else {
                 let buffers =
                     lsp_store.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-                lsp_store.stop_language_servers_for_buffers(
-                    buffers,
-                    envelope
-                        .payload
-                        .also_servers
-                        .into_iter()
-                        .filter_map(|selector| {
-                            Some(match selector.selector? {
-                                proto::language_server_selector::Selector::ServerId(server_id) => {
-                                    LanguageServerSelector::Id(LanguageServerId::from_proto(
+                lsp_store
+                    .stop_language_servers_for_buffers(
+                        buffers,
+                        envelope
+                            .payload
+                            .also_servers
+                            .into_iter()
+                            .filter_map(|selector| {
+                                Some(match selector.selector? {
+                                    proto::language_server_selector::Selector::ServerId(
                                         server_id,
-                                    ))
-                                }
-                                proto::language_server_selector::Selector::Name(name) => {
-                                    LanguageServerSelector::Name(LanguageServerName(
-                                        SharedString::from(name),
-                                    ))
-                                }
+                                    ) => LanguageServerSelector::Id(LanguageServerId::from_proto(
+                                        server_id,
+                                    )),
+                                    proto::language_server_selector::Selector::Name(name) => {
+                                        LanguageServerSelector::Name(LanguageServerName(
+                                            SharedString::from(name),
+                                        ))
+                                    }
+                                })
                             })
-                        })
-                        .collect(),
-                    cx,
-                );
+                            .collect(),
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
             }
         })?;
 
@@ -10290,9 +10298,9 @@ impl LspStore {
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        also_restart_servers: HashSet<LanguageServerSelector>,
+        also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::StopLanguageServers {
                 project_id,
@@ -10300,7 +10308,7 @@ impl LspStore {
                     .into_iter()
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
-                also_servers: also_restart_servers
+                also_servers: also_stop_servers
                     .into_iter()
                     .map(|selector| {
                         let selector = match selector {
@@ -10322,24 +10330,31 @@ impl LspStore {
                     .collect(),
                 all: false,
             });
-            cx.background_spawn(request).detach_and_log_err(cx);
+            cx.background_spawn(async move {
+                let _ = request.await?;
+                Ok(())
+            })
         } else {
-            self.stop_local_language_servers_for_buffers(&buffers, also_restart_servers, cx)
-                .detach();
+            let task =
+                self.stop_local_language_servers_for_buffers(&buffers, also_stop_servers, cx);
+            cx.background_spawn(async move {
+                task.await;
+                Ok(())
+            })
         }
     }
 
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
-        also_restart_servers: HashSet<LanguageServerSelector>,
+        also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let Some(local) = self.as_local_mut() else {
             return Task::ready(());
         };
         let mut language_server_names_to_stop = BTreeSet::default();
-        let mut language_servers_to_stop = also_restart_servers
+        let mut language_servers_to_stop = also_stop_servers
             .into_iter()
             .flat_map(|selector| match selector {
                 LanguageServerSelector::Id(id) => Some(id),
@@ -10503,7 +10518,7 @@ impl LspStore {
                         code_description: diagnostic
                             .code_description
                             .as_ref()
-                            .map(|d| d.href.clone()),
+                            .and_then(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         markdown: adapter.as_ref().and_then(|adapter| {
                             adapter.diagnostic_message_to_markdown(&diagnostic.message)
@@ -10530,7 +10545,7 @@ impl LspStore {
                                     code_description: diagnostic
                                         .code_description
                                         .as_ref()
-                                        .map(|c| c.href.clone()),
+                                        .and_then(|d| d.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
                                     markdown: adapter.as_ref().and_then(|adapter| {
                                         adapter.diagnostic_message_to_markdown(&info.message)

@@ -3,17 +3,23 @@ pub struct MessageHistory<T> {
     current: Option<usize>,
 }
 
-impl<T> MessageHistory<T> {
-    pub fn new() -> Self {
+impl<T> Default for MessageHistory<T> {
+    fn default() -> Self {
         MessageHistory {
             items: Vec::new(),
             current: None,
         }
     }
+}
 
+impl<T> MessageHistory<T> {
     pub fn push(&mut self, message: T) {
         self.current.take();
         self.items.push(message);
+    }
+
+    pub fn reset_position(&mut self) {
+        self.current.take();
     }
 
     pub fn prev(&mut self) -> Option<&T> {
@@ -46,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_prev_next() {
-        let mut history = MessageHistory::new();
+        let mut history = MessageHistory::default();
 
         // Test empty history
         assert_eq!(history.prev(), None);

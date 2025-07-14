@@ -787,6 +787,15 @@ impl ActiveThread {
                     .unwrap()
             }
         });
+
+        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
+            Some(cx.observe_release(&workspace, |this, _, cx| {
+                this.dismiss_notifications(cx);
+            }))
+        } else {
+            None
+        };
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -832,6 +841,10 @@ impl ActiveThread {
                     cx,
                 );
             }
+        }
+
+        if let Some(subscription) = workspace_subscription {
+            this._subscriptions.push(subscription);
         }
 
         this
