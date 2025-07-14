@@ -9660,12 +9660,11 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=c9c189f1c5dd53c624a419ce35bc77ad6a908d18#c9c189f1c5dd53c624a419ce35bc77ad6a908d18"
+source = "git+https://github.com/zed-industries/lsp-types?rev=6add7052b598ea1f40f7e8913622c3958b009b60#6add7052b598ea1f40f7e8913622c3958b009b60"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
  "serde_json",
- "serde_repr",
  "url",
 ]
 

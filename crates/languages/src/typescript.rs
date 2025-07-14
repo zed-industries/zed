@@ -863,7 +863,7 @@ impl LspAdapter for EsLintLspAdapter {
             },
             "experimental": {
                 "useFlatConfig": use_flat_config,
-            },
+            }
         });
 
         let override_options = cx.update(|cx| {
