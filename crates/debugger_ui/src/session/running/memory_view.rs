@@ -20,6 +20,8 @@ use ui::{
 use util::ResultExt;
 use workspace::Workspace;
 
+use crate::session::running::stack_frame_list::StackFrameList;
+
 actions!(debugger, [GoToSelectedAddress]);
 
 pub(crate) struct MemoryView {
@@ -27,6 +29,7 @@ pub(crate) struct MemoryView {
     scroll_handle: UniformListScrollHandle,
     scroll_state: ScrollbarState,
     show_scrollbar: bool,
+    stack_frame_list: WeakEntity<StackFrameList>,
     hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     view_state: ViewState,
@@ -124,6 +127,7 @@ impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
         workspace: WeakEntity<Workspace>,
+        stack_frame_list: WeakEntity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -137,6 +141,7 @@ impl MemoryView {
             workspace,
             scroll_state,
             scroll_handle,
+            stack_frame_list,
             show_scrollbar: false,
             hide_scrollbar_task: None,
             focus_handle: cx.focus_handle(),
@@ -280,17 +285,11 @@ impl MemoryView {
         cx.spawn(async move |this, cx| {
             let access_size = access_size.await.unwrap_or(1);
             this.update(cx, |this, cx| {
-                this.view_state.base_row =
-                    (as_address & !0xfff) / this.view_state.line_width.width as u64;
                 this.view_state.selection = Some(SelectedMemoryRange::DragComplete(Drag {
                     start_address: as_address,
                     end_address: as_address + access_size - 1,
                 }));
-                let line_ix = (as_address & 0xfff) / this.view_state.line_width.width as u64;
-                this.scroll_handle
-                    .scroll_to_item(line_ix as usize, ScrollStrategy::Center);
-
-                cx.notify();
+                this.jump_to_address(as_address, cx);
             })
             .ok();
         })
@@ -508,21 +507,48 @@ impl MemoryView {
         if !self.query_editor.focus_handle(cx).is_focused(window) {
             return;
         }
-        self.jump_to_typed_address(cx);
+        self.jump_to_query_bar_address(cx);
     }
 
-    fn jump_to_typed_address(&mut self, cx: &mut Context<Self>) {
+    fn jump_to_query_bar_address(&mut self, cx: &mut Context<Self>) {
         use parse_int::parse;
         let text = self.query_editor.read(cx).text(cx);
 
         let Ok(as_address) = parse::<u64>(&text) else {
-            return;
+            return self.jump_to_expression(text, cx);
         };
-        self.view_state.base_row = (as_address & !0xfff) / self.view_state.line_width.width as u64;
-        let line_ix = (as_address & 0xfff) / self.view_state.line_width.width as u64;
+        self.jump_to_address(as_address, cx);
+    }
+
+    fn jump_to_address(&mut self, address: u64, cx: &mut Context<Self>) {
+        self.view_state.base_row = (address & !0xfff) / self.view_state.line_width.width as u64;
+        let line_ix = (address & 0xfff) / self.view_state.line_width.width as u64;
         self.scroll_handle
             .scroll_to_item(line_ix as usize, ScrollStrategy::Center);
         cx.notify();
+    }
+
+    fn jump_to_expression(&mut self, expr: String, cx: &mut Context<Self>) {
+        let Ok(selected_frame) = self
+            .stack_frame_list
+            .update(cx, |this, cx| this.opened_stack_frame_id())
+        else {
+            return;
+        };
+        let reference = self.session.update(cx, |this, cx| {
+            this.memory_reference_of_expr(selected_frame, expr, cx)
+        });
+        cx.spawn(async move |this, cx| {
+            if let Some(reference) = reference.await {
+                _ = this.update(cx, |this, cx| {
+                    let Ok(address) = parse_int::parse::<u64>(&reference) else {
+                        return;
+                    };
+                    this.jump_to_address(address, cx);
+                });
+            }
+        })
+        .detach();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -560,7 +586,7 @@ impl MemoryView {
         self.query_editor.update(cx, |this, cx| {
             this.set_text(as_query, window, cx);
         });
-        self.jump_to_typed_address(cx);
+        self.jump_to_query_bar_address(cx);
     }
 
     fn deploy_memory_context_menu(

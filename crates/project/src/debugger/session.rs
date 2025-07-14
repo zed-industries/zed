@@ -1771,6 +1771,29 @@ impl Session {
         })
     }
 
+    pub fn memory_reference_of_expr(
+        &mut self,
+        frame_id: Option<u64>,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<String>> {
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+
+                context: Some(EvaluateArgumentsContext::Repl),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            result.memory_reference
+        })
+    }
+
     pub fn write_memory(&mut self, address: u64, data: &[u8], cx: &mut Context<Self>) {
         let data = base64::engine::general_purpose::STANDARD.encode(data);
         self.request(
