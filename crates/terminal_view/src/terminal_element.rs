@@ -497,44 +497,24 @@ impl TerminalElement {
     /// Checks if a character is a decorative block/box-like character that should
     /// preserve its exact colors without contrast adjustment.
     ///
-    /// This includes:
-    /// - Unicode box drawing, block elements, and geometric shapes
-    /// - Braille patterns and common symbols
-    /// - Powerline symbols and other terminal glyphs from Private Use Area
-    /// - Font icon sets commonly used in terminals (Nerd Fonts, etc.)
-    ///
-    /// These characters are typically used for visual borders, separators, and
-    /// icons where exact color matching is important for the visual design.
+    /// This specifically targets characters used as visual connectors, separators,
+    /// and borders where color matching with adjacent backgrounds is critical.
+    /// Regular icons (git, folders, etc.) are excluded as they need to remain readable.
     ///
     /// Fixes https://github.com/zed-industries/zed/issues/34234
     fn is_decorative_character(ch: char) -> bool {
         matches!(
             ch as u32,
             // Unicode Box Drawing and Block Elements
-            0x2500..=0x257F // Box Drawing
-            | 0x2580..=0x259F // Block Elements
-            | 0x25A0..=0x25FF // Geometric Shapes (includes triangles, circles, etc.)
-            | 0x2600..=0x26FF // Miscellaneous Symbols (includes stars, weather, etc.)
-            | 0x2700..=0x27BF // Dingbats
-            | 0x2800..=0x28FF // Braille Patterns
+            0x2500..=0x257F // Box Drawing (└ ┐ ─ │ etc.)
+            | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
+            | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc. - includes triangular/circular separators)
 
-            // Private Use Area - Common terminal/font icon ranges
-            | 0xE000..=0xE00F // Pomicons
-            | 0xE0A0..=0xE0A3 // Powerline Extra Symbols
-            | 0xE0B0..=0xE0C8 // Powerline Symbols
-            | 0xE0CA..=0xE0FF // Powerline Extra Symbols continued
-            | 0xE200..=0xE2A9 // Font Awesome Extension
-            | 0xE300..=0xE3E3 // Weather Icons
-            | 0xE5FA..=0xE6B5 // Seti-UI + Custom
-            | 0xE700..=0xE7C5 // Devicons
-            | 0xE800..=0xEA88 // Font Awesome
-            | 0xEA60..=0xEBEB // Codicons
-            | 0xF000..=0xF2E0 // Font Awesome (main range)
-            | 0xF0001..=0xF1AF0 // Material Design Icons
-            | 0xF300..=0xF32F // Font Logos
-            | 0xF400..=0xF532 // Octicons
-            | 0xF500..=0xFD46 // Material Design Icons
-            | 0xFD50..=0xFDFF // IEC Power Symbols
+            // Private Use Area - Powerline separator symbols only
+            | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
+            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
+            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
+            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
         )
     }
 
@@ -1660,23 +1640,17 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
         assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
 
-        // Other common terminal glyphs
-        assert!(TerminalElement::is_decorative_character('\u{E0A0}')); // Version control branch
-        assert!(TerminalElement::is_decorative_character('\u{F00C}')); // Font Awesome check
-        assert!(TerminalElement::is_decorative_character('\u{F111}')); // Font Awesome circle
-        assert!(TerminalElement::is_decorative_character('\u{E711}')); // Devicons
-        assert!(TerminalElement::is_decorative_character('\u{EA71}')); // Codicons folder
-        assert!(TerminalElement::is_decorative_character('\u{F401}')); // Octicons
-        assert!(TerminalElement::is_decorative_character('\u{FD50}')); // IEC Power Symbol
-
         // Characters that should NOT be considered decorative
         assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
         assert!(!TerminalElement::is_decorative_character('$')); // Symbol
         assert!(!TerminalElement::is_decorative_character(' ')); // Space
         assert!(!TerminalElement::is_decorative_character('←')); // U+2190 (Arrow, not in our ranges)
         assert!(!TerminalElement::is_decorative_character('→')); // U+2192 (Arrow, not in our ranges)
+        assert!(!TerminalElement::is_decorative_character('\u{F00C}')); // Font Awesome check (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{E711}')); // Devicons (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{EA71}')); // Codicons folder (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{F401}')); // Octicons (icon, needs contrast)
         assert!(!TerminalElement::is_decorative_character('\u{1F600}')); // Emoji (not in our ranges)
-        assert!(!TerminalElement::is_decorative_character('\u{FFFE}')); // Not in our ranges
     }
 
     #[test]
