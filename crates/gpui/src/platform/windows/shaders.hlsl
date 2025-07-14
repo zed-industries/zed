@@ -40,12 +40,13 @@ struct LinearColorStop {
 struct Background {
     // 0u is Solid
     // 1u is LinearGradient
+    // 2u is PatternSlash
     uint tag;
     // 0u is sRGB linear color
     // 1u is Oklab color
     uint color_space;
     Hsla solid;
-    float angle;
+    float gradient_angle_or_pattern_height;
     LinearColorStop colors[2];
     uint pad;
 };
@@ -295,6 +296,12 @@ GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, Hsl
     return output;
 }
 
+float2x2 rotate2d(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return float2x2(c, -s, s, c);
+}
+
 float4 gradient_color(Background background,
                       float2 position,
                       Bounds bounds,
@@ -307,7 +314,8 @@ float4 gradient_color(Background background,
             break;
         case 1: {
             // -90 degrees to match the CSS gradient angle.
-            float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+            float gradient_angle = background.gradient_angle_or_pattern_height;
+            float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
             float2 direction = float2(cos(radians), sin(radians));
 
             // Expand the short side to be the same as the long side
@@ -345,6 +353,22 @@ float4 gradient_color(Background background,
                     break;
                 }
             }
+            break;
+        }
+        case 2: {
+            float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
+            float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
+            float pattern_interval = fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
+            float pattern_height = pattern_width + pattern_interval;
+            float stripe_angle = M_PI_F / 4.0;
+            float pattern_period = pattern_height * sin(stripe_angle);
+            float2x2 rotation = rotate2d(stripe_angle);
+            float2 relative_position = position - bounds.origin;
+            float2 rotated_point = mul(rotation, relative_position);
+            float pattern = fmod(rotated_point.x, pattern_period);
+            float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
+            color = solid_color;
+            color.a *= saturate(0.5 - distance);
             break;
         }
     }
