@@ -634,7 +634,7 @@ impl DirectWriteState {
         let advance = [0.0f32];
         let offset = [DWRITE_GLYPH_OFFSET::default()];
         let glyph_run = DWRITE_GLYPH_RUN {
-            fontFace: ManuallyDrop::new(Some(font.font_face.cast()?)),
+            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
             fontEmSize: params.font_size.0,
             glyphCount: 1,
             glyphIndices: glyph_id.as_ptr(),
@@ -644,7 +644,6 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
-        let transform = DWRITE_MATRIX::default();
         let rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC;
         let measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
         let baseline_origin_x = 0.0;
@@ -653,7 +652,7 @@ impl DirectWriteState {
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
-                Some(&transform as *const _),
+                None,
                 rendering_mode,
                 measuring_mode,
                 DWRITE_GRID_FIT_MODE_DEFAULT,
@@ -830,7 +829,7 @@ impl DirectWriteState {
                 ));
             }
 
-            let mut alpha_data = vec![0u8; (width * height) as usize];
+            let mut alpha_data = vec![0u8; (width * height * 3) as usize];
 
             unsafe {
                 glyph_analysis.CreateAlphaTexture(
