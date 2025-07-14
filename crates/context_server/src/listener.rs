@@ -8,7 +8,7 @@ use futures::{
     select_biased,
 };
 use gpui::{App, AppContext, AsyncApp, Task};
-use serde_json::value::RawValue;
+use serde_json::{json, value::RawValue};
 use smol::{
     net::unix::{UnixListener, UnixStream},
     stream::StreamExt,
@@ -198,6 +198,14 @@ impl McpServer {
                             incoming_tx.unbounded_send(message).log_err();
                         }
                         Err(error) => {
+                            outgoing_bytes.write_all(serde_json::to_string(&json!({
+                                "jsonrpc": "2.0",
+                                "error": json!({
+                                    "code": -32603,
+                                    "message": format!("Failed to parse: {error}"),
+                                }),
+                            }))?.as_bytes()).await?;
+                            outgoing_bytes.write_all(&[b'\n']).await?;
                             log::error!("failed to parse incoming message: {error}. Raw: {incoming_line}");
                         }
                     }
