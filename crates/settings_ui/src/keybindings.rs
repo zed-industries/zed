@@ -12,7 +12,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent,
     Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero, KeyContext,
-    KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
+    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
     ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
@@ -1895,6 +1895,8 @@ struct KeystrokeInput {
 }
 
 impl KeystrokeInput {
+    const KEYSTROKE_COUNT_MAX: usize = 3;
+
     fn new(
         placeholder_keystrokes: Option<Vec<Keystroke>>,
         window: &mut Window,
@@ -1918,70 +1920,65 @@ impl KeystrokeInput {
         }
     }
 
+    fn dummy(modifiers: Modifiers) -> Keystroke {
+        return Keystroke {
+            modifiers,
+            key: "".to_string(),
+            key_char: None,
+        };
+    }
+
+    fn keystrokes_changed(&self, cx: &mut Context<Self>) {
+        cx.emit(());
+        cx.notify();
+    }
+
     fn on_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let keystrokes_len = self.keystrokes.len();
+
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
+            && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !event.modifiers.modified() {
                 self.keystrokes.pop();
-                cx.emit(());
             } else {
                 last.modifiers = event.modifiers;
             }
-        } else {
-            self.keystrokes.push(Keystroke {
-                modifiers: event.modifiers,
-                key: "".to_string(),
-                key_char: None,
-            });
-            cx.emit(());
+            self.keystrokes_changed(cx);
+        } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
+            self.keystrokes.push(Self::dummy(event.modifiers));
+            self.keystrokes_changed(cx);
         }
         cx.stop_propagation();
-        cx.notify();
     }
 
     fn handle_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
-        if let Some(last) = self.keystrokes.last_mut()
+        if let Some(last) = self.keystrokes.last()
             && last.key.is_empty()
+            && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
         {
-            *last = keystroke.clone();
-        } else if Some(keystroke) != self.keystrokes.last() {
+            self.keystrokes.pop();
+        }
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(keystroke.clone());
+            if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                self.keystrokes.push(Self::dummy(keystroke.modifiers));
+            }
         }
-        cx.emit(());
+        self.keystrokes_changed(cx);
         cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn on_key_up(
-        &mut self,
-        event: &gpui::KeyUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(last) = self.keystrokes.last_mut()
-            && !last.key.is_empty()
-            && last.modifiers == event.keystroke.modifiers
-        {
-            cx.emit(());
-            self.keystrokes.push(Keystroke {
-                modifiers: event.keystroke.modifiers,
-                key: "".to_string(),
-                key_char: None,
-            });
-        }
-        cx.stop_propagation();
-        cx.notify();
     }
 
     fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.intercept_subscription.is_none() {
             let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
+                dbg!(&event.keystroke);
                 this.handle_keystroke(&event.keystroke, cx);
             });
             self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
@@ -2184,8 +2181,14 @@ impl Render for KeystrokeInput {
                     .id("keystroke-input-inner")
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-                    .on_key_up(cx.listener(Self::on_key_up))
                     .size_full()
+                    .when(self.highlight_on_focus, |this| {
+                        this.focus(|mut style| {
+                            style.border_color = Some(colors.border_focused);
+                            style
+                        })
+                    })
+                    .w_full()
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
