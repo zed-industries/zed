@@ -73,7 +73,9 @@ impl Tool for ProjectNotificationsTool {
         } else {
             // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
             const HEADER: &str = include_str!("./project_notifications_tool/prompt_header.txt");
-            format!("{HEADER}{stale_files}").replace("\r\n", "\n")
+
+            let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
+            format!("{HEADER}{stale_files}\n{patch}").replace("\r\n", "\n")
         };
 
         Task::ready(Ok(response.into())).into()

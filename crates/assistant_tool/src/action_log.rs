@@ -49,6 +49,7 @@ impl ActionLog {
 
     pub fn latest_snapshot(&self, buffer: &Entity<Buffer>) -> Option<text::BufferSnapshot> {
         Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
+    }
 
     /// Returns user edits made since the agent last read the buffers
     pub fn user_edits_since_last_read(&self) -> Vec<(Entity<Buffer>, Patch<u32>)> {
@@ -67,16 +68,80 @@ impl ActionLog {
             .collect()
     }
 
-    pub fn user_edits_since_last_read_patch(&self) -> String {
+    pub fn user_edits_since_last_read_patch(&self, cx: &Context<Self>) -> String {
         self.user_edits_since_last_read()
             .iter()
-            .map(|(buffer, patch)| Self::format_patch(patch.clone(), buffer.clone()))
+            .map(|(buffer, patch)| Self::format_patch(patch.clone(), buffer.clone(), cx))
             .collect::<Vec<String>>()
             .join("\n")
     }
 
     fn format_patch(patch: Patch<u32>, buffer: Entity<Buffer>, cx: &Context<Self>) -> String {
-        buffer.read_with(cx, |buffer, cx| buffer.base_text().
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
+        // Get file path for header
+        let file_path = buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx).to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
+
+        let mut result = String::new();
+        result.push_str(&format!("--- a/{}\n", file_path));
+        result.push_str(&format!("+++ b/{}\n", file_path));
+
+        // Process each edit in the patch
+        for edit in patch.edits() {
+            let old_start = edit.old.start as usize;
+            let old_end = edit.old.end as usize;
+            let new_start = edit.new.start as usize;
+            let new_end = edit.new.end as usize;
+
+            // Convert offsets to line numbers for header
+            let old_start_point = buffer_snapshot.offset_to_point(old_start);
+            let old_end_point = buffer_snapshot.offset_to_point(old_end);
+            let new_start_point = buffer_snapshot.offset_to_point(new_start);
+            let new_end_point = buffer_snapshot.offset_to_point(new_end);
+
+            // Calculate line counts
+            let old_line_count = if old_end > old_start {
+                old_end_point.row - old_start_point.row + 1
+            } else {
+                0
+            };
+            let new_line_count = if new_end > new_start {
+                new_end_point.row - new_start_point.row + 1
+            } else {
+                0
+            };
+
+            // Add hunk header
+            result.push_str(&format!(
+                "@@ -{},{} +{},{} @@\n",
+                old_start_point.row + 1,
+                old_line_count,
+                new_start_point.row + 1,
+                new_line_count
+            ));
+
+            // Add old text (deletions)
+            if old_end > old_start {
+                let old_text: String = buffer_snapshot.text_for_range(old_start..old_end).collect();
+                for line in old_text.lines() {
+                    result.push_str(&format!("-{}\n", line));
+                }
+            }
+
+            // Add new text (additions)
+            if new_end > new_start {
+                let new_text: String = buffer_snapshot.text_for_range(new_start..new_end).collect();
+                for line in new_text.lines() {
+                    result.push_str(&format!("+{}\n", line));
+                }
+            }
+        }
+
+        result
     }
 
     fn track_buffer_internal(
@@ -2331,5 +2396,57 @@ mod tests {
                 })
                 .collect()
         })
+    }
+
+    #[gpui::test]
+    async fn test_format_patch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"test.txt": "line1\nline2\nline3\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/test.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            // Track the buffer and mark it as read first
+            action_log.update(cx, |log, cx| {
+                log.buffer_read(buffer.clone(), cx);
+            });
+
+            // Make some edits to create a patch
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 0)..Point::new(1, 5), "CHANGED")], None, cx)
+                    .unwrap(); // Replace "line2" with "CHANGED"
+            });
+        });
+
+        cx.run_until_parked();
+
+        // Get the patch
+        let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
+
+        // Verify the patch format contains expected unified diff elements
+        assert!(patch.contains("--- a/"));
+        assert!(patch.contains("+++ b/"));
+        assert!(patch.contains("@@"));
+        assert!(patch.contains("test.txt"));
+
+        // Verify the patch is not empty and shows actual changes
+        assert!(!patch.is_empty());
+
+        // The patch should show line-based changes for our edit
+        assert!(patch.lines().count() > 4); // Header lines + actual diff lines
     }
 }
