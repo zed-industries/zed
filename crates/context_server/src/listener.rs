@@ -126,11 +126,9 @@ impl McpServer {
 
         cx.background_spawn(Self::handle_io(outgoing_rx, incoming_tx, write, read))
             .detach();
-        dbg!();
 
         cx.spawn(async move |cx| {
             while let Some(request) = incoming_rx.next().await {
-                dbg!();
                 let Some(request_id) = request.id.clone() else {
                     continue;
                 };
@@ -179,7 +177,6 @@ impl McpServer {
             select_biased! {
                 message = outgoing_rx.next().fuse() => {
                     if let Some(message) = message {
-                        dbg!(&message);
                         log::trace!("send: {}", &message);
                         outgoing_bytes.write_all(message.as_bytes()).await?;
                         outgoing_bytes.write_all(&[b'\n']).await?;
@@ -191,7 +188,6 @@ impl McpServer {
                     if bytes_read? == 0 {
                         break
                     }
-                    dbg!(&incoming_line);
                     log::trace!("recv: {}", &incoming_line);
                     match serde_json::from_str(&incoming_line) {
                         Ok(message) => {

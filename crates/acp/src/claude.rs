@@ -151,6 +151,7 @@ impl ClaudeAgentConnection {
         cx.background_spawn(async move {
             io_task.await.log_err();
             drop(mcp_config_path);
+            drop(child);
         })
         .detach();
         let end_turn_tx = Rc::new(RefCell::new(None));
@@ -186,7 +187,6 @@ impl ClaudeAgentConnection {
         end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
         tool_id_map: &mut HashMap<String, acp::ToolCallId>,
     ) {
-        dbg!(&message);
         match message {
             SdkMessage::Assistant { message, .. } | SdkMessage::User { message, .. } => {
                 for chunk in message.content {

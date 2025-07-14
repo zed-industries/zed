@@ -23,6 +23,7 @@ dependencies = [
  "log",
  "markdown",
  "project",
+ "schemars",
  "serde",
  "serde_json",
  "settings",

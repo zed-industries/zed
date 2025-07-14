@@ -7,6 +7,7 @@ use context_server::{
     },
 };
 use gpui::{App, Task};
+use schemars::JsonSchema;
 use serde_json::json;
 
 use crate::claude::McpServerConfig;
@@ -17,6 +18,13 @@ pub struct PermissionMcpServer {
 
 pub const SERVER_NAME: &str = "zed";
 pub const TOOL_NAME: &str = "request_confirmation";
+
+#[derive(JsonSchema)]
+struct PermissionToolSchema {
+    tool_name: String,
+    input: serde_json::Value,
+    tool_use_id: Option<String>,
+}
 
 impl PermissionMcpServer {
     pub fn new(cx: &App) -> Result<Self> {
@@ -35,7 +43,7 @@ impl PermissionMcpServer {
             command: zed_path,
             args: vec![
                 "--nc".into(),
-                dbg!(self.server.socket_path().display().to_string()),
+                self.server.socket_path().display().to_string(),
             ],
             env: None,
         })
@@ -56,7 +64,7 @@ impl PermissionMcpServer {
                     }),
                 },
                 server_info: Implementation {
-                    name: "Zed MCP Server".into(),
+                    name: SERVER_NAME.into(),
                     version: "0.1.0".into(),
                 },
                 meta: None,
@@ -69,8 +77,7 @@ impl PermissionMcpServer {
             Ok(ListToolsResponse {
                 tools: vec![Tool {
                     name: TOOL_NAME.into(),
-                    // todo!
-                    input_schema: json!({}),
+                    input_schema: schemars::schema_for!(PermissionToolSchema).into(),
                     description: None,
                     annotations: None,
                 }],
