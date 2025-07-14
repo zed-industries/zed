@@ -748,6 +748,7 @@ mod tests {
             )
         }
     }
+
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::App) {
         let test_values = [
@@ -1461,9 +1462,11 @@ impl<'a> TabStopCursor<'a> {
     }
 
     fn is_char_boundary(&self) -> bool {
+        // FIXME: if idx is 128 should we return false or be at the next chunk?
+        // idx might also be 1-indexed instead of 0-indexed, need to double check
         self.current_chunk
             .as_ref()
-            .is_some_and(|(chunk, idx)| (chunk.chars & (1 << idx)) != 0)
+            .is_some_and(|(chunk, idx)| (chunk.chars & (1 << *idx.min(&127))) != 0)
     }
 
     /// distance: length to move forward while searching for the next tab stop

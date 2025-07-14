@@ -1,5 +1,8 @@
 use criterion::{Bencher, BenchmarkId};
-use editor::{Editor, EditorMode, MultiBuffer, actions::MoveDown};
+use editor::{
+    Editor, EditorMode, MultiBuffer,
+    actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
+};
 use gpui::{AppContext, Focusable as _, TestAppContext, TestDispatcher};
 use project::Project;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -7,16 +10,64 @@ use settings::SettingsStore;
 use ui::IntoElement;
 use util::RandomCharIter;
 
-fn editor_with_one_long_line(_bencher: &mut Bencher<'_>, args: &(String, TestAppContext)) {
-    let (text, cx) = args;
+fn editor_input_with_1000_cursors(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
     let mut cx = cx.clone();
+    let text = String::from_iter(["line:\n"; 500]);
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
 
     let cx = cx.add_empty_window();
-    let _editor = cx.update(|window, cx| {
-        let editor = cx.new(|cx| Editor::new(EditorMode::full(), buffer, None, window, cx));
+    let editor = cx.update(|window, cx| {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            editor.select_all(&SelectAll, window, cx);
+            editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
+            editor
+        });
         window.focus(&editor.focus_handle(cx));
         editor
+    });
+
+    bencher.iter(|| {
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.handle_input("hello world", window, cx);
+                editor.delete_to_previous_word_start(
+                    &DeleteToPreviousWordStart {
+                        ignore_newlines: false,
+                    },
+                    window,
+                    cx,
+                );
+                editor.delete_to_previous_word_start(
+                    &DeleteToPreviousWordStart {
+                        ignore_newlines: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        })
+    });
+}
+
+fn open_editor_with_one_long_line(bencher: &mut Bencher<'_>, args: &(String, TestAppContext)) {
+    let (text, cx) = args;
+    let mut cx = cx.clone();
+
+    bencher.iter(|| {
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+
+        let cx = cx.add_empty_window();
+        let _ = cx.update(|window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                editor.set_style(editor::EditorStyle::default(), window, cx);
+                editor
+            });
+            window.focus(&editor.focus_handle(cx));
+            editor
+        });
     });
 }
 
@@ -37,14 +88,18 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 
     let cx = cx.add_empty_window();
     let editor = cx.update(|window, cx| {
-        let editor = cx.new(|cx| Editor::new(EditorMode::full(), buffer, None, window, cx));
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_style(editor::EditorStyle::default(), window, cx);
+            editor
+        });
         window.focus(&editor.focus_handle(cx));
         editor
     });
 
     bencher.iter(|| {
         cx.update(|window, cx| {
-            editor.update(cx, |editor, cx| editor.move_down(&MoveDown, window, cx));
+            // editor.update(cx, |editor, cx| editor.move_down(&MoveDown, window, cx));
             let mut view = editor.clone().into_any_element();
             let _ = view.request_layout(window, cx);
             let _ = view.prepaint(window, cx);
@@ -73,18 +128,32 @@ pub fn benches() {
         (criterion::Criterion::default()).configure_from_args();
 
     // setup app context
-    criterion.bench_with_input(
+    let mut group = criterion.benchmark_group("Time to render");
+    group.bench_with_input(
         BenchmarkId::new("editor_render", "TestAppContext"),
         &cx,
         editor_render,
     );
 
-    let text = String::from_iter(["char"; 100000]);
-    criterion.bench_with_input(
+    group.finish();
+
+    let text = String::from_iter(["char"; 1000]);
+    let mut group = criterion.benchmark_group("Build buffer with one long line");
+    group.bench_with_input(
         BenchmarkId::new("editor_with_one_long_line", "(String, TestAppContext )"),
-        &(text, cx),
-        editor_with_one_long_line,
+        &(text, cx.clone()),
+        open_editor_with_one_long_line,
     );
+
+    group.finish();
+
+    let mut group = criterion.benchmark_group("multi cursor edits");
+    group.bench_with_input(
+        BenchmarkId::new("editor_input_with_1000_cursors", "TestAppContext"),
+        &cx,
+        editor_input_with_1000_cursors,
+    );
+    group.finish();
 }
 
 fn main() {
