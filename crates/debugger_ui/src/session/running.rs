@@ -689,7 +689,8 @@ impl RunningState {
 
         let debug_terminal =
             parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
-        let memory_view = cx.new(|cx| MemoryView::new(session.clone(), window, cx));
+        let memory_view =
+            cx.new(|cx| MemoryView::new(session.clone(), workspace.clone(), window, cx));
         let variable_list = cx.new(|cx| {
             VariableList::new(
                 session.clone(),

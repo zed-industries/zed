@@ -4399,6 +4399,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "notifications",
  "parking_lot",
  "parse_int",
  "paths",

@@ -2,10 +2,11 @@ use std::{ops::RangeInclusive, sync::LazyLock, time::Duration};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    AppContext, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, ScrollStrategy,
-    ScrollWheelEvent, Stateful, Task, TextStyle, UniformList, UniformListScrollHandle, bounds,
-    point, size, uniform_list,
+    AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent,
+    ScrollStrategy, ScrollWheelEvent, Stateful, Task, TextStyle, UniformList,
+    UniformListScrollHandle, WeakEntity, bounds, point, size, uniform_list,
 };
+use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -13,11 +14,13 @@ use ui::{
     ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
     FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
     ParentElement, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
-    StatefulInteractiveElement, Styled, TextSize, Window, div, h_flex, px, v_flex,
+    StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
+use workspace::Workspace;
 
 pub(crate) struct MemoryView {
+    workspace: WeakEntity<Workspace>,
     scroll_handle: UniformListScrollHandle,
     scroll_state: ScrollbarState,
     show_scrollbar: bool,
@@ -110,20 +113,18 @@ static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
 impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let view_state = ViewState::new(0, WIDTHS[4].clone());
         let scroll_handle = UniformListScrollHandle::default();
 
-        let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Go to Memory Address / Expression", cx);
-            editor
-        });
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
 
         let scroll_state = ScrollbarState::new(scroll_handle.clone());
-        Self {
+        let mut this = Self {
+            workspace,
             scroll_state,
             scroll_handle,
             show_scrollbar: false,
@@ -133,8 +134,10 @@ impl MemoryView {
             query_editor,
             session,
             width_picker_handle: Default::default(),
-            is_writing_memory: false,
-        }
+            is_writing_memory: true,
+        };
+        this.change_query_bar_mode(false, window, cx);
+        this
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
@@ -407,14 +410,70 @@ impl MemoryView {
             .0;
         cx.notify();
     }
+
+    fn change_query_bar_mode(
+        &mut self,
+        is_writing_memory: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if is_writing_memory == self.is_writing_memory {
+            return;
+        }
+        if !self.is_writing_memory {
+            self.query_editor.update(cx, |this, cx| {
+                this.clear(window, cx);
+                this.set_placeholder_text("Write to Selected Memory Range", cx);
+            });
+            self.is_writing_memory = true;
+            self.query_editor.focus_handle(cx).focus(window);
+        } else {
+            self.query_editor.update(cx, |this, cx| {
+                this.clear(window, cx);
+                this.set_placeholder_text("Go to Memory Address / Expression", cx);
+            });
+            self.is_writing_memory = false;
+        }
+    }
+
     fn change_address(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
             if !self.is_writing_memory {
-                self.query_editor.update(cx, |this, cx| {
-                    this.clear(window, cx);
+                let should_return = self.session.update(cx, |session, cx| {
+                    if !session
+                        .capabilities()
+                        .supports_write_memory_request
+                        .unwrap_or_default()
+                        || true
+                    {
+                        let adapter_name = session.adapter();
+                        // We cannot write memory with this adapter.
+                        _ = self.workspace.update(cx, |this, cx| {
+                            this.toggle_status_toast(
+                                StatusToast::new(format!(
+                                    "Debug Adapter `{adapter_name}` does not support writing to memory"
+                                ), cx, |this, cx| {
+                                    cx.spawn(async move |this, cx| {
+                                        cx.background_executor().timer(Duration::from_secs(2)).await;
+                                        _ = this.update(cx, |_, cx| {
+                                            cx.emit(DismissEvent)
+                                        });
+                                    }).detach();
+                                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                }),
+                                cx,
+                            );
+                        });
+                        true
+                    } else {
+                        false
+                    }
                 });
-                self.is_writing_memory = true;
-                self.query_editor.focus_handle(cx).focus(window);
+                if should_return {
+                    return;
+                }
+
+                self.change_query_bar_mode(true, window, cx);
             } else if self.query_editor.focus_handle(cx).is_focused(window) {
                 let mut text = self.query_editor.read(cx).text(cx);
                 if text.chars().any(|c| !c.is_ascii_hexdigit()) {
@@ -428,7 +487,7 @@ impl MemoryView {
                         this.write_memory(*range.start(), &as_hex, cx);
                     }
                 });
-                self.is_writing_memory = false;
+                self.change_query_bar_mode(false, window, cx);
             }
 
             cx.notify();
@@ -629,10 +688,13 @@ impl Render for MemoryView {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let icon = if self.is_writing_memory {
-            IconName::Pencil
+        let (icon, tooltip_text) = if self.is_writing_memory {
+            (IconName::Pencil, "Edit memory at a selected address")
         } else {
-            IconName::ArrowCircle
+            (
+                IconName::LocationEdit,
+                "Change address of currently viewed memory",
+            )
         };
         v_flex()
             .id("Memory-view")
@@ -674,7 +736,12 @@ impl Render for MemoryView {
                                 |this| this.border_color(cx.theme().colors().border_focused),
                                 |this| this.border_color(cx.theme().colors().border_transparent),
                             )
-                            .child(Icon::new(icon).size(ui::IconSize::XSmall))
+                            .child(
+                                div()
+                                    .id("memory-view-editor-icon")
+                                    .child(Icon::new(icon).size(ui::IconSize::XSmall))
+                                    .tooltip(Tooltip::text(tooltip_text)),
+                            )
                             .child(self.render_query_bar(cx)),
                     )
                     .child(self.render_width_picker(window, cx)),
