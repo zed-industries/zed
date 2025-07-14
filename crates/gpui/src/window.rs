@@ -1273,7 +1273,7 @@ impl Window {
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
-
+        println!("actually setting focus");
         self.focus = Some(handle.id);
         self.clear_pending_keystrokes();
         self.refresh();
@@ -1808,6 +1808,13 @@ impl Window {
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
+
+        dbg!(
+            &previous_focus_path,
+            &current_focus_path,
+            &previous_window_active,
+            &current_window_active
+        );
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
