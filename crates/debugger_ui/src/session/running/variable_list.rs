@@ -676,11 +676,11 @@ impl VariableList {
                         |menu, variables_reference| {
                             if let Some(_) = self.session.update(cx, |session, cx| {
                                 session.data_breakpoint_info(
-                                    DataBreakpointContext::Variable {
+                                    Arc::new(DataBreakpointContext::Variable {
                                         variables_reference,
                                         name: variable.name.clone(),
                                         bytes: None,
-                                    },
+                                    }),
                                     None,
                                     cx,
                                 )
@@ -746,17 +746,14 @@ impl VariableList {
             return;
         };
 
+        let context = Arc::new(DataBreakpointContext::Variable {
+            variables_reference: var_ref,
+            name: name.clone(),
+            bytes: None,
+        });
         let Some(data_id) = self.session.update(cx, |session, cx| {
             session
-                .data_breakpoint_info(
-                    DataBreakpointContext::Variable {
-                        variables_reference: var_ref,
-                        name: name.clone(),
-                        bytes: None,
-                    },
-                    None,
-                    cx,
-                )
+                .data_breakpoint_info(context.clone(), None, cx)
                 .and_then(|info| info.data_id)
         }) else {
             return;
@@ -764,6 +761,7 @@ impl VariableList {
 
         self.session.update(cx, |session, cx| {
             session.create_data_breakpoint(
+                context,
                 data_id.clone(),
                 dap::DataBreakpoint {
                     data_id,

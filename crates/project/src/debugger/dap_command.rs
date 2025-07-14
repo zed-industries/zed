@@ -1686,9 +1686,31 @@ pub enum DataBreakpointContext {
     },
 }
 
+impl DataBreakpointContext {
+    pub fn human_readable_label(&self) -> String {
+        match self {
+            DataBreakpointContext::Variable { name, .. } => format!("Variable: {}", name),
+            DataBreakpointContext::Expression { expression, .. } => {
+                format!("Expression: {}", expression)
+            }
+            DataBreakpointContext::Address { address, bytes } => {
+                let mut label = format!("Address: {}", address);
+                if let Some(bytes) = bytes {
+                    label.push_str(&format!(
+                        " ({} byte{})",
+                        bytes,
+                        if *bytes == 1 { "" } else { "s" }
+                    ));
+                }
+                label
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct DataBreakpointInfoCommand {
-    pub context: DataBreakpointContext,
+    pub context: Arc<DataBreakpointContext>,
     pub mode: Option<String>,
 }
 
@@ -1704,7 +1726,7 @@ impl LocalDapCommand for DataBreakpointInfoCommand {
     }
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        let (variables_reference, name, frame_id, as_address, bytes) = match &self.context {
+        let (variables_reference, name, frame_id, as_address, bytes) = match &*self.context {
             DataBreakpointContext::Variable {
                 variables_reference,
                 name,

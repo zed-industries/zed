@@ -24,10 +24,10 @@ use project::{
 };
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div,
-    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
-    Render, RenderOnce, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
-    Styled, Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
+    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
+    Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -190,7 +190,7 @@ impl BreakpointList {
                     (SelectedBreakpointKind::Exception, bp.is_enabled)
                 }
                 BreakpointEntryKind::DataBreakpoint(bp) => {
-                    (SelectedBreakpointKind::Data, bp.is_enabled)
+                    (SelectedBreakpointKind::Data, bp.0.is_enabled)
                 }
             })
         })
@@ -426,7 +426,10 @@ impl BreakpointList {
                 let id = exception_breakpoint.id.clone();
                 self.toggle_exception_breakpoint(&id, cx);
             }
-            BreakpointEntryKind::DataBreakpoint(data_breakpoint) => {}
+            BreakpointEntryKind::DataBreakpoint(data_breakpoint) => {
+                let id = data_breakpoint.0.dap.data_id.clone();
+                self.toggle_data_breakpoint(&id, cx);
+            }
         }
         cx.notify();
     }
@@ -494,6 +497,14 @@ impl BreakpointList {
             self.strip_mode.take();
         }
         cx.notify();
+    }
+
+    fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            session.update(cx, |this, cx| {
+                this.toggle_data_breakpoint(&id, cx);
+            });
+        }
     }
 
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -794,11 +805,8 @@ impl Render for BreakpointList {
             session
                 .read(cx)
                 .data_breakpoints()
-                .map(|(dap, is_enabled)| BreakpointEntry {
-                    kind: BreakpointEntryKind::DataBreakpoint(DataBreakpoint {
-                        dap: dap.clone(),
-                        is_enabled: *is_enabled,
-                    }),
+                .map(|state| BreakpointEntry {
+                    kind: BreakpointEntryKind::DataBreakpoint(DataBreakpoint(state.clone())),
                     weak: weak.clone(),
                 })
         });
@@ -1023,10 +1031,7 @@ struct ExceptionBreakpoint {
     is_enabled: bool,
 }
 #[derive(Clone, Debug)]
-struct DataBreakpoint {
-    dap: dap::DataBreakpoint,
-    is_enabled: bool,
-}
+struct DataBreakpoint(project::debugger::session::DataBreakpointState);
 
 impl DataBreakpoint {
     fn render(
@@ -1038,31 +1043,32 @@ impl DataBreakpoint {
         focus_handle: FocusHandle,
         list: WeakEntity<BreakpointList>,
     ) -> ListItem {
-        let color = if self.is_enabled {
+        let color = if self.0.is_enabled {
             Color::Debugger
         } else {
             Color::Muted
         };
-        let is_enabled = self.is_enabled;
+        let is_enabled = self.0.is_enabled;
+        let id = self.0.dap.data_id.clone();
         ListItem::new(SharedString::from(format!(
             "data-breakpoint-ui-item-{}",
-            self.dap.data_id
+            self.0.dap.data_id
         )))
         .rounded()
         .start_slot(
             div()
                 .id(SharedString::from(format!(
                     "data-breakpoint-ui-item-{}-click-handler",
-                    self.dap.data_id
+                    self.0.dap.data_id
                 )))
                 .tooltip({
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
                             if is_enabled {
-                                "Disable Exception Breakpoint"
+                                "Disable Data Breakpoint"
                             } else {
-                                "Enable Exception Breakpoint"
+                                "Enable Data Breakpoint"
                             },
                             &ToggleEnableBreakpoint,
                             &focus_handle,
@@ -1074,10 +1080,10 @@ impl DataBreakpoint {
                 .on_click({
                     let list = list.clone();
                     move |_, _, cx| {
-                        // list.update(cx, |this, cx| {
-                        //     this.toggle_exception_breakpoint(&id, cx);
-                        // })
-                        // .ok();
+                        list.update(cx, |this, cx| {
+                            this.toggle_data_breakpoint(&id, cx);
+                        })
+                        .ok();
                     }
                 })
                 .cursor_pointer()
@@ -1101,7 +1107,7 @@ impl DataBreakpoint {
                         .justify_center()
                         .id(("data-breakpoint-label", ix))
                         .child(
-                            Label::new(self.dap.data_id.clone())
+                            Label::new(self.0.context.human_readable_label())
                                 .size(LabelSize::Small)
                                 .line_height_style(ui::LineHeightStyle::UiLabel),
                         ),
@@ -1295,7 +1301,7 @@ impl BreakpointEntry {
             .into(),
             BreakpointEntryKind::DataBreakpoint(data_breakpoint) => format!(
                 "data-breakpoint-control-strip--{}",
-                data_breakpoint.dap.data_id
+                data_breakpoint.0.dap.data_id
             )
             .into(),
         }
