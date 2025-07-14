@@ -8,9 +8,6 @@ Zed implements the client side of the protocol, and various _debug adapters_ imp
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
-> We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
-> You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
-
 ## Supported Languages
 
 To debug code written in a specific language, Zed needs to find a debug adapter for that language. Some debug adapters are provided by Zed without additional setup, and some are provided by [language extensions](./extensions/debugger-extensions.md). The following languages currently have debug adapters available:
