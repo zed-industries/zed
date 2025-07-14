@@ -814,7 +814,7 @@ impl DapCommand for RestartCommand {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VariablesCommand {
     pub variables_reference: u64,
     pub filter: Option<VariablesArgumentsFilter>,
@@ -1901,7 +1901,7 @@ impl DapCommand for LocationsCommand {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct ReadMemory {
     pub(crate) memory_reference: String,
     pub(crate) offset: Option<u64>,
@@ -1951,25 +1951,6 @@ impl LocalDapCommand for ReadMemory {
             content: data.into(),
             unreadable_bytes: message.unreadable_bytes,
         })
-    }
-}
-
-impl LocalDapCommand for dap::DataBreakpointInfoArguments {
-    type Response = dap::DataBreakpointInfoResponse;
-    type DapRequest = dap::requests::DataBreakpointInfo;
-    const CACHEABLE: bool = true;
-    fn is_supported(capabilities: &Capabilities) -> bool {
-        capabilities.supports_data_breakpoints.unwrap_or_default()
-    }
-    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        self.clone()
-    }
-
-    fn response_from_dap(
-        &self,
-        message: <Self::DapRequest as dap::requests::Request>::Response,
-    ) -> Result<Self::Response> {
-        Ok(message)
     }
 }
 
