@@ -1808,17 +1808,18 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
+        println!(
+            "dbg! Window::draw - pre-swap: rendered_frame.focus = {:?}, next_frame.focus = {:?}",
+            self.rendered_frame.focus, self.next_frame.focus
+        );
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        println!(
+            "dbg! Window::draw - post-swap: rendered_frame.focus = {:?}, next_frame.focus = {:?}",
+            self.rendered_frame.focus, self.next_frame.focus
+        );
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
-
-        dbg!(
-            &previous_focus_path,
-            &current_focus_path,
-            &previous_window_active,
-            &current_window_active
-        );
 
         if previous_focus_path != current_focus_path
             || previous_window_active != current_window_active
@@ -3789,11 +3790,7 @@ impl Window {
         action: &dyn Action,
         cx: &mut App,
     ) {
-        dbg!("dispatch_action_on_node");
-        dbg!(action.name());
-        dbg!(action.as_any().type_id());
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
-        dbg!(&dispatch_path);
 
         // Capture phase for global actions.
         cx.propagate_event = true;
@@ -3801,15 +3798,9 @@ impl Window {
             .global_action_listeners
             .remove(&action.as_any().type_id())
         {
-            dbg!(
-                "Found global listeners for capture phase",
-                global_listeners.len()
-            );
             for listener in &global_listeners {
-                dbg!("Executing global listener in capture phase");
                 listener(action.as_any(), DispatchPhase::Capture, cx);
                 if !cx.propagate_event {
-                    dbg!("Event propagation stopped in global capture phase");
                     break;
                 }
             }
@@ -3838,11 +3829,9 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    dbg!("Found window action listener in capture phase", node_id);
                     listener(any_action, DispatchPhase::Capture, self, cx);
 
                     if !cx.propagate_event {
-                        dbg!("Event propagation stopped in window capture phase");
                         return;
                     }
                 }
@@ -3859,12 +3848,10 @@ impl Window {
             {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
-                    dbg!("Found window action listener in bubble phase", node_id);
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
                     listener(any_action, DispatchPhase::Bubble, self, cx);
 
                     if !cx.propagate_event {
-                        dbg!("Event propagation stopped in window bubble phase");
                         return;
                     }
                 }
@@ -3876,17 +3863,11 @@ impl Window {
             .global_action_listeners
             .remove(&action.as_any().type_id())
         {
-            dbg!(
-                "Found global listeners for bubble phase",
-                global_listeners.len()
-            );
             for listener in global_listeners.iter().rev() {
-                dbg!("Executing global listener in bubble phase");
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 if !cx.propagate_event {
-                    dbg!("Event propagation stopped in global bubble phase");
                     break;
                 }
             }
