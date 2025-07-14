@@ -8,7 +8,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, Role,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, Role,
 };
 use menu;
 use open_ai::ResponseStreamEvent;
@@ -310,6 +310,14 @@ impl LanguageModel for XAiLanguageModel {
             LanguageModelToolChoice::Auto
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
+        }
+    }
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        let model_id = self.model.id().trim().to_lowercase();
+        if model_id.eq(x_ai::Model::Grok4.id()) {
+            LanguageModelToolSchemaFormat::JsonSchemaSubset
+        } else {
+            LanguageModelToolSchemaFormat::JsonSchema
         }
     }
 
