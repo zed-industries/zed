@@ -236,6 +236,7 @@ mod tests {
     use crate::fake::Ollama;
 
     use gpui::{AppContext, TestAppContext};
+
     use language::Buffer;
     use project::Project;
     use settings::SettingsStore;
@@ -404,6 +405,64 @@ mod tests {
             assert_eq!(editor.text(cx), "let items = vec![");
             // Completion should still be active for remaining text
             assert!(editor.has_active_inline_completion());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_completion_invalidation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
+        let (provider, fake_http_client) = Ollama::fake(cx);
+
+        // Set up the editor with the Ollama provider
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        });
+
+        editor_cx.set_state("fooˇ");
+
+        // Configure completion response that extends the current text
+        fake_http_client.set_generate_response("bar");
+
+        // Trigger the completion through the provider
+        let buffer =
+            editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap().clone());
+        let cursor_position = editor_cx.buffer_snapshot().anchor_after(3); // After "foo"
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer, cursor_position, false, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.refresh_inline_completion(false, true, window, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            assert!(editor.has_active_inline_completion());
+            assert_eq!(editor.display_text(cx), "foobar");
+            assert_eq!(editor.text(cx), "foo");
+
+            // Backspace within the original text - completion should remain
+            editor.backspace(&Default::default(), window, cx);
+            assert!(editor.has_active_inline_completion());
+            assert_eq!(editor.display_text(cx), "fobar");
+            assert_eq!(editor.text(cx), "fo");
+
+            editor.backspace(&Default::default(), window, cx);
+            assert!(editor.has_active_inline_completion());
+            assert_eq!(editor.display_text(cx), "fbar");
+            assert_eq!(editor.text(cx), "f");
+
+            // This backspace removes all original text - should invalidate completion
+            editor.backspace(&Default::default(), window, cx);
+            assert!(!editor.has_active_inline_completion());
+            assert_eq!(editor.display_text(cx), "");
+            assert_eq!(editor.text(cx), "");
         });
     }
 }
