@@ -9094,6 +9094,7 @@ dependencies = [
  "util",
  "vercel",
  "workspace-hack",
+ "x_ai",
  "zed_llm_client",
 ]
 
@@ -19839,6 +19840,17 @@ name = "x11rb-protocol"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec107c4503ea0b4a98ef47356329af139c0a4f7750e621cf2973cd3385ebcb3d"
+
+[[package]]
+name = "x_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
+]
 
 [[package]]
 name = "xattr"
