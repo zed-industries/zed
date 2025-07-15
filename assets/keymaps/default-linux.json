@@ -1120,5 +1120,14 @@
       "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter"
     }
+  },
+  {
+    "context": "KeystrokeInput",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "keystroke_input::StartRecording",
+      "escape escape escape": "keystroke_input::StopRecording",
+      "delete": "keystroke_input::ClearKeystrokes"
+    }
   }
 ]

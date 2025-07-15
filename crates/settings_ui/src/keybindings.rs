@@ -12,7 +12,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent,
     Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero, KeyContext,
-    KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
     ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
@@ -65,6 +65,18 @@ actions!(
         ToggleConflictFilter,
         /// Toggle Keystroke search
         ToggleKeystrokeSearch,
+    ]
+);
+
+actions!(
+    keystroke_input,
+    [
+        /// Starts recording keystrokes
+        StartRecording,
+        /// Stops recording keystrokes
+        StopRecording,
+        /// Clears the recorded keystrokes
+        ClearKeystrokes,
     ]
 );
 
@@ -1883,6 +1895,13 @@ async fn remove_keybinding(
     Ok(())
 }
 
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+enum CloseKeystrokeResult {
+    Partial,
+    Close,
+    None,
+}
+
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
@@ -1892,9 +1911,13 @@ struct KeystrokeInput {
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
     search: bool,
+    close_keystrokes: Option<Vec<Keystroke>>,
+    close_keystrokes_start: Option<usize>,
 }
 
 impl KeystrokeInput {
+    const KEYSTROKE_COUNT_MAX: usize = 3;
+
     fn new(
         placeholder_keystrokes: Option<Vec<Keystroke>>,
         window: &mut Window,
@@ -1915,7 +1938,81 @@ impl KeystrokeInput {
             intercept_subscription: None,
             _focus_subscriptions,
             search: false,
+            close_keystrokes: None,
+            close_keystrokes_start: None,
         }
+    }
+
+    fn dummy(modifiers: Modifiers) -> Keystroke {
+        return Keystroke {
+            modifiers,
+            key: "".to_string(),
+            key_char: None,
+        };
+    }
+
+    fn keystrokes_changed(&self, cx: &mut Context<Self>) {
+        cx.emit(());
+        cx.notify();
+    }
+
+    fn key_context() -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("KeystrokeInput");
+        key_context
+    }
+
+    fn handle_possible_close_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> CloseKeystrokeResult {
+        let Some(keybind_for_close_action) = window
+            .highest_precedence_binding_for_action_in_context(&StopRecording, Self::key_context())
+        else {
+            log::trace!("No keybinding to stop recording keystrokes in keystroke input");
+            self.close_keystrokes.take();
+            return CloseKeystrokeResult::None;
+        };
+        let action_keystrokes = keybind_for_close_action.keystrokes();
+
+        if let Some(mut close_keystrokes) = self.close_keystrokes.take() {
+            let mut index = 0;
+
+            while index < action_keystrokes.len() && index < close_keystrokes.len() {
+                if !close_keystrokes[index].should_match(&action_keystrokes[index]) {
+                    break;
+                }
+                index += 1;
+            }
+            if index == close_keystrokes.len() {
+                if index >= action_keystrokes.len() {
+                    self.close_keystrokes_start.take();
+                    return CloseKeystrokeResult::None;
+                }
+                if keystroke.should_match(&action_keystrokes[index]) {
+                    if action_keystrokes.len() >= 1 && index == action_keystrokes.len() - 1 {
+                        self.stop_recording(&StopRecording, window, cx);
+                        return CloseKeystrokeResult::Close;
+                    } else {
+                        close_keystrokes.push(keystroke.clone());
+                        self.close_keystrokes = Some(close_keystrokes);
+                        return CloseKeystrokeResult::Partial;
+                    }
+                } else {
+                    self.close_keystrokes_start.take();
+                    return CloseKeystrokeResult::None;
+                }
+            }
+        } else if let Some(first_action_keystroke) = action_keystrokes.first()
+            && keystroke.should_match(first_action_keystroke)
+        {
+            self.close_keystrokes = Some(vec![keystroke.clone()]);
+            return CloseKeystrokeResult::Partial;
+        }
+        self.close_keystrokes_start.take();
+        return CloseKeystrokeResult::None;
     }
 
     fn on_modifiers_changed(
@@ -1924,65 +2021,60 @@ impl KeystrokeInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let keystrokes_len = self.keystrokes.len();
+
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
+            && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if !event.modifiers.modified() {
                 self.keystrokes.pop();
-                cx.emit(());
             } else {
                 last.modifiers = event.modifiers;
             }
-        } else {
-            self.keystrokes.push(Keystroke {
-                modifiers: event.modifiers,
-                key: "".to_string(),
-                key_char: None,
-            });
-            cx.emit(());
+            self.keystrokes_changed(cx);
+        } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
+            self.keystrokes.push(Self::dummy(event.modifiers));
+            self.keystrokes_changed(cx);
         }
         cx.stop_propagation();
-        cx.notify();
     }
 
-    fn handle_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
-        if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
-        {
-            *last = keystroke.clone();
-        } else if Some(keystroke) != self.keystrokes.last() {
-            self.keystrokes.push(keystroke.clone());
-        }
-        cx.emit(());
-        cx.stop_propagation();
-        cx.notify();
-    }
-
-    fn on_key_up(
+    fn handle_keystroke(
         &mut self,
-        event: &gpui::KeyUpEvent,
-        _window: &mut Window,
+        keystroke: &Keystroke,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(last) = self.keystrokes.last_mut()
-            && !last.key.is_empty()
-            && last.modifiers == event.keystroke.modifiers
-        {
-            cx.emit(());
-            self.keystrokes.push(Keystroke {
-                modifiers: event.keystroke.modifiers,
-                key: "".to_string(),
-                key_char: None,
-            });
+        let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
+        if close_keystroke_result == CloseKeystrokeResult::Close {
+            return;
         }
+        if let Some(last) = self.keystrokes.last()
+            && last.key.is_empty()
+            && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
+        {
+            self.keystrokes.pop();
+        }
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+            if close_keystroke_result == CloseKeystrokeResult::Partial
+                && self.close_keystrokes_start.is_none()
+            {
+                self.close_keystrokes_start = Some(self.keystrokes.len());
+            }
+            self.keystrokes.push(keystroke.clone());
+            if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                self.keystrokes.push(Self::dummy(keystroke.modifiers));
+            }
+        }
+        self.keystrokes_changed(cx);
         cx.stop_propagation();
-        cx.notify();
     }
 
     fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.intercept_subscription.is_none() {
-            let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, _window, cx| {
-                this.handle_keystroke(&event.keystroke, cx);
+            let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, window, cx| {
+                this.handle_keystroke(&event.keystroke, window, cx);
             });
             self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
         }
@@ -2014,18 +2106,22 @@ impl KeystrokeInput {
         return &self.keystrokes;
     }
 
-    fn render_keystrokes(&self) -> impl Iterator<Item = Div> {
-        let (keystrokes, color) = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+    fn render_keystrokes(&self, is_recording: bool) -> impl Iterator<Item = Div> {
+        let keystrokes = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
             && self.keystrokes.is_empty()
         {
-            (placeholders, Color::Placeholder)
+            if is_recording {
+                &[]
+            } else {
+                placeholders.as_slice()
+            }
         } else {
-            (&self.keystrokes, Color::Default)
+            &self.keystrokes
         };
         keystrokes.iter().map(move |keystroke| {
             h_flex().children(ui::render_keystroke(
                 keystroke,
-                Some(color),
+                Some(Color::Default),
                 Some(rems(0.875).into()),
                 ui::PlatformStyle::platform(),
                 false,
@@ -2039,6 +2135,40 @@ impl KeystrokeInput {
 
     fn set_search_mode(&mut self, search: bool) {
         self.search = search;
+    }
+
+    fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.outer_focus_handle.is_focused(window) {
+            return;
+        }
+        self.clear_keystrokes(&ClearKeystrokes, window, cx);
+        window.focus(&self.inner_focus_handle);
+        cx.notify();
+    }
+
+    fn stop_recording(&mut self, _: &StopRecording, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.inner_focus_handle.is_focused(window) {
+            return;
+        }
+        window.focus(&self.outer_focus_handle);
+        if let Some(close_keystrokes_start) = self.close_keystrokes_start.take() {
+            self.keystrokes.drain(close_keystrokes_start..);
+        }
+        self.close_keystrokes.take();
+        cx.notify();
+    }
+
+    fn clear_keystrokes(
+        &mut self,
+        _: &ClearKeystrokes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.outer_focus_handle.is_focused(window) {
+            return;
+        }
+        self.keystrokes.clear();
+        cx.notify();
     }
 }
 
@@ -2062,6 +2192,22 @@ impl Render for KeystrokeInput {
             .editor_background
             .blend(colors.text_accent.opacity(0.1));
 
+        let recording_pulse = || {
+            Icon::new(IconName::Circle)
+                .size(IconSize::Small)
+                .color(Color::Error)
+                .with_animation(
+                    "recording-pulse",
+                    Animation::new(std::time::Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(gpui::pulsating_between(0.4, 0.8)),
+                    {
+                        let color = Color::Error.color(cx);
+                        move |this, delta| this.color(Color::Custom(color.opacity(delta)))
+                    },
+                )
+        };
+
         let recording_indicator = h_flex()
             .h_4()
             .pr_1()
@@ -2072,21 +2218,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Small)
-                    .color(Color::Error)
-                    .with_animation(
-                        "recording-pulse",
-                        Animation::new(std::time::Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
-                        {
-                            let color = Color::Error.color(cx);
-                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
-                        },
-                    ),
-            )
+            .child(recording_pulse())
             .child(
                 Label::new("REC")
                     .size(LabelSize::XSmall)
@@ -2104,21 +2236,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Small)
-                    .color(Color::Accent)
-                    .with_animation(
-                        "recording-pulse",
-                        Animation::new(std::time::Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
-                        {
-                            let color = Color::Accent.color(cx);
-                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
-                        },
-                    ),
-            )
+            .child(recording_pulse())
             .child(
                 Label::new("SEARCH")
                     .size(LabelSize::XSmall)
@@ -2156,13 +2274,9 @@ impl Render for KeystrokeInput {
             .when(is_focused, |parent| {
                 parent.border_color(colors.border_focused)
             })
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                // TODO: replace with action
-                if !event.keystroke.modifiers.modified() && event.keystroke.key == "enter" {
-                    window.focus(&this.inner_focus_handle);
-                    cx.notify();
-                }
-            }))
+            .key_context(Self::key_context())
+            .on_action(cx.listener(Self::start_recording))
+            .on_action(cx.listener(Self::stop_recording))
             .child(
                 h_flex()
                     .w(horizontal_padding)
@@ -2184,13 +2298,19 @@ impl Render for KeystrokeInput {
                     .id("keystroke-input-inner")
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-                    .on_key_up(cx.listener(Self::on_key_up))
                     .size_full()
+                    .when(self.highlight_on_focus, |this| {
+                        this.focus(|mut style| {
+                            style.border_color = Some(colors.border_focused);
+                            style
+                        })
+                    })
+                    .w_full()
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
                     .gap(ui::DynamicSpacing::Base04.rems(cx))
-                    .children(self.render_keystrokes()),
+                    .children(self.render_keystrokes(is_recording)),
             )
             .child(
                 h_flex()
@@ -2204,15 +2324,18 @@ impl Render for KeystrokeInput {
                                 IconButton::new("stop-record-btn", IconName::StopFilled)
                                     .shape(ui::IconButtonShape::Square)
                                     .map(|this| {
-                                        if self.search {
-                                            this.tooltip(Tooltip::text("Stop Searching"))
-                                        } else {
-                                            this.tooltip(Tooltip::text("Stop Recording"))
-                                        }
+                                        this.tooltip(Tooltip::for_action_title(
+                                            if self.search {
+                                                "Stop Searching"
+                                            } else {
+                                                "Stop Recording"
+                                            },
+                                            &StopRecording,
+                                        ))
                                     })
                                     .icon_color(Color::Error)
-                                    .on_click(cx.listener(|this, _event, window, _cx| {
-                                        this.outer_focus_handle.focus(window);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.stop_recording(&StopRecording, window, cx);
                                     })),
                             )
                         } else {
@@ -2220,15 +2343,18 @@ impl Render for KeystrokeInput {
                                 IconButton::new("record-btn", record_icon)
                                     .shape(ui::IconButtonShape::Square)
                                     .map(|this| {
-                                        if self.search {
-                                            this.tooltip(Tooltip::text("Start Searching"))
-                                        } else {
-                                            this.tooltip(Tooltip::text("Start Recording"))
-                                        }
+                                        this.tooltip(Tooltip::for_action_title(
+                                            if self.search {
+                                                "Start Searching"
+                                            } else {
+                                                "Start Recording"
+                                            },
+                                            &StartRecording,
+                                        ))
                                     })
                                     .when(!is_focused, |this| this.icon_color(Color::Muted))
-                                    .on_click(cx.listener(|this, _event, window, _cx| {
-                                        this.inner_focus_handle.focus(window);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.start_recording(&StartRecording, window, cx);
                                     })),
                             )
                         }
@@ -2236,14 +2362,15 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("clear-btn", IconName::Delete)
                             .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Clear Keystrokes"))
+                            .tooltip(Tooltip::for_action_title(
+                                "Clear Keystrokes",
+                                &ClearKeystrokes,
+                            ))
                             .when(!is_recording || !is_focused, |this| {
                                 this.icon_color(Color::Muted)
                             })
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.keystrokes.clear();
-                                cx.emit(());
-                                cx.notify();
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),
                     ),
             );
