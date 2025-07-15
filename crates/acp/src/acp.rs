@@ -1,10 +1,10 @@
 pub use acp::ToolCallId;
 use agent_servers::AgentServer;
-use agentic_coding_protocol::{self as acp, UserMessageChunk};
+use agentic_coding_protocol::{self as acp, ToolCallLocation, UserMessageChunk};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
-use editor::{MultiBuffer, PathKey};
+use editor::{Bias, MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -769,6 +769,11 @@ impl AcpThread {
             status,
         };
 
+        let location = call.locations.last().cloned();
+        if let Some(location) = location {
+            self.set_project_location(location, cx)
+        }
+
         self.push_entry(AgentThreadEntry::ToolCall(call), cx);
 
         id
@@ -831,6 +836,11 @@ impl AcpThread {
             }
         }
 
+        let location = call.locations.last().cloned();
+        if let Some(location) = location {
+            self.set_project_location(location, cx)
+        }
+
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
     }
@@ -850,6 +860,37 @@ impl AcpThread {
                 None
             }
         }
+    }
+
+    pub fn set_project_location(&self, location: ToolCallLocation, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
+                return;
+            };
+            let buffer = project.open_buffer(path, cx);
+            cx.spawn(async move |project, cx| {
+                let buffer = buffer.await?;
+
+                project.update(cx, |project, cx| {
+                    let position = if let Some(line) = location.line {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
+                        snapshot.anchor_before(point)
+                    } else {
+                        Anchor::MIN
+                    };
+
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })
+            })
+            .detach_and_log_err(cx);
+        });
     }
 
     /// Returns true if the last turn is awaiting tool authorization
@@ -1780,7 +1821,7 @@ mod tests {
 
                 Ok(AgentServerCommand {
                     path: "node".into(),
-                    args: vec![cli_path, "--acp".into()],
+                    args: vec![cli_path, "--experimental-acp".into()],
                     env: None,
                 })
             }
