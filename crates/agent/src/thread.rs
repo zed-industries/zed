@@ -1316,7 +1316,12 @@ impl Thread {
                 .generate_assistant_system_prompt(project_context, model_context)
             {
                 Err(err) => {
-                    log::error!("Error generating system prompt: {err:?}");
+                    let message = format!("{err:?}").into();
+                    log::error!("{message}");
+                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                        header: "Error generating system prompt".into(),
+                        message,
+                    }));
                 }
                 Ok(system_prompt) => {
                     request.messages.push(LanguageModelRequestMessage {
@@ -1327,7 +1332,12 @@ impl Thread {
                 }
             }
         } else {
-            log::error!("Context for system prompt unexpectedly not ready.");
+            let message = "Context for system prompt unexpectedly not ready.".into();
+            log::error!("{message}");
+            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                header: "Error generating system prompt".into(),
+                message,
+            }));
         }
 
         let mut message_ix_to_cache = None;
@@ -1919,9 +1929,12 @@ impl Thread {
                                         }
                                     }
 
-                                    log::info!(
-                                        "Model refused to generate content for safety reasons."
-                                    );
+                                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                        header: "Language model refusal".into(),
+                                        message:
+                                            "Model refused to generate content for safety reasons."
+                                                .into(),
+                                    }));
                                 }
                             }
 
