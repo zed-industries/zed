@@ -461,9 +461,9 @@ struct Quad {
 };
 
 struct QuadVertexOutput {
+    nointerpolation uint quad_id: TEXCOORD0;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
-    nointerpolation uint quad_id: TEXCOORD0;
     nointerpolation float4 background_solid: COLOR1;
     nointerpolation float4 background_color0: COLOR2;
     nointerpolation float4 background_color1: COLOR3;
@@ -512,9 +512,9 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     input.background_solid, input.background_color0, input.background_color1);
 
     bool unrounded = quad.corner_radii.top_left == 0.0 &&
-    quad.corner_radii.bottom_left == 0.0 &&
-    quad.corner_radii.top_right == 0.0 &&
-    quad.corner_radii.bottom_right == 0.0;
+        quad.corner_radii.top_right == 0.0 &&
+        quad.corner_radii.bottom_left == 0.0 &&
+        quad.corner_radii.bottom_right == 0.0;
 
     // Fast path when the quad is not rounded and doesn't have any border
     if (quad.border_widths.top == 0.0 &&
@@ -796,19 +796,6 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 **
 */
 
-struct ShadowVertexOutput {
-    float4 position: SV_Position;
-    nointerpolation float4 color: COLOR;
-    nointerpolation uint shadow_id: TEXCOORD0;
-    float4 clip_distance: SV_ClipDistance;
-};
-
-struct ShadowFragmentInput {
-  float4 position: SV_Position;
-  float4 color: COLOR;
-  nointerpolation uint shadow_id: TEXCOORD0;
-};
-
 struct Shadow {
     uint order;
     float blur_radius;
@@ -816,6 +803,19 @@ struct Shadow {
     Corners corner_radii;
     Bounds content_mask;
     Hsla color;
+};
+
+struct ShadowVertexOutput {
+    nointerpolation uint shadow_id: TEXCOORD0;
+    float4 position: SV_Position;
+    nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct ShadowFragmentInput {
+  nointerpolation uint shadow_id: TEXCOORD0;
+  float4 position: SV_Position;
+  nointerpolation float4 color: COLOR;
 };
 
 StructuredBuffer<Shadow> shadows: register(t1);
@@ -950,16 +950,16 @@ struct Underline {
 };
 
 struct UnderlineVertexOutput {
+  nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
-  nointerpolation uint underline_id: TEXCOORD0;
   float4 clip_distance: SV_ClipDistance;
 };
 
 struct UnderlineFragmentInput {
+  nointerpolation uint underline_id: TEXCOORD0;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
-  nointerpolation uint underline_id: TEXCOORD0;
 };
 
 StructuredBuffer<Underline> underlines: register(t1);
@@ -1075,16 +1075,16 @@ struct PolychromeSprite {
 };
 
 struct PolychromeSpriteVertexOutput {
+    nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
-    nointerpolation uint sprite_id: TEXCOORD0;
     float4 clip_distance: SV_ClipDistance;
 };
 
 struct PolychromeSpriteFragmentInput {
+    nointerpolation uint sprite_id: TEXCOORD0;
     float4 position: SV_Position;
     float2 tile_position: POSITION;
-    nointerpolation uint sprite_id: TEXCOORD0;
 };
 
 StructuredBuffer<PolychromeSprite> poly_sprites: register(t1);
@@ -1115,10 +1115,6 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
         float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = float4(grayscale, sample.a);
     }
-    // if ((sprite.grayscale & 0xFFu) != 0u) {
-    //     float3 grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
-    //     color = float4(grayscale, sample.a);
-    // }
     color.a *= sprite.opacity * saturate(0.5 - distance);
     return color;
 }

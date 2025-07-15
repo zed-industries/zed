@@ -58,7 +58,6 @@ struct DirectXGlobalElements {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
     blend_state: ID3D11BlendState,
-    blend_state_for_pr: ID3D11BlendState,
 }
 
 #[repr(C)]
@@ -601,13 +600,11 @@ impl DirectXGlobalElements {
         };
 
         let blend_state = create_blend_state(device)?;
-        let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
 
         Ok(Self {
             global_params_buffer,
             sampler,
             blend_state,
-            blend_state_for_pr,
         })
     }
 }
@@ -849,7 +846,7 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     let desc = D3D11_RASTERIZER_DESC {
         FillMode: D3D11_FILL_SOLID,
         CullMode: D3D11_CULL_NONE,
-        // CullMode: D3D11_CULL_BACK,
+        // FrontCounterClockwise: true.into(),
         FrontCounterClockwise: false.into(),
         DepthBias: 0,
         DepthBiasClamp: 0.0,
@@ -879,25 +876,6 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
-    unsafe {
-        let mut state = None;
-        device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
-    }
-}
-
-fn create_blend_state_for_path_raster(device: &ID3D11Device) -> Result<ID3D11BlendState> {
-    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
-    // device performs the blend in linear space, which is ideal.
-    let mut desc = D3D11_BLEND_DESC::default();
-    desc.RenderTarget[0].BlendEnable = true.into();
-    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
@@ -989,13 +967,6 @@ fn create_buffer_view(
 }
 
 fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: u32) -> Result<ID3D11Buffer> {
-    // let desc = D3D11_BUFFER_DESC {
-    //     ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
-    //     Usage: D3D11_USAGE_DYNAMIC,
-    //     BindFlags: D3D11_BIND_INDIRECT_DRAW.0 as u32,
-    //     MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
-    //     ..Default::default()
-    // };
     let desc = D3D11_BUFFER_DESC {
         ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
         Usage: D3D11_USAGE_DYNAMIC,
@@ -1173,20 +1144,6 @@ fn update_buffer<T>(
     Ok(())
 }
 
-fn update_indirect_buffer(
-    device_context: &ID3D11DeviceContext,
-    buffer: &ID3D11Buffer,
-    data: &[DrawInstancedIndirectArgs],
-) -> Result<()> {
-    unsafe {
-        let mut dest = std::mem::zeroed();
-        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
-        std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
-        device_context.Unmap(buffer, 0);
-    }
-    Ok(())
-}
-
 fn prepare_indirect_draws(
     device_context: &ID3D11DeviceContext,
     pipeline: &PathsPipelineState,
@@ -1314,7 +1271,6 @@ mod shader_resources {
                 &mut compile_blob,
                 Some(&mut error_blob),
             );
-            println!("Shader compile result: {:?}", ret);
             if ret.is_err() {
                 let Some(error_blob) = error_blob else {
                     return Err(anyhow::anyhow!("{ret:?}"));
@@ -1325,8 +1281,8 @@ mod shader_resources {
                     string_len,
                     string_len,
                 );
-                let error_string = String::from_utf8_lossy(&error_string_encode);
-                println!("Shader compile error: {}", error_string);
+                let error_string = String::from_utf8_lossy(&error_string_encode).to_string();
+                log::error!("Shader compile error: {}", error_string);
                 return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
             Ok(compile_blob.unwrap())
