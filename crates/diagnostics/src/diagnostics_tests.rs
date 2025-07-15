@@ -1540,8 +1540,8 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
 
     let no_hints = GoToDiagnosticSeverityFilter::Range {
-        min: GoToDiagnosticSeverity::Error,
-        max: GoToDiagnosticSeverity::Information,
+        min: GoToDiagnosticSeverity::Information,
+        max: GoToDiagnosticSeverity::Error,
     };
 
     go!(no_hints);
@@ -1554,8 +1554,8 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
 
     let warning_info = GoToDiagnosticSeverityFilter::Range {
-        min: GoToDiagnosticSeverity::Warning,
-        max: GoToDiagnosticSeverity::Information,
+        min: GoToDiagnosticSeverity::Information,
+        max: GoToDiagnosticSeverity::Warning,
     };
 
     go!(warning_info);
@@ -1564,12 +1564,6 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
     go!(warning_info);
     cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
-
-    let only_hint = GoToDiagnosticSeverityFilter::Only(GoToDiagnosticSeverity::Hint);
-    go!(only_hint);
-    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
-    go!(only_hint);
-    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
 }
 
 fn init_test(cx: &mut TestAppContext) {

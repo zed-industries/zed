@@ -331,13 +331,13 @@ impl DiagnosticSeverity {
 #[serde(rename_all = "snake_case")]
 pub enum GoToDiagnosticSeverity {
     /// Errors
-    Error = 0,
+    Error = 3,
     /// Warnings
-    Warning = 1,
+    Warning = 2,
     /// Information
-    Information = 2,
+    Information = 1,
     /// Hints
-    Hint = 3,
+    Hint = 0,
 }
 
 impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
@@ -354,11 +354,11 @@ impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
 
 impl GoToDiagnosticSeverity {
     pub fn min() -> Self {
-        Self::Error
+        Self::Hint
     }
 
     pub fn max() -> Self {
-        Self::Hint
+        Self::Error
     }
 }
 
@@ -391,16 +391,11 @@ impl Default for GoToDiagnosticSeverityFilter {
 
 impl GoToDiagnosticSeverityFilter {
     pub fn matches(&self, severity: lsp::DiagnosticSeverity) -> bool {
-        println!("comparing {severity:?} to {self:?}");
         let severity: GoToDiagnosticSeverity = severity.into();
-        let result = match self {
+        match self {
             Self::Only(target) => *target == severity,
             Self::Range { min, max } => severity >= *min && severity <= *max,
-        };
-
-        println!("result: {result:?}");
-
-        result
+        }
     }
 }
 
