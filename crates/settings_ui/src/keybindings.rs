@@ -2324,11 +2324,14 @@ impl Render for KeystrokeInput {
                                 IconButton::new("stop-record-btn", IconName::StopFilled)
                                     .shape(ui::IconButtonShape::Square)
                                     .map(|this| {
-                                        if self.search {
-                                            this.tooltip(Tooltip::text("Stop Searching"))
-                                        } else {
-                                            this.tooltip(Tooltip::text("Stop Recording"))
-                                        }
+                                        this.tooltip(Tooltip::for_action_title(
+                                            if self.search {
+                                                "Stop Searching"
+                                            } else {
+                                                "Stop Recording"
+                                            },
+                                            &StopRecording,
+                                        ))
                                     })
                                     .icon_color(Color::Error)
                                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -2340,11 +2343,14 @@ impl Render for KeystrokeInput {
                                 IconButton::new("record-btn", record_icon)
                                     .shape(ui::IconButtonShape::Square)
                                     .map(|this| {
-                                        if self.search {
-                                            this.tooltip(Tooltip::text("Start Searching"))
-                                        } else {
-                                            this.tooltip(Tooltip::text("Start Recording"))
-                                        }
+                                        this.tooltip(Tooltip::for_action_title(
+                                            if self.search {
+                                                "Start Searching"
+                                            } else {
+                                                "Start Recording"
+                                            },
+                                            &StartRecording,
+                                        ))
                                     })
                                     .when(!is_focused, |this| this.icon_color(Color::Muted))
                                     .on_click(cx.listener(|this, _event, window, cx| {
@@ -2356,7 +2362,10 @@ impl Render for KeystrokeInput {
                     .child(
                         IconButton::new("clear-btn", IconName::Delete)
                             .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Clear Keystrokes"))
+                            .tooltip(Tooltip::for_action_title(
+                                "Clear Keystrokes",
+                                &ClearKeystrokes,
+                            ))
                             .when(!is_recording || !is_focused, |this| {
                                 this.icon_color(Color::Muted)
                             })
