@@ -281,6 +281,10 @@ enum PreviousEdit {
     Keybinding {
         action_mapping: ActionMapping,
         action_name: SharedString,
+        /// The scrollbar position to fallback to if we don't find the keybinding during a refresh
+        /// this can happen if there's a filter applied to the search and the keybinding modification
+        /// filters the binding from the search results
+        fallback: Point<Pixels>,
     },
 }
 
@@ -583,6 +587,7 @@ impl KeymapEditor {
                         PreviousEdit::Keybinding {
                             action_mapping,
                             action_name,
+                            fallback,
                         } => {
                             let scroll_position =
                                 this.matches.iter().enumerate().find_map(|(index, item)| {
@@ -596,12 +601,14 @@ impl KeymapEditor {
                                     }
                                 });
 
-                            this.scroll_to_item(
-                                scroll_position.unwrap_or(0),
-                                ScrollStrategy::Top,
-                                cx,
-                            );
-                            this.selected_index = scroll_position;
+                            if let Some(scroll_position) = scroll_position {
+                                this.scroll_to_item(scroll_position, ScrollStrategy::Top, cx);
+                                this.selected_index = Some(scroll_position);
+                            } else {
+                                this.table_interaction_state.update(cx, |table, _| {
+                                    table.set_scrollbar_offset(Axis::Vertical, fallback)
+                                });
+                            }
                             cx.notify();
                         }
                     }
@@ -1588,10 +1595,14 @@ impl KeybindingEditorModal {
                         new_context.map(SharedString::from),
                     );
 
-                    this.keymap_editor.update(cx, |keymap, _| {
+                    this.keymap_editor.update(cx, |keymap, cx| {
                         keymap.previous_edit = Some(PreviousEdit::Keybinding {
                             action_mapping,
                             action_name,
+                            fallback: keymap
+                                .table_interaction_state
+                                .read(cx)
+                                .get_scrollbar_offset(Axis::Vertical),
                         })
                     });
                     cx.emit(DismissEvent);
