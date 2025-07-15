@@ -848,6 +848,12 @@ impl KeymapEditor {
         self.search_mode = self.search_mode.invert();
         self.update_matches(cx);
 
+        // Update the keystroke editor to turn the `search` bool on
+        self.keystroke_editor.update(cx, |keystroke_editor, cx| {
+            keystroke_editor.set_search_mode(self.search_mode == SearchMode::KeyStroke);
+            cx.notify();
+        });
+
         match self.search_mode {
             SearchMode::KeyStroke => {
                 window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
@@ -1888,6 +1894,7 @@ struct KeystrokeInput {
     inner_focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
+    search: bool,
 }
 
 impl KeystrokeInput {
@@ -1910,6 +1917,7 @@ impl KeystrokeInput {
             outer_focus_handle,
             intercept_subscription: None,
             _focus_subscriptions,
+            search: false,
         }
     }
 
@@ -2031,6 +2039,10 @@ impl KeystrokeInput {
     fn recording_focus_handle(&self, _cx: &App) -> FocusHandle {
         self.inner_focus_handle.clone()
     }
+
+    fn set_search_mode(&mut self, search: bool) {
+        self.search = search;
+    }
 }
 
 impl EventEmitter<()> for KeystrokeInput {}
@@ -2049,23 +2061,19 @@ impl Render for KeystrokeInput {
 
         let horizontal_padding = rems_from_px(64.);
 
-        let recording_bg_color = cx
-            .theme()
-            .colors()
+        let recording_bg_color = colors
             .editor_background
-            .blend(cx.theme().colors().text_accent.opacity(0.1));
+            .blend(colors.text_accent.opacity(0.1));
 
         let recording_indicator = h_flex()
             .h_4()
             .pr_1()
             .gap_0p5()
             .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx
-                .theme()
-                .colors()
+            .border_color(colors.border)
+            .bg(colors
                 .editor_background
-                .blend(cx.theme().status().error.opacity(0.1)))
+                .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
             .child(
                 Icon::new(IconName::Circle)
@@ -2088,6 +2096,44 @@ impl Render for KeystrokeInput {
                     .weight(FontWeight::SEMIBOLD)
                     .color(Color::Error),
             );
+
+        let search_indicator = h_flex()
+            .h_4()
+            .pr_1()
+            .gap_0p5()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors
+                .editor_background
+                .blend(colors.text_accent.opacity(0.1)))
+            .rounded_sm()
+            .child(
+                Icon::new(IconName::Circle)
+                    .size(IconSize::Small)
+                    .color(Color::Accent)
+                    .with_animation(
+                        "recording-pulse",
+                        Animation::new(std::time::Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
+                        {
+                            let color = Color::Accent.color(cx);
+                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
+                        },
+                    ),
+            )
+            .child(
+                Label::new("SEARCH")
+                    .size(LabelSize::XSmall)
+                    .weight(FontWeight::SEMIBOLD)
+                    .color(Color::Accent),
+            );
+
+        let record_icon = if self.search {
+            IconName::MagnifyingGlass
+        } else {
+            IconName::PlayFilled
+        };
 
         return h_flex()
             .id("keystroke-input")
@@ -2126,7 +2172,15 @@ impl Render for KeystrokeInput {
                     .gap_0p5()
                     .justify_start()
                     .flex_none()
-                    .when(is_recording, |this| this.child(recording_indicator)),
+                    .when(is_recording, |this| {
+                        this.map(|this| {
+                            if self.search {
+                                this.child(search_indicator)
+                            } else {
+                                this.child(recording_indicator)
+                            }
+                        })
+                    }),
             )
             .child(
                 h_flex()
@@ -2152,7 +2206,13 @@ impl Render for KeystrokeInput {
                             this.child(
                                 IconButton::new("stop-record-btn", IconName::StopFilled)
                                     .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Stop Recording"))
+                                    .map(|this| {
+                                        if self.search {
+                                            this.tooltip(Tooltip::text("Stop Searching"))
+                                        } else {
+                                            this.tooltip(Tooltip::text("Stop Recording"))
+                                        }
+                                    })
                                     .icon_color(Color::Error)
                                     .on_click(cx.listener(|this, _event, window, _cx| {
                                         this.outer_focus_handle.focus(window);
@@ -2160,9 +2220,15 @@ impl Render for KeystrokeInput {
                             )
                         } else {
                             this.child(
-                                IconButton::new("record-btn", IconName::PlayFilled)
+                                IconButton::new("record-btn", record_icon)
                                     .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::text("Start Recording"))
+                                    .map(|this| {
+                                        if self.search {
+                                            this.tooltip(Tooltip::text("Start Searching"))
+                                        } else {
+                                            this.tooltip(Tooltip::text("Start Recording"))
+                                        }
+                                    })
                                     .when(!is_focused, |this| this.icon_color(Color::Muted))
                                     .on_click(cx.listener(|this, _event, window, _cx| {
                                         this.inner_focus_handle.focus(window);
