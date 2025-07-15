@@ -4285,7 +4285,7 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
-        // Create model that returns internal server error (which now uses fixed delay with 1 retry)
+        // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
         // Insert a user message
@@ -4419,7 +4419,6 @@ fn main() {{
         cx.run_until_parked();
 
         // Advance through all retries
-        // ServerOverloaded now uses fixed delay, not exponential backoff
         for _ in 0..MAX_RETRY_ATTEMPTS {
             cx.executor().advance_clock(BASE_RETRY_DELAY);
             cx.run_until_parked();
