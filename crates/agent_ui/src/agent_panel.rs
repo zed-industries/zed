@@ -2192,7 +2192,7 @@ impl AgentPanel {
                 this.child(
                     v_flex()
                         .size_full()
-                        .max_w_80()
+                        .max_w_64()
                         .mx_auto()
                         .justify_center()
                         .items_center()
@@ -2208,27 +2208,8 @@ impl AgentPanel {
                                     ),
                                 )
                                 .child(
-                                    Button::new("new-thread", "Start New Thread")
-                                        .icon(IconName::Plus)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &NewThread::default(),
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                NewThread::default().boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
-                                )
-                                .child(
                                     Button::new("context", "Add Context")
+                                        .label_size(LabelSize::Small)
                                         .icon(IconName::FileCode)
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::Small)
@@ -2249,6 +2230,7 @@ impl AgentPanel {
                                 )
                                 .child(
                                     Button::new("mode", "Switch Model")
+                                        .label_size(LabelSize::Small)
                                         .icon(IconName::DatabaseZap)
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::Small)
@@ -2269,6 +2251,7 @@ impl AgentPanel {
                                 )
                                 .child(
                                     Button::new("settings", "View Settings")
+                                        .label_size(LabelSize::Small)
                                         .icon(IconName::Settings)
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::Small)
