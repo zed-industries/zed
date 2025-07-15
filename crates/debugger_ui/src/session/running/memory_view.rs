@@ -159,6 +159,11 @@ impl MemoryView {
             open_context_menu: None,
         };
         this.change_query_bar_mode(false, window, cx);
+        cx.on_focus_out(&this.focus_handle, window, |this, _, window, cx| {
+            this.change_query_bar_mode(false, window, cx);
+            cx.notify();
+        })
+        .detach();
         this
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -769,7 +774,7 @@ fn render_single_memory_view_line(
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
                                 let weak = weak.clone();
 
-                                this.bg(Color::Selected.color(cx).opacity(0.4)).when(
+                                this.bg(Color::Selected.color(cx).opacity(0.2)).when(
                                     !selection.is_dragging(),
                                     |this| {
                                         let selection = selection.drag().memory_range();
@@ -866,7 +871,7 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + ix as u64), |this| {
-                                this.bg(Color::Selected.color(cx).opacity(0.4))
+                                this.bg(Color::Selected.color(cx).opacity(0.2))
                             })
                         })
                         .child(
