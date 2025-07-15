@@ -51,30 +51,7 @@ impl ActionLog {
         Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
     }
 
-    /// Returns user edits made since the agent last read the buffers
-    pub fn user_edits_since_last_read(&self) -> Vec<(Entity<Buffer>, Patch<u32>)> {
-        self.tracked_buffers
-            .values()
-            .filter_map(|tracked| {
-                let text_with_latest_user_edits = tracked.diff_base.to_string();
-                let text_with_last_seen_user_edits = tracked.last_seen_base.to_string();
-                if text_with_latest_user_edits == text_with_last_seen_user_edits {
-                    return None;
-                }
-                let unnotified_user_edits = language::line_diff(
-                    &text_with_last_seen_user_edits,
-                    &text_with_latest_user_edits,
-                )
-                .into_iter()
-                .map(|(old, new)| Edit { old, new })
-                .collect();
-
-                Some((tracked.buffer.clone(), Patch::new(unnotified_user_edits)))
-            })
-            .collect()
-    }
-
-    pub fn user_edits_since_last_read_patch(&self, cx: &Context<Self>) -> String {
+    pub fn user_edits_since_last_read(&self, cx: &Context<Self>) -> String {
         self.tracked_buffers
             .values()
             .filter_map(|tracked| {
@@ -104,72 +81,6 @@ impl ActionLog {
             })
             .collect::<Vec<_>>()
             .join("\n\n")
-    }
-
-    fn format_patch(
-        &self,
-        patch: Patch<u32>,
-        buffer: Entity<Buffer>,
-        cx: &Context<Self>,
-    ) -> String {
-        let tracked_buffer = self
-            .tracked_buffers
-            .get(&buffer)
-            .expect("buffer should be tracked");
-        let old_text = &tracked_buffer.last_seen_base;
-        let new_snapshot = buffer.read(cx).snapshot();
-
-        // Get file path for header
-        let file_path = buffer
-            .read(cx)
-            .file()
-            .map(|file| file.full_path(cx).to_string_lossy().to_string())
-            .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
-
-        let mut result = String::new();
-        result.push_str(&format!("--- a/{}\n", file_path));
-        result.push_str(&format!("+++ b/{}\n", file_path));
-
-        // Process each edit in the patch
-        for edit in patch.edits() {
-            dbg!(&edit);
-            let old_start = edit.old.start as usize;
-            let old_end = edit.old.end as usize;
-            let new_start = edit.new.start as usize;
-            let new_end = edit.new.end as usize;
-
-            // Hunk header
-            let old_line_count = old_end.saturating_sub(old_start);
-            let new_line_count = new_end.saturating_sub(new_start);
-            result.push_str(&format!(
-                "@@ -{},{} +{},{} @@\n",
-                old_start + 1,
-                old_line_count,
-                new_start + 1,
-                new_line_count
-            ));
-
-            // Deletions
-            if old_end > old_start {
-                let range = row_range_to_offset_range(&edit.old, old_text);
-                let old_text: String = old_text.chunks_in_range(range).collect();
-                for line in old_text.lines() {
-                    result.push_str(&format!("-{line}\n"));
-                }
-            }
-
-            // Additions
-            if new_end > new_start {
-                let range = row_range_to_offset_range(&edit.new, new_snapshot.as_rope());
-                let new_text: String = new_snapshot.text_for_range(range).collect();
-                for line in new_text.lines() {
-                    result.push_str(&format!("+{line}\n"));
-                }
-            }
-        }
-
-        dbg!(&result);
-        result
     }
 
     fn track_buffer_internal(
@@ -418,7 +329,6 @@ impl ActionLog {
             anyhow::Ok(rebase)
         })??;
         let (new_base_text, new_diff_base) = rebase.await;
-        dbg!(&new_base_text);
         Self::update_diff(
             this,
             buffer,
@@ -1385,8 +1295,16 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
-            .await;
+        fs.insert_tree(
+            path!("/dir"),
+            json!({"file": indoc! {"
+            abc
+            def
+            ghi
+            jkl
+            mno"}}),
+        )
+        .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let file_path = project
@@ -1410,7 +1328,12 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abc\ndeF\nGHI\njkl\nmno"
+            indoc! {"
+                abc
+                deF
+                GHI
+                jkl
+                mno"}
         );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -1438,12 +1361,31 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abXc\ndeF\nGHI\nYjkl\nmno"
+            indoc! {"
+                abXc
+                deF
+                GHI
+                Yjkl
+                mno"}
         );
 
-        // User edits should be stored separately
-        let user_edits = action_log.read_with(cx, |log, _| log.user_edits_since_last_read());
-        assert_eq!(user_edits.len(), 1);
+        // User edits should be stored separately from agent's
+        let user_edits = action_log.update(cx, |log, cx| log.user_edits_since_last_read(cx));
+        assert_eq!(
+            user_edits,
+            indoc! {"
+                --- a/dir/file
+                +++ b/dir/file
+                @@ -1,5 +1,5 @@
+                -abc
+                +abXc
+                 def
+                 ghi
+                -jkl
+                +Yjkl
+                 mno
+            "}
+        );
 
         action_log.update(cx, |log, cx| {
             log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
@@ -2482,7 +2424,7 @@ mod tests {
         cx.run_until_parked();
 
         // Get the patch
-        let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
+        let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read(cx));
 
         // Verify the patch format contains expected unified diff elements
         assert_eq!(
@@ -2497,11 +2439,5 @@ mod tests {
              line 3
             "}
         );
-
-        // Verify the patch is not empty and shows actual changes
-        assert!(!patch.is_empty());
-
-        // The patch should show line-based changes for our edit
-        assert!(patch.lines().count() > 4); // Header lines + actual diff lines
     }
 }

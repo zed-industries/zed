@@ -74,7 +74,7 @@ impl Tool for ProjectNotificationsTool {
             // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
             const HEADER: &str = include_str!("./project_notifications_tool/prompt_header.txt");
 
-            let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
+            let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read(cx));
             format!("{HEADER}{stale_files}\n\n```diff\n{patch}\n```\n").replace("\r\n", "\n")
         };
 
