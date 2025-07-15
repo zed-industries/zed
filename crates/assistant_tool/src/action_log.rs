@@ -77,7 +77,7 @@ impl ActionLog {
     }
 
     fn format_patch(patch: Patch<u32>, buffer: Entity<Buffer>, cx: &Context<Self>) -> String {
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let snapshot = buffer.read(cx).snapshot();
 
         // Get file path for header
         let file_path = buffer
@@ -97,50 +97,37 @@ impl ActionLog {
             let new_start = edit.new.start as usize;
             let new_end = edit.new.end as usize;
 
-            // Convert offsets to line numbers for header
-            let old_start_point = buffer_snapshot.offset_to_point(old_start);
-            let old_end_point = buffer_snapshot.offset_to_point(old_end);
-            let new_start_point = buffer_snapshot.offset_to_point(new_start);
-            let new_end_point = buffer_snapshot.offset_to_point(new_end);
-
-            // Calculate line counts
-            let old_line_count = if old_end > old_start {
-                old_end_point.row - old_start_point.row + 1
-            } else {
-                0
-            };
-            let new_line_count = if new_end > new_start {
-                new_end_point.row - new_start_point.row + 1
-            } else {
-                0
-            };
-
-            // Add hunk header
+            // Hunk header
+            let old_line_count = old_end - old_start;
+            let new_line_count = new_end - new_start;
             result.push_str(&format!(
                 "@@ -{},{} +{},{} @@\n",
-                old_start_point.row + 1,
+                old_start + 1,
                 old_line_count,
-                new_start_point.row + 1,
+                new_start + 1,
                 new_line_count
             ));
 
-            // Add old text (deletions)
+            // Deletions
             if old_end > old_start {
-                let old_text: String = buffer_snapshot.text_for_range(old_start..old_end).collect();
+                let range = row_range_to_offset_range(&edit.old, snapshot.as_rope());
+                let old_text: String = snapshot.text_for_range(range).collect();
                 for line in old_text.lines() {
-                    result.push_str(&format!("-{}\n", line));
+                    result.push_str(&format!("-{line}\n"));
                 }
             }
 
-            // Add new text (additions)
+            // Additions
             if new_end > new_start {
-                let new_text: String = buffer_snapshot.text_for_range(new_start..new_end).collect();
+                let range = row_range_to_offset_range(&edit.new, snapshot.as_rope());
+                let new_text: String = snapshot.text_for_range(range).collect();
                 for line in new_text.lines() {
-                    result.push_str(&format!("+{}\n", line));
+                    result.push_str(&format!("+{line}\n"));
                 }
             }
         }
 
+        dbg!(&result);
         result
     }
 
@@ -376,7 +363,6 @@ impl ActionLog {
                         .for_each(|edit| tracked_buffer.unnotified_user_edits.push(edit));
                 }
                 async move {
-                    // let edits = diff_snapshots(&old_snapshot, &new_snapshot);
                     if let ChangeAuthor::User = author {
                         apply_non_conflicting_edits(
                             &unreviewed_edits,
@@ -1001,6 +987,18 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
     }
 }
 
+fn row_range_to_offset_range(rows: &Range<u32>, text: &Rope) -> Range<usize> {
+    let start = text.point_to_offset(Point {
+        row: rows.start,
+        column: 0,
+    });
+    let end = text.point_to_offset(Point {
+        row: rows.end,
+        column: 0,
+    });
+    start..end
+}
+
 #[derive(Copy, Clone, Debug)]
 enum ChangeAuthor {
     User,
@@ -1053,6 +1051,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -1398,7 +1397,6 @@ mod tests {
 
         // User edits should be stored separately
         let user_edits = action_log.read_with(cx, |log, _| log.user_edits_since_last_read());
-        dbg!(&user_edits);
         assert_eq!(user_edits.len(), 1);
 
         action_log.update(cx, |log, cx| {
@@ -2438,10 +2436,17 @@ mod tests {
         let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
 
         // Verify the patch format contains expected unified diff elements
-        assert!(patch.contains("--- a/"));
-        assert!(patch.contains("+++ b/"));
-        assert!(patch.contains("@@"));
-        assert!(patch.contains("test.txt"));
+        // TODO: add context lines
+        assert_eq!(
+            patch,
+            indoc! {"
+            --- a/dir/test.txt
+            +++ b/dir/test.txt
+            @@ -1,3 +1,3 @@
+            -line2
+            +CHANGED
+            "}
+        );
 
         // Verify the patch is not empty and shows actual changes
         assert!(!patch.is_empty());
