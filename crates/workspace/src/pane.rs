@@ -1,7 +1,7 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder,
+    CloseWindow, NewFile, NewTerminal, NotificationId,
+    OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible, SplitDirection, Toast, ToggleFileFinder, 
+    ToggleProjectSymbols, ToggleZoom, Workspace, WorkspaceItemBuilder,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
         ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics, TabContentParams,
@@ -10,7 +10,7 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, PinnedTabSizing, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -225,6 +225,8 @@ actions!(
         TogglePinTab,
         /// Unpins all tabs in the pane.
         UnpinAllTabs,
+        /// Toggles lock status for the pane.
+        ToggleLock,
     ]
 );
 
@@ -340,6 +342,7 @@ pub struct Pane {
     can_split_predicate:
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
     can_toggle_zoom: bool,
+    locked: bool,
     should_display_tab_bar: Rc<dyn Fn(&Window, &mut Context<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<
         dyn Fn(
@@ -353,6 +356,7 @@ pub struct Pane {
     max_tabs: Option<NonZeroUsize>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
+    pinned_tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
@@ -482,6 +486,7 @@ impl Pane {
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
+            pinned_tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
             project: project.downgrade(),
@@ -489,6 +494,7 @@ impl Pane {
             custom_drop_handle: None,
             can_split_predicate: None,
             can_toggle_zoom: true,
+            locked: false,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
@@ -2220,7 +2226,41 @@ impl Pane {
         }
     }
 
+    fn toggle_lock(&mut self, _: &ToggleLock, _window: &mut Window, cx: &mut Context<Self>) {
+        self.locked = !self.locked;
+        cx.notify();
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    pub fn set_locked(&mut self, locked: bool, cx: &mut Context<Self>) {
+        self.locked = locked;
+        cx.notify();
+    }
+
     fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // Check if we're at the max pinned tabs limit
+        if let Some(max_pinned) = TabBarSettings::get_global(cx).max_pinned_tabs {
+            if self.pinned_tab_count >= max_pinned {
+                // Show notification that max pinned tabs has been reached
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        let message = format!("Maximum of {} pinned tabs reached", max_pinned);
+                        workspace.show_toast(
+                            Toast::new(
+                                NotificationId::unique::<()>(),
+                                message
+                            ),
+                            cx,
+                        );
+                    });
+                }
+                return;
+            }
+        }
+        
         self.change_tab_pin_state(ix, PinOperation::Pin, window, cx);
     }
 
@@ -2316,12 +2356,15 @@ impl Pane {
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Pane>,
-    ) -> impl IntoElement + use<> {
+    ) -> AnyElement {
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
             .map(|id| id == item.item_id())
             .unwrap_or(false);
+        let is_pinned = self.is_tab_pinned(ix);
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+        let pinned_tab_sizing = tab_bar_settings.pinned_tab_sizing;
 
         let label = item.tab_content(
             TabContentParams {
@@ -2390,7 +2433,6 @@ impl Pane {
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
-        let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
         let tab = Tab::new(ix)
@@ -2523,8 +2565,9 @@ impl Pane {
                 });
                 this.end_slot(end_slot)
             })
-            .child(
-                h_flex()
+            .child({
+                let has_icon = icon.is_some() || decorated_icon.is_some();
+                let mut content = h_flex()
                     .gap_1()
                     .items_center()
                     .children(
@@ -2536,9 +2579,46 @@ impl Pane {
                             None
                         })
                         .flatten(),
-                    )
-                    .child(label),
-            );
+                    );
+                
+                if is_pinned {
+                    match pinned_tab_sizing {
+                        PinnedTabSizing::Normal => content = content.child(label),
+                        PinnedTabSizing::Shrink => {
+                            // Show truncated label with max width
+                            content = content.child(
+                                div()
+                                    .max_w_20()
+                                    .overflow_x_hidden()
+                                    .child(label)
+                            )
+                        }
+                        PinnedTabSizing::Compact => {
+                            // Show only icon or first letter
+                            if !has_icon {
+                                // Show first letter of the label
+                                let tab_text = item.tab_content_text(detail, cx);
+                                if let Some(first_char) = tab_text.chars().next() {
+                                    content = content.child(
+                                        Label::new(first_char.to_string())
+                                            .color(if is_active {
+                                                Color::Default
+                                            } else if !self.has_focus(window, cx) {
+                                                Color::Muted
+                                            } else {
+                                                Color::Default
+                                            })
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    content = content.child(label);
+                }
+                
+                content
+            });
 
         let single_entry_to_resolve = self.items[ix]
             .is_singleton(cx)
@@ -2552,7 +2632,7 @@ impl Pane {
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
-        right_click_menu(ix)
+        let tab_element = right_click_menu(ix)
             .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let pane = pane.clone();
@@ -2767,42 +2847,36 @@ impl Pane {
                         }
                     }
 
+                    // Add lock/unlock pane option
+                    if let Some(pane_entity) = pane.upgrade() {
+                        menu = menu.separator().map(|this| {
+                            let is_locked = pane_entity.read(cx).is_locked();
+                            this.entry(
+                                if is_locked { "Unlock Pane" } else { "Lock Pane" },
+                                Some(ToggleLock.boxed_clone()),
+                                window.handler_for(&pane_entity, move |pane: &mut Pane, window, cx| {
+                                    pane.toggle_lock(&ToggleLock, window, cx);
+                                }),
+                            )
+                        });
+                    }
+
                     menu.context(menu_context)
                 })
-            })
+            });
+        
+        // Wrap in a constrained div for compact pinned tabs
+        if is_pinned && pinned_tab_sizing == PinnedTabSizing::Compact {
+            div().w(px(32.)).child(tab_element).into_any_element()
+        } else {
+            tab_element.into_any_element()
+        }
     }
 
     fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
         let focus_handle = self.focus_handle.clone();
-        let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
-            .icon_size(IconSize::Small)
-            .on_click({
-                let entity = cx.entity().clone();
-                move |_, window, cx| {
-                    entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
-                }
-            })
-            .disabled(!self.can_navigate_backward())
-            .tooltip({
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
-                }
-            });
-
-        let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
-            .icon_size(IconSize::Small)
-            .on_click({
-                let entity = cx.entity().clone();
-                move |_, window, cx| entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
-            })
-            .disabled(!self.can_navigate_forward())
-            .tooltip({
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
-                }
-            });
+        let can_navigate_backward = self.can_navigate_backward();
+        let can_navigate_forward = self.can_navigate_forward();
 
         let mut tab_items = self
             .items
@@ -2826,95 +2900,404 @@ impl Pane {
         }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
-        TabBar::new("tab_bar")
-            .when(
-                self.display_nav_history_buttons.unwrap_or_default(),
-                |tab_bar| {
-                    tab_bar
-                        .start_child(navigate_backward)
-                        .start_child(navigate_forward)
-                },
-            )
-            .map(|tab_bar| {
-                if self.show_tab_bar_buttons {
-                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                    let (left_children, right_children) = render_tab_buttons(self, window, cx);
-                    tab_bar
-                        .start_children(left_children)
-                        .end_children(right_children)
-                } else {
-                    tab_bar
-                }
-            })
-            .children(pinned_tabs.len().ne(&0).then(|| {
-                let content_width = self.tab_bar_scroll_handle.content_size().width;
-                let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
-                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = content_width > viewport_width;
-                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
-                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
-                h_flex()
-                    .children(pinned_tabs)
-                    .when(is_scrollable && is_scrolled, |this| {
-                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
-                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
-                            .border_color(cx.theme().colors().border)
-                    })
-            }))
-            .child(
-                h_flex()
-                    .id("unpinned tabs")
-                    .overflow_x_scroll()
-                    .w_full()
-                    .track_scroll(&self.tab_bar_scroll_handle)
-                    .children(unpinned_tabs)
-                    .child(
-                        div()
-                            .id("tab_bar_drop_target")
-                            .min_w_6()
-                            // HACK: This empty child is currently necessary to force the drop target to appear
-                            // despite us setting a min width above.
-                            .child("")
-                            .h_full()
-                            .flex_grow()
-                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
-                                bar.bg(cx.theme().colors().drop_target_background)
-                            })
-                            .on_drop(cx.listener(
-                                move |this, dragged_tab: &DraggedTab, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
-                                },
-                            ))
-                            .on_drop(cx.listener(
-                                move |this, selection: &DraggedSelection, window, cx| {
-                                    this.drag_split_direction = None;
-                                    this.handle_project_entry_drop(
-                                        &selection.active_selection.entry_id,
-                                        Some(tab_count),
-                                        window,
-                                        cx,
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+        let use_separate_row = tab_bar_settings.pinned_tabs_on_separate_row;
+        let has_pinned_tabs = pinned_tabs.len() > 0;
+        let is_locked = self.locked;
+        
+        // Create layout based on configuration
+        if use_separate_row && has_pinned_tabs {
+            // Two-row layout
+            v_flex()
+                .w_full()
+                .bg(cx.theme().colors().tab_bar_background)
+                // First row: Pinned tabs
+                .when(pinned_tabs.len() > 0, |container| {
+                container.child(
+                    TabBar::new("pinned_tab_bar")
+                        .when(is_locked, |tab_bar| {
+                            tab_bar.start_child(
+                                div()
+                                    .child(
+                                        Icon::new(IconName::LockOutlined)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
                                     )
-                                },
-                            ))
-                            .on_drop(cx.listener(move |this, paths, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_external_paths_drop(paths, window, cx)
-                            }))
-                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.up.click_count == 2 {
-                                    window.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                        cx,
-                                    );
+                                    .px_1()
+                            )
+                        })
+                        .when(
+                            self.display_nav_history_buttons.unwrap_or_default(),
+                            {
+                                let entity = cx.entity().clone();
+                                let focus_handle = focus_handle.clone();
+                                move |tab_bar| {
+                                    tab_bar
+                                        .start_child(
+                                            IconButton::new("navigate_backward", IconName::ArrowLeft)
+                                                .icon_size(IconSize::Small)
+                                                .on_click({
+                                                    let entity = entity.clone();
+                                                    move |_, window, cx| {
+                                                        entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
+                                                    }
+                                                })
+                                                .disabled(!can_navigate_backward)
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                                                    }
+                                                })
+                                        )
+                                        .start_child(
+                                            IconButton::new("navigate_forward", IconName::ArrowRight)
+                                                .icon_size(IconSize::Small)
+                                                .on_click({
+                                                    let entity = entity.clone();
+                                                    move |_, window, cx| {
+                                                        entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
+                                                    }
+                                                })
+                                                .disabled(!can_navigate_forward)
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                                                    }
+                                                })
+                                        )
                                 }
-                            })),
+                            },
+                        )
+                        .map(|tab_bar| {
+                            if self.show_tab_bar_buttons {
+                                let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                                let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                                tab_bar
+                                    .start_children(left_children)
+                                    .end_children(right_children)
+                            } else {
+                                tab_bar
+                            }
+                        })
+                        .child(
+                            h_flex()
+                                .id("pinned tabs")
+                                .overflow_x_scroll()
+                                .w_full()
+                                .track_scroll(&self.pinned_tab_bar_scroll_handle)
+                                .children(pinned_tabs)
+                                .child(
+                                    div()
+                                        .id("pinned_tab_bar_drop_target")
+                                        .min_w_6()
+                                        .child("")
+                                        .h_full()
+                                        .flex_grow()
+                                        .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                            bar.bg(cx.theme().colors().drop_target_background)
+                                        })
+                                        .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                            bar.bg(cx.theme().colors().drop_target_background)
+                                        })
+                                        .on_drop(cx.listener(
+                                            move |this, dragged_tab: &DraggedTab, window, cx| {
+                                                this.drag_split_direction = None;
+                                                let drop_index = this.pinned_tab_count;
+                                                this.handle_tab_drop(dragged_tab, drop_index, window, cx)
+                                            },
+                                        ))
+                                        .on_drop(cx.listener(
+                                            move |this, selection: &DraggedSelection, window, cx| {
+                                                this.drag_split_direction = None;
+                                                this.handle_project_entry_drop(
+                                                    &selection.active_selection.entry_id,
+                                                    Some(this.pinned_tab_count),
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                        .on_drop(cx.listener(move |this, paths, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_external_paths_drop(paths, window, cx)
+                                        }))
+                                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                            if event.up.click_count == 2 {
+                                                window.dispatch_action(
+                                                    this.double_click_dispatch_action.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                ),
+                        ),
+                )
+            })
+            // Second row: Unpinned tabs
+            .child(
+                TabBar::new("unpinned_tab_bar")
+                    .when(!has_pinned_tabs && is_locked, |tab_bar| {
+                        tab_bar.start_child(
+                            div()
+                                .child(
+                                    Icon::new(IconName::LockOutlined)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                )
+                                .px_1()
+                        )
+                    })
+                    .when(
+                        !has_pinned_tabs && self.display_nav_history_buttons.unwrap_or_default(),
+                        {
+                            let entity = cx.entity().clone();
+                            let focus_handle = focus_handle.clone();
+                            move |tab_bar| {
+                                tab_bar
+                                    .start_child(
+                                        IconButton::new("navigate_backward", IconName::ArrowLeft)
+                                            .icon_size(IconSize::Small)
+                                            .on_click({
+                                                let entity = entity.clone();
+                                                move |_, window, cx| {
+                                                    entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
+                                                }
+                                            })
+                                            .disabled(!can_navigate_backward)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                                                }
+                                            })
+                                    )
+                                    .start_child(
+                                        IconButton::new("navigate_forward", IconName::ArrowRight)
+                                            .icon_size(IconSize::Small)
+                                            .on_click({
+                                                let entity = entity.clone();
+                                                move |_, window, cx| {
+                                                    entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
+                                                }
+                                            })
+                                            .disabled(!can_navigate_forward)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                                                }
+                                            })
+                                    )
+                            }
+                        },
+                    )
+                    .map(|tab_bar| {
+                        if !has_pinned_tabs && self.show_tab_bar_buttons {
+                            let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                            let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                            tab_bar
+                                .start_children(left_children)
+                                .end_children(right_children)
+                        } else {
+                            tab_bar
+                        }
+                    })
+                    .child(
+                        h_flex()
+                            .id("unpinned tabs")
+                            .overflow_x_scroll()
+                            .w_full()
+                            .track_scroll(&self.tab_bar_scroll_handle)
+                            .children(unpinned_tabs)
+                            .child(
+                                div()
+                                    .id("tab_bar_drop_target")
+                                    .min_w_6()
+                                    // HACK: This empty child is currently necessary to force the drop target to appear
+                                    // despite us setting a min width above.
+                                    .child("")
+                                    .h_full()
+                                    .flex_grow()
+                                    .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                        bar.bg(cx.theme().colors().drop_target_background)
+                                    })
+                                    .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                        bar.bg(cx.theme().colors().drop_target_background)
+                                    })
+                                    .on_drop(cx.listener(
+                                        move |this, dragged_tab: &DraggedTab, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, selection: &DraggedSelection, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_project_entry_drop(
+                                                &selection.active_selection.entry_id,
+                                                Some(tab_count),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                    .on_drop(cx.listener(move |this, paths, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_external_paths_drop(paths, window, cx)
+                                    }))
+                                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                        if event.up.click_count == 2 {
+                                            window.dispatch_action(
+                                                this.double_click_dispatch_action.boxed_clone(),
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                            ),
                     ),
             )
             .into_any_element()
+        } else {
+            // Single-row layout (original behavior)
+            TabBar::new("tab_bar")
+                .when(is_locked, |tab_bar| {
+                    tab_bar.start_child(
+                        div()
+                            .child(
+                                Icon::new(IconName::LockOutlined)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                            )
+                            .px_1()
+                    )
+                })
+                .when(
+                    self.display_nav_history_buttons.unwrap_or_default(),
+                    {
+                        let entity = cx.entity().clone();
+                        let focus_handle = focus_handle.clone();
+                        move |tab_bar| {
+                            tab_bar
+                                .start_child(
+                                    IconButton::new("navigate_backward", IconName::ArrowLeft)
+                                        .icon_size(IconSize::Small)
+                                        .on_click({
+                                            let entity = entity.clone();
+                                            move |_, window, cx| {
+                                                entity.update(cx, |pane, cx| pane.navigate_backward(window, cx))
+                                            }
+                                        })
+                                        .disabled(!can_navigate_backward)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in("Go Back", &GoBack, &focus_handle, window, cx)
+                                            }
+                                        })
+                                )
+                                .start_child(
+                                    IconButton::new("navigate_forward", IconName::ArrowRight)
+                                        .icon_size(IconSize::Small)
+                                        .on_click({
+                                            let entity = entity.clone();
+                                            move |_, window, cx| {
+                                                entity.update(cx, |pane, cx| pane.navigate_forward(window, cx))
+                                            }
+                                        })
+                                        .disabled(!can_navigate_forward)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in("Go Forward", &GoForward, &focus_handle, window, cx)
+                                            }
+                                        })
+                                )
+                        }
+                    },
+                )
+                .map(|tab_bar| {
+                    if self.show_tab_bar_buttons {
+                        let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                        let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                        tab_bar
+                            .start_children(left_children)
+                            .end_children(right_children)
+                    } else {
+                        tab_bar
+                    }
+                })
+                .children(pinned_tabs.len().ne(&0).then(|| {
+                    let content_width = self.tab_bar_scroll_handle.content_size().width;
+                    let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
+                    // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                    let is_scrollable = content_width > viewport_width;
+                    let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                    let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
+                    h_flex()
+                        .children(pinned_tabs)
+                        .when(is_scrollable && is_scrolled, |this| {
+                            this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                                .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                                .border_color(cx.theme().colors().border)
+                        })
+                }))
+                .child(
+                    h_flex()
+                        .id("unpinned tabs")
+                        .overflow_x_scroll()
+                        .w_full()
+                        .track_scroll(&self.tab_bar_scroll_handle)
+                        .children(unpinned_tabs)
+                        .child(
+                            div()
+                                .id("tab_bar_drop_target")
+                                .min_w_6()
+                                // HACK: This empty child is currently necessary to force the drop target to appear
+                                // despite us setting a min width above.
+                                .child("")
+                                .h_full()
+                                .flex_grow()
+                                .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                    bar.bg(cx.theme().colors().drop_target_background)
+                                })
+                                .drag_over::<DraggedSelection>(|bar, _, _, cx| {
+                                    bar.bg(cx.theme().colors().drop_target_background)
+                                })
+                                .on_drop(cx.listener(
+                                    move |this, dragged_tab: &DraggedTab, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_tab_drop(dragged_tab, this.items.len(), window, cx)
+                                    },
+                                ))
+                                .on_drop(cx.listener(
+                                    move |this, selection: &DraggedSelection, window, cx| {
+                                        this.drag_split_direction = None;
+                                        this.handle_project_entry_drop(
+                                            &selection.active_selection.entry_id,
+                                            Some(tab_count),
+                                            window,
+                                            cx,
+                                        )
+                                    },
+                                ))
+                                .on_drop(cx.listener(move |this, paths, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_external_paths_drop(paths, window, cx)
+                                }))
+                                .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                    if event.up.click_count == 2 {
+                                        window.dispatch_action(
+                                            this.double_click_dispatch_action.boxed_clone(),
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                )
+                .into_any_element()
+        }
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
@@ -3006,6 +3389,19 @@ impl Pane {
         if let Some(preview_item_id) = self.preview_item_id {
             if item_id == preview_item_id {
                 self.set_preview_item_id(None, cx);
+            }
+        }
+        
+        // When using separate rows, detect if dropping between pinned/unpinned regions
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+        if tab_bar_settings.pinned_tabs_on_separate_row {
+            let is_dropping_in_pinned_region = ix <= self.pinned_tab_count;
+            let was_pinned = dragged_tab.ix < self.pinned_tab_count;
+            
+            // If moving between regions, update the drop index to account for automatic pin/unpin
+            if was_pinned != is_dropping_in_pinned_region {
+                // The tab will be automatically pinned/unpinned after the move
+                // So we don't need to adjust the index here
             }
         }
 
@@ -3485,6 +3881,9 @@ impl Render for Pane {
             }))
             .on_action(cx.listener(|pane, action, window, cx| {
                 pane.unpin_all_tabs(action, window, cx);
+            }))
+            .on_action(cx.listener(|pane, action, window, cx| {
+                pane.toggle_lock(action, window, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {

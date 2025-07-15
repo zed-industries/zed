@@ -38,7 +38,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &Welcome, window, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
+            workspace.add_item_to_active_pane_or_new_pane(Box::new(welcome_page), None, true, window, cx)
         });
         workspace
             .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));

@@ -439,6 +439,7 @@ pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
     pub(crate) pinned_count: usize,
+    pub(crate) locked: bool,
 }
 
 impl SerializedPane {
@@ -447,6 +448,7 @@ impl SerializedPane {
             children,
             active,
             pinned_count,
+            locked: false,
         }
     }
 
@@ -507,8 +509,9 @@ impl SerializedPane {
                 }
             })?;
         }
-        pane.update(cx, |pane, _| {
+        pane.update(cx, |pane, cx| {
             pane.set_pinned_count(self.pinned_count.min(items.len()));
+            pane.set_locked(self.locked, cx);
         })?;
 
         anyhow::Ok(items)

@@ -919,7 +919,12 @@
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true,
     // Whether or not to show the tab bar buttons.
-    "show_tab_bar_buttons": true
+    "show_tab_bar_buttons": true,
+    // How to display pinned tabs in the tab bar.
+    // Options: "normal", "shrink", "compact"
+    "pinned_tab_sizing": "normal",
+    // Whether to show pinned tabs on a separate row.
+    "pinned_tabs_on_separate_row": false
   },
   // Settings related to the editor's tabs
   "tabs": {

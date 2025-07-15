@@ -52,7 +52,7 @@ use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    DetachAndPromptErr, Notifications, dismiss_app_notification,
+    DetachAndPromptErr, NotificationId, Notifications, dismiss_app_notification,
     simple_message_notification::MessageNotification,
 };
 pub use pane::*;
@@ -108,7 +108,6 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     SerializedAxis,
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
@@ -233,6 +232,14 @@ actions!(
         ToggleBottomDock,
         /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles pinned tabs on separate row.
+        TogglePinnedTabsOnSeparateRow,
+        /// Cycles through pinned tab sizing modes.
+        CyclePinnedTabSizing,
+        /// Locks all panes in the workspace.
+        LockAllPanes,
+        /// Unlocks all panes in the workspace.
+        UnlockAllPanes,
         /// Toggles the left dock.
         ToggleLeftDock,
         /// Toggles the right dock.
@@ -3121,6 +3128,32 @@ impl Workspace {
             cx,
         )
     }
+    
+    pub fn add_item_to_active_pane_or_new_pane(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        destination_index: Option<usize>,
+        focus_item: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Check if the active pane is locked and no unlocked panes exist
+        if self.active_pane.read(cx).is_locked() && self.find_unlocked_pane(cx).is_none() {
+            // All panes are locked, create a new pane
+            self.split_item(SplitDirection::Right, item, window, cx);
+        } else {
+            // Use the normal add_item flow
+            self.add_item(
+                self.active_pane.clone(),
+                item,
+                destination_index,
+                false,
+                focus_item,
+                window,
+                cx,
+            )
+        }
+    }
 
     pub fn add_item(
         &mut self,
@@ -3136,7 +3169,14 @@ impl Workspace {
             telemetry::event!(text);
         }
 
-        pane.update(cx, |pane, cx| {
+        // If the pane is locked, find an alternative pane
+        let target_pane = if pane.read(cx).is_locked() {
+            self.find_unlocked_pane(cx).unwrap_or(pane)
+        } else {
+            pane
+        };
+
+        target_pane.update(cx, |pane, cx| {
             pane.add_item(
                 item,
                 activate_pane,
@@ -3146,6 +3186,23 @@ impl Workspace {
                 cx,
             )
         });
+    }
+
+    fn find_unlocked_pane(&self, cx: &App) -> Option<Entity<Pane>> {
+        // First try the last active center pane if it's unlocked
+        if let Some(pane) = self.last_active_center_pane
+            .as_ref()
+            .and_then(|p| p.upgrade())
+            .filter(|p| !p.read(cx).is_locked())
+        {
+            return Some(pane);
+        }
+
+        // Otherwise find the first unlocked pane
+        self.panes
+            .iter()
+            .find(|p| !p.read(cx).is_locked())
+            .cloned()
     }
 
     pub fn split_item(
@@ -5091,7 +5148,7 @@ impl Workspace {
             window: &mut Window,
             cx: &mut App,
         ) -> SerializedPane {
-            let (items, active, pinned_count) = {
+            let (items, active, pinned_count, locked) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
@@ -5109,10 +5166,16 @@ impl Workspace {
                         .collect::<Vec<_>>(),
                     pane.has_focus(window, cx),
                     pane.pinned_count(),
+                    pane.is_locked(),
                 )
             };
 
-            SerializedPane::new(items, active, pinned_count)
+            SerializedPane {
+                children: items,
+                active,
+                pinned_count,
+                locked,
+            }
         }
 
         fn build_serialized_pane_group(
@@ -5619,6 +5682,10 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::toggle_pinned_tabs_on_separate_row))
+            .on_action(cx.listener(Workspace::cycle_pinned_tab_sizing))
+            .on_action(cx.listener(Workspace::lock_all_panes))
+            .on_action(cx.listener(Workspace::unlock_all_panes))
             .on_action(cx.listener(Workspace::cancel))
     }
 
@@ -5718,6 +5785,62 @@ impl Workspace {
                 .detach_and_log_err(cx);
         }
         cx.notify();
+    }
+
+    pub fn toggle_pinned_tabs_on_separate_row(
+        &mut self,
+        _: &TogglePinnedTabsOnSeparateRow,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project().read(cx).fs();
+        settings::update_settings_file::<TabBarSettings>(fs.clone(), cx, move |settings, cx| {
+            settings.pinned_tabs_on_separate_row = Some(!TabBarSettings::get(None, cx).pinned_tabs_on_separate_row);
+        });
+    }
+
+    pub fn cycle_pinned_tab_sizing(
+        &mut self,
+        _: &CyclePinnedTabSizing,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use workspace_settings::PinnedTabSizing;
+        
+        let fs = self.project().read(cx).fs();
+        settings::update_settings_file::<TabBarSettings>(fs.clone(), cx, move |settings, cx| {
+                let current = TabBarSettings::get(None, cx).pinned_tab_sizing;
+                settings.pinned_tab_sizing = Some(match current {
+                    PinnedTabSizing::Normal => PinnedTabSizing::Shrink,
+                    PinnedTabSizing::Shrink => PinnedTabSizing::Compact,
+                    PinnedTabSizing::Compact => PinnedTabSizing::Normal,
+                });
+            },
+        );
+    }
+
+    pub fn lock_all_panes(&mut self, _: &LockAllPanes, _: &mut Window, cx: &mut Context<Self>) {
+        for pane in self.panes.clone() {
+            pane.update(cx, |pane, cx| {
+                pane.set_locked(true, cx);
+            });
+        }
+        self.show_toast(
+            Toast::new(NotificationId::unique::<LockAllPanes>(), "All panes have been locked"),
+            cx,
+        );
+    }
+
+    pub fn unlock_all_panes(&mut self, _: &UnlockAllPanes, _: &mut Window, cx: &mut Context<Self>) {
+        for pane in self.panes.clone() {
+            pane.update(cx, |pane, cx| {
+                pane.set_locked(false, cx);
+            });
+        }
+        self.show_toast(
+            Toast::new(NotificationId::unique::<UnlockAllPanes>(), "All panes have been unlocked"),
+            cx,
+        );
     }
 
     fn adjust_padding(padding: Option<f32>) -> f32 {

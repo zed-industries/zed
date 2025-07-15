@@ -204,11 +204,49 @@ pub struct WorkspaceSettingsContent {
     pub close_on_file_delete: Option<bool>,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PinnedTabSizing {
+    /// A pinned tab inherits the look of other tabs
+    #[default]
+    Normal,
+    /// A pinned tab shrinks to a fixed size showing parts of the editor label
+    Shrink,
+    /// A pinned tab will only show as icon or first letter of the editor label
+    Compact,
+}
+
 #[derive(Deserialize)]
 pub struct TabBarSettings {
+    #[serde(default = "default_true")]
     pub show: bool,
+    #[serde(default = "default_true")]
     pub show_nav_history_buttons: bool,
+    #[serde(default = "default_true")]
     pub show_tab_bar_buttons: bool,
+    #[serde(default)]
+    pub pinned_tab_sizing: PinnedTabSizing,
+    #[serde(default)]
+    pub pinned_tabs_on_separate_row: bool,
+    #[serde(default)]
+    pub max_pinned_tabs: Option<usize>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for TabBarSettings {
+    fn default() -> Self {
+        Self {
+            show: true,
+            show_nav_history_buttons: true,
+            show_tab_bar_buttons: true,
+            pinned_tab_sizing: PinnedTabSizing::default(),
+            pinned_tabs_on_separate_row: false,
+            max_pinned_tabs: None,
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -225,6 +263,18 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
+    /// How to display pinned tabs in the tab bar.
+    ///
+    /// Default: normal
+    pub pinned_tab_sizing: Option<PinnedTabSizing>,
+    /// Whether to show pinned tabs on a separate row.
+    ///
+    /// Default: false
+    pub pinned_tabs_on_separate_row: Option<bool>,
+    /// Maximum number of pinned tabs allowed per pane.
+    ///
+    /// Default: None (unlimited)
+    pub max_pinned_tabs: Option<usize>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -384,5 +434,21 @@ impl Settings for TabBarSettings {
         if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
             current.show_tab_bar_buttons = Some(false)
         }
+        
+        vscode.enum_setting(
+            "workbench.editor.pinnedTabSizing",
+            &mut current.pinned_tab_sizing,
+            |s| match s {
+                "normal" => Some(PinnedTabSizing::Normal),
+                "shrink" => Some(PinnedTabSizing::Shrink),
+                "compact" => Some(PinnedTabSizing::Compact),
+                _ => None,
+            },
+        );
+        
+        vscode.bool_setting(
+            "workbench.editor.pinnedTabsOnSeparateRow",
+            &mut current.pinned_tabs_on_separate_row,
+        );
     }
 }

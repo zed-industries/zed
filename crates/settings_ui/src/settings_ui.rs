@@ -67,7 +67,7 @@ pub fn init(cx: &mut App) {
                 workspace.activate_item(&existing, true, true, window, cx);
             } else {
                 let settings_page = SettingsPage::new(workspace, cx);
-                workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
+                workspace.add_item_to_active_pane_or_new_pane(Box::new(settings_page), None, true, window, cx)
             }
         });
     });

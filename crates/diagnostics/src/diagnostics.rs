@@ -348,7 +348,7 @@ impl ProjectDiagnosticsEditor {
                     cx,
                 )
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
+            workspace.add_item_to_active_pane_or_new_pane(Box::new(diagnostics), None, true, window, cx);
         }
     }
 

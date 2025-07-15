@@ -1127,6 +1127,7 @@ impl WorkspaceDb {
                     active: true,
                     children: vec![],
                     pinned_count: 0,
+                    locked: false,
                 })
             }))
     }
