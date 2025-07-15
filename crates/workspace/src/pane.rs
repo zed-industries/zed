@@ -40,6 +40,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -364,6 +365,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
 }
@@ -505,6 +507,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
         }
     }
@@ -616,8 +619,16 @@ impl Pane {
             project::Event::DiskBasedDiagnosticsFinished { .. }
             | project::Event::DiagnosticsUpdated { .. } => {
                 if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
-                    self.update_diagnostics(cx);
-                    cx.notify();
+                    self.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.update_diagnostics(cx);
+                            cx.notify();
+                        })
+                        .log_err();
+                    });
                 }
             }
             _ => {}

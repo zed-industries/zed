@@ -1106,6 +1106,7 @@ impl LanguageServer {
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
+
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1125,16 +1126,40 @@ impl LanguageServer {
         )
     }
 
-    fn request_internal<T>(
+    /// Sends a RPC request to the language server, with a custom timer, a future which when becoming
+    /// ready causes the request to be timed out with the future's output message.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
+    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
+        &self,
+        params: T::Params,
+        timer: U,
+    ) -> impl LspRequestFuture<T::Result> + use<T, U>
+    where
+        T::Result: 'static + Send,
+    {
+        Self::request_internal_with_timer::<T, U>(
+            &self.next_id,
+            &self.response_handlers,
+            &self.outbound_tx,
+            &self.executor,
+            timer,
+            params,
+        )
+    }
+
+    fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
+        timer: U,
         params: T::Params,
-    ) -> impl LspRequestFuture<T::Result> + use<T>
+    ) -> impl LspRequestFuture<T::Result> + use<T, U>
     where
         T::Result: 'static + Send,
         T: request::Request,
+        U: Future<Output = String>,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
@@ -1179,7 +1204,6 @@ impl LanguageServer {
             .context("failed to write to language server's stdin");
 
         let outbound_tx = outbound_tx.downgrade();
-        let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {
@@ -1216,12 +1240,39 @@ impl LanguageServer {
                     }
                 }
 
-                _ = timeout => {
-                    log::error!("Cancelled LSP request task for {method:?} id {id} which took over {LSP_REQUEST_TIMEOUT:?}");
+                message = timer.fuse() => {
+                    log::error!("Cancelled LSP request task for {method:?} id {id} {message}");
                     ConnectionResult::Timeout
                 }
             }
         })
+    }
+
+    fn request_internal<T>(
+        next_id: &AtomicI32,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
+        outbound_tx: &channel::Sender<String>,
+        executor: &BackgroundExecutor,
+        params: T::Params,
+    ) -> impl LspRequestFuture<T::Result> + use<T>
+    where
+        T::Result: 'static + Send,
+        T: request::Request,
+    {
+        Self::request_internal_with_timer::<T, _>(
+            next_id,
+            response_handlers,
+            outbound_tx,
+            executor,
+            Self::default_request_timer(executor.clone()),
+            params,
+        )
+    }
+
+    pub fn default_request_timer(executor: BackgroundExecutor) -> impl Future<Output = String> {
+        executor
+            .timer(LSP_REQUEST_TIMEOUT)
+            .map(|_| format!("which took over {LSP_REQUEST_TIMEOUT:?}"))
     }
 
     /// Sends a RPC notification to the language server.

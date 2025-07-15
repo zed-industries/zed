@@ -3168,6 +3168,7 @@ dependencies = [
  "session",
  "settings",
  "sha2",
+ "smol",
  "sqlx",
  "strum 0.27.1",
  "subtle",

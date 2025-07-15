@@ -108,6 +108,7 @@ pub struct ProjectPanel {
     hide_scrollbar_task: Option<Task<()>>,
     diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,
+    diagnostic_summary_update: Task<()>,
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
@@ -420,8 +421,16 @@ impl ProjectPanel {
                 | project::Event::DiagnosticsUpdated { .. } => {
                     if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
                     {
-                        this.update_diagnostics(cx);
-                        cx.notify();
+                        this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(30))
+                                .await;
+                            this.update(cx, |this, cx| {
+                                this.update_diagnostics(cx);
+                                cx.notify();
+                            })
+                            .log_err();
+                        });
                     }
                 }
                 project::Event::WorktreeRemoved(id) => {
@@ -564,6 +573,7 @@ impl ProjectPanel {
                     .parent_entity(&cx.entity()),
                 max_width_item_index: None,
                 diagnostics: Default::default(),
+                diagnostic_summary_update: Task::ready(()),
                 scroll_handle,
                 mouse_down: false,
                 hover_expand_task: None,
