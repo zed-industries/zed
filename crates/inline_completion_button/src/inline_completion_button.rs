@@ -241,17 +241,11 @@ impl Render for InlineCompletionButton {
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
-                let has_subscription = self.user_store.read(cx).current_plan().is_some()
-                    && self.user_store.read(cx).subscription_period().is_some();
 
-                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
+                if !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
-                        if has_subscription {
-                            "Read Terms of Service"
-                        } else {
-                            "Choose a Plan"
-                        }
+                        "Accept the Terms of Service to use"
                     } else {
                         "Sign in to use"
                     };
@@ -577,6 +571,7 @@ impl InlineCompletionButton {
                                     h_flex()
                                         .items_start()
                                         .pt_2()
+                                        .pr_1()
                                         .flex_1()
                                         .gap_1p5()
                                         .border_t_1()
@@ -758,44 +753,24 @@ impl InlineCompletionButton {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new("Your GitHub account is less than 30 days old")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                )
+                            Label::new("Your GitHub account is less than 30 days old.")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
                                 .into_any_element()
                         },
                         |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
-                    .entry(
-                        "You need to upgrade to Zed Pro or contact us.",
-                        None,
-                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
-                    )
+                    .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
+                        cx.open_url(&zed_urls::account_url(cx))
+                    })
                     .separator();
             } else if self.user_store.read(cx).has_overdue_invoices() {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new("You have an outstanding invoice")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                )
+                            Label::new("You have an outstanding invoice")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
                                 .into_any_element()
                         },
                         |_window, cx| {

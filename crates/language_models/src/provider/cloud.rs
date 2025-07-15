@@ -1117,6 +1117,7 @@ impl RenderOnce for ZedAiConfiguration {
                 }
             }
         };
+
         let manage_subscription_buttons = if is_pro {
             h_flex().child(
                 Button::new("manage_settings", "Manage Subscription")
@@ -1125,24 +1126,30 @@ impl RenderOnce for ZedAiConfiguration {
             )
         } else {
             h_flex()
+                .w_full()
                 .gap_2()
                 .child(
-                    Button::new("learn_more", "Learn more")
-                        .style(ButtonStyle::Subtle)
-                        .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
+                    h_flex().w_full().child(
+                        Button::new("learn_more", "Learn More")
+                            .style(ButtonStyle::Outlined)
+                            .full_width()
+                            .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
+                    ),
                 )
                 .child(
-                    Button::new(
-                        "upgrade",
-                        if self.plan.is_none() && self.eligible_for_trial {
-                            "Start Trial"
-                        } else {
-                            "Upgrade"
-                        },
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Accent)
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                    h_flex().w_full().child(
+                        Button::new(
+                            "upgrade",
+                            if self.plan.is_none() && self.eligible_for_trial {
+                                "Start Trial"
+                            } else {
+                                "Upgrade to Pro"
+                            },
+                        )
+                        .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .full_width()
+                        .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                    ),
                 )
         };
 
@@ -1161,7 +1168,8 @@ impl RenderOnce for ZedAiConfiguration {
                     ))
                 })
                 .when(self.has_accepted_terms_of_service, |this| {
-                    this.child(subscription_text)
+                    this.text_sm()
+                        .child(subscription_text)
                         .child(manage_subscription_buttons)
                 })
         } else {
