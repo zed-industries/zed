@@ -489,7 +489,7 @@ impl AgentConfiguration {
                 .bg(bg_color)
                 .overflow_hidden()
                 .child(
-                    Label::new(format!("{}", plan_name))
+                    Label::new(plan_name.to_string())
                         .color(plan_color)
                         .size(LabelSize::XSmall)
                         .buffer_font(cx),
