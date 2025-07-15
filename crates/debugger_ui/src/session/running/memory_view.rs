@@ -583,16 +583,22 @@ impl MemoryView {
         else {
             return;
         };
+        let expr = format!("?${{{expr}}}");
         let reference = self.session.update(cx, |this, cx| {
             this.memory_reference_of_expr(selected_frame, expr, cx)
         });
         cx.spawn(async move |this, cx| {
-            if let Some(reference) = reference.await {
+            if let Some((reference, typ)) = reference.await {
                 _ = this.update(cx, |this, cx| {
-                    let Ok(address) = parse_int::parse::<u64>(&reference) else {
-                        return;
+                    let sizeof_expr = if typ.as_ref().is_some_and(|t| {
+                        t.chars()
+                            .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+                    }) {
+                        typ.as_deref()
+                    } else {
+                        None
                     };
-                    this.jump_to_address(address, cx);
+                    this.go_to_memory_reference(&reference, sizeof_expr, selected_frame, cx);
                 });
             }
         })
