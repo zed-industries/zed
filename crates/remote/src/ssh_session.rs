@@ -400,6 +400,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .args(["-o", "ControlMaster=no", "-o"])
             .arg(format!("ControlPath={}", self.socket_path.display()))
     }
@@ -410,6 +411,7 @@ impl SshSocket {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .args(self.connection_options.additional_args())
             .envs(self.envs.clone())
     }
 
@@ -417,22 +419,26 @@ impl SshSocket {
     // On Linux, we use the `ControlPath` option to create a socket file that ssh can use to
     #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.extend(vec![
+            "-o".to_string(),
+            "ControlMaster=no".to_string(),
+            "-o".to_string(),
+            format!("ControlPath={}", self.socket_path.display()),
+            self.connection_options.ssh_url(),
+        ]);
         SshArgs {
-            arguments: vec![
-                "-o".to_string(),
-                "ControlMaster=no".to_string(),
-                "-o".to_string(),
-                format!("ControlPath={}", self.socket_path.display()),
-                self.connection_options.ssh_url(),
-            ],
+            arguments,
             envs: None,
         }
     }
 
     #[cfg(target_os = "windows")]
     fn ssh_args(&self) -> SshArgs {
+        let mut arguments = self.connection_options.additional_args();
+        arguments.push(self.connection_options.ssh_url());
         SshArgs {
-            arguments: vec![self.connection_options.ssh_url()],
+            arguments,
             envs: Some(self.envs.clone()),
         }
     }
