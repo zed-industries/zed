@@ -2,30 +2,23 @@ use std::sync::Arc;
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use ai_onboarding::EditPredictionOnboarding;
-use anyhow::Context as _;
 use client::{Client, UserStore};
-use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
-    linear_color_stop, linear_gradient, svg,
+    linear_color_stop, linear_gradient,
 };
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::update_settings_file;
-use ui::{Checkbox, Vector, VectorName, prelude::*};
-use util::ResultExt;
-use workspace::{ModalView, Workspace, notifications::NotifyTaskExt};
+use ui::{Vector, VectorName, prelude::*};
+use workspace::{ModalView, Workspace};
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
-    user_store: Entity<UserStore>,
     onboarding: Entity<EditPredictionOnboarding>,
-    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
-    terms_of_service: bool,
     data_collection_expanded: bool,
-    data_collection_opted_in: bool,
 }
 
 pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
@@ -74,78 +67,74 @@ impl ZedPredictModal {
                         cx,
                     )
                 }),
-                user_store,
-                client,
                 fs,
                 focus_handle: cx.focus_handle(),
-                terms_of_service: false,
                 data_collection_expanded: false,
-                data_collection_opted_in: false,
             }
         });
     }
 
-    fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
-        cx.notify();
+    // fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    //     cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
+    //     cx.notify();
 
-        onboarding_event!("Docs Link Clicked");
-    }
+    //     onboarding_event!("Docs Link Clicked");
+    // }
 
-    fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let task = self
-            .user_store
-            .update(cx, |this, cx| this.accept_terms_of_service(cx));
-        let fs = self.fs.clone();
+    // fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    //     let task = self
+    //         .user_store
+    //         .update(cx, |this, cx| this.accept_terms_of_service(cx));
+    //     let fs = self.fs.clone();
 
-        cx.spawn(async move |this, cx| {
-            task.await?;
+    //     cx.spawn(async move |this, cx| {
+    //         task.await?;
 
-            let mut data_collection_opted_in = false;
-            this.update(cx, |this, _cx| {
-                data_collection_opted_in = this.data_collection_opted_in;
-            })
-            .ok();
+    //         let mut data_collection_opted_in = false;
+    //         this.update(cx, |this, _cx| {
+    //             data_collection_opted_in = this.data_collection_opted_in;
+    //         })
+    //         .ok();
 
-            KEY_VALUE_STORE
-                .write_kvp(
-                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                    data_collection_opted_in.to_string(),
-                )
-                .await
-                .log_err();
+    //         KEY_VALUE_STORE
+    //             .write_kvp(
+    //                 ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+    //                 data_collection_opted_in.to_string(),
+    //             )
+    //             .await
+    //             .log_err();
 
-            // Make sure edit prediction provider setting is using the new key
-            let settings_path = paths::settings_file().as_path();
-            let settings_path = fs.canonicalize(settings_path).await.with_context(|| {
-                format!("Failed to canonicalize settings path {:?}", settings_path)
-            })?;
+    //         // Make sure edit prediction provider setting is using the new key
+    //         let settings_path = paths::settings_file().as_path();
+    //         let settings_path = fs.canonicalize(settings_path).await.with_context(|| {
+    //             format!("Failed to canonicalize settings path {:?}", settings_path)
+    //         })?;
 
-            if let Some(settings) = fs.load(&settings_path).await.log_err() {
-                if let Some(new_settings) =
-                    migrator::migrate_edit_prediction_provider_settings(&settings)?
-                {
-                    fs.atomic_write(settings_path, new_settings).await?;
-                }
-            }
+    //         if let Some(settings) = fs.load(&settings_path).await.log_err() {
+    //             if let Some(new_settings) =
+    //                 migrator::migrate_edit_prediction_provider_settings(&settings)?
+    //             {
+    //                 fs.atomic_write(settings_path, new_settings).await?;
+    //             }
+    //         }
 
-            this.update(cx, |this, cx| {
-                update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
-                    file.features
-                        .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::Zed);
-                });
+    //         this.update(cx, |this, cx| {
+    //             update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
+    //                 file.features
+    //                     .get_or_insert(Default::default())
+    //                     .edit_prediction_provider = Some(EditPredictionProvider::Zed);
+    //             });
 
-                cx.emit(DismissEvent);
-            })
-        })
-        .detach_and_notify_err(window, cx);
+    //             cx.emit(DismissEvent);
+    //         })
+    //     })
+    //     .detach_and_notify_err(window, cx);
 
-        onboarding_event!(
-            "Enable Clicked",
-            data_collection_opted_in = self.data_collection_opted_in,
-        );
-    }
+    //     onboarding_event!(
+    //         "Enable Clicked",
+    //         data_collection_opted_in = self.data_collection_opted_in,
+    //     );
+    // }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
