@@ -996,23 +996,45 @@ impl ActiveThread {
             | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::Stopped(reason) => match reason {
-                Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
-                    self.play_notification_sound(window, cx);
-                    self.show_notification(
-                        if used_tools {
-                            "Finished running tools"
-                        } else {
-                            "New message"
-                        },
-                        IconName::ZedAssistant,
-                        window,
-                        cx,
-                    );
+            ThreadEvent::Stopped(reason) => {
+                match reason {
+                    Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
+                        self.play_notification_sound(window, cx);
+                        let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                        self.show_notification(
+                            if used_tools {
+                                "Finished running tools"
+                            } else {
+                                "New message"
+                            },
+                            IconName::ZedAssistant,
+                            window,
+                            cx,
+                        );
+                    }
+                    Ok(StopReason::ToolUse) => {
+                        // Don't show notification for intermediate tool use
+                    }
+                    Ok(StopReason::Refusal) => {
+                        self.play_notification_sound(window, cx);
+                        self.show_notification(
+                            "Language model refused to respond",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(_) => {
+                        self.play_notification_sound(window, cx);
+                        self.show_notification(
+                            "Agent stopped due to an error",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
                 }
-                _ => {}
-            },
+            }
             ThreadEvent::ToolConfirmationNeeded => {
                 self.play_notification_sound(window, cx);
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
