@@ -18,8 +18,6 @@ pub struct ActionLog {
     edited_since_project_diagnostics_check: bool,
     /// The project this action log is associated with
     project: Entity<Project>,
-    /// Tracks which buffer versions have already been notified as changed externally
-    notified_versions: BTreeMap<Entity<Buffer>, clock::Global>,
 }
 
 impl ActionLog {
@@ -29,7 +27,6 @@ impl ActionLog {
             tracked_buffers: BTreeMap::default(),
             edited_since_project_diagnostics_check: false,
             project,
-            notified_versions: BTreeMap::default(),
         }
     }
 
@@ -51,8 +48,20 @@ impl ActionLog {
         Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
     }
 
-    pub fn user_edits_since_last_read(&self, cx: &Context<Self>) -> String {
+    pub fn has_unnotified_user_edits(&self) -> bool {
         self.tracked_buffers
+            .values()
+            .any(|tracked| tracked.has_unnotified_user_edits)
+    }
+
+    /// Return a unified diff patch with user edits made since last read or notification
+    pub fn unnotified_user_edits(&self, cx: &Context<Self>) -> Option<String> {
+        if !self.has_unnotified_user_edits() {
+            return None;
+        }
+
+        let unified_diff = self
+            .tracked_buffers
             .values()
             .filter_map(|tracked| {
                 let text_with_latest_user_edits = tracked.diff_base.to_string();
@@ -80,7 +89,19 @@ impl ActionLog {
                 Some(result)
             })
             .collect::<Vec<_>>()
-            .join("\n\n")
+            .join("\n\n");
+
+        Some(unified_diff)
+    }
+
+    /// Return a unified diff patch with user edits made since last read/notification
+    /// and mark them as notified
+    pub fn flush_unnotified_user_edits(&mut self, cx: &Context<Self>) -> Option<String> {
+        let patch = self.unnotified_user_edits(cx);
+        self.tracked_buffers.values_mut().for_each(|tracked| {
+            tracked.has_unnotified_user_edits = false;
+        });
+        patch
     }
 
     fn track_buffer_internal(
@@ -91,7 +112,6 @@ impl ActionLog {
     ) -> &mut TrackedBuffer {
         let status = if is_created {
             if let Some(tracked) = self.tracked_buffers.remove(&buffer) {
-                self.notified_versions.remove(&buffer);
                 match tracked.status {
                     TrackedBufferStatus::Created {
                         existing_file_content,
@@ -143,12 +163,10 @@ impl ActionLog {
                         new: 0..text_snapshot.max_point().row + 1,
                     }])
                 } else {
-                    let current_rope = buffer.read(cx).as_rope();
-                    diff_base = current_rope.clone();
-                    last_seen_base = current_rope.clone();
+                    diff_base = buffer.read(cx).as_rope().clone();
+                    last_seen_base = diff_base.clone();
                     unreviewed_edits = Patch::default();
                 }
-                let unnotified_user_edits = Patch::default();
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
@@ -159,7 +177,7 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
-                    unnotified_user_edits,
+                    has_unnotified_user_edits: false,
                     _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
@@ -213,7 +231,6 @@ impl ActionLog {
                     // If the buffer had been edited by a tool, but it got
                     // deleted externally, we want to stop tracking it.
                     self.tracked_buffers.remove(&buffer);
-                    self.notified_versions.remove(&buffer);
                 }
                 cx.notify();
             }
@@ -227,7 +244,6 @@ impl ActionLog {
                     // resurrected externally, we want to clear the edits we
                     // were tracking and reset the buffer's state.
                     self.tracked_buffers.remove(&buffer);
-                    self.notified_versions.remove(&buffer);
                     self.track_buffer_internal(buffer, false, cx);
                 }
                 cx.notify();
@@ -306,6 +322,10 @@ impl ActionLog {
                 .tracked_buffers
                 .get_mut(buffer)
                 .context("buffer not tracked")?;
+
+            if let ChangeAuthor::User = author {
+                tracked_buffer.has_unnotified_user_edits = true;
+            }
 
             let rebase = cx.background_spawn({
                 let mut base_text = tracked_buffer.diff_base.clone();
@@ -508,11 +528,7 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
-        // TODO: move to track_buffer_internal?
-        // Update the last read state to current buffer state
-        tracked_buffer.last_seen_base = buffer.read(cx).as_rope().clone();
-        tracked_buffer.unnotified_user_edits = Patch::default();
+        self.track_buffer_internal(buffer.clone(), false, cx);
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
@@ -537,7 +553,6 @@ impl ActionLog {
         match tracked_buffer.status {
             TrackedBufferStatus::Created { .. } => {
                 self.tracked_buffers.remove(&buffer);
-                self.notified_versions.remove(&buffer);
                 cx.notify();
             }
             TrackedBufferStatus::Modified => {
@@ -563,7 +578,6 @@ impl ActionLog {
         match tracked_buffer.status {
             TrackedBufferStatus::Deleted => {
                 self.tracked_buffers.remove(&buffer);
-                self.notified_versions.remove(&buffer);
                 cx.notify();
             }
             _ => {
@@ -672,7 +686,6 @@ impl ActionLog {
                 };
 
                 self.tracked_buffers.remove(&buffer);
-                self.notified_versions.remove(&buffer);
                 cx.notify();
                 task
             }
@@ -686,7 +699,6 @@ impl ActionLog {
 
                 // Clear all tracked edits for this buffer and start over as if we just read it.
                 self.tracked_buffers.remove(&buffer);
-                self.notified_versions.remove(&buffer);
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
                 save
@@ -785,33 +797,6 @@ impl ActionLog {
             .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
             .collect()
-    }
-
-    /// Returns stale buffers that haven't been notified yet
-    pub fn unnotified_stale_buffers<'a>(
-        &'a self,
-        cx: &'a App,
-    ) -> impl Iterator<Item = &'a Entity<Buffer>> {
-        self.stale_buffers(cx).filter(|buffer| {
-            let buffer_entity = buffer.read(cx);
-            self.notified_versions
-                .get(buffer)
-                .map_or(true, |notified_version| {
-                    *notified_version != buffer_entity.version
-                })
-        })
-    }
-
-    /// Marks the given buffers as notified at their current versions
-    pub fn mark_buffers_as_notified(
-        &mut self,
-        buffers: impl IntoIterator<Item = Entity<Buffer>>,
-        cx: &App,
-    ) {
-        for buffer in buffers {
-            let version = buffer.read(cx).version.clone();
-            self.notified_versions.insert(buffer, version);
-        }
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -942,18 +927,6 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
     }
 }
 
-fn row_range_to_offset_range(rows: &Range<u32>, text: &Rope) -> Range<usize> {
-    let start = text.point_to_offset(Point {
-        row: rows.start,
-        column: 0,
-    });
-    let end = text.point_to_offset(Point {
-        row: rows.end,
-        column: 0,
-    });
-    start..end
-}
-
 #[derive(Copy, Clone, Debug)]
 enum ChangeAuthor {
     User,
@@ -976,7 +949,7 @@ struct TrackedBuffer {
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
-    unnotified_user_edits: Patch<u32>,
+    has_unnotified_user_edits: bool,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -1370,9 +1343,9 @@ mod tests {
         );
 
         // User edits should be stored separately from agent's
-        let user_edits = action_log.update(cx, |log, cx| log.user_edits_since_last_read(cx));
+        let user_edits = action_log.update(cx, |log, cx| log.unnotified_user_edits(cx));
         assert_eq!(
-            user_edits,
+            user_edits.expect("should have some user edits"),
             indoc! {"
                 --- a/dir/file
                 +++ b/dir/file
@@ -2424,11 +2397,11 @@ mod tests {
         cx.run_until_parked();
 
         // Get the patch
-        let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read(cx));
+        let patch = action_log.update(cx, |log, cx| log.unnotified_user_edits(cx));
 
         // Verify the patch format contains expected unified diff elements
         assert_eq!(
-            patch,
+            patch.unwrap(),
             indoc! {"
             --- a/dir/test.txt
             +++ b/dir/test.txt

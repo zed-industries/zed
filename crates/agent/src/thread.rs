@@ -1519,7 +1519,9 @@ impl Thread {
     ) -> Option<PendingToolUse> {
         let action_log = self.action_log.read(cx);
 
-        action_log.unnotified_stale_buffers(cx).next()?;
+        if !action_log.has_unnotified_user_edits() {
+            return None;
+        }
 
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
