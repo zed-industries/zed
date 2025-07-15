@@ -71,9 +71,9 @@ actions!(
 actions!(
     keystroke_input,
     [
-        /// Start recording keystrokes
+        /// Starts recording keystrokes
         StartRecording,
-        /// Stop recording keystrokes
+        /// Stops recording keystrokes
         StopRecording,
     ]
 );
@@ -2131,16 +2131,13 @@ impl KeystrokeInput {
         self.search = search;
     }
 
-    fn start_recording(
-        &mut self,
-        _: &StartRecording,
-        window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
+    fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
         if !self.outer_focus_handle.is_focused(window) {
             return;
         }
+        self.clear_keystrokes(&ClearKeystrokes, window, cx);
         window.focus(&self.inner_focus_handle);
+        cx.notify();
     }
 
     fn stop_recording(&mut self, _: &StopRecording, window: &mut Window, cx: &mut Context<Self>) {
@@ -2148,11 +2145,11 @@ impl KeystrokeInput {
             return;
         }
         window.focus(&self.outer_focus_handle);
-        cx.notify();
         if let Some(close_keystrokes_start) = self.close_keystrokes_start.take() {
             self.keystrokes.drain(close_keystrokes_start..);
         }
         self.close_keystrokes.take();
+        cx.notify();
     }
 }
 
@@ -2176,6 +2173,22 @@ impl Render for KeystrokeInput {
             .editor_background
             .blend(colors.text_accent.opacity(0.1));
 
+        let recording_pulse = || {
+            Icon::new(IconName::Circle)
+                .size(IconSize::Small)
+                .color(Color::Error)
+                .with_animation(
+                    "recording-pulse",
+                    Animation::new(std::time::Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(gpui::pulsating_between(0.4, 0.8)),
+                    {
+                        let color = Color::Error.color(cx);
+                        move |this, delta| this.color(Color::Custom(color.opacity(delta)))
+                    },
+                )
+        };
+
         let recording_indicator = h_flex()
             .h_4()
             .pr_1()
@@ -2186,21 +2199,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Small)
-                    .color(Color::Error)
-                    .with_animation(
-                        "recording-pulse",
-                        Animation::new(std::time::Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
-                        {
-                            let color = Color::Error.color(cx);
-                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
-                        },
-                    ),
-            )
+            .child(recording_pulse())
             .child(
                 Label::new("REC")
                     .size(LabelSize::XSmall)
@@ -2218,21 +2217,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(
-                Icon::new(IconName::Circle)
-                    .size(IconSize::Small)
-                    .color(Color::Accent)
-                    .with_animation(
-                        "recording-pulse",
-                        Animation::new(std::time::Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
-                        {
-                            let color = Color::Accent.color(cx);
-                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
-                        },
-                    ),
-            )
+            .child(recording_pulse())
             .child(
                 Label::new("SEARCH")
                     .size(LabelSize::XSmall)
@@ -2273,13 +2258,6 @@ impl Render for KeystrokeInput {
             .key_context(Self::key_context())
             .on_action(cx.listener(Self::start_recording))
             .on_action(cx.listener(Self::stop_recording))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                // TODO: replace with action
-                if !event.keystroke.modifiers.modified() && event.keystroke.key == "enter" {
-                    window.focus(&this.inner_focus_handle);
-                    cx.notify();
-                }
-            }))
             .child(
                 h_flex()
                     .w(horizontal_padding)
@@ -2334,8 +2312,8 @@ impl Render for KeystrokeInput {
                                         }
                                     })
                                     .icon_color(Color::Error)
-                                    .on_click(cx.listener(|this, _event, window, _cx| {
-                                        this.outer_focus_handle.focus(window);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.stop_recording(&StopRecording, window, cx);
                                     })),
                             )
                         } else {
@@ -2350,8 +2328,8 @@ impl Render for KeystrokeInput {
                                         }
                                     })
                                     .when(!is_focused, |this| this.icon_color(Color::Muted))
-                                    .on_click(cx.listener(|this, _event, window, _cx| {
-                                        this.inner_focus_handle.focus(window);
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.start_recording(&StartRecording, window, cx);
                                     })),
                             )
                         }
