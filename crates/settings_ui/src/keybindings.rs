@@ -1,4 +1,5 @@
 use std::{
+    iter::Filter,
     ops::{Not, Range},
     sync::Arc,
 };
@@ -699,7 +700,12 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let weak = cx.weak_entity();
         self.context_menu = self.selected_binding().map(|selected_binding| {
+            let key_strokes = selected_binding
+                .keystrokes()
+                .map(|keystrokes| Vec::from(keystrokes))
+                .unwrap_or_default();
             let selected_binding_has_no_context = selected_binding
                 .context
                 .as_ref()
@@ -727,6 +733,22 @@ impl KeymapEditor {
                     "Copy Context",
                     Box::new(CopyContext),
                 )
+                .entry("Show matching keybindings", None, {
+                    let weak = weak.clone();
+                    let key_strokes = key_strokes.clone();
+
+                    move |_, cx| {
+                        weak.update(cx, |this, cx| {
+                            this.filter_state = FilterState::All;
+                            this.search_mode = SearchMode::KeyStroke;
+
+                            this.keystroke_editor.update(cx, |editor, cx| {
+                                editor.set_keystrokes(key_strokes.clone(), cx);
+                            });
+                        })
+                        .ok();
+                    }
+                })
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
@@ -2201,6 +2223,11 @@ impl KeystrokeInput {
             close_keystrokes: None,
             close_keystrokes_start: None,
         }
+    }
+
+    fn set_keystrokes(&mut self, keystrokes: Vec<Keystroke>, cx: &mut Context<Self>) {
+        self.keystrokes = keystrokes;
+        self.keystrokes_changed(cx);
     }
 
     fn dummy(modifiers: Modifiers) -> Keystroke {
