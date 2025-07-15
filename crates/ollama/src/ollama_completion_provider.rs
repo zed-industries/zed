@@ -51,8 +51,6 @@ impl OllamaCompletionProvider {
         self.file_extension = Some(new_file_extension);
     }
 
-    // Removed get_stop_tokens and clean_completion - Ollama handles everything natively with FIM
-
     fn extract_context(&self, buffer: &Buffer, cursor_position: Anchor) -> (String, String) {
         let cursor_offset = cursor_position.to_offset(buffer);
         let text = buffer.text();
@@ -236,6 +234,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 mod tests {
     use super::*;
     use crate::fake::Ollama;
+
     use gpui::{AppContext, TestAppContext};
     use language::Buffer;
     use project::Project;
@@ -245,8 +244,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
+            editor::init_settings(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
         });
     }
 
@@ -341,5 +343,67 @@ mod tests {
             assert_eq!(suggestion.edits.len(), 1);
             assert!(suggestion.edits[0].1.contains("1, 2, 3"));
         }
+    }
+
+    #[gpui::test]
+    async fn test_accept_partial_ollama_suggestion(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
+        let (provider, fake_http_client) = Ollama::fake(cx);
+
+        // Set up the editor with the Ollama provider
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        });
+
+        // Set initial state
+        editor_cx.set_state("let items = ˇ");
+
+        // Configure a multi-word completion
+        fake_http_client.set_generate_response("vec![hello, world]");
+
+        // Trigger the completion through the provider
+        let buffer =
+            editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap().clone());
+        let cursor_position = editor_cx.buffer_snapshot().anchor_after(12);
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer, cursor_position, false, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.refresh_inline_completion(false, true, window, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            // Verify we have an active completion
+            assert!(editor.has_active_inline_completion());
+
+            // The display text should show the full completion
+            assert_eq!(editor.display_text(cx), "let items = vec![hello, world]");
+            // But the actual text should only show what's been typed
+            assert_eq!(editor.text(cx), "let items = ");
+
+            // Accept first partial - should accept "vec" (alphabetic characters)
+            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+
+            // Assert the buffer now contains the first partially accepted text
+            assert_eq!(editor.text(cx), "let items = vec");
+            // Completion should still be active for remaining text
+            assert!(editor.has_active_inline_completion());
+
+            // Accept second partial - should accept "![" (non-alphabetic characters)
+            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+
+            // Assert the buffer now contains both partial acceptances
+            assert_eq!(editor.text(cx), "let items = vec![");
+            // Completion should still be active for remaining text
+            assert!(editor.has_active_inline_completion());
+        });
     }
 }
