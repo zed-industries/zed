@@ -75,6 +75,8 @@ actions!(
         StartRecording,
         /// Stops recording keystrokes
         StopRecording,
+        /// Clears the recorded keystrokes
+        ClearKeystrokes,
     ]
 );
 
@@ -2151,6 +2153,19 @@ impl KeystrokeInput {
         self.close_keystrokes.take();
         cx.notify();
     }
+
+    fn clear_keystrokes(
+        &mut self,
+        _: &ClearKeystrokes,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.outer_focus_handle.is_focused(window) {
+            return;
+        }
+        self.keystrokes.clear();
+        cx.notify();
+    }
 }
 
 impl EventEmitter<()> for KeystrokeInput {}
@@ -2341,10 +2356,8 @@ impl Render for KeystrokeInput {
                             .when(!is_recording || !is_focused, |this| {
                                 this.icon_color(Color::Muted)
                             })
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.keystrokes.clear();
-                                cx.emit(());
-                                cx.notify();
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),
                     ),
             );
