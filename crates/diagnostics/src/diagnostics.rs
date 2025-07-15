@@ -48,7 +48,14 @@ use workspace::{
 
 actions!(
     diagnostics,
-    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+    [
+        /// Opens the project diagnostics view.
+        Deploy,
+        /// Toggles the display of warning-level diagnostics.
+        ToggleWarnings,
+        /// Toggles automatic refresh of diagnostics.
+        ToggleDiagnosticsRefresh
+    ]
 );
 
 #[derive(Default)]
@@ -649,7 +656,6 @@ impl ProjectDiagnosticsEditor {
                                     block.render_block(editor.clone(), bcx)
                                 }),
                                 priority: 1,
-                                render_in_minimap: false,
                             }
                         });
                 let block_ids = this.editor.update(cx, |editor, cx| {

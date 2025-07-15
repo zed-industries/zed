@@ -176,6 +176,7 @@ enum IndentType {
     Same,
 }
 
+/// Moves to the start of the next word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +185,7 @@ struct NextWordStart {
     ignore_punctuation: bool,
 }
 
+/// Moves to the end of the next word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +194,7 @@ struct NextWordEnd {
     ignore_punctuation: bool,
 }
 
+/// Moves to the start of the previous word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +203,7 @@ struct PreviousWordStart {
     ignore_punctuation: bool,
 }
 
+/// Moves to the end of the previous word.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -208,6 +212,7 @@ struct PreviousWordEnd {
     ignore_punctuation: bool,
 }
 
+/// Moves to the start of the next subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +221,7 @@ pub(crate) struct NextSubwordStart {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the end of the next subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -224,6 +230,7 @@ pub(crate) struct NextSubwordEnd {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the start of the previous subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -232,6 +239,7 @@ pub(crate) struct PreviousSubwordStart {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves to the end of the previous subword.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -240,6 +248,7 @@ pub(crate) struct PreviousSubwordEnd {
     pub(crate) ignore_punctuation: bool,
 }
 
+/// Moves cursor up by the specified number of lines.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +257,7 @@ pub(crate) struct Up {
     pub(crate) display_lines: bool,
 }
 
+/// Moves cursor down by the specified number of lines.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -256,6 +266,7 @@ pub(crate) struct Down {
     pub(crate) display_lines: bool,
 }
 
+/// Moves to the first non-whitespace character on the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -264,6 +275,7 @@ struct FirstNonWhitespace {
     display_lines: bool,
 }
 
+/// Moves to the end of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -272,6 +284,7 @@ struct EndOfLine {
     display_lines: bool,
 }
 
+/// Moves to the start of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -280,6 +293,7 @@ pub struct StartOfLine {
     pub(crate) display_lines: bool,
 }
 
+/// Moves to the middle of the current line.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -288,6 +302,7 @@ struct MiddleOfLine {
     display_lines: bool,
 }
 
+/// Finds the next unmatched bracket or delimiter.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -296,6 +311,7 @@ struct UnmatchedForward {
     char: char,
 }
 
+/// Finds the previous unmatched bracket or delimiter.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -307,46 +323,85 @@ struct UnmatchedBackward {
 actions!(
     vim,
     [
+        /// Moves cursor left one character.
         Left,
+        /// Moves cursor left one character, wrapping to previous line.
         #[action(deprecated_aliases = ["vim::Backspace"])]
         WrappingLeft,
+        /// Moves cursor right one character.
         Right,
+        /// Moves cursor right one character, wrapping to next line.
         #[action(deprecated_aliases = ["vim::Space"])]
         WrappingRight,
+        /// Selects the current line.
         CurrentLine,
+        /// Moves to the start of the next sentence.
         SentenceForward,
+        /// Moves to the start of the previous sentence.
         SentenceBackward,
+        /// Moves to the start of the paragraph.
         StartOfParagraph,
+        /// Moves to the end of the paragraph.
         EndOfParagraph,
+        /// Moves to the start of the document.
         StartOfDocument,
+        /// Moves to the end of the document.
         EndOfDocument,
+        /// Moves to the matching bracket or delimiter.
         Matching,
+        /// Goes to a percentage position in the file.
         GoToPercentage,
+        /// Moves to the start of the next line.
         NextLineStart,
+        /// Moves to the start of the previous line.
         PreviousLineStart,
+        /// Moves to the start of a line downward.
         StartOfLineDownward,
+        /// Moves to the end of a line downward.
         EndOfLineDownward,
+        /// Goes to a specific column number.
         GoToColumn,
+        /// Repeats the last character find.
         RepeatFind,
+        /// Repeats the last character find in reverse.
         RepeatFindReversed,
+        /// Moves to the top of the window.
         WindowTop,
+        /// Moves to the middle of the window.
         WindowMiddle,
+        /// Moves to the bottom of the window.
         WindowBottom,
+        /// Moves to the start of the next section.
         NextSectionStart,
+        /// Moves to the end of the next section.
         NextSectionEnd,
+        /// Moves to the start of the previous section.
         PreviousSectionStart,
+        /// Moves to the end of the previous section.
         PreviousSectionEnd,
+        /// Moves to the start of the next method.
         NextMethodStart,
+        /// Moves to the end of the next method.
         NextMethodEnd,
+        /// Moves to the start of the previous method.
         PreviousMethodStart,
+        /// Moves to the end of the previous method.
         PreviousMethodEnd,
+        /// Moves to the next comment.
         NextComment,
+        /// Moves to the previous comment.
         PreviousComment,
+        /// Moves to the previous line with lesser indentation.
         PreviousLesserIndent,
+        /// Moves to the previous line with greater indentation.
         PreviousGreaterIndent,
+        /// Moves to the previous line with the same indentation.
         PreviousSameIndent,
+        /// Moves to the next line with lesser indentation.
         NextLesserIndent,
+        /// Moves to the next line with greater indentation.
         NextGreaterIndent,
+        /// Moves to the next line with the same indentation.
         NextSameIndent,
     ]
 );

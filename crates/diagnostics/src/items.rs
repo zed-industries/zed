@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::Diagnostic;
-use project::project_settings::ProjectSettings;
+use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
@@ -77,7 +77,7 @@ impl Render for DiagnosticIndicator {
                     .tooltip(|window, cx| {
                         Tooltip::for_action(
                             "Next Diagnostic",
-                            &editor::actions::GoToDiagnostic,
+                            &editor::actions::GoToDiagnostic::default(),
                             window,
                             cx,
                         )
@@ -156,7 +156,12 @@ impl DiagnosticIndicator {
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
-                editor.go_to_diagnostic_impl(editor::Direction::Next, window, cx);
+                editor.go_to_diagnostic_impl(
+                    editor::Direction::Next,
+                    GoToDiagnosticSeverityFilter::default(),
+                    window,
+                    cx,
+                );
             })
         }
     }

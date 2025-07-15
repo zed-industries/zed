@@ -3081,6 +3081,45 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let lua_language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["--".into()],
+            block_comment: Some(("--[[".into(), "]]".into())),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(lua_language), cx));
+
+    // Line with line comment should extend
+    cx.set_state(indoc! {"
+        --ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --
+        --ˇ
+    "});
+
+    // Line with block comment that matches line comment should not extend
+    cx.set_state(indoc! {"
+        --[[ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --[[
+        ˇ
+    "});
+}
+
+#[gpui::test]
 fn test_insert_with_old_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3466,6 +3505,70 @@ async fn test_indent_outdent(cx: &mut TestAppContext) {
         ˇthree
             four
     "});
+}
+
+#[gpui::test]
+async fn test_indent_yaml_comments_with_multiple_cursors(cx: &mut TestAppContext) {
+    // This is a regression test for issue #33761
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
+        r#"ˇ#     ingress:
+ˇ#         api:
+ˇ#             enabled: false
+ˇ#             pathType: Prefix
+ˇ#           console:
+ˇ#               enabled: false
+ˇ#               pathType: Prefix
+"#,
+    );
+
+    // Press tab to indent all lines
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(
+        r#"    ˇ#     ingress:
+    ˇ#         api:
+    ˇ#             enabled: false
+    ˇ#             pathType: Prefix
+    ˇ#           console:
+    ˇ#               enabled: false
+    ˇ#               pathType: Prefix
+"#,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_yaml_non_comments_with_multiple_cursors(cx: &mut TestAppContext) {
+    // This is a test to make sure our fix for issue #33761 didn't break anything
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let yaml_language = languages::language("yaml", tree_sitter_yaml::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(yaml_language), cx));
+
+    cx.set_state(
+        r#"ˇingress:
+ˇ  api:
+ˇ    enabled: false
+ˇ    pathType: Prefix
+"#,
+    );
+
+    // Press tab to indent all lines
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+
+    cx.assert_editor_state(
+        r#"ˇingress:
+    ˇapi:
+        ˇenabled: false
+        ˇpathType: Prefix
+"#,
+    );
 }
 
 #[gpui::test]
@@ -4009,6 +4112,29 @@ async fn test_manipulate_immutable_lines_with_single_selection(cx: &mut TestAppC
         Y
         z
         Zˇ»
+    "});
+
+    // Test sort_lines_by_length()
+    //
+    // Demonstrates:
+    // - ∞ is 3 bytes UTF-8, but sorted by its char count (1)
+    // - sort is stable
+    cx.set_state(indoc! {"
+        «123
+        æ
+        12
+        ∞
+        1
+        æˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_by_length(&SortLinesByLength, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «æ
+        ∞
+        1
+        æ
+        12
+        123ˇ»
     "});
 
     // Test reverse_lines()
@@ -4955,7 +5081,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -4998,7 +5123,6 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
                 style: BlockStyle::Sticky,
                 render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             None,
             cx,
@@ -14610,7 +14734,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14619,7 +14743,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14628,7 +14752,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14637,7 +14761,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -21339,7 +21463,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21375,7 +21499,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -22260,6 +22384,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         def f() -> list[str]:
             aˇ
+    "});
+
+    // test does not outdent on typing : after case keyword
+    cx.set_state(indoc! {"
+        match 1:
+            caseˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(":", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        match 1:
+            case:ˇ
     "});
 }
 

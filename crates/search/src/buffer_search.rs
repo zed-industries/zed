@@ -46,6 +46,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
+/// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = buffer_search)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +59,17 @@ pub struct Deploy {
     pub selection_search_enabled: bool,
 }
 
-actions!(buffer_search, [DeployReplace, Dismiss, FocusEditor]);
+actions!(
+    buffer_search,
+    [
+        /// Deploys the search and replace interface.
+        DeployReplace,
+        /// Dismisses the search bar.
+        Dismiss,
+        /// Focuses back on the editor.
+        FocusEditor
+    ]
+);
 
 impl Deploy {
     pub fn find() -> Self {
@@ -928,6 +939,11 @@ impl BufferSearchBar {
             });
     }
 
+    pub fn focus_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus(&self.replacement_editor.focus_handle(cx), window, cx);
+        cx.notify();
+    }
+
     pub fn search(
         &mut self,
         query: &str,
@@ -1077,6 +1093,21 @@ impl BufferSearchBar {
                     searchable_item.update_matches(matches, window, cx);
                     searchable_item.activate_match(new_match_index, matches, window, cx);
                 }
+            }
+        }
+    }
+
+    pub fn select_first_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+            if let Some(matches) = self
+                .searchable_items_with_matches
+                .get(&searchable_item.downgrade())
+            {
+                if matches.is_empty() {
+                    return;
+                }
+                searchable_item.update_matches(matches, window, cx);
+                searchable_item.activate_match(0, matches, window, cx);
             }
         }
     }

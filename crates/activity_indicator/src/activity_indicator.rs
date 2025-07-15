@@ -31,7 +31,13 @@ use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
-actions!(activity_indicator, [ShowErrorMessage]);
+actions!(
+    activity_indicator,
+    [
+        /// Displays error messages from language servers in the status bar.
+        ShowErrorMessage
+    ]
+);
 
 pub enum Event {
     ShowStatus {
@@ -442,7 +448,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
-                tooltip_message: Some(session.read(cx).label().to_string()),
+                tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
             });
         }

@@ -103,19 +103,20 @@ struct ContextServerDescriptorRegistryProxy {
 impl ExtensionContextServerProxy for ContextServerDescriptorRegistryProxy {
     fn register_context_server(&self, extension: Arc<dyn Extension>, id: Arc<str>, cx: &mut App) {
         self.context_server_factory_registry
-            .update(cx, |registry, _| {
+            .update(cx, |registry, cx| {
                 registry.register_context_server_descriptor(
                     id.clone(),
                     Arc::new(ContextServerDescriptor { id, extension })
                         as Arc<dyn registry::ContextServerDescriptor>,
+                    cx,
                 )
             });
     }
 
     fn unregister_context_server(&self, server_id: Arc<str>, cx: &mut App) {
         self.context_server_factory_registry
-            .update(cx, |registry, _| {
-                registry.unregister_context_server_descriptor_by_id(&server_id)
+            .update(cx, |registry, cx| {
+                registry.unregister_context_server_descriptor_by_id(&server_id, cx)
             });
     }
 }

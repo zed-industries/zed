@@ -16,8 +16,13 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     let mut command_string = String::new();
     let mut command = std::process::Command::new(&shell_path);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
-    // so file descriptor 0 (stdin) is used instead. [Citation Needed]
+    // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
+    // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
     const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
+    let redir = match shell_name {
+        Some("rc") => format!(">[1={}]", ENV_OUTPUT_FD), // `[1=0]`
+        _ => format!(">&{}", ENV_OUTPUT_FD),             // `>&0`
+    };
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -38,10 +43,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!(
-        "sh -c \"{} --printenv >&{}\";",
-        zed_path, ENV_OUTPUT_FD
-    ));
+    command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);

@@ -47,7 +47,16 @@ use workspace::{
 
 actions!(
     project_search,
-    [SearchInNew, ToggleFocus, NextField, ToggleFilters]
+    [
+        /// Searches in a new project search tab.
+        SearchInNew,
+        /// Toggles focus between the search bar and the search results.
+        ToggleFocus,
+        /// Moves to the next input field.
+        NextField,
+        /// Toggles the search filters panel.
+        ToggleFilters
+    ]
 );
 
 #[derive(Default)]

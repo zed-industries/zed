@@ -1,15 +1,81 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use collections::HashMap;
-use gpui::{Animation, AnimationExt as _, Entity, Transformation, percentage};
+use gpui::{Animation, AnimationExt as _, Entity, Transformation, WeakEntity, percentage};
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
-use util::truncate_and_trailoff;
+use util::{maybe, truncate_and_trailoff};
 
 use crate::{
     debugger_panel::DebugPanel,
     session::{DebugSession, running::RunningState},
 };
+
+struct SessionListEntry {
+    ancestors: Vec<Entity<DebugSession>>,
+    leaf: Entity<DebugSession>,
+}
+
+impl SessionListEntry {
+    pub(crate) fn label_element(&self, depth: usize, cx: &mut App) -> AnyElement {
+        const MAX_LABEL_CHARS: usize = 150;
+
+        let mut label = String::new();
+        for ancestor in &self.ancestors {
+            label.push_str(&ancestor.update(cx, |ancestor, cx| {
+                ancestor.label(cx).unwrap_or("(child)".into())
+            }));
+            label.push_str(" » ");
+        }
+        label.push_str(
+            &self
+                .leaf
+                .update(cx, |leaf, cx| leaf.label(cx).unwrap_or("(child)".into())),
+        );
+        let label = truncate_and_trailoff(&label, MAX_LABEL_CHARS);
+
+        let is_terminated = self
+            .leaf
+            .read(cx)
+            .running_state
+            .read(cx)
+            .session()
+            .read(cx)
+            .is_terminated();
+        let icon = {
+            if is_terminated {
+                Some(Indicator::dot().color(Color::Error))
+            } else {
+                match self
+                    .leaf
+                    .read(cx)
+                    .running_state
+                    .read(cx)
+                    .thread_status(cx)
+                    .unwrap_or_default()
+                {
+                    project::debugger::session::ThreadStatus::Stopped => {
+                        Some(Indicator::dot().color(Color::Conflict))
+                    }
+                    _ => Some(Indicator::dot().color(Color::Success)),
+                }
+            }
+        };
+
+        h_flex()
+            .id("session-label")
+            .ml(depth * px(16.0))
+            .gap_2()
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .when(is_terminated, |this| this.strikethrough()),
+            )
+            .into_any_element()
+    }
+}
 
 impl DebugPanel {
     fn dropdown_label(label: impl Into<SharedString>) -> Label {
@@ -25,145 +91,205 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if let Some(running_state) = running_state {
-            let sessions = self.sessions().clone();
-            let weak = cx.weak_entity();
-            let running_state = running_state.read(cx);
-            let label = if let Some(active_session) = active_session.clone() {
-                active_session.read(cx).session(cx).read(cx).label()
-            } else {
-                SharedString::new_static("Unknown Session")
-            };
+        let running_state = running_state?;
 
-            let is_terminated = running_state.session().read(cx).is_terminated();
-            let is_started = active_session
-                .is_some_and(|session| session.read(cx).session(cx).read(cx).is_started());
+        let mut session_entries = Vec::with_capacity(self.sessions_with_children.len() * 3);
+        let mut sessions_with_children = self.sessions_with_children.iter().peekable();
 
-            let session_state_indicator = if is_terminated {
-                Indicator::dot().color(Color::Error).into_any_element()
-            } else if !is_started {
-                Icon::new(IconName::ArrowCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(2)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    )
-                    .into_any_element()
+        while let Some((root, children)) = sessions_with_children.next() {
+            let root_entry = if let Ok([single_child]) = <&[_; 1]>::try_from(children.as_slice())
+                && let Some(single_child) = single_child.upgrade()
+                && single_child.read(cx).quirks.compact
+            {
+                sessions_with_children.next();
+                SessionListEntry {
+                    leaf: single_child.clone(),
+                    ancestors: vec![root.clone()],
+                }
             } else {
-                match running_state.thread_status(cx).unwrap_or_default() {
-                    ThreadStatus::Stopped => {
-                        Indicator::dot().color(Color::Conflict).into_any_element()
-                    }
-                    _ => Indicator::dot().color(Color::Success).into_any_element(),
+                SessionListEntry {
+                    leaf: root.clone(),
+                    ancestors: Vec::new(),
                 }
             };
+            session_entries.push(root_entry);
 
-            let trigger = h_flex()
-                .gap_2()
-                .child(session_state_indicator)
-                .justify_between()
-                .child(
-                    DebugPanel::dropdown_label(label)
-                        .when(is_terminated, |this| this.strikethrough()),
-                )
-                .into_any_element();
-
-            Some(
-                DropdownMenu::new_with_element(
-                    "debugger-session-list",
-                    trigger,
-                    ContextMenu::build(window, cx, move |mut this, _, cx| {
-                        let context_menu = cx.weak_entity();
-                        let mut session_depths = HashMap::default();
-                        for session in sessions.into_iter() {
-                            let weak_session = session.downgrade();
-                            let weak_session_id = weak_session.entity_id();
-                            let session_id = session.read(cx).session_id(cx);
-                            let parent_depth = session
-                                .read(cx)
-                                .session(cx)
-                                .read(cx)
-                                .parent_id(cx)
-                                .and_then(|parent_id| session_depths.get(&parent_id).cloned());
-                            let self_depth =
-                                *session_depths.entry(session_id).or_insert_with(|| {
-                                    parent_depth.map(|depth| depth + 1).unwrap_or(0usize)
-                                });
-                            this = this.custom_entry(
-                                {
-                                    let weak = weak.clone();
-                                    let context_menu = context_menu.clone();
-                                    move |_, cx| {
-                                        weak_session
-                                            .read_with(cx, |session, cx| {
-                                                let context_menu = context_menu.clone();
-
-                                                let id: SharedString =
-                                                    format!("debug-session-{}", session_id.0)
-                                                        .into();
-
-                                                h_flex()
-                                                    .w_full()
-                                                    .group(id.clone())
-                                                    .justify_between()
-                                                    .child(session.label_element(self_depth, cx))
-                                                    .child(
-                                                        IconButton::new(
-                                                            "close-debug-session",
-                                                            IconName::Close,
-                                                        )
-                                                        .visible_on_hover(id.clone())
-                                                        .icon_size(IconSize::Small)
-                                                        .on_click({
-                                                            let weak = weak.clone();
-                                                            move |_, window, cx| {
-                                                                weak.update(cx, |panel, cx| {
-                                                                    panel.close_session(
-                                                                        weak_session_id,
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                })
-                                                                .ok();
-                                                                context_menu
-                                                                    .update(cx, |this, cx| {
-                                                                        this.cancel(
-                                                                            &Default::default(),
-                                                                            window,
-                                                                            cx,
-                                                                        );
-                                                                    })
-                                                                    .ok();
-                                                            }
-                                                        }),
-                                                    )
-                                                    .into_any_element()
-                                            })
-                                            .unwrap_or_else(|_| div().into_any_element())
-                                    }
-                                },
-                                {
-                                    let weak = weak.clone();
-                                    move |window, cx| {
-                                        weak.update(cx, |panel, cx| {
-                                            panel.activate_session(session.clone(), window, cx);
-                                        })
-                                        .ok();
-                                    }
-                                },
-                            );
-                        }
-                        this
+            session_entries.extend(
+                sessions_with_children
+                    .by_ref()
+                    .take_while(|(session, _)| {
+                        session
+                            .read(cx)
+                            .session(cx)
+                            .read(cx)
+                            .parent_id(cx)
+                            .is_some()
+                    })
+                    .map(|(session, _)| SessionListEntry {
+                        leaf: session.clone(),
+                        ancestors: vec![],
                     }),
-                )
-                .style(DropdownStyle::Ghost)
-                .handle(self.session_picker_menu_handle.clone()),
-            )
-        } else {
-            None
+            );
         }
+
+        let weak = cx.weak_entity();
+        let trigger_label = if let Some(active_session) = active_session.clone() {
+            active_session.update(cx, |active_session, cx| {
+                active_session.label(cx).unwrap_or("(child)".into())
+            })
+        } else {
+            SharedString::new_static("Unknown Session")
+        };
+        let running_state = running_state.read(cx);
+
+        let is_terminated = running_state.session().read(cx).is_terminated();
+        let is_started = active_session
+            .is_some_and(|session| session.read(cx).session(cx).read(cx).is_started());
+
+        let session_state_indicator = if is_terminated {
+            Indicator::dot().color(Color::Error).into_any_element()
+        } else if !is_started {
+            Icon::new(IconName::ArrowCircle)
+                .size(IconSize::Small)
+                .color(Color::Muted)
+                .with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                )
+                .into_any_element()
+        } else {
+            match running_state.thread_status(cx).unwrap_or_default() {
+                ThreadStatus::Stopped => Indicator::dot().color(Color::Conflict).into_any_element(),
+                _ => Indicator::dot().color(Color::Success).into_any_element(),
+            }
+        };
+
+        let trigger = h_flex()
+            .gap_2()
+            .child(session_state_indicator)
+            .justify_between()
+            .child(
+                DebugPanel::dropdown_label(trigger_label)
+                    .when(is_terminated, |this| this.strikethrough()),
+            )
+            .into_any_element();
+
+        let menu = DropdownMenu::new_with_element(
+            "debugger-session-list",
+            trigger,
+            ContextMenu::build(window, cx, move |mut this, _, cx| {
+                let context_menu = cx.weak_entity();
+                let mut session_depths = HashMap::default();
+                for session_entry in session_entries {
+                    let session_id = session_entry.leaf.read(cx).session_id(cx);
+                    let parent_depth = session_entry
+                        .ancestors
+                        .first()
+                        .unwrap_or(&session_entry.leaf)
+                        .read(cx)
+                        .session(cx)
+                        .read(cx)
+                        .parent_id(cx)
+                        .and_then(|parent_id| session_depths.get(&parent_id).cloned());
+                    let self_depth = *session_depths
+                        .entry(session_id)
+                        .or_insert_with(|| parent_depth.map(|depth| depth + 1).unwrap_or(0usize));
+                    this = this.custom_entry(
+                        {
+                            let weak = weak.clone();
+                            let context_menu = context_menu.clone();
+                            let ancestors: Rc<[_]> = session_entry
+                                .ancestors
+                                .iter()
+                                .map(|session| session.downgrade())
+                                .collect();
+                            let leaf = session_entry.leaf.downgrade();
+                            move |window, cx| {
+                                Self::render_session_menu_entry(
+                                    weak.clone(),
+                                    context_menu.clone(),
+                                    ancestors.clone(),
+                                    leaf.clone(),
+                                    self_depth,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        },
+                        {
+                            let weak = weak.clone();
+                            let leaf = session_entry.leaf.clone();
+                            move |window, cx| {
+                                weak.update(cx, |panel, cx| {
+                                    panel.activate_session(leaf.clone(), window, cx);
+                                })
+                                .ok();
+                            }
+                        },
+                    );
+                }
+                this
+            }),
+        )
+        .style(DropdownStyle::Ghost)
+        .handle(self.session_picker_menu_handle.clone());
+
+        Some(menu)
+    }
+
+    fn render_session_menu_entry(
+        weak: WeakEntity<DebugPanel>,
+        context_menu: WeakEntity<ContextMenu>,
+        ancestors: Rc<[WeakEntity<DebugSession>]>,
+        leaf: WeakEntity<DebugSession>,
+        self_depth: usize,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let Some(session_entry) = maybe!({
+            let ancestors = ancestors
+                .iter()
+                .map(|ancestor| ancestor.upgrade())
+                .collect::<Option<Vec<_>>>()?;
+            let leaf = leaf.upgrade()?;
+            Some(SessionListEntry { ancestors, leaf })
+        }) else {
+            return div().into_any_element();
+        };
+
+        let id: SharedString = format!(
+            "debug-session-{}",
+            session_entry.leaf.read(cx).session_id(cx).0
+        )
+        .into();
+        let session_entity_id = session_entry.leaf.entity_id();
+
+        h_flex()
+            .w_full()
+            .group(id.clone())
+            .justify_between()
+            .child(session_entry.label_element(self_depth, cx))
+            .child(
+                IconButton::new("close-debug-session", IconName::Close)
+                    .visible_on_hover(id.clone())
+                    .icon_size(IconSize::Small)
+                    .on_click({
+                        let weak = weak.clone();
+                        move |_, window, cx| {
+                            weak.update(cx, |panel, cx| {
+                                panel.close_session(session_entity_id, window, cx);
+                            })
+                            .ok();
+                            context_menu
+                                .update(cx, |this, cx| {
+                                    this.cancel(&Default::default(), window, cx);
+                                })
+                                .ok();
+                        }
+                    }),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn render_thread_dropdown(

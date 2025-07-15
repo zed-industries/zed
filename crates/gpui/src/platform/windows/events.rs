@@ -93,7 +93,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, wparam, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
@@ -466,12 +466,7 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(input) = char::from_u32(wparam.0 as u32)
-        .filter(|c| !c.is_control())
-        .map(String::from)
-    else {
-        return Some(1);
-    };
+    let input = parse_char_message(wparam, &state_ptr)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
@@ -1152,37 +1147,23 @@ fn handle_set_cursor(
 
 fn handle_system_settings_changed(
     handle: HWND,
+    wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let display = lock.display;
-    // system settings
-    lock.system_settings.update(display);
-    // mouse double click
-    lock.click_state.system_update();
-    // window border offset
-    lock.border_offset.update(handle).log_err();
-    drop(lock);
-
-    // lParam is a pointer to a string that indicates the area containing the system parameter
-    // that was changed.
-    let parameter = PCWSTR::from_raw(lparam.0 as _);
-    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
-        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
-            log::info!("System settings changed: {}", parameter_string);
-            match parameter_string.as_str() {
-                "ImmersiveColorSet" => {
-                    handle_system_theme_changed(handle, state_ptr);
-                }
-                _ => {}
-            }
-        }
-    }
-
+    if wparam.0 != 0 {
+        let mut lock = state_ptr.state.borrow_mut();
+        let display = lock.display;
+        lock.system_settings.update(display, wparam.0);
+        lock.click_state.system_update(wparam.0);
+        lock.border_offset.update(handle).log_err();
+    } else {
+        handle_system_theme_changed(handle, lparam, state_ptr)?;
+    };
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
+
     Some(0)
 }
 
@@ -1199,17 +1180,34 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
 
 fn handle_system_theme_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut callback = state_ptr
-        .state
-        .borrow_mut()
-        .callbacks
-        .appearance_changed
-        .take()?;
-    callback();
-    state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    configure_dwm_dark_mode(handle);
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    let new_appearance = system_appearance()
+                        .context("unable to get system appearance when handling ImmersiveColorSet")
+                        .log_err()?;
+                    let mut lock = state_ptr.state.borrow_mut();
+                    if new_appearance != lock.appearance {
+                        lock.appearance = new_appearance;
+                        let mut callback = lock.callbacks.appearance_changed.take()?;
+                        drop(lock);
+                        callback();
+                        state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                        configure_dwm_dark_mode(handle, new_appearance);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     Some(0)
 }
 
@@ -1223,6 +1221,38 @@ fn handle_input_language_changed(
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
     Some(0)
+}
+
+#[inline]
+fn parse_char_message(wparam: WPARAM, state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<String> {
+    let code_point = wparam.loword();
+    let mut lock = state_ptr.state.borrow_mut();
+    // https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G2630
+    match code_point {
+        0xD800..=0xDBFF => {
+            // High surrogate, wait for low surrogate
+            lock.pending_surrogate = Some(code_point);
+            None
+        }
+        0xDC00..=0xDFFF => {
+            if let Some(high_surrogate) = lock.pending_surrogate.take() {
+                // Low surrogate, combine with pending high surrogate
+                String::from_utf16(&[high_surrogate, code_point]).ok()
+            } else {
+                // Invalid low surrogate without a preceding high surrogate
+                log::warn!(
+                    "Received low surrogate without a preceding high surrogate: {code_point:x}"
+                );
+                None
+            }
+        }
+        _ => {
+            lock.pending_surrogate = None;
+            char::from_u32(code_point as u32)
+                .filter(|c| !c.is_control())
+                .map(|c| c.to_string())
+        }
+    }
 }
 
 #[inline]
@@ -1266,6 +1296,10 @@ where
                 modifiers,
                 capslock: current_capslock(),
             }))
+        }
+        VK_PACKET => {
+            translate_message(handle, wparam, lparam);
+            None
         }
         VK_CAPITAL => {
             let capslock = current_capslock();
