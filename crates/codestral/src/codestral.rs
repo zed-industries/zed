@@ -1,9 +1,10 @@
 mod codestral_completion_provider;
+mod input_excerpt;
 
 pub use codestral_completion_provider::*;
 
 use client::Client;
-use gpui::{App, AppContext, Context, Entity, Global, actions};
+use gpui::{actions, App, AppContext, Context, Entity, Global};
 use language::language_settings::all_language_settings;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -77,7 +78,7 @@ impl Codestral {
         if let Self::Starting = self {
             log::debug!("Codestral: Transitioning from Starting to Authenticating");
             *self = Self::Authenticating;
-            
+
             cx.spawn(async move |this, cx| {
                 // Try to get API key from settings first
                 let api_key = cx.update(|cx| {
@@ -92,11 +93,12 @@ impl Codestral {
                         cx.notify();
                     })?;
                 } else {
-                    let error_msg = "No API key configured. Please add your Codestral API key to settings.";
+                    let error_msg =
+                        "No API key configured. Please add your Codestral API key to settings.";
                     log::error!("Codestral: {}", error_msg);
                     this.update(cx, |this, cx| {
-                        *this = Self::Error { 
-                            error: anyhow::anyhow!(error_msg) 
+                        *this = Self::Error {
+                            error: anyhow::anyhow!(error_msg),
                         };
                         cx.notify();
                     })?;
@@ -183,3 +185,4 @@ pub struct Message {
     pub content: String,
     pub role: String,
 }
+
