@@ -2126,71 +2126,59 @@ impl Thread {
     fn get_retry_strategy(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
 
+        // General strategy here:
+        // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
+        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), try multiple times with exponential backoff.
+        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), just retry once.
         match error {
-            // Errors that should retry with fixed delay
-            HttpResponseError { status_code, .. }
-                if *status_code == StatusCode::BAD_REQUEST
-                    || *status_code == StatusCode::BAD_GATEWAY =>
-            {
-                Some(RetryStrategy::Fixed {
-                    delay: BASE_RETRY_DELAY,
-                    max_attempts: 1,
-                })
-            }
-            HttpResponseError { status_code, .. }
-                if *status_code == StatusCode::GATEWAY_TIMEOUT
-                    || *status_code == StatusCode::TOO_MANY_REQUESTS
-                    || status_code.is_server_error() =>
-            {
-                Some(RetryStrategy::ExponentialBackoff {
-                    initial_delay: BASE_RETRY_DELAY,
-                    max_attempts: MAX_RETRY_ATTEMPTS,
-                })
-            }
-            ServerOverloaded { retry_after, .. } => Some(RetryStrategy::Fixed {
-                delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                max_attempts: 1,
-            }),
-            RateLimitExceeded { retry_after, .. } => Some(RetryStrategy::Fixed {
-                delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+            HttpResponseError {
+                status_code: StatusCode::TOO_MANY_REQUESTS,
+                ..
+            } => Some(RetryStrategy::ExponentialBackoff {
+                initial_delay: BASE_RETRY_DELAY,
                 max_attempts: MAX_RETRY_ATTEMPTS,
             }),
-            ApiInternalServerError { .. } => {
-                // Internal server errors should use exponential backoff with full retry attempts
-                Some(RetryStrategy::ExponentialBackoff {
-                    initial_delay: BASE_RETRY_DELAY,
+            ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
+                Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
                     max_attempts: MAX_RETRY_ATTEMPTS,
                 })
             }
+            ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 1,
+            }),
             ApiReadResponseError { .. }
             | HttpSend { .. }
             | DeserializeResponse { .. }
-            | BadRequestFormat { .. } => {
-                // These are often be spurious errors, so retry with base delay
-                Some(RetryStrategy::Fixed {
-                    delay: BASE_RETRY_DELAY,
-                    max_attempts: 1,
-                })
-            }
-            Other(..) => Some(RetryStrategy::Fixed {
+            | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
-                max_attempts: MAX_RETRY_ATTEMPTS,
+                max_attempts: 1,
             }),
-            // Retrying these errors won't help.
-            HttpResponseError { status_code, .. }
-                if *status_code == StatusCode::PAYLOAD_TOO_LARGE =>
-            {
-                None
+            // Retrying these errors definitely shouldn't help.
+            HttpResponseError {
+                status_code:
+                    StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
+                ..
             }
-            SerializeRequest { .. }
+            | SerializeRequest { .. }
             | BuildRequestBody { .. }
             | PromptTooLarge { .. }
             | AuthenticationError { .. }
             | PermissionError { .. }
             | ApiEndpointNotFound { .. }
             | NoApiKey { .. } => None,
+            // Retry all other 4xx and 5xx errors once.
+            HttpResponseError { status_code, .. }
+                if status_code.is_client_error() || status_code.is_server_error() =>
+            {
+                Some(RetryStrategy::Fixed {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 1,
+                })
+            }
             // Conservatively assume that any other errors are non-retryable
-            HttpResponseError { .. } => None,
+            HttpResponseError { .. } | Other(..) => None,
         }
     }
 
