@@ -1105,7 +1105,9 @@
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
-      "cmd-backspace": ["terminal::SendText", "\u0015"],
+      "cmd-backspace": ["terminal::SendText", "\u0015"], // ctrl-u: clear line
+      "alt-delete": ["terminal::SendText", "\u001bd"], // alt-d: delete word forward
+      "cmd-delete": ["terminal::SendText", "\u000b"], // ctrl-k: delete to end of line
       "cmd-right": ["terminal::SendText", "\u0005"],
       "cmd-left": ["terminal::SendText", "\u0001"],
       // Terminal.app compatibility
