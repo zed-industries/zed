@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::Diagnostic;
-use project::project_settings::{GoToDiagnosticSeverity, ProjectSettings};
+use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
@@ -158,7 +158,7 @@ impl DiagnosticIndicator {
             editor.update(cx, |editor, cx| {
                 editor.go_to_diagnostic_impl(
                     editor::Direction::Next,
-                    GoToDiagnosticSeverity::Any,
+                    GoToDiagnosticSeverityFilter::default(),
                     window,
                     cx,
                 );

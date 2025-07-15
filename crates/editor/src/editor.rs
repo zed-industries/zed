@@ -134,7 +134,7 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverity},
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
 };
 
 pub use git::blame::BlameRenderer;
@@ -15113,7 +15113,7 @@ impl Editor {
     pub fn go_to_diagnostic_impl(
         &mut self,
         direction: Direction,
-        severity: GoToDiagnosticSeverity,
+        severity: GoToDiagnosticSeverityFilter,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -15129,11 +15129,11 @@ impl Editor {
 
         fn filtered(
             snapshot: EditorSnapshot,
-            severity: GoToDiagnosticSeverity,
+            severity: GoToDiagnosticSeverityFilter,
             diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
         ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
             diagnostics
-                .filter(move |entry| severity == entry.diagnostic.severity)
+                .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
                 .filter(|entry| !entry.diagnostic.is_unnecessary)
                 .filter(move |entry| !snapshot.intersects_fold(entry.range.start))

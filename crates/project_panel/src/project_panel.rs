@@ -33,7 +33,7 @@ use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
-    project_settings::GoToDiagnosticSeverity,
+    project_settings::GoToDiagnosticSeverityFilter,
     relativize_path,
 };
 use project_panel_settings::{
@@ -213,7 +213,7 @@ struct Trash {
 #[serde(deny_unknown_fields)]
 struct SelectNextDiagnostic {
     #[serde(default)]
-    pub severity: GoToDiagnosticSeverity,
+    pub severity: GoToDiagnosticSeverityFilter,
 }
 
 /// Selects the previous entry with diagnostics.
@@ -222,7 +222,7 @@ struct SelectNextDiagnostic {
 #[serde(deny_unknown_fields)]
 struct SelectPrevDiagnostic {
     #[serde(default)]
-    pub severity: GoToDiagnosticSeverity,
+    pub severity: GoToDiagnosticSeverityFilter,
 }
 
 actions!(
@@ -1989,7 +1989,7 @@ impl ProjectPanel {
                     && self
                         .diagnostics
                         .get(&(worktree_id, entry.path.to_path_buf()))
-                        .is_some_and(|severity| &action.severity == severity)
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );
@@ -2025,7 +2025,7 @@ impl ProjectPanel {
                     && self
                         .diagnostics
                         .get(&(worktree_id, entry.path.to_path_buf()))
-                        .is_some_and(|severity| &action.severity == severity)
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );

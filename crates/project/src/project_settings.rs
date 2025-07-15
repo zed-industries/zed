@@ -327,31 +327,80 @@ impl DiagnosticSeverity {
 }
 
 /// Determines the severity of the diagnostic that should be moved to.
-#[derive(PartialEq, Clone, Copy, Default, Debug, Deserialize, JsonSchema)]
+#[derive(PartialEq, PartialOrd, Clone, Copy, Debug, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GoToDiagnosticSeverity {
-    /// Any severity
-    #[default]
-    Any,
     /// Errors
-    Error,
+    Error = 0,
     /// Warnings
-    Warning,
+    Warning = 1,
     /// Information
-    Information,
+    Information = 2,
     /// Hints
-    Hint,
+    Hint = 3,
 }
 
-impl PartialEq<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
-    fn eq(&self, other: &lsp::DiagnosticSeverity) -> bool {
-        match self {
-            GoToDiagnosticSeverity::Any => true,
-            GoToDiagnosticSeverity::Error => other == &lsp::DiagnosticSeverity::ERROR,
-            GoToDiagnosticSeverity::Warning => other == &lsp::DiagnosticSeverity::WARNING,
-            GoToDiagnosticSeverity::Information => other == &lsp::DiagnosticSeverity::INFORMATION,
-            GoToDiagnosticSeverity::Hint => other == &lsp::DiagnosticSeverity::HINT,
+impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
+    fn from(severity: lsp::DiagnosticSeverity) -> Self {
+        match severity {
+            lsp::DiagnosticSeverity::ERROR => Self::Error,
+            lsp::DiagnosticSeverity::WARNING => Self::Warning,
+            lsp::DiagnosticSeverity::INFORMATION => Self::Information,
+            lsp::DiagnosticSeverity::HINT => Self::Hint,
+            _ => Self::Error,
         }
+    }
+}
+
+impl GoToDiagnosticSeverity {
+    pub fn min() -> Self {
+        Self::Error
+    }
+
+    pub fn max() -> Self {
+        Self::Hint
+    }
+}
+
+/// Allows filtering diagnostics that should be moved to.
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum GoToDiagnosticSeverityFilter {
+    /// Move to diagnostics of a specific severity.
+    Only(GoToDiagnosticSeverity),
+
+    /// Specify a range of severities to include.
+    Range {
+        /// Minimum severity to move to. Defaults no "error".
+        #[serde(default = "GoToDiagnosticSeverity::min")]
+        min: GoToDiagnosticSeverity,
+        /// Maximum severity to move to. Defaults to "hint".
+        #[serde(default = "GoToDiagnosticSeverity::max")]
+        max: GoToDiagnosticSeverity,
+    },
+}
+
+impl Default for GoToDiagnosticSeverityFilter {
+    fn default() -> Self {
+        Self::Range {
+            min: GoToDiagnosticSeverity::min(),
+            max: GoToDiagnosticSeverity::max(),
+        }
+    }
+}
+
+impl GoToDiagnosticSeverityFilter {
+    pub fn matches(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        println!("comparing {severity:?} to {self:?}");
+        let severity: GoToDiagnosticSeverity = severity.into();
+        let result = match self {
+            Self::Only(target) => *target == severity,
+            Self::Range { min, max } => severity >= *min && severity <= *max,
+        };
+
+        println!("result: {result:?}");
+
+        result
     }
 }
 

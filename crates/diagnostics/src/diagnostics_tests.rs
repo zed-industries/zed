@@ -14,7 +14,10 @@ use indoc::indoc;
 use language::{DiagnosticSourceKind, Rope};
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
-use project::{FakeFs, project_settings::GoToDiagnosticSeverity};
+use project::{
+    FakeFs,
+    project_settings::{GoToDiagnosticSeverity, GoToDiagnosticSeverityFilter},
+};
 use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
 use serde_json::json;
 use settings::SettingsStore;
@@ -1449,12 +1452,7 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     let lsp_store =
         cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
-    cx.set_state(indoc! {"
-        error
-        warning
-        info
-        hiˇnt
-    "});
+    cx.set_state(indoc! {"error warning info hiˇnt"});
 
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
@@ -1475,24 +1473,24 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
                             },
                             lsp::Diagnostic {
                                 range: lsp::Range::new(
-                                    lsp::Position::new(1, 0),
-                                    lsp::Position::new(1, 7),
+                                    lsp::Position::new(0, 6),
+                                    lsp::Position::new(0, 13),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::WARNING),
                                 ..Default::default()
                             },
                             lsp::Diagnostic {
                                 range: lsp::Range::new(
-                                    lsp::Position::new(2, 0),
-                                    lsp::Position::new(2, 4),
+                                    lsp::Position::new(0, 14),
+                                    lsp::Position::new(0, 18),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::INFORMATION),
                                 ..Default::default()
                             },
                             lsp::Diagnostic {
                                 range: lsp::Range::new(
-                                    lsp::Position::new(3, 0),
-                                    lsp::Position::new(3, 4),
+                                    lsp::Position::new(0, 19),
+                                    lsp::Position::new(0, 23),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::HINT),
                                 ..Default::default()
@@ -1509,95 +1507,69 @@ async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    // Any, should wrap around to first error
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        ˇerror
-        warning
-        info
-        hint
-    "});
+    macro_rules! go {
+        ($severity:expr) => {
+            cx.update_editor(|editor, window, cx| {
+                editor.go_to_diagnostic(
+                    &GoToDiagnostic {
+                        severity: $severity,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        };
+    }
 
-    // Warning
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        error
-        ˇwarning
-        info
-        hint
-    "});
+    // Default, should cycle through all diagnostics
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
 
-    // Wrap around to error
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(
-            &GoToDiagnostic {
-                severity: GoToDiagnosticSeverity::Error,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        ˇerror
-        warning
-        info
-        hint
-    "});
+    let only_info = GoToDiagnosticSeverityFilter::Only(GoToDiagnosticSeverity::Information);
+    go!(only_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(only_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
 
-    // Forward to hint
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(
-            &GoToDiagnostic {
-                severity: GoToDiagnosticSeverity::Hint,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        error
-        warning
-        info
-        ˇhint
-    "});
+    let no_hints = GoToDiagnosticSeverityFilter::Range {
+        min: GoToDiagnosticSeverity::Error,
+        max: GoToDiagnosticSeverity::Information,
+    };
 
-    // Back to warning
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(
-            &GoToPreviousDiagnostic {
-                severity: GoToDiagnosticSeverity::Warning,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        error
-        ˇwarning
-        info
-        hint
-    "});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
 
-    // Forward to info
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(
-            &GoToPreviousDiagnostic {
-                severity: GoToDiagnosticSeverity::Information,
-            },
-            window,
-            cx,
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        error
-        warning
-        ˇinfo
-        hint
-    "});
+    let warning_info = GoToDiagnosticSeverityFilter::Range {
+        min: GoToDiagnosticSeverity::Warning,
+        max: GoToDiagnosticSeverity::Information,
+    };
+
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+
+    let only_hint = GoToDiagnosticSeverityFilter::Only(GoToDiagnosticSeverity::Hint);
+    go!(only_hint);
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
+    go!(only_hint);
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
 }
 
 fn init_test(cx: &mut TestAppContext) {

@@ -1,7 +1,7 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
 use gpui::{Action, actions};
-use project::project_settings::GoToDiagnosticSeverity;
+use project::project_settings::GoToDiagnosticSeverityFilter;
 use schemars::JsonSchema;
 use util::serde::default_true;
 
@@ -272,7 +272,7 @@ pub enum UuidVersion {
 #[serde(deny_unknown_fields)]
 pub struct GoToDiagnostic {
     #[serde(default)]
-    pub severity: GoToDiagnosticSeverity,
+    pub severity: GoToDiagnosticSeverityFilter,
 }
 
 /// Goes to the previous diagnostic in the file.
@@ -281,7 +281,7 @@ pub struct GoToDiagnostic {
 #[serde(deny_unknown_fields)]
 pub struct GoToPreviousDiagnostic {
     #[serde(default)]
-    pub severity: GoToDiagnosticSeverity,
+    pub severity: GoToDiagnosticSeverityFilter,
 }
 
 actions!(
