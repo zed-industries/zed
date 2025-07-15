@@ -544,9 +544,9 @@ impl KeymapEditor {
 
             let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
-            let action_input = key_binding
+            let action_arguments = key_binding
                 .action_input()
-                .map(|input| SyntaxHighlightedText::new(input, json_language.clone()));
+                .map(|arguments| SyntaxHighlightedText::new(arguments, json_language.clone()));
             let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
@@ -555,7 +555,7 @@ impl KeymapEditor {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action_name: action_name.into(),
-                action_input,
+                action_arguments,
                 action_docs,
                 action_schema: action_schema.get(action_name).cloned(),
                 context: Some(context),
@@ -572,7 +572,7 @@ impl KeymapEditor {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
                 action_name: action_name.into(),
-                action_input: None,
+                action_arguments: None,
                 action_docs: action_documentation.get(action_name).copied(),
                 action_schema: action_schema.get(action_name).cloned(),
                 context: None,
@@ -1021,7 +1021,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action_name: SharedString,
-    action_input: Option<SyntaxHighlightedText>,
+    action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
     action_schema: Option<schemars::Schema>,
     context: Option<KeybindContextString>,
@@ -1333,8 +1333,8 @@ impl Render for KeymapEditor {
                                         binding.keystroke_text.clone().into_any_element(),
                                         IntoElement::into_any_element,
                                     );
-                                    let action_input = match binding.action_input.clone() {
-                                        Some(input) => input.into_any_element(),
+                                    let action_arguments = match binding.action_arguments.clone() {
+                                        Some(arguments) => arguments.into_any_element(),
                                         None => {
                                             if binding.action_schema.is_some() {
                                                 muted_styled_text(NO_ACTION_ARGUMENTS_TEXT, cx)
@@ -1368,7 +1368,14 @@ impl Render for KeymapEditor {
                                         .map(|(_source, name)| name)
                                         .unwrap_or_default()
                                         .into_any_element();
-                                    Some([icon, action, action_input, keystrokes, context, source])
+                                    Some([
+                                        icon,
+                                        action,
+                                        action_arguments,
+                                        keystrokes,
+                                        context,
+                                        source,
+                                    ])
                                 })
                                 .collect()
                         }),
@@ -1535,7 +1542,7 @@ struct KeybindingEditorModal {
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<SingleLineInput>,
-    input_editor: Option<Entity<Editor>>,
+    action_arguments_editor: Option<Entity<Editor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -1601,16 +1608,16 @@ impl KeybindingEditorModal {
             input
         });
 
-        let input_editor = editing_keybind.action_schema.clone().map(|_schema| {
+        let action_arguments_editor = editing_keybind.action_schema.clone().map(|_schema| {
             cx.new(|cx| {
                 let mut editor = Editor::auto_height_unbounded(1, window, cx);
                 let workspace = workspace.clone();
 
-                if let Some(input) = editing_keybind.action_input.clone() {
-                    editor.set_text(input.text, window, cx);
+                if let Some(arguments) = editing_keybind.action_arguments.clone() {
+                    editor.set_text(arguments.text, window, cx);
                 } else {
                     // TODO: default value from schema?
-                    editor.set_placeholder_text("Action Input", cx);
+                    editor.set_placeholder_text("Action Arguments", cx);
                 }
                 cx.spawn(async |editor, cx| {
                     let json_language = load_json_language(workspace, cx).await;
@@ -1622,7 +1629,7 @@ impl KeybindingEditorModal {
                                 });
                             }
                         })
-                        .context("Failed to load JSON language for editing keybinding action input")
+                        .context("Failed to load JSON language for editing keybinding action arguments input")
                 })
                 .detach_and_log_err(cx);
                 editor
@@ -1631,8 +1638,8 @@ impl KeybindingEditorModal {
 
         let focus_state = KeybindingEditorModalFocusState::new(
             keybind_editor.read_with(cx, |keybind_editor, cx| keybind_editor.focus_handle(cx)),
-            input_editor.as_ref().map(|input_editor| {
-                input_editor.read_with(cx, |input_editor, cx| input_editor.focus_handle(cx))
+            action_arguments_editor.as_ref().map(|args_editor| {
+                args_editor.read_with(cx, |args_editor, cx| args_editor.focus_handle(cx))
             }),
             context_editor.read_with(cx, |context_editor, cx| context_editor.focus_handle(cx)),
         );
@@ -1644,7 +1651,7 @@ impl KeybindingEditorModal {
             fs,
             keybind_editor,
             context_editor,
-            input_editor,
+            action_arguments_editor,
             error: None,
             keymap_editor,
             workspace,
@@ -1666,22 +1673,22 @@ impl KeybindingEditorModal {
         }
     }
 
-    fn validate_action_input(&self, cx: &App) -> anyhow::Result<Option<String>> {
-        let input = self
-            .input_editor
+    fn validate_action_arguments(&self, cx: &App) -> anyhow::Result<Option<String>> {
+        let action_arguments = self
+            .action_arguments_editor
             .as_ref()
             .map(|editor| editor.read(cx).text(cx));
 
-        let value = input
+        let value = action_arguments
             .as_ref()
-            .map(|input| {
-                serde_json::from_str(input).context("Failed to parse action input as JSON")
+            .map(|args| {
+                serde_json::from_str(args).context("Failed to parse action arguments as JSON")
             })
             .transpose()?;
 
         cx.build_action(&self.editing_keybind.action_name, value)
-            .context("Failed to validate action input")?;
-        Ok(input)
+            .context("Failed to validate action arguments")?;
+        Ok(action_arguments)
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
@@ -1711,7 +1718,7 @@ impl KeybindingEditorModal {
             return;
         }
 
-        let new_input = match self.validate_action_input(cx) {
+        let new_action_args = match self.validate_action_arguments(cx) {
             Err(input_err) => {
                 self.set_error(InputError::error(input_err.to_string()), cx);
                 return;
@@ -1799,7 +1806,7 @@ impl KeybindingEditorModal {
                 existing_keybind,
                 &new_keystrokes,
                 new_context.as_deref(),
-                new_input.as_deref(),
+                new_action_args.as_deref(),
                 &fs,
                 tab_size,
             )
@@ -1905,7 +1912,7 @@ impl Render for KeybindingEditorModal {
                                         .gap_1()
                                         .child(self.keybind_editor.clone()),
                                 )
-                                .when_some(self.input_editor.clone(), |this, editor| {
+                                .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
                                             .mt_1p5()
@@ -2142,7 +2149,7 @@ async fn save_keybinding_update(
     existing: ProcessedKeybinding,
     new_keystrokes: &[Keystroke],
     new_context: Option<&str>,
-    new_input: Option<&str>,
+    new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
 ) -> anyhow::Result<()> {
@@ -2156,10 +2163,10 @@ async fn save_keybinding_update(
             .context
             .as_ref()
             .and_then(KeybindContextString::local_str);
-        let existing_input = existing
-            .action_input
+        let existing_args = existing
+            .action_arguments
             .as_ref()
-            .map(|input| input.text.as_ref());
+            .map(|args| args.text.as_ref());
 
         settings::KeybindUpdateOperation::Replace {
             target: settings::KeybindUpdateTarget {
@@ -2167,7 +2174,7 @@ async fn save_keybinding_update(
                 keystrokes: existing_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input: existing_input,
+                action_arguments: existing_args,
             },
             target_keybind_source: existing
                 .source
@@ -2179,7 +2186,7 @@ async fn save_keybinding_update(
                 keystrokes: new_keystrokes,
                 action_name: &existing.action_name,
                 use_key_equivalents: false,
-                input: new_input,
+                action_arguments: new_args,
             },
         }
     } else {
@@ -2188,7 +2195,7 @@ async fn save_keybinding_update(
             keystrokes: new_keystrokes,
             action_name: &existing.action_name,
             use_key_equivalents: false,
-            input: new_input,
+            action_arguments: new_args,
         })
     };
     let updated_keymap_contents =
@@ -2224,10 +2231,10 @@ async fn remove_keybinding(
             keystrokes,
             action_name: &existing.action_name,
             use_key_equivalents: false,
-            input: existing
-                .action_input
+            action_arguments: existing
+                .action_arguments
                 .as_ref()
-                .map(|input| input.text.as_ref()),
+                .map(|arguments| arguments.text.as_ref()),
         },
         target_keybind_source: existing
             .source
