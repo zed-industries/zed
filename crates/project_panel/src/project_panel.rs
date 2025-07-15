@@ -320,6 +320,33 @@ pub fn init(cx: &mut App) {
                 });
             }
         });
+
+        workspace.register_action(|workspace, action: &Rename, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    if let Some(first_marked) = panel.marked_entries.first() {
+                        let first_marked = *first_marked;
+                        panel.marked_entries.clear();
+                        panel.selection = Some(first_marked);
+                    }
+                    panel.rename(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &Duplicate, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.duplicate(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &Delete, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| panel.delete(action, window, cx));
+            }
+        });
     })
     .detach();
 }
