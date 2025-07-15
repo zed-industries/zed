@@ -1780,7 +1780,7 @@ mod tests {
 
                 Ok(AgentServerCommand {
                     path: "node".into(),
-                    args: vec![cli_path, "--acp".into()],
+                    args: vec![cli_path, "--experimental-acp".into()],
                     env: None,
                 })
             }
