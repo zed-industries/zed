@@ -191,6 +191,7 @@ pub enum IconName {
     Play,
     PlayAlt,
     PlayBug,
+    PlayFilled,
     Plus,
     PocketKnife,
     Power,
