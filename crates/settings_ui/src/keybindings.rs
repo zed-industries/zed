@@ -10,10 +10,10 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, KeyDownEvent, Keystroke,
-    ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, StyledText,
-    Subscription, WeakEntity, actions, anchored, deferred, div,
+    Action, Animation, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero, KeyContext,
+    KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
+    ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
@@ -637,7 +637,7 @@ impl KeymapEditor {
                     "Delete",
                     Box::new(DeleteBinding),
                 )
-                .action("Copy action", Box::new(CopyAction))
+                .action("Copy Action", Box::new(CopyAction))
                 .action_disabled_when(
                     selected_binding_has_no_context,
                     "Copy Context",
@@ -1536,8 +1536,8 @@ impl Render for KeybindingEditorModal {
         let input_base = || {
             div()
                 .w_full()
-                .py_2()
-                .px_3()
+                .py_1()
+                .px_2()
                 .min_h_8()
                 .rounded_md()
                 .bg(theme.editor_background)
@@ -2000,7 +2000,50 @@ impl Focusable for KeystrokeInput {
 impl Render for KeystrokeInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        let is_inner_focused = self.inner_focus_handle.is_focused(window);
+        let is_focused = self.outer_focus_handle.contains_focused(window, cx);
+        let is_recording = self.inner_focus_handle.is_focused(window);
+
+        let horizontal_padding = rems_from_px(64.);
+
+        let recording_bg_color = cx
+            .theme()
+            .colors()
+            .editor_background
+            .blend(cx.theme().colors().text_accent.opacity(0.05));
+
+        let recording_indicator = h_flex()
+            .h_4()
+            .pr_1()
+            .gap_0p5()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx
+                .theme()
+                .colors()
+                .editor_background
+                .blend(cx.theme().status().error.opacity(0.1)))
+            .rounded_sm()
+            .child(
+                Icon::new(IconName::Circle)
+                    .size(IconSize::Small)
+                    .color(Color::Error)
+                    .with_animation(
+                        "recording-pulse",
+                        Animation::new(std::time::Duration::from_secs(1))
+                            .repeat()
+                            .with_easing(gpui::pulsating_between(0.4, 0.8)),
+                        {
+                            let color = Color::Error.color(cx);
+                            move |this, delta| this.color(Color::Custom(color.opacity(delta)))
+                        },
+                    ),
+            )
+            .child(
+                Label::new("REC")
+                    .size(LabelSize::XSmall)
+                    .weight(FontWeight::SEMIBOLD)
+                    .color(Color::Error),
+            );
 
         return h_flex()
             .id("keystroke-input")
@@ -2008,18 +2051,23 @@ impl Render for KeystrokeInput {
             .py_2()
             .px_3()
             .gap_2()
-            .min_h_8()
+            .min_h_10()
             .w_full()
             .flex_1()
             .justify_between()
             .rounded_md()
             .overflow_hidden()
-            .bg(colors.editor_background)
-            .border_2()
+            .map(|this| {
+                if is_recording {
+                    this.bg(recording_bg_color)
+                } else {
+                    this.bg(colors.editor_background)
+                }
+            })
+            .border_1()
             .border_color(colors.border_variant)
-            .focus(|mut s| {
-                s.border_color = Some(colors.border_focused);
-                s
+            .when(is_focused, |parent| {
+                parent.border_color(colors.border_focused)
             })
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 // TODO: replace with action
@@ -2030,17 +2078,19 @@ impl Render for KeystrokeInput {
             }))
             .child(
                 h_flex()
+                    .w(horizontal_padding)
+                    .gap_0p5()
+                    .justify_start()
+                    .flex_none()
+                    .when(is_recording, |this| this.child(recording_indicator)),
+            )
+            .child(
+                h_flex()
                     .id("keystroke-input-inner")
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .on_key_up(cx.listener(Self::on_key_up))
-                    .when(self.highlight_on_focus, |this| {
-                        this.focus(|mut style| {
-                            style.border_color = Some(colors.border_focused);
-                            style
-                        })
-                    })
-                    .w_full()
+                    .size_full()
                     .min_w_0()
                     .justify_center()
                     .flex_wrap()
@@ -2049,40 +2099,38 @@ impl Render for KeystrokeInput {
             )
             .child(
                 h_flex()
+                    .w(horizontal_padding)
                     .gap_0p5()
+                    .justify_end()
                     .flex_none()
-                    .when(is_inner_focused, |this| {
-                        this.child(
-                            Icon::new(IconName::Circle)
-                                .color(Color::Error)
-                                .with_animation(
-                                    "recording-pulse",
-                                    gpui::Animation::new(std::time::Duration::from_secs(1))
-                                        .repeat()
-                                        .with_easing(gpui::pulsating_between(0.8, 1.0)),
-                                    {
-                                        let color = Color::Error.color(cx);
-                                        move |this, delta| {
-                                            this.color(Color::Custom(color.opacity(delta)))
-                                        }
-                                    },
-                                ),
-                        )
+                    .map(|this| {
+                        if is_recording {
+                            this.child(
+                                IconButton::new("stop-record-btn", IconName::StopFilled)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(Tooltip::text("Stop Recording"))
+                                    .icon_color(Color::Error)
+                                    .on_click(cx.listener(|this, _event, window, _cx| {
+                                        this.outer_focus_handle.focus(window);
+                                    })),
+                            )
+                        } else {
+                            this.child(
+                                IconButton::new("record-btn", IconName::PlayFilled)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(Tooltip::text("Start Recording"))
+                                    .icon_color(Color::Muted)
+                                    .on_click(cx.listener(|this, _event, window, _cx| {
+                                        this.inner_focus_handle.focus(window);
+                                    })),
+                            )
+                        }
                     })
                     .child(
-                        IconButton::new("backspace-btn", IconName::Delete)
-                            .tooltip(Tooltip::text("Delete Keystroke"))
-                            .when(!is_inner_focused, |this| this.icon_color(Color::Muted))
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.keystrokes.pop();
-                                cx.emit(());
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        IconButton::new("clear-btn", IconName::Eraser)
+                        IconButton::new("clear-btn", IconName::Delete)
+                            .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::text("Clear Keystrokes"))
-                            .when(!is_inner_focused, |this| this.icon_color(Color::Muted))
+                            .when(!is_recording, |this| this.icon_color(Color::Muted))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.clear();
                                 cx.emit(());
