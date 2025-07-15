@@ -28,7 +28,7 @@ impl Default for DataCollection {
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ProviderOptions {
+pub struct Provider {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     order: Option<Vec<String>>,
     #[serde(default = "default_true")]
@@ -91,7 +91,7 @@ pub struct Model {
     pub supports_images: Option<bool>,
     #[serde(default)]
     pub mode: ModelMode,
-    pub provider: Option<ProviderOptions>,
+    pub provider: Option<Provider>,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -128,7 +128,7 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
-        provider: Option<ProviderOptions>,
+        provider: Option<Provider>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -185,7 +185,7 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     pub usage: RequestUsage,
-    pub provider: Option<ProviderOptions>,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

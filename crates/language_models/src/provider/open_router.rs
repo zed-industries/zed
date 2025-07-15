@@ -16,7 +16,7 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ProviderOptions, ResponseStreamEvent, list_models,
+    Model, ModelMode as OpenRouterModelMode, Provider, ResponseStreamEvent, list_models,
     stream_completion,
 };
 use schemars::JsonSchema;
@@ -50,7 +50,7 @@ pub struct AvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
-    pub provider: Option<ProviderOptions>,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
