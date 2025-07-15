@@ -88,7 +88,7 @@ impl ActionLog {
                 let mut result = String::new();
                 result.push_str(&format!("--- a/{}\n", file_path));
                 result.push_str(&format!("+++ b/{}\n", file_path));
-                result.push_str(&format!("{}", patch));
+                result.push_str(&patch);
 
                 Some(result)
             })
@@ -532,7 +532,7 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer.clone(), false, cx);
+        self.track_buffer_internal(buffer, false, cx);
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
