@@ -2483,6 +2483,7 @@ impl Pane {
                     IconButton::new("unpin tab", IconName::Pin)
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
                         .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
@@ -2502,6 +2503,7 @@ impl Pane {
                     }
                     .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
                     .icon_size(IconSize::Small)
                     .on_click(cx.listener(move |pane, _, window, cx| {
                         pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
