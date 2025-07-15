@@ -525,6 +525,44 @@ You can find available models and their specifications on the [OpenRouter models
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
+### Docker Model Runner
+
+> ✅ Supports tool use
+
+[Docker Model Runner](https://docs.docker.com/ai/model-runner/) provides an easy way to run LLMs locally in Docker Desktop or Docker CE. It automatically manages model serving, so you don't need to manually start or stop model servers.
+To use it from Zed, you need to [enable host-side TCP support](https://docs.docker.com/ai/model-runner/#enable-docker-model-runner)
+
+
+#### Configuration
+
+To use Docker Model Runner with Zed, configure it as an OpenAI-compatible provider:
+
+```json
+{
+  "language_models": {
+    "openai": {
+      "api_url": "http://localhost:12434/engines/llama.cpp/v1",
+      "available_models": [
+        {
+          "name": "ai/qwen3:8B-Q4_0",
+          "display_name": "Qweb3 8B-Q4_0"
+        }
+      ],
+      "version": "1"
+    }
+  }
+}
+```
+
+#### Model Management
+
+Docker Model Runner automatically handles model serving, but you need to pull the models before you can use them:
+
+- **List models**: `docker model list` shows pulled models
+- **Pull models**: `docker model pull <model-name>` downloads and makes models available
+
+With the host-side TCP port enabled with the default value, the models will be available at `http://localhost:12434/engines/llama.cpp/v1` and compatible with OpenAI's API format.
+
 ### Vercel v0
 
 [Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
