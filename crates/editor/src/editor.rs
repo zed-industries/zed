@@ -16981,7 +16981,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        workspace.toggle_last_active_pane(window, cx);
+        let Some(item) = workspace.recent_active_item_by_type::<Self>(cx) else {
+            return;
+        };
+        workspace.activate_item(&item, true, true, window, cx);
     }
 
     pub fn toggle_fold(

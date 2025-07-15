@@ -1711,6 +1711,26 @@ impl Workspace {
         history
     }
 
+    pub fn recent_active_item_by_type<T: 'static>(&self, cx: &App) -> Option<Entity<T>> {
+        let mut recent_item: Option<Entity<T>> = None;
+        let mut recent_timestamp = 0;
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+            for entry in pane.activation_history() {
+                if entry.timestamp > recent_timestamp {
+                    if let Some(item) = pane.items().find(|item| item.item_id() == entry.entity_id)
+                    {
+                        if let Some(typed_item) = item.act_as::<T>(cx) {
+                            recent_timestamp = entry.timestamp;
+                            recent_item = Some(typed_item);
+                        }
+                    }
+                }
+            }
+        }
+        recent_item
+    }
+
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
@@ -1789,14 +1809,6 @@ impl Workspace {
         self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
-    }
-
-    pub fn toggle_last_active_pane(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(last_pane) = self.last_active_center_pane.as_ref() {
-            last_pane
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
-                .ok();
-        }
     }
 
     fn navigate_history(
