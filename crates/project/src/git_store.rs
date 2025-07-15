@@ -48,13 +48,13 @@ use rpc::{
 use serde::Deserialize;
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     future::Future,
     mem,
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{self, AtomicU64},
     },
     time::Instant,
@@ -72,6 +72,7 @@ pub struct GitStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<RepositoryId, Entity<Repository>>,
+    repositories_by_abs_root_path: BTreeMap<Arc<Path>, Entity<Repository>>,
     active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -400,6 +401,7 @@ impl GitStore {
             buffer_store,
             worktree_store,
             repositories: HashMap::default(),
+            repositories_by_abs_root_path: BTreeMap::default(),
             active_repo_id: None,
             _subscriptions,
             loading_diffs: HashMap::default(),
@@ -1193,23 +1195,35 @@ impl GitStore {
     ) {
         let mut removed_ids = Vec::new();
         for update in updated_git_repositories.iter() {
-            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                let existing_work_directory_abs_path =
-                    repo.read(cx).work_directory_abs_path.clone();
-                Some(&existing_work_directory_abs_path)
-                    == update.old_work_directory_abs_path.as_ref()
-                    || Some(&existing_work_directory_abs_path)
-                        == update.new_work_directory_abs_path.as_ref()
-            }) {
+            let existing_repo = update
+                .old_work_directory_abs_path
+                .as_ref()
+                .and_then(|k| self.repositories_by_abs_root_path.get(k))
+                .or_else(|| {
+                    update
+                        .new_work_directory_abs_path
+                        .as_ref()
+                        .and_then(|k| self.repositories_by_abs_root_path.get(k))
+                });
+            if let Some(existing) = existing_repo {
                 if let Some(new_work_directory_abs_path) =
                     update.new_work_directory_abs_path.clone()
                 {
-                    existing.update(cx, |existing, cx| {
-                        existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
+                    let old_path = existing.update(cx, |existing, cx| {
+                        let old_path = std::mem::replace(
+                            &mut existing.snapshot.work_directory_abs_path,
+                            new_work_directory_abs_path.clone(),
+                        );
+
                         existing.schedule_scan(updates_tx.clone(), cx);
+                        old_path
                     });
+                    let existing = existing.clone();
+                    self.repositories_by_abs_root_path.remove(&old_path);
+                    self.repositories_by_abs_root_path
+                        .insert(new_work_directory_abs_path, existing);
                 } else {
-                    removed_ids.push(*id);
+                    removed_ids.push(existing.read(cx).id);
                 }
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
@@ -1240,7 +1254,9 @@ impl GitStore {
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
-                self.repositories.insert(id, repo);
+                self.repositories.insert(id, repo.clone());
+                self.repositories_by_abs_root_path
+                    .insert(work_directory_abs_path.clone(), repo);
                 cx.emit(GitStoreEvent::RepositoryAdded(id));
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
@@ -1254,7 +1270,11 @@ impl GitStore {
                 self.active_repo_id = None;
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
-            self.repositories.remove(&id);
+            let repo = self.repositories.remove(&id);
+            if let Some(repo) = repo {
+                self.repositories_by_abs_root_path
+                    .remove(&repo.read(cx).work_directory_abs_path);
+            }
             if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
@@ -1413,13 +1433,14 @@ impl GitStore {
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
         let abs_path = self.worktree_store.read(cx).absolutize(path, cx)?;
-        self.repositories
-            .values()
-            .filter_map(|repo| {
+        let range: Range<Arc<Path>> = Arc::from("".as_ref())..Arc::from(abs_path.as_ref());
+        self.repositories_by_abs_root_path
+            .range(range)
+            .last()
+            .and_then(|(_, repo)| {
                 let repo_path = repo.read(cx).abs_path_to_repo_path(&abs_path)?;
                 Some((repo.clone(), repo_path))
             })
-            .max_by_key(|(repo, _)| repo.read(cx).work_directory_abs_path.clone())
     }
 
     pub fn git_init(
