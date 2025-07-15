@@ -1013,7 +1013,7 @@ impl ActiveThread {
                         );
                     }
                     Ok(StopReason::ToolUse) => {
-                        // Don't show notification for intermediate tool use
+                        // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
                         self.play_notification_sound(window, cx);
