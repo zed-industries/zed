@@ -996,30 +996,57 @@ impl ActiveThread {
             | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::Stopped(reason) => match reason {
-                Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
-                    self.play_notification_sound(window, cx);
-                    self.show_notification(
-                        if used_tools {
-                            "Finished running tools"
-                        } else {
-                            "New message"
-                        },
-                        IconName::ZedAssistant,
-                        window,
-                        cx,
-                    );
+            ThreadEvent::Stopped(reason) => {
+                match reason {
+                    Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
+                        let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                        self.notify_with_sound(
+                            if used_tools {
+                                "Finished running tools"
+                            } else {
+                                "New message"
+                            },
+                            IconName::ZedAssistant,
+                            window,
+                            cx,
+                        );
+                    }
+                    Ok(StopReason::ToolUse) => {
+                        // Don't notify for intermediate tool use
+                    }
+                    Ok(StopReason::Refusal) => {
+                        self.notify_with_sound(
+                            "Language model refused to respond",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        self.notify_with_sound(
+                            "Agent stopped due to an error",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+
+                        let error_message = error
+                            .chain()
+                            .map(|err| err.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.last_error = Some(ThreadError::Message {
+                            header: "Error interacting with language model".into(),
+                            message: error_message.into(),
+                        });
+                    }
                 }
-                _ => {}
-            },
+            }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.play_notification_sound(window, cx);
-                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
+                self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::ToolUseLimitReached => {
-                self.play_notification_sound(window, cx);
-                self.show_notification(
+                self.notify_with_sound(
                     "Consecutive tool use limit reached.",
                     IconName::Warning,
                     window,
@@ -1162,9 +1189,6 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::RetriesFailed { message } => {
-                self.show_notification(message, ui::IconName::Warning, window, cx);
-            }
         }
     }
 
@@ -1217,6 +1241,17 @@ impl ActiveThread {
                 // Don't show anything
             }
         }
+    }
+
+    fn notify_with_sound(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        window: &mut Window,
+        cx: &mut Context<ActiveThread>,
+    ) {
+        self.play_notification_sound(window, cx);
+        self.show_notification(caption, icon, window, cx);
     }
 
     fn pop_up(
