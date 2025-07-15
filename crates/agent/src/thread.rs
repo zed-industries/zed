@@ -2223,10 +2223,14 @@ impl Thread {
 
             // Add a transient message to inform the user
             let delay_secs = delay.as_secs();
-            let retry_message = format!(
-                "{error}. Retrying (attempt {attempt} of {max_attempts}) \
-                in {delay_secs} seconds..."
-            );
+            let retry_message = if max_attempts == 1 {
+                format!("{error}. Retrying in {delay_secs} seconds...")
+            } else {
+                format!(
+                    "{error}. Retrying (attempt {attempt} of {max_attempts}) \
+                    in {delay_secs} seconds..."
+                )
+            };
             log::warn!(
                 "Retrying completion request (attempt {attempt} of {max_attempts}) \
                 in {delay_secs} seconds: {error:?}",
@@ -4256,7 +4260,8 @@ fn main() {{
                             if let MessageSegment::Text(text) = seg {
                                 text.contains("internal")
                                     && text.contains("Fake")
-                                    && text.contains("attempt 1 of 1")
+                                    && text.contains("Retrying in")
+                                    && !text.contains("attempt")
                             } else {
                                 false
                             }
