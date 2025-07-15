@@ -4,11 +4,47 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
+use util::serde::default_true;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
     opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataCollection {
+    Allow,
+    Disallow,
+}
+
+impl Default for DataCollection {
+    fn default() -> Self {
+        Self::Allow
+    }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    order: Option<Vec<String>>,
+    #[serde(default = "default_true")]
+    allow_fallbacks: bool,
+    #[serde(default)]
+    require_parameters: bool,
+    #[serde(default)]
+    data_collection: DataCollection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    only: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ignore: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quantizations: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sort: Option<String>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -55,6 +91,7 @@ pub struct Model {
     pub supports_images: Option<bool>,
     #[serde(default)]
     pub mode: ModelMode,
+    pub provider_options: Option<ProviderOptions>,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -76,6 +113,7 @@ impl Model {
             Some(true),
             Some(false),
             Some(ModelMode::Default),
+            None,
         )
     }
 
@@ -90,6 +128,7 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
+        provider_options: Option<ProviderOptions>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -98,6 +137,7 @@ impl Model {
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
+            provider_options,
         }
     }
 
@@ -145,6 +185,8 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     pub usage: RequestUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "provider")]
+    pub provider_options: Option<ProviderOptions>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -631,6 +673,7 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                 } else {
                     ModelMode::Default
                 },
+                provider_options: None,
             })
             .collect();
 

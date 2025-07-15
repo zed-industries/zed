@@ -4,7 +4,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    AnyView, App, AppContext, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle,
+    WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -15,7 +16,8 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as OpenRouterModelMode, ProviderOptions, ResponseStreamEvent, list_models,
+    stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +50,7 @@ pub struct AvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub provider_options: Option<ProviderOptions>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -278,6 +281,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode: model.mode.clone().unwrap_or_default().into(),
+                provider_options: model.provider_options.clone(),
             });
         }
 
@@ -551,6 +555,7 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+        provider_options: model.provider_options.clone(),
     }
 }
 
