@@ -2077,46 +2077,45 @@ async fn save_keybinding_update(
         .await
         .context("Failed to load keymap file")?;
 
-    let operation = if !create {
-        let existing_keystrokes = existing.keystrokes().unwrap_or_default();
-        let existing_context = existing
-            .context
-            .as_ref()
-            .and_then(KeybindContextString::local_str);
-        let existing_args = existing
-            .action_arguments
-            .as_ref()
-            .map(|args| args.text.as_ref());
+    let existing_keystrokes = existing.keystrokes().unwrap_or_default();
+    let existing_context = existing
+        .context
+        .as_ref()
+        .and_then(KeybindContextString::local_str);
+    let existing_args = existing
+        .action_arguments
+        .as_ref()
+        .map(|args| args.text.as_ref());
 
+    let target = settings::KeybindUpdateTarget {
+        context: existing_context,
+        keystrokes: existing_keystrokes,
+        action_name: &existing.action_name,
+        action_arguments: existing_args,
+    };
+
+    let source = settings::KeybindUpdateTarget {
+        context: new_context,
+        keystrokes: new_keystrokes,
+        action_name: &existing.action_name,
+        action_arguments: new_args,
+    };
+
+    let operation = if !create {
         settings::KeybindUpdateOperation::Replace {
-            target: settings::KeybindUpdateTarget {
-                context: existing_context,
-                keystrokes: existing_keystrokes,
-                action_name: &existing.action_name,
-                use_key_equivalents: false,
-                action_arguments: existing_args,
-            },
+            target,
             target_keybind_source: existing
                 .source
                 .as_ref()
                 .map(|(source, _name)| *source)
                 .unwrap_or(KeybindSource::User),
-            source: settings::KeybindUpdateTarget {
-                context: new_context,
-                keystrokes: new_keystrokes,
-                action_name: &existing.action_name,
-                use_key_equivalents: false,
-                action_arguments: new_args,
-            },
+            source,
         }
     } else {
-        settings::KeybindUpdateOperation::Add(settings::KeybindUpdateTarget {
-            context: new_context,
-            keystrokes: new_keystrokes,
-            action_name: &existing.action_name,
-            use_key_equivalents: false,
-            action_arguments: new_args,
-        })
+        settings::KeybindUpdateOperation::Add {
+            source,
+            from: Some(target),
+        }
     };
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
