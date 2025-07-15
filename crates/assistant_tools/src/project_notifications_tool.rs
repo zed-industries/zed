@@ -75,7 +75,7 @@ impl Tool for ProjectNotificationsTool {
             const HEADER: &str = include_str!("./project_notifications_tool/prompt_header.txt");
 
             let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
-            format!("{HEADER}{stale_files}\n{patch}").replace("\r\n", "\n")
+            format!("{HEADER}{stale_files}\n\n```diff\n{patch}\n```\n").replace("\r\n", "\n")
         };
 
         Task::ready(Ok(response.into())).into()

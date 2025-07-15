@@ -71,13 +71,23 @@ impl ActionLog {
     pub fn user_edits_since_last_read_patch(&self, cx: &Context<Self>) -> String {
         self.user_edits_since_last_read()
             .iter()
-            .map(|(buffer, patch)| Self::format_patch(patch.clone(), buffer.clone(), cx))
+            .map(|(buffer, patch)| self.format_patch(patch.clone(), buffer.clone(), cx))
             .collect::<Vec<String>>()
             .join("\n")
     }
 
-    fn format_patch(patch: Patch<u32>, buffer: Entity<Buffer>, cx: &Context<Self>) -> String {
-        let snapshot = buffer.read(cx).snapshot();
+    fn format_patch(
+        &self,
+        patch: Patch<u32>,
+        buffer: Entity<Buffer>,
+        cx: &Context<Self>,
+    ) -> String {
+        let tracked_buffer = self
+            .tracked_buffers
+            .get(&buffer)
+            .expect("buffer should be tracked");
+        let old_text = &tracked_buffer.last_read_rope;
+        let new_snapshot = buffer.read(cx).snapshot();
 
         // Get file path for header
         let file_path = buffer
@@ -92,14 +102,15 @@ impl ActionLog {
 
         // Process each edit in the patch
         for edit in patch.edits() {
+            dbg!(&edit);
             let old_start = edit.old.start as usize;
             let old_end = edit.old.end as usize;
             let new_start = edit.new.start as usize;
             let new_end = edit.new.end as usize;
 
             // Hunk header
-            let old_line_count = old_end - old_start;
-            let new_line_count = new_end - new_start;
+            let old_line_count = old_end.saturating_sub(old_start);
+            let new_line_count = new_end.saturating_sub(new_start);
             result.push_str(&format!(
                 "@@ -{},{} +{},{} @@\n",
                 old_start + 1,
@@ -110,8 +121,8 @@ impl ActionLog {
 
             // Deletions
             if old_end > old_start {
-                let range = row_range_to_offset_range(&edit.old, snapshot.as_rope());
-                let old_text: String = snapshot.text_for_range(range).collect();
+                let range = row_range_to_offset_range(&edit.old, old_text);
+                let old_text: String = old_text.chunks_in_range(range).collect();
                 for line in old_text.lines() {
                     result.push_str(&format!("-{line}\n"));
                 }
@@ -119,8 +130,8 @@ impl ActionLog {
 
             // Additions
             if new_end > new_start {
-                let range = row_range_to_offset_range(&edit.new, snapshot.as_rope());
-                let new_text: String = snapshot.text_for_range(range).collect();
+                let range = row_range_to_offset_range(&edit.new, new_snapshot.as_rope());
+                let new_text: String = new_snapshot.text_for_range(range).collect();
                 for line in new_text.lines() {
                     result.push_str(&format!("+{line}\n"));
                 }
@@ -181,21 +192,26 @@ impl ActionLog {
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
+                let last_read_rope;
                 let unreviewed_edits;
                 if is_created {
                     diff_base = Rope::default();
+                    last_read_rope = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
                     }])
                 } else {
-                    diff_base = buffer.read(cx).as_rope().clone();
+                    let current_rope = buffer.read(cx).as_rope().clone();
+                    diff_base = current_rope.clone();
+                    last_read_rope = current_rope;
                     unreviewed_edits = Patch::default();
                 }
                 let unnotified_user_edits = Patch::default();
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
+                    last_read_rope,
                     unreviewed_edits,
                     snapshot: text_snapshot.clone(),
                     status,
@@ -356,11 +372,13 @@ impl ActionLog {
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                dbg!(&edits);
                 if let ChangeAuthor::User = author {
                     edits
                         .iter()
                         .cloned()
                         .for_each(|edit| tracked_buffer.unnotified_user_edits.push(edit));
+                    dbg!(&tracked_buffer.unnotified_user_edits);
                 }
                 async move {
                     if let ChangeAuthor::User = author {
@@ -378,6 +396,7 @@ impl ActionLog {
             anyhow::Ok(rebase)
         })??;
         let (new_base_text, new_diff_base) = rebase.await;
+        dbg!(&new_base_text);
         Self::update_diff(
             this,
             buffer,
@@ -557,7 +576,11 @@ impl ActionLog {
 
     /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer, false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
+        // TODO: move to track_buffer_internal?
+        // Update the last read state to current buffer state
+        tracked_buffer.last_read_rope = buffer.read(cx).as_rope().clone();
+        tracked_buffer.unnotified_user_edits = Patch::default();
     }
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
@@ -1014,6 +1037,7 @@ enum TrackedBufferStatus {
 struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
+    last_read_rope: Rope,
     unreviewed_edits: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
@@ -2442,7 +2466,7 @@ mod tests {
             indoc! {"
             --- a/dir/test.txt
             +++ b/dir/test.txt
-            @@ -1,3 +1,3 @@
+            @@ -2,1 +2,1 @@
             -line2
             +CHANGED
             "}
