@@ -18,6 +18,7 @@ use crate::provider::{
     mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
+    open_ai_compatible::OpenAiCompatibleSettings,
     open_router::OpenRouterSettings,
     vercel::VercelSettings,
     x_ai::XAiSettings,
@@ -39,7 +40,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
-    pub openai_compatible: HashMap<Arc<str>, OpenAiSettings>,
+    pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel: VercelSettings,
     pub x_ai: XAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -111,7 +112,7 @@ pub struct OpenAiSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
-    pub available_models: Vec<provider::open_ai::AvailableModel>,
+    pub available_models: Vec<provider::open_ai_compatible::AvailableModel>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -241,7 +242,7 @@ impl settings::Settings for AllLanguageModelSettings {
             for (id, openai_compatible_settings) in value.openai_compatible.clone() {
                 settings.openai_compatible.insert(
                     id,
-                    OpenAiSettings {
+                    OpenAiCompatibleSettings {
                         api_url: openai_compatible_settings.api_url,
                         available_models: openai_compatible_settings.available_models,
                     },

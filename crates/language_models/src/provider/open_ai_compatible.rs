@@ -13,6 +13,8 @@ use language_model::{
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 
@@ -21,7 +23,22 @@ use ui_input::SingleLineInput;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::open_ai::{AvailableModel, OpenAiEventMapper, OpenAiSettings, into_open_ai};
+use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct OpenAiCompatibleSettings {
+    pub api_url: String,
+    pub available_models: Vec<AvailableModel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+}
 
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
@@ -35,7 +52,7 @@ pub struct State {
     env_var_name: Arc<str>,
     api_key: Option<String>,
     api_key_from_env: bool,
-    settings: OpenAiSettings,
+    settings: OpenAiCompatibleSettings,
     _subscription: Subscription,
 }
 
@@ -109,7 +126,7 @@ impl State {
 
 impl OpenAiCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiSettings> {
+        fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
             AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
                 .get(id)
