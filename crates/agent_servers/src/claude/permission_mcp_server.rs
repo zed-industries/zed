@@ -15,6 +15,7 @@ use context_server::{
 use gpui::{App, AsyncApp, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::debug_panic;
 
 use crate::claude::McpServerConfig;
 
@@ -78,7 +79,7 @@ enum PermissionToolBehavior {
 
 impl PermissionMcpServer {
     pub async fn new(
-        delegate: Rc<RefCell<Option<AcpClientDelegate>>>,
+        delegate: watch::Receiver<Option<AcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
@@ -183,17 +184,16 @@ impl PermissionMcpServer {
 
     fn handle_call_tool(
         request: CallToolParams,
-        delegate: Rc<RefCell<Option<AcpClientDelegate>>>,
+        mut delegate_watch: watch::Receiver<Option<AcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
             // todo! wait until ready instead
-            let delegate = delegate
-                .try_borrow()
-                .ok()
-                .and_then(|c| c.clone())
-                .context("Server still initializing")?;
+            let Some(delegate) = delegate_watch.recv().await? else {
+                debug_panic!("Sent None delegate");
+                anyhow::bail!("Server not available");
+            };
 
             if request.name.as_str() == TOOL_NAME {
                 let input =

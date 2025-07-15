@@ -121,11 +121,11 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.to_path_buf();
         let title = self.name().into();
         cx.spawn(async move |cx| {
-            let delegate_rc = Rc::new(RefCell::new(None));
+            let (mut delegate_tx, delegate_rx) = watch::channel(None);
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let permission_mcp_server =
-                PermissionMcpServer::new(delegate_rc.clone(), tool_id_map.clone(), cx).await?;
+                PermissionMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
@@ -188,7 +188,7 @@ impl AgentServer for ClaudeCode {
             cx.new(|cx| {
                 let end_turn_tx = Rc::new(RefCell::new(None));
                 let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
-                delegate_rc.borrow_mut().replace(delegate.clone());
+                delegate_tx.send(Some(delegate.clone())).log_err();
 
                 let handler_task = cx.foreground_executor().spawn({
                     let end_turn_tx = end_turn_tx.clone();
@@ -271,9 +271,12 @@ impl ClaudeAgentConnection {
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
-                                        content: Some(ToolCallContent::Markdown {
-                                            markdown: content,
-                                        }),
+                                        content: match content {
+                                            ToolResultContent::Text { text }
+                                            | ToolResultContent::UntaggedText(text) => {
+                                                Some(ToolCallContent::Markdown { markdown: text })
+                                            }
+                                        },
                                     })
                                     .await
                                     .log_err();
@@ -368,9 +371,20 @@ enum MessageContent {
         input: serde_json::Value,
     },
     ToolResult {
-        content: String,
+        content: ToolResultContent,
         tool_use_id: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ToolResultContent {
+    Text {
+        text: String,
+    },
+    // todo! image, web search, document
+    #[serde(untagged)]
+    UntaggedText(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

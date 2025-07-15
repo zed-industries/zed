@@ -162,6 +162,7 @@ dependencies = [
  "tempfile",
  "ui",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
 ]
