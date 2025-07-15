@@ -2185,14 +2185,13 @@ impl Thread {
     fn handle_retryable_error_with_delay(
         &mut self,
         error: &LanguageModelCompletionError,
-        custom_strategy: Option<RetryStrategy>,
+        strategy: Option<RetryStrategy>,
         model: Arc<dyn LanguageModel>,
         intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let retry_strategy = custom_strategy.or_else(|| Self::get_retry_strategy(error));
-        let Some(strategy) = retry_strategy else {
+        let Some(strategy) = strategy.or_else(|| Self::get_retry_strategy(error)) else {
             return false;
         };
 
@@ -2269,15 +2268,8 @@ impl Thread {
             // Max retries exceeded
             self.retry_state = None;
 
-            let notification_text = "Agent stopped due to an error".into();
-
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
-
-            cx.emit(ThreadEvent::RetriesFailed {
-                message: notification_text,
-                error: Arc::new(anyhow::Error::msg(error.to_string())),
-            });
 
             false
         }
@@ -3234,10 +3226,6 @@ pub enum ThreadEvent {
     CancelEditing,
     CompletionCanceled,
     ProfileChanged,
-    RetriesFailed {
-        message: SharedString,
-        error: Arc<anyhow::Error>,
-    },
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -4413,13 +4401,13 @@ fn main() {{
         });
 
         // Track events
-        let retries_failed = Arc::new(Mutex::new(false));
-        let retries_failed_clone = retries_failed.clone();
+        let stopped_with_error = Arc::new(Mutex::new(false));
+        let stopped_with_error_clone = stopped_with_error.clone();
 
         let _subscription = thread.update(cx, |_, cx| {
             cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
-                if let ThreadEvent::RetriesFailed { .. } = event {
-                    *retries_failed_clone.lock() = true;
+                if let ThreadEvent::Stopped(Err(_)) = event {
+                    *stopped_with_error_clone.lock() = true;
                 }
             })
         });
@@ -4454,14 +4442,14 @@ fn main() {{
                 .count()
         });
 
-        // After max retries, should emit RetriesFailed event
+        // After max retries, should emit Stopped(Err(...)) event
         assert_eq!(
             retry_count, MAX_RETRY_ATTEMPTS as usize,
             "Should have attempted MAX_RETRY_ATTEMPTS retries for overloaded errors"
         );
         assert!(
-            *retries_failed.lock(),
-            "Should emit RetriesFailed event after max retries exceeded"
+            *stopped_with_error.lock(),
+            "Should emit Stopped(Err(...)) event after max retries exceeded"
         );
 
         // Retry state should be cleared

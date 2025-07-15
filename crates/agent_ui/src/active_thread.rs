@@ -1022,13 +1022,23 @@ impl ActiveThread {
                             cx,
                         );
                     }
-                    Err(_) => {
+                    Err(error) => {
                         self.notify_with_sound(
                             "Agent stopped due to an error",
                             IconName::Warning,
                             window,
                             cx,
                         );
+
+                        let error_message = error
+                            .chain()
+                            .map(|err| err.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.last_error = Some(ThreadError::Message {
+                            header: "Error interacting with language model".into(),
+                            message: error_message.into(),
+                        });
                     }
                 }
             }
@@ -1178,20 +1188,6 @@ impl ActiveThread {
             ThreadEvent::ProfileChanged => {
                 self.save_thread(cx);
                 cx.notify();
-            }
-            ThreadEvent::RetriesFailed { message, error } => {
-                self.notify_with_sound(message, ui::IconName::Warning, window, cx);
-
-                // Also show the error in the UI
-                let error_message = error
-                    .chain()
-                    .map(|err| err.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                self.last_error = Some(ThreadError::Message {
-                    header: "Error interacting with language model".into(),
-                    message: error_message.into(),
-                });
             }
         }
     }
