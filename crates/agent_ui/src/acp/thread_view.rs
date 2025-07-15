@@ -1504,7 +1504,9 @@ impl AcpThreadView {
             .into_any_element()
     }
 
-    fn render_empty_state(&self, loading: bool, cx: &App) -> AnyElement {
+    fn render_empty_state(&self, cx: &App) -> AnyElement {
+        let loading = matches!(&self.thread_state, ThreadState::Loading { .. });
+
         v_flex()
             .size_full()
             .items_center()
@@ -1524,16 +1526,15 @@ impl AcpThreadView {
             } else {
                 self.render_agent_logo().into_any_element()
             })
-            .child(
-                h_flex().mt_4().mb_1().justify_center().child(
-                    if loading {
-                        Headline::new(format!("Connecting to {}…", self.agent.name()))
-                    } else {
-                        Headline::new(self.agent.empty_state_headline())
-                    }
-                    .size(HeadlineSize::Medium),
-                ),
-            )
+            .child(h_flex().mt_4().mb_1().justify_center().child(if loading {
+                div()
+                    .child(LoadingLabel::new("").size(LabelSize::Large))
+                    .into_any_element()
+            } else {
+                Headline::new(self.agent.empty_state_headline())
+                    .size(HeadlineSize::Medium)
+                    .into_any_element()
+            }))
             .child(
                 div()
                     .max_w_1_2()
@@ -2298,9 +2299,7 @@ impl Render for AcpThreadView {
                             ),
                         )
                 }
-                ThreadState::Loading { .. } => {
-                    v_flex().flex_1().child(self.render_empty_state(true, cx))
-                }
+                ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
                     .flex_1()
@@ -2341,7 +2340,7 @@ impl Render for AcpThreadView {
                         })
                         .children(self.render_edits_bar(&thread, window, cx))
                     } else {
-                        this.child(self.render_empty_state(false, cx))
+                        this.child(self.render_empty_state(cx))
                     }
                 }),
             })
