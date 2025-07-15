@@ -152,7 +152,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
