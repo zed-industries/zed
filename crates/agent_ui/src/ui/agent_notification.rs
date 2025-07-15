@@ -62,7 +62,7 @@ impl AgentNotification {
             app_id: Some(app_id.to_owned()),
             window_min_size: None,
             window_decorations: Some(WindowDecorations::Client),
-            allows_automatic_window_tabbing: None,
+            tabbing_identifier: None,
         }
     }
 }

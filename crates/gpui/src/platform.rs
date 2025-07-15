@@ -1099,8 +1099,8 @@ pub struct WindowOptions {
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
 
-    /// Whether to allow automatic window tabbing. macOS only.
-    pub allows_automatic_window_tabbing: Option<bool>,
+    /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
+    pub tabbing_identifier: Option<String>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1140,7 +1140,7 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
-    pub allows_automatic_window_tabbing: Option<bool>,
+    pub tabbing_identifier: Option<String>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1191,7 +1191,7 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
-            allows_automatic_window_tabbing: None,
+            tabbing_identifier: None,
         }
     }
 }

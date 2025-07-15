@@ -899,7 +899,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
-            allows_automatic_window_tabbing,
+            tabbing_identifier,
         } = options;
 
         let bounds = window_bounds
@@ -916,7 +916,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
-                allows_automatic_window_tabbing,
+                tabbing_identifier,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -1143,7 +1143,7 @@ impl Window {
 
         platform_window.map_window().unwrap();
 
-        let window = Window {
+        Ok(Window {
             handle,
             invalidator,
             removed: false,
@@ -1197,10 +1197,7 @@ impl Window {
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-        };
-
-        SystemWindowTabController::add_window(cx, &window);
-        Ok(window)
+        })
     }
 
     pub(crate) fn new_focus_listener(

@@ -36,7 +36,6 @@ pub struct DraggedWindowTab {
 }
 
 pub struct SystemWindowTabs {
-    tab_group: Option<usize>,
     tabs: Vec<SystemWindowTab>,
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
@@ -46,7 +45,6 @@ pub struct SystemWindowTabs {
 impl SystemWindowTabs {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let window_id = window.window_handle().window_id();
-        let tab_group = window.tab_group();
         let mut subscriptions = Vec::new();
 
         subscriptions.push(cx.observe_new(
@@ -136,7 +134,6 @@ impl SystemWindowTabs {
         );
 
         Self {
-            tab_group,
             tabs: Vec::new(),
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: window.bounds().size.width,
