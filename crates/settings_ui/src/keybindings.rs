@@ -1569,7 +1569,7 @@ impl Render for KeybindingEditorModal {
         let theme = cx.theme().colors();
         let action_name = format!(
             "{}",
-            command_palette::humanize_action_name(&self.editing_keybind.action_name)
+            command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string()
         );
 
         v_flex().w(rems(34.)).elevation_3(cx).child(
