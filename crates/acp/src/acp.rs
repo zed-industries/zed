@@ -1061,8 +1061,24 @@ impl AcpThread {
             this.update(cx, |this, _| {
                 let text = snapshot.text();
                 this.shared_buffers.insert(buffer.clone(), snapshot);
-                text
-            })
+                if request.line.is_none() && request.limit.is_none() {
+                    return Ok(text);
+                }
+                let limit = request.limit.unwrap_or(u32::MAX) as usize;
+                let Some(line) = request.line else {
+                    return Ok(text.lines().take(limit).collect::<String>());
+                };
+
+                let count = text.lines().count();
+                if count < line as usize {
+                    anyhow::bail!("There are only {} lines", count);
+                }
+                Ok(text
+                    .lines()
+                    .skip(line as usize + 1)
+                    .take(limit)
+                    .collect::<String>())
+            })?
         })
     }
 

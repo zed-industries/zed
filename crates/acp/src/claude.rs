@@ -135,6 +135,10 @@ impl ClaudeAgentConnection {
                     permission_mcp_server::SERVER_NAME,
                     permission_mcp_server::TOOL_NAME
                 ),
+                "--allowedTools",
+                "mcp__zed__Read,mcp__zed__Edit",
+                "--disallowedTools",
+                "Read,Edit",
             ])
             .current_dir(cwd)
             .stdin(std::process::Stdio::piped())
