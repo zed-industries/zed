@@ -18,7 +18,7 @@ use gpui::{
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
@@ -267,6 +267,22 @@ struct KeymapEditor {
     keystroke_editor: Entity<KeystrokeInput>,
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    previous_edit: Option<PreviousEdit>,
+}
+
+enum PreviousEdit {
+    /// When deleting, we bounds check this index and set the selected index to this one, and scroll to it
+    /// if it is not in bounds then we scroll to 0 and don't set a selected index
+    Index(usize),
+    /// When editing or creating, because the new keybinding could be in a different position in the sort order
+    /// we store metadata about the new binding (either the modified version or newly created one)
+    /// and upon reload, we search for this binding in the list of keybindings, and if we find the one that matches
+    /// this metadata, we set the selected index to it and scroll to it,
+    /// and if we don't find it, we scroll to 0 and don't set a selected index
+    Keybinding {
+        action_mapping: ActionMapping,
+        action_name: SharedString,
+    },
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -279,8 +295,7 @@ impl Focusable for KeymapEditor {
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let _keymap_subscription =
-            cx.observe_global::<KeymapEventChannel>(Self::update_keybindings);
+        let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(Self::on_keymap_changed);
         let table_interaction_state = TableInteractionState::new(window, cx);
 
         let keystroke_editor = cx.new(|cx| {
@@ -300,7 +315,7 @@ impl KeymapEditor {
                 return;
             }
 
-            this.update_matches(cx);
+            this.on_query_changed(cx);
         })
         .detach();
 
@@ -309,7 +324,7 @@ impl KeymapEditor {
                 return;
             }
 
-            this.update_matches(cx);
+            this.on_query_changed(cx);
         })
         .detach();
 
@@ -328,9 +343,10 @@ impl KeymapEditor {
             keystroke_editor,
             selected_index: None,
             context_menu: None,
+            previous_edit: None,
         };
 
-        this.update_keybindings(cx);
+        this.on_keymap_changed(cx);
 
         this
     }
@@ -352,17 +368,20 @@ impl KeymapEditor {
         }
     }
 
-    fn update_matches(&self, cx: &mut Context<Self>) {
+    fn on_query_changed(&self, cx: &mut Context<Self>) {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
 
         cx.spawn(async move |this, cx| {
-            Self::process_query(this, action_query, keystroke_query, cx).await
+            Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
+            this.update(cx, |this, cx| {
+                this.scroll_to_item(0, ScrollStrategy::Top, cx)
+            })
         })
         .detach();
     }
 
-    async fn process_query(
+    async fn update_matches(
         this: WeakEntity<Self>,
         action_query: String,
         keystroke_query: Vec<Keystroke>,
@@ -430,7 +449,6 @@ impl KeymapEditor {
                 });
             }
             this.selected_index.take();
-            this.scroll_to_item(0, ScrollStrategy::Top, cx);
             this.matches = matches;
             cx.notify();
         })
@@ -517,7 +535,7 @@ impl KeymapEditor {
         (processed_bindings, string_match_candidates)
     }
 
-    fn update_keybindings(&mut self, cx: &mut Context<KeymapEditor>) {
+    fn on_keymap_changed(&mut self, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
             let json_language = load_json_language(workspace.clone(), cx).await;
@@ -552,7 +570,44 @@ impl KeymapEditor {
                 )
             })?;
             // calls cx.notify
-            Self::process_query(this, action_query, keystroke_query, cx).await
+            Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
+            this.update(cx, |this, cx| {
+                if let Some(previous_edit) = this.previous_edit.take() {
+                    match previous_edit {
+                        // should remove scroll from process_query
+                        PreviousEdit::Index(index) => {
+                            this.scroll_to_item(
+                                index.min(this.matches.len().saturating_sub(1)),
+                                ScrollStrategy::Top,
+                                cx,
+                            );
+                            // set selected index and scroll
+                        }
+                        PreviousEdit::Keybinding {
+                            action_mapping,
+                            action_name,
+                        } => {
+                            let scroll_position = this
+                                .matches
+                                .iter()
+                                .enumerate()
+                                .find_map(|(index, item)| {
+                                    let binding = &this.keybindings[item.candidate_id];
+                                    if binding.get_action_mapping() == action_mapping
+                                        && binding.action_name == action_name
+                                    {
+                                        Some(index)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+
+                            this.scroll_to_item(scroll_position, ScrollStrategy::Top, cx);
+                        }
+                    }
+                }
+            })
         })
         .detach_and_log_err(cx);
     }
@@ -783,6 +838,11 @@ impl KeymapEditor {
         let Some(to_remove) = self.selected_binding().cloned() else {
             return;
         };
+
+        let Some(index) = self.selected_keybind_idx() else {
+            debug_panic!("Index must exist at this state");
+            return;
+        };
         let Ok(fs) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
@@ -790,6 +850,7 @@ impl KeymapEditor {
             return;
         };
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+        self.previous_edit = Some(PreviousEdit::Index(index));
         cx.spawn(async move |_, _| remove_keybinding(to_remove, &fs, tab_size).await)
             .detach_and_notify_err(window, cx);
     }
@@ -833,7 +894,7 @@ impl KeymapEditor {
         cx: &mut Context<Self>,
     ) {
         self.filter_state = self.filter_state.invert();
-        self.update_matches(cx);
+        self.on_query_changed(cx);
     }
 
     fn toggle_keystroke_search(
@@ -843,7 +904,7 @@ impl KeymapEditor {
         cx: &mut Context<Self>,
     ) {
         self.search_mode = self.search_mode.invert();
-        self.update_matches(cx);
+        self.on_query_changed(cx);
 
         match self.search_mode {
             SearchMode::KeyStroke => {
