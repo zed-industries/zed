@@ -6800,7 +6800,7 @@ impl Editor {
     fn refresh_single_line_folds(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         struct NewlineFold;
         let type_id = std::any::TypeId::of::<NewlineFold>();
-        if !self.mode.is_single_line() {
+        if self.mode != (EditorMode::SingleLine { auto_width: false }) {
             return;
         }
         let snapshot = self.snapshot(window, cx);
