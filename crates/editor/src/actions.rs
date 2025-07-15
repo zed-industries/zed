@@ -425,6 +425,8 @@ actions!(
         FoldRecursive,
         /// Folds the selected ranges.
         FoldSelectedRanges,
+        /// Toggles focus back to the last active buffer.
+        ToggleFocus,
         /// Toggles folding at the current position.
         ToggleFold,
         /// Toggles recursive folding at the current position.

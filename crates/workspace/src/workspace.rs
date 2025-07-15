@@ -1791,6 +1791,14 @@ impl Workspace {
             .collect()
     }
 
+    pub fn toggle_last_active_pane(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last_pane) = self.last_active_center_pane.as_ref() {
+            last_pane
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
+                .ok();
+        }
+    }
+
     fn navigate_history(
         &mut self,
         pane: WeakEntity<Pane>,
