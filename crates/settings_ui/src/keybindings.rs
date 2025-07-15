@@ -1104,6 +1104,7 @@ impl Render for KeymapEditor {
                                         && this.has_conflict(index))
                                     .then(|| {
                                         base_button_style(index, IconName::Warning)
+                                            .icon_color(Color::Warning)
                                             .tooltip(|window, cx| {
                                                 Tooltip::with_meta(
                                                     "Edit Keybinding",
