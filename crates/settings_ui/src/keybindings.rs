@@ -727,7 +727,7 @@ impl KeymapEditor {
         self.context_menu = self.selected_binding().map(|selected_binding| {
             let key_strokes = selected_binding
                 .keystrokes()
-                .map(|keystrokes| Vec::from(keystrokes))
+                .map(Vec::from)
                 .unwrap_or_default();
             let selected_binding_has_no_context = selected_binding
                 .context
