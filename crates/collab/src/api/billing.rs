@@ -1428,7 +1428,7 @@ async fn sync_model_request_usage_with_stripe(
     let get_zed_pro_subscriptions_started_at = Utc::now();
     let billing_subscriptions = app.db.get_active_zed_pro_billing_subscriptions().await?;
     log::info!(
-        "Stripe usage sync: Retrieved {} Zed pro subscriptions in {}",
+        "Stripe usage sync: Retrieved {} Zed Pro subscriptions in {}",
         billing_subscriptions.len(),
         Utc::now() - get_zed_pro_subscriptions_started_at
     );
