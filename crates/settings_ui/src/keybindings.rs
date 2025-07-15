@@ -1760,6 +1760,14 @@ impl KeybindingEditorModal {
     ) {
         self.focus_state.focus_previous(window, cx);
     }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.save(cx);
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent)
+    }
 }
 
 impl Render for KeybindingEditorModal {
@@ -1774,6 +1782,8 @@ impl Render for KeybindingEditorModal {
             .key_context(self.key_context())
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_prev))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
             .child(
                 Modal::new("keybinding_editor_modal", None)
                     .header(
@@ -2297,24 +2307,23 @@ impl KeystrokeInput {
         cx: &mut Context<Self>,
     ) {
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
-        if close_keystroke_result == CloseKeystrokeResult::Close {
-            return;
-        }
-        if let Some(last) = self.keystrokes.last()
-            && last.key.is_empty()
-            && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
-        {
-            self.keystrokes.pop();
-        }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-            if close_keystroke_result == CloseKeystrokeResult::Partial
-                && self.close_keystrokes_start.is_none()
+        if close_keystroke_result != CloseKeystrokeResult::Close {
+            if let Some(last) = self.keystrokes.last()
+                && last.key.is_empty()
+                && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
             {
-                self.close_keystrokes_start = Some(self.keystrokes.len());
+                self.keystrokes.pop();
             }
-            self.keystrokes.push(keystroke.clone());
             if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-                self.keystrokes.push(Self::dummy(keystroke.modifiers));
+                if close_keystroke_result == CloseKeystrokeResult::Partial
+                    && self.close_keystrokes_start.is_none()
+                {
+                    self.close_keystrokes_start = Some(self.keystrokes.len());
+                }
+                self.keystrokes.push(keystroke.clone());
+                if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                    self.keystrokes.push(Self::dummy(keystroke.modifiers));
+                }
             }
         }
         self.keystrokes_changed(cx);
