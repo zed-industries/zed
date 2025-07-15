@@ -21,8 +21,8 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
-    SharedString, Styled as _, Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, Modal, ModalFooter, ModalHeader,
+    ParentElement as _, Render, Section, SharedString, Styled as _, Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use workspace::{
@@ -1538,74 +1538,96 @@ impl KeybindingEditorModal {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let action_name = format!(
+            "{}",
+            command_palette::humanize_action_name(&self.editing_keybind.action_name)
+        );
 
-        v_flex()
-            .w(rems(34.))
-            .elevation_3(cx)
-            .child(
-                v_flex()
-                    .p_3()
-                    .child(Label::new("Edit Keystroke"))
-                    .child(
-                        Label::new("Record a new keystroke for the selected action.")
-                            .color(Color::Muted)
-                            .mb_1p5(),
-                    )
-                    .child(self.keybind_editor.clone()),
-            )
-            .when_some(self.input_editor.clone(), |this, editor| {
-                this.child(
-                    v_flex()
-                        .p_3()
-                        .pt_0()
-                        .gap_1()
-                        .child(Label::new("Edit Arguments"))
-                        .child(
-                            div()
-                                .w_full()
-                                .py_1()
-                                .px_1p5()
-                                .rounded_lg()
-                                .bg(theme.editor_background)
-                                .border_1()
-                                .border_color(theme.border_variant)
-                                .child(editor),
-                        ),
+        v_flex().w(rems(34.)).elevation_3(cx).child(
+            Modal::new("keybinding_editor_modal", None)
+                .header(
+                    ModalHeader::new().child(
+                        v_flex()
+                            .pb_1p5()
+                            .mb_1()
+                            .gap_0p5()
+                            .border_b_1()
+                            .border_color(theme.border_variant)
+                            .child(Label::new(action_name))
+                            .when_some(self.editing_keybind.action_docs, |this, docs| {
+                                this.child(
+                                    Label::new(docs).size(LabelSize::Small).color(Color::Muted),
+                                )
+                            }),
+                    ),
                 )
-            })
-            .child(v_flex().p_3().pt_0().child(self.context_editor.clone()))
-            .when_some(self.error.as_ref(), |this, error| {
-                this.child(
-                    div().p_3().pt_0().child(
-                        Banner::new()
-                            .map(|banner| match error {
-                                InputError::Error(_) => banner.severity(ui::Severity::Error),
-                                InputError::Warning(_) => banner.severity(ui::Severity::Warning),
+                .section(
+                    Section::new().child(
+                        v_flex()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .child(Label::new("Edit Keybinding"))
+                                    .gap_1()
+                                    .child(self.keybind_editor.clone()),
+                            )
+                            .when_some(self.input_editor.clone(), |this, editor| {
+                                this.child(
+                                    v_flex()
+                                        .mt_1p5()
+                                        .gap_1()
+                                        .child(Label::new("Edit Arguments"))
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .py_1()
+                                                .px_1p5()
+                                                .rounded_lg()
+                                                .bg(theme.editor_background)
+                                                .border_1()
+                                                .border_color(theme.border_variant)
+                                                .child(editor),
+                                        ),
+                                )
                             })
-                            // For some reason, the div overflows its container to the
-                            // right. The padding accounts for that.
-                            .child(div().size_full().pr_2().child(Label::new(error.content()))),
+                            .child(self.context_editor.clone())
+                            .when_some(self.error.as_ref(), |this, error| {
+                                this.child(
+                                    Banner::new()
+                                        .map(|banner| match error {
+                                            InputError::Error(_) => {
+                                                banner.severity(ui::Severity::Error)
+                                            }
+                                            InputError::Warning(_) => {
+                                                banner.severity(ui::Severity::Warning)
+                                            }
+                                        })
+                                        // For some reason, the div overflows its container to the
+                                        //right. The padding accounts for that.
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .pr_2()
+                                                .child(Label::new(error.content())),
+                                        ),
+                                )
+                            }),
                     ),
                 )
-            })
-            .child(
-                h_flex()
-                    .p_2()
-                    .w_full()
-                    .gap_1()
-                    .justify_end()
-                    .border_t_1()
-                    .border_color(theme.border_variant)
-                    .child(
-                        Button::new("cancel", "Cancel")
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                    )
-                    .child(
-                        Button::new("save-btn", "Save").on_click(
-                            cx.listener(|this, _event, _window, cx| Self::save(this, cx)),
-                        ),
+                .footer(
+                    ModalFooter::new().end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("cancel", "Cancel")
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                            )
+                            .child(Button::new("save-btn", "Save").on_click(
+                                cx.listener(|this, _event, _window, cx| Self::save(this, cx)),
+                            )),
                     ),
-            )
+                ),
+        )
     }
 }
 
