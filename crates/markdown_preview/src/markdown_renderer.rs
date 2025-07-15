@@ -57,7 +57,11 @@ impl RenderContext {
         let buffer_font_family = settings.buffer_font.family.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
-        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
+        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx) * 1.1);
+
+        // Increase base text size for all markdown content
+        let mut text_style = window.text_style();
+        text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx) * 1.1);
 
         RenderContext {
             workspace,
@@ -65,7 +69,7 @@ impl RenderContext {
             indent: 0,
             buffer_font_family,
             buffer_text_style,
-            text_style: window.text_style(),
+            text_style,
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,
