@@ -1716,10 +1716,11 @@ impl Workspace {
         let mut recent_timestamp = 0;
         for pane_handle in &self.panes {
             let pane = pane_handle.read(cx);
+            let item_map: HashMap<EntityId, &Box<dyn ItemHandle>> =
+                pane.items().map(|item| (item.item_id(), item)).collect();
             for entry in pane.activation_history() {
                 if entry.timestamp > recent_timestamp {
-                    if let Some(item) = pane.items().find(|item| item.item_id() == entry.entity_id)
-                    {
+                    if let Some(&item) = item_map.get(&entry.entity_id) {
                         if let Some(typed_item) = item.act_as::<T>(cx) {
                             recent_timestamp = entry.timestamp;
                             recent_item = Some(typed_item);
