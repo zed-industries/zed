@@ -1973,7 +1973,7 @@ impl KeystrokeInput {
             self.close_keystrokes.take();
             return CloseKeystrokeResult::None;
         };
-        let action_keystrokes = dbg!(keybind_for_close_action.keystrokes());
+        let action_keystrokes = keybind_for_close_action.keystrokes();
 
         if let Some(mut close_keystrokes) = self.close_keystrokes.take() {
             let mut index = 0;
@@ -2058,7 +2058,7 @@ impl KeystrokeInput {
             if close_keystroke_result == CloseKeystrokeResult::Partial
                 && self.close_keystrokes_start.is_none()
             {
-                self.close_keystrokes_start = dbg!(Some(self.keystrokes.len()));
+                self.close_keystrokes_start = Some(self.keystrokes.len());
             }
             self.keystrokes.push(keystroke.clone());
             if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
@@ -2072,7 +2072,6 @@ impl KeystrokeInput {
     fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.intercept_subscription.is_none() {
             let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, window, cx| {
-                dbg!(&event.keystroke);
                 this.handle_keystroke(&event.keystroke, window, cx);
             });
             self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
@@ -2132,7 +2131,15 @@ impl KeystrokeInput {
         self.search = search;
     }
 
-    fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_recording(
+        &mut self,
+        _: &StartRecording,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        if !self.outer_focus_handle.is_focused(window) {
+            return;
+        }
         window.focus(&self.inner_focus_handle);
     }
 
@@ -2142,10 +2149,10 @@ impl KeystrokeInput {
         }
         window.focus(&self.outer_focus_handle);
         cx.notify();
-        // todo! clear inputs
         if let Some(close_keystrokes_start) = self.close_keystrokes_start.take() {
             self.keystrokes.drain(close_keystrokes_start..);
         }
+        self.close_keystrokes.take();
     }
 }
 
