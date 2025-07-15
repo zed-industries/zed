@@ -1,7 +1,6 @@
 use agentic_coding_protocol as acp;
 use anyhow::Result;
-use futures::future::LocalBoxFuture;
-use smol::future::FutureExt as _;
+use futures::future::{FutureExt as _, LocalBoxFuture};
 
 pub trait AgentConnection {
     fn request_any(

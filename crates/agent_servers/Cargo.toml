@@ -13,15 +13,21 @@ path = "src/agent_servers.rs"
 doctest = false
 
 [dependencies]
+acp_thread.workspace = true
+agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 collections.workspace = true
+context_server.workspace = true
 futures.workspace = true
 gpui.workspace = true
+log.workspace = true
 paths.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
+tempfile.workspace = true
 util.workspace = true
 which.workspace = true
 workspace-hack.workspace = true

@@ -1,6 +1,7 @@
 mod permission_mcp_server;
 
 use collections::HashMap;
+use project::Project;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::io::Write;
@@ -8,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use agentic_coding_protocol::{
-    self as acp, AnyAgentRequest, AnyAgentResult, Client, PushToolCallParams,
+    self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion, PushToolCallParams,
     StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
 };
 use anyhow::{Result, anyhow};
@@ -21,14 +22,13 @@ use futures::{
     io::BufReader,
     select_biased,
 };
-use gpui::{AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use serde::{Deserialize, Serialize};
-use ui::App;
 use util::ResultExt;
 
-use crate::AcpClientDelegate;
+use crate::AgentServer;
 use crate::claude::permission_mcp_server::PermissionMcpServer;
-use crate::connection::AgentConnection;
+use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 impl AgentConnection for ClaudeAgentConnection {
     /// Send a request to the agent and wait for a response.
@@ -45,6 +45,7 @@ impl AgentConnection for ClaudeAgentConnection {
                 AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
                     acp::InitializeResponse {
                         is_authenticated: true,
+                        protocol_version: ProtocolVersion::latest(),
                     },
                 )),
                 AnyAgentRequest::AuthenticateParams(_) => {
@@ -90,27 +91,27 @@ impl AgentConnection for ClaudeAgentConnection {
     }
 }
 
-pub struct ClaudeAgentConnection {
-    outgoing_tx: UnboundedSender<SdkMessage>,
-    cx: AsyncApp,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
-    _permissions_mcp_server: PermissionMcpServer,
-    _handler_task: Task<()>,
-}
+struct ClaudeAgentServer;
 
-impl ClaudeAgentConnection {
-    pub fn new(delegate: AcpClientDelegate, cwd: &Path, cx: &App) -> Result<Self> {
-        let mut tool_id_map = Rc::new(RefCell::new(HashMap::default()));
+impl AgentServer for ClaudeAgentServer {
+    async fn new_thread(
+        self,
+        root_dir: &Path,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<AcpThread>> {
+        let mut delegate_rc = Rc::new(RefCell::new(None));
+
+        let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
         let permission_mcp_server =
-            PermissionMcpServer::new(cx, delegate.clone(), tool_id_map.clone())?;
+            PermissionMcpServer::new(delegate_rc.clone(), tool_id_map.clone(), cx).await?;
 
-        let mcp_config = McpConfig {
-            mcp_servers: [(
-                permission_mcp_server::SERVER_NAME.to_string(),
-                permission_mcp_server.server_config()?,
-            )]
-            .into(),
-        };
+        let mut mcp_servers = HashMap::default();
+        mcp_servers.insert(
+            permission_mcp_server::SERVER_NAME.to_string(),
+            permission_mcp_server.server_config()?,
+        );
+        let mcp_config = McpConfig { mcp_servers };
 
         let mut mcp_config_file = tempfile::Builder::new().tempfile()?;
         // todo! async
@@ -119,6 +120,7 @@ impl ClaudeAgentConnection {
         let mcp_config_path = mcp_config_file.into_temp_path();
 
         let command = which::which("claude")?;
+
         let mut child = util::command::new_smol_command(&command)
             .args([
                 "--input-format",
@@ -140,7 +142,7 @@ impl ClaudeAgentConnection {
                 "--disallowedTools",
                 "Read,Edit",
             ])
-            .current_dir(cwd)
+            .current_dir(root_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit())
@@ -151,41 +153,62 @@ impl ClaudeAgentConnection {
         let stdout = child.stdout.take().unwrap();
 
         let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
-
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-        let io_task = Self::handle_io(outgoing_rx, incoming_message_tx, stdin, stdout);
+
+        let io_task =
+            ClaudeAgentConnection::handle_io(outgoing_rx, incoming_message_tx, stdin, stdout);
         cx.background_spawn(async move {
             io_task.await.log_err();
             drop(mcp_config_path);
             drop(child);
         })
         .detach();
-        let end_turn_tx = Rc::new(RefCell::new(None));
 
-        let handler_task = cx.foreground_executor().spawn({
-            let end_turn_tx = end_turn_tx.clone();
-            let tool_id_map = tool_id_map.clone();
-            async move {
-                while let Some(message) = incoming_message_rx.next().await {
-                    Self::handle_message(
-                        delegate.clone(),
-                        message,
-                        end_turn_tx.clone(),
-                        tool_id_map.clone(),
-                    )
-                    .await
+        cx.new(|cx| {
+            let end_turn_tx = Rc::new(RefCell::new(None));
+            let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
+            delegate_rc.borrow_mut().replace(delegate.clone());
+
+            let handler_task = cx.foreground_executor().spawn({
+                let end_turn_tx = end_turn_tx.clone();
+                let tool_id_map = tool_id_map.clone();
+                async move {
+                    while let Some(message) = incoming_message_rx.next().await {
+                        ClaudeAgentConnection::handle_message(
+                            delegate.clone(),
+                            message,
+                            end_turn_tx.clone(),
+                            tool_id_map.clone(),
+                        )
+                        .await
+                    }
                 }
-            }
-        });
+            });
 
-        Ok(Self {
-            outgoing_tx,
-            end_turn_tx,
-            cx: cx.to_async(),
-            _handler_task: handler_task,
-            _permissions_mcp_server: permission_mcp_server,
+            let mut connection = ClaudeAgentConnection {
+                outgoing_tx,
+                end_turn_tx,
+                cx: cx.to_async(),
+                _handler_task: handler_task,
+                _permissions_mcp_server: None,
+            };
+
+            connection._permissions_mcp_server = Some(permission_mcp_server);
+            acp_thread::AcpThread::new(connection, None, project.clone(), cx)
         })
     }
+}
+
+pub struct ClaudeAgentConnection {
+    outgoing_tx: UnboundedSender<SdkMessage>,
+    cx: AsyncApp,
+    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+    _permissions_mcp_server: Option<PermissionMcpServer>,
+    _handler_task: Task<()>,
+}
+
+impl ClaudeAgentConnection {
+    fn new() {}
 
     async fn handle_message(
         delegate: AcpClientDelegate,

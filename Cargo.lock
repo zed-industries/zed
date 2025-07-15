@@ -6,7 +6,6 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
- "agent_servers",
  "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
@@ -145,15 +144,21 @@ dependencies = [
 name = "agent_servers"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
+ "agentic-coding-protocol",
  "anyhow",
  "collections",
+ "context_server",
  "futures 0.3.31",
  "gpui",
+ "log",
  "paths",
  "project",
  "schemars",
  "serde",
+ "serde_json",
  "settings",
+ "tempfile",
  "util",
  "which 6.0.3",
  "workspace-hack",
@@ -270,14 +275,18 @@ dependencies = [
 
 [[package]]
 name = "agentic-coding-protocol"
-version = "0.0.7"
+version = "0.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e276b798eddd02562a339340a96919d90bbfcf78de118fdddc932524646fac7"
 dependencies = [
  "anyhow",
  "chrono",
+ "derive_more 2.0.1",
  "futures 0.3.31",
  "log",
  "parking_lot",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
 ]
@@ -680,7 +689,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "extension",
  "futures 0.3.31",
  "gpui",
@@ -743,7 +752,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "derive_more",
+ "derive_more 0.99.19",
  "futures 0.3.31",
  "gpui",
  "icons",
@@ -779,7 +788,7 @@ dependencies = [
  "clock",
  "collections",
  "component",
- "derive_more",
+ "derive_more 0.99.19",
  "editor",
  "feature_flags",
  "fs",
@@ -1236,7 +1245,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "gpui",
  "parking_lot",
  "rodio",
@@ -2929,7 +2938,7 @@ dependencies = [
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
- "derive_more",
+ "derive_more 0.99.19",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3117,7 +3126,7 @@ dependencies = [
  "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
- "derive_more",
+ "derive_more 0.99.19",
  "editor",
  "envy",
  "extension",
@@ -3322,7 +3331,7 @@ name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "gpui",
  "workspace-hack",
 ]
@@ -4525,6 +4534,27 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.101",
+]
+
+[[package]]
+name = "derive_more"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -6225,7 +6255,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -7242,7 +7272,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
- "derive_more",
+ "derive_more 0.99.19",
  "embed-resource",
  "env_logger 0.11.8",
  "etagere",
@@ -7788,7 +7818,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes 1.10.1",
- "derive_more",
+ "derive_more 0.99.19",
  "futures 0.3.31",
  "http 1.3.1",
  "log",
@@ -8226,7 +8256,7 @@ dependencies = [
  "async-trait",
  "cargo_metadata",
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -14170,6 +14200,7 @@ dependencies = [
  "indexmap",
  "ref-cast",
  "schemars_derive",
+ "semver",
  "serde",
  "serde_json",
 ]
@@ -16129,7 +16160,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more",
+ "derive_more 0.99.19",
  "fs",
  "futures 0.3.31",
  "gpui",

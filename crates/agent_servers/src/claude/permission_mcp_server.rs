@@ -1,5 +1,6 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+use acp_thread::AcpClientDelegate;
 use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -15,7 +16,7 @@ use gpui::{App, AsyncApp, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{AcpClientDelegate, claude::McpServerConfig};
+use crate::claude::McpServerConfig;
 
 pub struct PermissionMcpServer {
     server: McpServer,
@@ -76,12 +77,12 @@ enum PermissionToolBehavior {
 }
 
 impl PermissionMcpServer {
-    pub fn new(
-        cx: &App,
-        delegate: AcpClientDelegate,
+    pub async fn new(
+        delegate: Rc<RefCell<Option<AcpClientDelegate>>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        cx: &AsyncApp,
     ) -> Result<Self> {
-        let mut mcp_server = McpServer::new(cx)?;
+        let mut mcp_server = McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
@@ -182,11 +183,18 @@ impl PermissionMcpServer {
 
     fn handle_call_tool(
         request: CallToolParams,
-        delegate: AcpClientDelegate,
+        delegate: Rc<RefCell<Option<AcpClientDelegate>>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
+            // todo! wait until ready instead
+            let delegate = delegate
+                .try_borrow()
+                .ok()
+                .and_then(|c| c.clone())
+                .context("Server still initializing")?;
+
             if request.name.as_str() == TOOL_NAME {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
@@ -290,7 +298,6 @@ impl PermissionMcpServer {
         match params.tool_use_id {
             Some(tool_use_id) => {
                 let Some(tool_call_id) = tool_id_map.borrow().get(&tool_use_id).cloned() else {
-                    // todo!
                     return Task::ready(Err(anyhow::anyhow!("Tool call ID not found")));
                 };
 

@@ -17,7 +17,6 @@ test-support = ["gpui/test-support", "project/test-support"]
 gemini = []
 
 [dependencies]
-agent_servers.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true

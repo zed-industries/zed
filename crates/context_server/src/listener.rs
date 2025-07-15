@@ -34,27 +34,32 @@ pub struct McpServer {
 type McpHandler = Box<dyn Fn(RequestId, Option<Box<RawValue>>, &App) -> Task<String>>;
 
 impl McpServer {
-    pub fn new(cx: &App) -> Result<Self> {
-        let temp_dir = tempfile::Builder::new().prefix("zed-mcp").tempdir()?;
-        let socket_path = temp_dir.path().join("mcp.sock");
+    pub fn new(cx: &AsyncApp) -> Task<Result<Self>> {
+        let task = cx.background_spawn(async move {
+            let temp_dir = tempfile::Builder::new().prefix("zed-mcp").tempdir()?;
+            let socket_path = temp_dir.path().join("mcp.sock");
+            let listener = UnixListener::bind(&socket_path).context("creating mcp socket")?;
 
-        let listener = UnixListener::bind(&socket_path).context("creating mcp socket")?;
-        let handlers = Rc::new(RefCell::new(HashMap::default()));
-
-        let server_task = cx.spawn({
-            let handlers = handlers.clone();
-            async move |cx| {
-                while let Ok((stream, _)) = listener.accept().await {
-                    Self::serve_connection(stream, handlers.clone(), cx);
-                }
-                drop(temp_dir)
-            }
+            anyhow::Ok((temp_dir, socket_path, listener))
         });
 
-        Ok(Self {
-            socket_path,
-            _server_task: server_task,
-            handlers: handlers.clone(),
+        cx.spawn(async move |cx| {
+            let (temp_dir, socket_path, listener) = task.await?;
+            let handlers = Rc::new(RefCell::new(HashMap::default()));
+            let server_task = cx.spawn({
+                let handlers = handlers.clone();
+                async move |cx| {
+                    while let Ok((stream, _)) = listener.accept().await {
+                        Self::serve_connection(stream, handlers.clone(), cx);
+                    }
+                    drop(temp_dir)
+                }
+            });
+            Ok(Self {
+                socket_path,
+                _server_task: server_task,
+                handlers: handlers.clone(),
+            })
         })
     }
 

@@ -1,3 +1,4 @@
+use agent_servers::AgentServer as _;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -190,7 +191,9 @@ impl AcpThreadView {
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let thread = match AcpThread::spawn(agent_servers::Gemini, &root_dir, project, cx).await
+            let thread = match agent_servers::Gemini
+                .new_thread(&root_dir, &project, cx)
+                .await
             {
                 Ok(thread) => thread,
                 Err(err) => {

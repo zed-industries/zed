@@ -1,7 +1,7 @@
-pub mod connection;
+mod connection;
+pub use connection::*;
 
 pub use acp::ToolCallId;
-use agent_servers::AgentServer;
 use agentic_coding_protocol::{
     self as acp, AgentRequest, ToolCallConfirmationOutcome, UserMessageChunk,
 };
@@ -29,9 +29,6 @@ use std::{
 };
 use ui::{App, IconName};
 use util::ResultExt;
-
-use crate::connection::AgentConnection;
-mod claude;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserMessage {
@@ -464,7 +461,6 @@ pub struct AcpThread {
     send_task: Option<Task<()>>,
     connection: Arc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
-    _io_task: Task<()>,
 }
 
 pub enum AcpThreadEvent {
@@ -507,80 +503,24 @@ impl Display for LoadError {
 impl Error for LoadError {}
 
 impl AcpThread {
-    pub async fn spawn(
-        server: impl AgentServer + 'static,
-        root_dir: &Path,
+    pub fn new(
+        connection: impl AgentConnection + 'static,
+        child_status: Option<Task<Result<()>>>,
         project: Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Self>> {
-        // let command = match server.command(&project, cx).await {
-        //     Ok(command) => command,
-        //     Err(e) => return Err(anyhow!(LoadError::Other(format!("{e}").into()))),
-        // };
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        // let mut child = util::command::new_smol_command(&command.path)
-        //     .args(command.args.iter())
-        //     .current_dir(root_dir)
-        //     .stdin(std::process::Stdio::piped())
-        //     .stdout(std::process::Stdio::piped())
-        //     .stderr(std::process::Stdio::inherit())
-        //     .kill_on_drop(true)
-        //     .spawn()?;
-
-        // let stdin = child.stdin.take().unwrap();
-        // let stdout = child.stdout.take().unwrap();
-
-        cx.new(|cx| {
-            let foreground_executor = cx.foreground_executor().clone();
-
-            let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
-            let connection = claude::ClaudeAgentConnection::new(delegate, root_dir, cx).unwrap();
-
-            // let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-            //     AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-            //     stdin,
-            //     stdout,
-            //     move |fut| foreground_executor.spawn(fut).detach(),
-            // );
-
-            // let io_task = cx.background_spawn(async move {
-            //     io_fut.await.log_err();
-            // });
-
-            // let child_status = cx.background_spawn(async move {
-            //     match child.status().await {
-            //         Err(e) => Err(anyhow!(e)),
-            //         Ok(result) if result.success() => Ok(()),
-            //         Ok(result) => {
-            //             if let Some(version) = server.version(&command).await.log_err()
-            //                 && !version.supported
-            //             {
-            //                 Err(anyhow!(LoadError::Unsupported {
-            //                     current_version: version.current_version
-            //                 }))
-            //             } else {
-            //                 Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-            //             }
-            //         }
-            //     }
-            // });
-
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-            Self {
-                action_log,
-                shared_buffers: Default::default(),
-                entries: Default::default(),
-                title: "ACP Thread".into(),
-                project,
-                send_task: None,
-                connection: Arc::new(connection),
-                child_status: None,
-                _io_task: Task::ready(()),
-            }
-        })
+        Self {
+            action_log,
+            shared_buffers: Default::default(),
+            entries: Default::default(),
+            title: "ACP Thread".into(),
+            project,
+            send_task: None,
+            connection: Arc::new(connection),
+            child_status,
+        }
     }
 
     /// Send a request to the agent and wait for a response.
@@ -639,7 +579,6 @@ impl AcpThread {
             send_task: None,
             connection: Arc::new(connection),
             child_status: None,
-            _io_task: io_task,
         }
     }
 
@@ -921,7 +860,9 @@ impl AcpThread {
     }
 
     pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
-        self.request(acp::InitializeParams)
+        self.request(acp::InitializeParams {
+            protocol_version: acp::ProtocolVersion::latest(),
+        })
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
@@ -949,7 +890,6 @@ impl AcpThread {
         message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp::Error>> {
-        let agent = self.connection.clone();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
                 &message,
@@ -1160,19 +1100,19 @@ impl AcpThread {
 }
 
 #[derive(Clone)]
-struct AcpClientDelegate {
+pub struct AcpClientDelegate {
     thread: WeakEntity<AcpThread>,
     cx: AsyncApp,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
 impl AcpClientDelegate {
-    fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
+    pub fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
         Self { thread, cx }
     }
 
     // todo! allow this via ACP?
-    async fn request_existing_tool_call_confirmation(
+    pub async fn request_existing_tool_call_confirmation(
         &self,
         tool_call_id: ToolCallId,
         confirmation: acp::ToolCallConfirmation,
@@ -1304,7 +1244,8 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_servers::{AgentServerCommand, AgentServerVersion};
+    use agentic_coding_protocol::ProtocolVersion;
+    use anyhow::anyhow;
     use async_pipe::{PipeReader, PipeWriter};
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
@@ -1313,7 +1254,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{future::BoxedLocal, stream::StreamExt as _};
-    use std::{cell::RefCell, env, path::Path, rc::Rc, time::Duration};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1852,44 +1793,45 @@ mod tests {
     ) -> Entity<AcpThread> {
         struct DevGemini;
 
-        impl agent_servers::AgentServer for DevGemini {
-            async fn command(
-                &self,
-                _project: &Entity<Project>,
-                _cx: &mut AsyncApp,
-            ) -> Result<agent_servers::AgentServerCommand> {
-                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../gemini-cli/packages/cli")
-                    .to_string_lossy()
-                    .to_string();
+        // impl agent_server::AgentServer for DevGemini {
+        //     async fn command(
+        //         &self,
+        //         _project: &Entity<Project>,
+        //         _cx: &mut AsyncApp,
+        //     ) -> Result<agent_server::AgentServerCommand> {
+        //         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        //             .join("../../../gemini-cli/packages/cli")
+        //             .to_string_lossy()
+        //             .to_string();
 
-                Ok(AgentServerCommand {
-                    path: "node".into(),
-                    args: vec![cli_path, "--acp".into()],
-                    env: None,
-                })
-            }
+        //         Ok(AgentServerCommand {
+        //             path: "node".into(),
+        //             args: vec![cli_path, "--acp".into()],
+        //             env: None,
+        //         })
+        //     }
 
-            async fn version(
-                &self,
-                _command: &agent_servers::AgentServerCommand,
-            ) -> Result<AgentServerVersion> {
-                Ok(AgentServerVersion {
-                    current_version: "0.1.0".into(),
-                    supported: true,
-                })
-            }
-        }
+        //     async fn version(
+        //         &self,
+        //         _command: &agent_server::AgentServerCommand,
+        //     ) -> Result<AgentServerVersion> {
+        //         Ok(AgentServerVersion {
+        //             current_version: "0.1.0".into(),
+        //             supported: true,
+        //         })
+        //     }
+        // }
 
-        let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
-            .await
-            .unwrap();
+        // let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
+        //     .await
+        //     .unwrap();
 
-        thread
-            .update(cx, |thread, _| thread.initialize())
-            .await
-            .unwrap();
-        thread
+        // thread
+        //     .update(cx, |thread, _| thread.initialize())
+        //     .await
+        //     .unwrap();
+        // thread
+        todo!()
     }
 
     pub fn fake_acp_thread(
@@ -1925,8 +1867,12 @@ mod tests {
     }
 
     impl acp::Agent for FakeAgent {
-        async fn initialize(&self) -> Result<acp::InitializeResponse, acp::Error> {
+        async fn initialize(
+            &self,
+            _params: acp::InitializeParams,
+        ) -> Result<acp::InitializeResponse, acp::Error> {
             Ok(acp::InitializeResponse {
+                protocol_version: ProtocolVersion::latest(),
                 is_authenticated: true,
             })
         }
