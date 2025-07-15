@@ -16,6 +16,7 @@ use gpui::{
     ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
@@ -1292,6 +1293,7 @@ struct KeybindingEditorModal {
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -1355,6 +1357,8 @@ impl KeybindingEditorModal {
         let input_editor = editing_keybind.action_schema.clone().map(|_schema| {
             cx.new(|cx| {
                 let mut editor = Editor::auto_height_unbounded(1, window, cx);
+                let workspace = workspace.clone();
+
                 if let Some(input) = editing_keybind.action_input.clone() {
                     editor.set_text(input.text, window, cx);
                 } else {
@@ -1388,6 +1392,7 @@ impl KeybindingEditorModal {
             input_editor,
             error: None,
             keymap_editor,
+            workspace,
         }
     }
 
@@ -1508,6 +1513,25 @@ impl KeybindingEditorModal {
 
         let create = self.creating;
 
+        let status_toast = StatusToast::new(
+            format!(
+                "Saved edits to the {} action.",
+                command_palette::humanize_action_name(&self.editing_keybind.action_name)
+            ),
+            cx,
+            move |this, _cx| {
+                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                    .dismiss_button(true)
+                // .action("Undo", f) todo: wire the undo functionality
+            },
+        );
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_status_toast(status_toast, cx);
+            })
+            .log_err();
+
         cx.spawn(async move |this, cx| {
             if let Err(err) = save_keybinding_update(
                 create,
@@ -1622,9 +1646,11 @@ impl Render for KeybindingEditorModal {
                                 Button::new("cancel", "Cancel")
                                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                             )
-                            .child(Button::new("save-btn", "Save").on_click(
-                                cx.listener(|this, _event, _window, cx| Self::save(this, cx)),
-                            )),
+                            .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                |this, _event, _window, cx| {
+                                    this.save(cx);
+                                },
+                            ))),
                     ),
                 ),
         )

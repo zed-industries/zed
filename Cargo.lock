@@ -14684,6 +14684,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "notifications",
  "paths",
  "project",
  "schemars",
