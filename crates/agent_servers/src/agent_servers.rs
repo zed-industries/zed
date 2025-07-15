@@ -8,7 +8,7 @@ pub use gemini::*;
 pub use settings::*;
 pub use stdio_agent_server::*;
 
-use gpui::App;
+use gpui::{App, Task};
 
 pub fn init(cx: &mut App) {
     settings::init(cx);
@@ -17,11 +17,10 @@ pub fn init(cx: &mut App) {
 use acp_thread::AcpThread;
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AsyncApp, Entity, SharedString};
+use gpui::{Entity, SharedString};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
@@ -40,11 +39,11 @@ pub struct AgentServerVersion {
 
 pub trait AgentServer: Send {
     fn new_thread(
-        self,
+        &self,
         root_dir: &Path,
         project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> impl Future<Output = Result<Entity<AcpThread>>>;
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>>;
 }
 
 impl std::fmt::Debug for AgentServerCommand {

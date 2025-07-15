@@ -1,4 +1,4 @@
-use agent_servers::AgentServer as _;
+use agent_servers::AgentServer;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -50,6 +50,7 @@ use crate::{AgentDiffPane, Follow, KeepAll, OpenAgentDiff, RejectAll};
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
 pub struct AcpThreadView {
+    agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     thread_state: ThreadState,
@@ -83,6 +84,7 @@ enum ThreadState {
 
 impl AcpThreadView {
     pub fn new(
+        agent: impl AgentServer + 'static,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
@@ -158,10 +160,13 @@ impl AcpThreadView {
             }),
         );
 
+        let agent = Rc::new(agent);
+
         Self {
+            agent: agent.clone(),
             workspace: workspace.clone(),
             project: project.clone(),
-            thread_state: Self::initial_state(workspace, project, window, cx),
+            thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             message_set_from_history: false,
             _message_editor_subscription: message_editor_subscription,
@@ -178,6 +183,7 @@ impl AcpThreadView {
     }
 
     fn initial_state(
+        agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         window: &mut Window,
@@ -190,11 +196,9 @@ impl AcpThreadView {
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
+        let task = agent.new_thread(&root_dir, &project, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let thread = match agent_servers::Claude
-                .new_thread(&root_dir, &project, cx)
-                .await
-            {
+            let thread = match task.await {
                 Ok(thread) => thread,
                 Err(err) => {
                     this.update(cx, |this, cx| {
@@ -611,6 +615,7 @@ impl AcpThreadView {
         let authenticate = thread.read(cx).authenticate();
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
+            let agent = self.agent.clone();
             async move |this, cx| {
                 let result = authenticate.await;
 
@@ -620,8 +625,13 @@ impl AcpThreadView {
                             Markdown::new(format!("Error: {err}").into(), None, None, cx)
                         }))
                     } else {
-                        this.thread_state =
-                            Self::initial_state(this.workspace.clone(), project.clone(), window, cx)
+                        this.thread_state = Self::initial_state(
+                            agent,
+                            this.workspace.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        )
                     }
                     this.auth_task.take()
                 })

@@ -2,7 +2,7 @@ use crate::{AgentServer, AgentServerCommand, AgentServerVersion};
 use acp_thread::{AcpClientDelegate, AcpThread, LoadError};
 use agentic_coding_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{AsyncApp, Entity, prelude::*};
+use gpui::{App, AsyncApp, Entity, Task, prelude::*};
 use project::Project;
 use std::{
     path::{Path, PathBuf},
@@ -10,7 +10,7 @@ use std::{
 };
 use util::{ResultExt, paths};
 
-pub trait StdioAgentServer {
+pub trait StdioAgentServer: Send {
     fn command(
         &self,
         project: &Entity<Project>,
@@ -23,62 +23,68 @@ pub trait StdioAgentServer {
     ) -> impl Future<Output = Result<AgentServerVersion>> + Send;
 }
 
-impl<T: StdioAgentServer + Send + 'static> AgentServer for T {
-    async fn new_thread(
-        self,
+impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
+    fn new_thread(
+        &self,
         root_dir: &Path,
         project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<AcpThread>> {
-        let command = self.command(project, cx).await?;
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        let root_dir = root_dir.to_path_buf();
+        let project = project.clone();
+        let this = self.clone();
 
-        let mut child = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()?;
+        cx.spawn(async move |cx| {
+            let command = this.command(&project, cx).await?;
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+            let mut child = util::command::new_smol_command(&command.path)
+                .args(command.args.iter())
+                .current_dir(root_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()?;
 
-        cx.new(|cx| {
-            let foreground_executor = cx.foreground_executor().clone();
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
 
-            let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-                AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-                stdin,
-                stdout,
-                move |fut| foreground_executor.spawn(fut).detach(),
-            );
+            cx.new(|cx| {
+                let foreground_executor = cx.foreground_executor().clone();
 
-            let io_task = cx.background_spawn(async move {
-                io_fut.await.log_err();
-            });
+                let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
+                    AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+                    stdin,
+                    stdout,
+                    move |fut| foreground_executor.spawn(fut).detach(),
+                );
 
-            let child_status = cx.background_spawn(async move {
-                let result = match child.status().await {
-                    Err(e) => Err(anyhow!(e)),
-                    Ok(result) if result.success() => Ok(()),
-                    Ok(result) => {
-                        if let Some(version) = self.version(&command).await.log_err()
-                            && !version.supported
-                        {
-                            Err(anyhow!(LoadError::Unsupported {
-                                current_version: version.current_version
-                            }))
-                        } else {
-                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
+                let io_task = cx.background_spawn(async move {
+                    io_fut.await.log_err();
+                });
+
+                let child_status = cx.background_spawn(async move {
+                    let result = match child.status().await {
+                        Err(e) => Err(anyhow!(e)),
+                        Ok(result) if result.success() => Ok(()),
+                        Ok(result) => {
+                            if let Some(version) = this.version(&command).await.log_err()
+                                && !version.supported
+                            {
+                                Err(anyhow!(LoadError::Unsupported {
+                                    current_version: version.current_version
+                                }))
+                            } else {
+                                Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
+                            }
                         }
-                    }
-                };
-                drop(io_task);
-                result
-            });
+                    };
+                    drop(io_task);
+                    result
+                });
 
-            AcpThread::new(connection, Some(child_status), project.clone(), cx)
+                AcpThread::new(connection, Some(child_status), project.clone(), cx)
+            })
         })
     }
 }

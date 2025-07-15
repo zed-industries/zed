@@ -565,8 +565,11 @@ impl AcpThread {
         let io_task = cx.background_spawn({
             async move {
                 io_fut.await.log_err();
+                Ok(())
             }
         });
+
+        let child_status = Some(io_task);
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -578,7 +581,7 @@ impl AcpThread {
             project,
             send_task: None,
             connection: Arc::new(connection),
-            child_status: None,
+            child_status,
         }
     }
 
@@ -925,8 +928,6 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<(), acp::Error>> {
-        let agent = self.connection.clone();
-
         if self.send_task.take().is_some() {
             let request = self.request(acp::CancelSendMessageParams);
             cx.spawn(async move |this, cx| {

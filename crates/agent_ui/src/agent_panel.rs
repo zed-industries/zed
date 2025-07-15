@@ -889,6 +889,7 @@ impl AgentPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
+    // todo! new claude code too
     fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
@@ -897,6 +898,7 @@ impl AgentPanel {
         cx.spawn_in(window, async move |this, cx| {
             let thread_view = cx.new_window_entity(|window, cx| {
                 crate::acp::AcpThreadView::new(
+                    agent_servers::Gemini,
                     workspace.clone(),
                     project,
                     message_history,

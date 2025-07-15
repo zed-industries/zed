@@ -22,7 +22,7 @@ use futures::{
     io::BufReader,
     select_biased,
 };
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
@@ -91,125 +91,126 @@ impl AgentConnection for ClaudeAgentConnection {
     }
 }
 
+#[derive(Clone)]
 pub struct Claude;
 
 impl AgentServer for Claude {
-    async fn new_thread(
-        self,
+    fn new_thread(
+        &self,
         root_dir: &Path,
         project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<AcpThread>> {
-        let mut delegate_rc = Rc::new(RefCell::new(None));
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        let project = project.clone();
+        let root_dir = root_dir.to_path_buf();
+        cx.spawn(async move |cx| {
+            let delegate_rc = Rc::new(RefCell::new(None));
+            let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
-        let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
-        let permission_mcp_server =
-            PermissionMcpServer::new(delegate_rc.clone(), tool_id_map.clone(), cx).await?;
+            let permission_mcp_server =
+                PermissionMcpServer::new(delegate_rc.clone(), tool_id_map.clone(), cx).await?;
 
-        let mut mcp_servers = HashMap::default();
-        mcp_servers.insert(
-            permission_mcp_server::SERVER_NAME.to_string(),
-            permission_mcp_server.server_config()?,
-        );
-        let mcp_config = McpConfig { mcp_servers };
+            let mut mcp_servers = HashMap::default();
+            mcp_servers.insert(
+                permission_mcp_server::SERVER_NAME.to_string(),
+                permission_mcp_server.server_config()?,
+            );
+            let mcp_config = McpConfig { mcp_servers };
 
-        let mut mcp_config_file = tempfile::Builder::new().tempfile()?;
-        // todo! async
-        mcp_config_file.write_all(serde_json::to_string(&mcp_config)?.as_bytes())?;
-        mcp_config_file.flush()?;
-        let mcp_config_path = mcp_config_file.into_temp_path();
+            let mut mcp_config_file = tempfile::Builder::new().tempfile()?;
+            // todo! async
+            mcp_config_file.write_all(serde_json::to_string(&mcp_config)?.as_bytes())?;
+            mcp_config_file.flush()?;
+            let mcp_config_path = mcp_config_file.into_temp_path();
 
-        let command = which::which("claude")?;
+            let command = which::which("claude")?;
 
-        let mut child = util::command::new_smol_command(&command)
-            .args([
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-                "--print",
-                "--verbose",
-                "--mcp-config",
-                &mcp_config_path.to_string_lossy().to_string(),
-                "--permission-prompt-tool",
-                &format!(
-                    "mcp__{}__{}",
-                    permission_mcp_server::SERVER_NAME,
-                    permission_mcp_server::TOOL_NAME
-                ),
-                "--allowedTools",
-                "mcp__zed__Read,mcp__zed__Edit",
-                "--disallowedTools",
-                "Read,Edit",
-            ])
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()?;
+            let mut child = util::command::new_smol_command(&command)
+                .args([
+                    "--input-format",
+                    "stream-json",
+                    "--output-format",
+                    "stream-json",
+                    "--print",
+                    "--verbose",
+                    "--mcp-config",
+                    &mcp_config_path.to_string_lossy().to_string(),
+                    "--permission-prompt-tool",
+                    &format!(
+                        "mcp__{}__{}",
+                        permission_mcp_server::SERVER_NAME,
+                        permission_mcp_server::TOOL_NAME
+                    ),
+                    "--allowedTools",
+                    "mcp__zed__Read,mcp__zed__Edit",
+                    "--disallowedTools",
+                    "Read,Edit",
+                ])
+                .current_dir(root_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()?;
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
 
-        let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
+            let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
+            let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
-        let io_task =
-            ClaudeAgentConnection::handle_io(outgoing_rx, incoming_message_tx, stdin, stdout);
-        cx.background_spawn(async move {
-            io_task.await.log_err();
-            drop(mcp_config_path);
-            drop(child);
-        })
-        .detach();
+            let io_task =
+                ClaudeAgentConnection::handle_io(outgoing_rx, incoming_message_tx, stdin, stdout);
+            cx.background_spawn(async move {
+                io_task.await.log_err();
+                drop(mcp_config_path);
+                drop(child);
+            })
+            .detach();
 
-        cx.new(|cx| {
-            let end_turn_tx = Rc::new(RefCell::new(None));
-            let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
-            delegate_rc.borrow_mut().replace(delegate.clone());
+            cx.new(|cx| {
+                let end_turn_tx = Rc::new(RefCell::new(None));
+                let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
+                delegate_rc.borrow_mut().replace(delegate.clone());
 
-            let handler_task = cx.foreground_executor().spawn({
-                let end_turn_tx = end_turn_tx.clone();
-                let tool_id_map = tool_id_map.clone();
-                async move {
-                    while let Some(message) = incoming_message_rx.next().await {
-                        ClaudeAgentConnection::handle_message(
-                            delegate.clone(),
-                            message,
-                            end_turn_tx.clone(),
-                            tool_id_map.clone(),
-                        )
-                        .await
+                let handler_task = cx.foreground_executor().spawn({
+                    let end_turn_tx = end_turn_tx.clone();
+                    let tool_id_map = tool_id_map.clone();
+                    async move {
+                        while let Some(message) = incoming_message_rx.next().await {
+                            ClaudeAgentConnection::handle_message(
+                                delegate.clone(),
+                                message,
+                                end_turn_tx.clone(),
+                                tool_id_map.clone(),
+                            )
+                            .await
+                        }
                     }
-                }
-            });
+                });
 
-            let mut connection = ClaudeAgentConnection {
-                outgoing_tx,
-                end_turn_tx,
-                cx: cx.to_async(),
-                _handler_task: handler_task,
-                _permissions_mcp_server: None,
-            };
+                let mut connection = ClaudeAgentConnection {
+                    outgoing_tx,
+                    end_turn_tx,
+                    _handler_task: handler_task,
+                    _permissions_mcp_server: None,
+                };
 
-            connection._permissions_mcp_server = Some(permission_mcp_server);
-            acp_thread::AcpThread::new(connection, None, project.clone(), cx)
+                connection._permissions_mcp_server = Some(permission_mcp_server);
+                acp_thread::AcpThread::new(connection, None, project.clone(), cx)
+            })
         })
     }
 }
 
 struct ClaudeAgentConnection {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    cx: AsyncApp,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
     _permissions_mcp_server: Option<PermissionMcpServer>,
     _handler_task: Task<()>,
 }
 
 impl ClaudeAgentConnection {
-    fn new() {}
-
     async fn handle_message(
         delegate: AcpClientDelegate,
         message: SdkMessage,
@@ -277,10 +278,6 @@ impl ClaudeAgentConnection {
             }
             SdkMessage::System { .. } => {}
         }
-    }
-
-    fn send(&self, message: SdkMessage) -> Result<()> {
-        Ok(self.outgoing_tx.unbounded_send(message)?)
     }
 
     async fn handle_io(

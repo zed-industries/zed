@@ -1,5 +1,5 @@
-use crate::{AgentServerCommand, AgentServerVersion};
 use crate::stdio_agent_server::{StdioAgentServer, find_bin_in_path};
+use crate::{AgentServerCommand, AgentServerVersion};
 use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
 use project::Project;
@@ -7,6 +7,7 @@ use settings::SettingsStore;
 
 use crate::AllAgentServersSettings;
 
+#[derive(Clone)]
 pub struct Gemini;
 
 const ACP_ARG: &str = "--acp";
