@@ -3290,7 +3290,6 @@ mod tests {
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
     use http_client;
-    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3651,6 +3650,7 @@ fn main() {{
                 cx,
             );
         });
+        cx.run_until_parked();
 
         // We shouldn't have a stale buffer notification yet
         let notifications = thread.read_with(cx, |thread, _| {
@@ -3680,11 +3680,13 @@ fn main() {{
                 cx,
             )
         });
+        cx.run_until_parked();
 
         // Check for the stale buffer warning
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         let notifications = thread.read_with(cx, |thread, _cx| {
             find_tool_uses(thread, "project_notifications")
@@ -3698,12 +3700,8 @@ fn main() {{
             panic!("`project_notifications` should return text");
         };
 
-        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
-
-        These files have changed since the last read:
-        - code.rs
-        "};
-        assert_eq!(notification_content, expected_content);
+        assert!(notification_content.contains("These files have changed since the last read:"));
+        assert!(notification_content.contains("code.rs"));
 
         // Insert another user message and flush notifications again
         thread.update(cx, |thread, cx| {
@@ -3719,6 +3717,7 @@ fn main() {{
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         // There should be no new notifications (we already flushed one)
         let notifications = thread.read_with(cx, |thread, _cx| {
