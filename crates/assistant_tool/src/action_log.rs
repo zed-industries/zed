@@ -64,6 +64,10 @@ impl ActionLog {
             .tracked_buffers
             .values()
             .filter_map(|tracked| {
+                if !tracked.has_unnotified_user_edits {
+                    return None;
+                }
+
                 let text_with_latest_user_edits = tracked.diff_base.to_string();
                 let text_with_last_seen_user_edits = tracked.last_seen_base.to_string();
                 if text_with_latest_user_edits == text_with_last_seen_user_edits {
