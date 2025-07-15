@@ -169,7 +169,7 @@ impl Project {
             .read(cx)
             .get_cli_environment()
             .unwrap_or_default();
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         match self.ssh_details(cx) {
             Some(SshDetails {
@@ -247,7 +247,7 @@ impl Project {
             .unwrap_or_default();
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
