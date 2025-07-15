@@ -54,7 +54,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        Arc, OnceLock,
+        Arc,
         atomic::{self, AtomicU64},
     },
     time::Instant,
@@ -2209,6 +2209,13 @@ impl GitStore {
         self.repositories
             .iter()
             .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
+            .collect()
+    }
+
+    pub fn repo_snapshots_by_path(&self, cx: &App) -> BTreeMap<Arc<Path>, RepositorySnapshot> {
+        self.repositories_by_abs_root_path
+            .iter()
+            .map(|(path, repo)| (path.clone(), repo.read(cx).snapshot.clone()))
             .collect()
     }
 }

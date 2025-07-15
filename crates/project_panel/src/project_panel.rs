@@ -1806,11 +1806,11 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let repo_snapshots = git_store.repo_snapshots(cx);
+        let snapshots_by_root_path = git_store.repo_snapshots_by_path(cx);
         let worktree_snapshot = worktree.snapshot();
         let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         let mut siblings: Vec<_> =
-            ChildEntriesGitIter::new(&repo_snapshots, &worktree_snapshot, parent_path)
+            ChildEntriesGitIter::new(&snapshots_by_root_path, &worktree_snapshot, parent_path)
                 .filter(|sibling| {
                     (sibling.id == latest_entry.id)
                         || (!marked_entries_in_worktree.contains(&&SelectedEntry {
@@ -2858,7 +2858,8 @@ impl ProjectPanel {
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
         let project = self.project.read(cx);
-        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
+        let git_store = project.git_store().read(cx);
+        let snapshots_by_root_path = git_store.repo_snapshots_by_path(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
             .next_back()
@@ -2903,7 +2904,7 @@ impl ProjectPanel {
 
             let mut visible_worktree_entries = Vec::new();
             let mut entry_iter =
-                GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
+                GitTraversal::new(&snapshots_by_root_path, worktree_snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if hide_root && Some(entry.entry) == worktree.read(cx).root_entry() {
@@ -3503,16 +3504,12 @@ impl ProjectPanel {
                 .cloned();
         }
 
-        let repo_snapshots = self
-            .project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repo_snapshots(cx);
+        let git_store = self.project.read(cx).git_store().read(cx);
+        let snapshots_by_root_path = git_store.repo_snapshots_by_path(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.read_with(cx, |tree, _| {
             utils::ReversibleIterable::new(
-                GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize)),
+                GitTraversal::new(&snapshots_by_root_path, tree.entries(true, 0usize)),
                 reverse_search,
             )
             .find_single_ended(|ele| predicate(*ele, worktree_id))
@@ -3532,12 +3529,8 @@ impl ProjectPanel {
             .iter()
             .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
-        let repo_snapshots = self
-            .project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repo_snapshots(cx);
+        let git_store = self.project.read(cx).git_store().read(cx);
+        let snapshots_by_root_path = git_store.repo_snapshots_by_path(cx);
 
         let mut last_found: Option<SelectedEntry> = None;
 
@@ -3554,7 +3547,7 @@ impl ProjectPanel {
                 let tree_id = worktree.id();
 
                 let mut first_iter = GitTraversal::new(
-                    &repo_snapshots,
+                    &snapshots_by_root_path,
                     worktree.traverse_from_path(true, true, true, entry.path.as_ref()),
                 );
 
@@ -3570,7 +3563,7 @@ impl ProjectPanel {
                     .map(|ele| ele.to_owned());
 
                 let second_iter =
-                    GitTraversal::new(&repo_snapshots, worktree.entries(true, 0usize));
+                    GitTraversal::new(&snapshots_by_root_path, worktree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter
