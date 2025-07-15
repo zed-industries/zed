@@ -22,8 +22,9 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, Modal, ModalFooter, ModalHeader,
-    ParentElement as _, Render, Section, SharedString, Styled as _, Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Modal,
+    ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _,
+    Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use workspace::{
@@ -450,6 +451,13 @@ impl KeymapEditor {
         })
     }
 
+    fn has_conflict(&self, row_index: usize) -> bool {
+        self.matches
+            .get(row_index)
+            .map(|candidate| candidate.candidate_id)
+            .is_some_and(|id| self.keybinding_conflict_state.has_conflict(&id))
+    }
+
     fn process_bindings(
         json_language: Arc<Language>,
         rust_language: Arc<Language>,
@@ -847,8 +855,14 @@ impl KeymapEditor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.filter_state = self.filter_state.invert();
-        self.update_matches(cx);
+        self.set_filter_state(self.filter_state.invert(), cx);
+    }
+
+    fn set_filter_state(&mut self, filter_state: FilterState, cx: &mut Context<Self>) {
+        if self.filter_state != filter_state {
+            self.filter_state = filter_state;
+            self.update_matches(cx);
+        }
     }
 
     fn toggle_keystroke_search(
@@ -1078,8 +1092,15 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
-                    .column_widths([rems(16.), rems(16.), rems(16.), rems(32.), rems(8.)])
-                    .header(["Action", "Arguments", "Keystrokes", "Context", "Source"])
+                    .column_widths([
+                        rems(2.5),
+                        rems(16.),
+                        rems(16.),
+                        rems(16.),
+                        rems(32.),
+                        rems(8.),
+                    ])
+                    .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
@@ -1090,6 +1111,49 @@ impl Render for KeymapEditor {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
                                     let action_name = binding.action_name.clone();
+
+                                    let icon = (this.filter_state != FilterState::Conflicts
+                                        && this.has_conflict(index))
+                                    .then(|| {
+                                        base_button_style(index, IconName::Warning)
+                                            .icon_color(Color::Warning)
+                                            .tooltip(|window, cx| {
+                                                Tooltip::with_meta(
+                                                    "Edit Keybinding",
+                                                    None,
+                                                    "Use alt+click to show conflicts",
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(cx.listener(
+                                                move |this, click: &ClickEvent, window, cx| {
+                                                    if click.modifiers().alt {
+                                                        this.set_filter_state(
+                                                            FilterState::Conflicts,
+                                                            cx,
+                                                        );
+                                                    } else {
+                                                        this.select_index(index, cx);
+                                                        this.open_edit_keybinding_modal(
+                                                            false, window, cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    }
+                                                },
+                                            ))
+                                    })
+                                    .unwrap_or_else(|| {
+                                        base_button_style(index, IconName::Pencil)
+                                            .visible_on_hover(row_group_id(index))
+                                            .tooltip(Tooltip::text("Edit Keybinding"))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.select_index(index, cx);
+                                                this.open_edit_keybinding_modal(false, window, cx);
+                                                cx.stop_propagation();
+                                            }))
+                                    })
+                                    .into_any_element();
 
                                     let action = div()
                                         .id(("keymap action", index))
@@ -1148,32 +1212,26 @@ impl Render for KeymapEditor {
                                         .map(|(_source, name)| name)
                                         .unwrap_or_default()
                                         .into_any_element();
-                                    Some([action, action_input, keystrokes, context, source])
+                                    Some([icon, action, action_input, keystrokes, context, source])
                                 })
                                 .collect()
                         }),
                     )
                     .map_row(
                         cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
-                            let is_conflict = this
-                                .matches
-                                .get(row_index)
-                                .map(|candidate| candidate.candidate_id)
-                                .is_some_and(|id| this.keybinding_conflict_state.has_conflict(&id));
+                            let is_conflict = this.has_conflict(row_index);
                             let is_selected = this.selected_index == Some(row_index);
 
+                            let row_id = row_group_id(row_index);
+
                             let row = row
-                                .id(("keymap-table-row", row_index))
+                                .id(row_id.clone())
                                 .on_any_mouse_down(cx.listener(
                                     move |this,
                                           mouse_down_event: &gpui::MouseDownEvent,
                                           window,
                                           cx| {
                                         match mouse_down_event.button {
-                                            MouseButton::Left => {
-                                                this.select_index(row_index, cx);
-                                            }
-
                                             MouseButton::Right => {
                                                 this.select_index(row_index, cx);
                                                 this.create_context_menu(
@@ -1188,11 +1246,13 @@ impl Render for KeymapEditor {
                                 ))
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
+                                        this.select_index(row_index, cx);
                                         if event.up.click_count == 2 {
                                             this.open_edit_keybinding_modal(false, window, cx);
                                         }
                                     },
                                 ))
+                                .group(row_id)
                                 .border_2()
                                 .when(is_conflict, |row| {
                                     row.bg(cx.theme().status().error_background)
@@ -1223,6 +1283,16 @@ impl Render for KeymapEditor {
                 .with_priority(1)
             }))
     }
+}
+
+fn row_group_id(row_index: usize) -> SharedString {
+    SharedString::new(format!("keymap-table-row-{}", row_index))
+}
+
+fn base_button_style(row_index: usize, icon: IconName) -> IconButton {
+    IconButton::new(("keymap-icon", row_index), icon)
+        .shape(IconButtonShape::Square)
+        .size(ButtonSize::Compact)
 }
 
 #[derive(Debug, Clone, IntoElement)]
