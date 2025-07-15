@@ -10,15 +10,15 @@ use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, KeyDownEvent, Keystroke,
-    ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, StyledText,
-    Subscription, WeakEntity, actions, anchored, deferred, div,
+    Action, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent,
+    Entity, EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, KeyDownEvent,
+    Keystroke, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy, ScrollWheelEvent,
+    StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
-use util::{ResultExt, debug_panic};
+use util::ResultExt;
 
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
@@ -271,9 +271,8 @@ struct KeymapEditor {
 }
 
 enum PreviousEdit {
-    /// When deleting, we bounds check this index and set the selected index to this one, and scroll to it
-    /// if it is not in bounds then we scroll to 0 and don't set a selected index
-    Index(usize),
+    /// When deleting, we want to maintain the same scroll position
+    ScrollBarOffset(Point<Pixels>),
     /// When editing or creating, because the new keybinding could be in a different position in the sort order
     /// we store metadata about the new binding (either the modified version or newly created one)
     /// and upon reload, we search for this binding in the list of keybindings, and if we find the one that matches
@@ -575,23 +574,18 @@ impl KeymapEditor {
                 if let Some(previous_edit) = this.previous_edit.take() {
                     match previous_edit {
                         // should remove scroll from process_query
-                        PreviousEdit::Index(index) => {
-                            this.scroll_to_item(
-                                index.min(this.matches.len().saturating_sub(1)),
-                                ScrollStrategy::Top,
-                                cx,
-                            );
+                        PreviousEdit::ScrollBarOffset(offset) => {
+                            this.table_interaction_state.update(cx, |table, _| {
+                                table.set_scrollbar_offset(Axis::Vertical, offset)
+                            })
                             // set selected index and scroll
                         }
                         PreviousEdit::Keybinding {
                             action_mapping,
                             action_name,
                         } => {
-                            let scroll_position = this
-                                .matches
-                                .iter()
-                                .enumerate()
-                                .find_map(|(index, item)| {
+                            let scroll_position =
+                                this.matches.iter().enumerate().find_map(|(index, item)| {
                                     let binding = &this.keybindings[item.candidate_id];
                                     if binding.get_action_mapping() == action_mapping
                                         && binding.action_name == action_name
@@ -600,10 +594,15 @@ impl KeymapEditor {
                                     } else {
                                         None
                                     }
-                                })
-                                .unwrap_or(0);
+                                });
 
-                            this.scroll_to_item(scroll_position, ScrollStrategy::Top, cx);
+                            this.scroll_to_item(
+                                scroll_position.unwrap_or(0),
+                                ScrollStrategy::Top,
+                                cx,
+                            );
+                            this.selected_index = scroll_position;
+                            cx.notify();
                         }
                     }
                 }
@@ -839,10 +838,6 @@ impl KeymapEditor {
             return;
         };
 
-        let Some(index) = self.selected_keybind_idx() else {
-            debug_panic!("Index must exist at this state");
-            return;
-        };
         let Ok(fs) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
@@ -850,7 +845,11 @@ impl KeymapEditor {
             return;
         };
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
-        self.previous_edit = Some(PreviousEdit::Index(index));
+        self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
+            self.table_interaction_state
+                .read(cx)
+                .get_scrollbar_offset(Axis::Vertical),
+        ));
         cx.spawn(async move |_, _| remove_keybinding(to_remove, &fs, tab_size).await)
             .detach_and_notify_err(window, cx);
     }
@@ -1565,6 +1564,8 @@ impl KeybindingEditorModal {
         let create = self.creating;
 
         cx.spawn(async move |this, cx| {
+            let action_name = existing_keybind.action_name.clone();
+
             if let Err(err) = save_keybinding_update(
                 create,
                 existing_keybind,
@@ -1581,7 +1582,18 @@ impl KeybindingEditorModal {
                 })
                 .log_err();
             } else {
-                this.update(cx, |_this, cx| {
+                this.update(cx, |this, cx| {
+                    let action_mapping = (
+                        ui::text_for_keystrokes(new_keystrokes.as_slice(), cx).into(),
+                        new_context.map(SharedString::from),
+                    );
+
+                    this.keymap_editor.update(cx, |keymap, _| {
+                        keymap.previous_edit = Some(PreviousEdit::Keybinding {
+                            action_mapping,
+                            action_name,
+                        })
+                    });
                     cx.emit(DismissEvent);
                 })
                 .ok();
@@ -1853,9 +1865,12 @@ async fn save_keybinding_update(
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
             .context("Failed to update keybinding")?;
-    fs.atomic_write(paths::keymap_file().clone(), updated_keymap_contents)
-        .await
-        .context("Failed to write keymap file")?;
+    fs.write(
+        paths::keymap_file().as_path(),
+        updated_keymap_contents.as_bytes(),
+    )
+    .await
+    .context("Failed to write keymap file")?;
     Ok(())
 }
 
@@ -1895,9 +1910,12 @@ async fn remove_keybinding(
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
             .context("Failed to update keybinding")?;
-    fs.atomic_write(paths::keymap_file().clone(), updated_keymap_contents)
-        .await
-        .context("Failed to write keymap file")?;
+    fs.write(
+        paths::keymap_file().as_path(),
+        updated_keymap_contents.as_bytes(),
+    )
+    .await
+    .context("Failed to write keymap file")?;
     Ok(())
 }
 
