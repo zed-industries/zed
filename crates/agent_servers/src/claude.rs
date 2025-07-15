@@ -238,7 +238,7 @@ impl ClaudeAgentConnection {
             SdkMessage::Assistant { message, .. } | SdkMessage::User { message, .. } => {
                 for chunk in message.content {
                     match chunk {
-                        MessageContent::Text { text } => {
+                        MessageContent::Text { text } | MessageContent::UntaggedText(text) => {
                             delegate
                                 .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
                                     chunk: acp::AssistantMessageChunk::Text { text },
@@ -271,16 +271,46 @@ impl ClaudeAgentConnection {
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
-                                        content: match content {
-                                            ToolResultContent::Text { text }
-                                            | ToolResultContent::UntaggedText(text) => {
-                                                Some(ToolCallContent::Markdown { markdown: text })
+                                        content: match &*content {
+                                            MessageContent::Text { text }
+                                            | MessageContent::UntaggedText(text) => {
+                                                Some(ToolCallContent::Markdown {
+                                                    markdown: text.to_string(),
+                                                })
+                                            }
+                                            MessageContent::Image
+                                            | MessageContent::Document
+                                            | MessageContent::Thinking
+                                            | MessageContent::RedactedThinking
+                                            | MessageContent::ToolUse { .. }
+                                            | MessageContent::ToolResult { .. }
+                                            | MessageContent::WebSearchToolResult => {
+                                                Some(ToolCallContent::Markdown {
+                                                    markdown: format!(
+                                                        "Unsupported tool content: {:?}",
+                                                        content
+                                                    ),
+                                                })
                                             }
                                         },
                                     })
                                     .await
                                     .log_err();
                             }
+                        }
+                        MessageContent::Image
+                        | MessageContent::Document
+                        | MessageContent::Thinking
+                        | MessageContent::RedactedThinking
+                        | MessageContent::WebSearchToolResult => {
+                            delegate
+                                .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
+                                    chunk: acp::AssistantMessageChunk::Text {
+                                        text: format!("Unsupported content: {:?}", chunk),
+                                    },
+                                })
+                                .await
+                                .log_err();
                         }
                     }
                 }
@@ -365,24 +395,20 @@ enum MessageContent {
     Text {
         text: String,
     },
+    Image,
+    Document,
+    Thinking,
+    RedactedThinking,
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
-        content: ToolResultContent,
+        content: Box<MessageContent>,
         tool_use_id: String,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ToolResultContent {
-    Text {
-        text: String,
-    },
-    // todo! image, web search, document
+    WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
 }
