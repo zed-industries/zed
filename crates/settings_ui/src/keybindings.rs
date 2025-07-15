@@ -1596,7 +1596,7 @@ impl Render for KeybindingEditorModal {
                             .gap_2()
                             .child(
                                 v_flex()
-                                    .child(Label::new("Edit Keybinding"))
+                                    .child(Label::new("Edit Keystroke"))
                                     .gap_1()
                                     .child(self.keybind_editor.clone()),
                             )
