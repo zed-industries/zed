@@ -114,10 +114,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &NewAcpThread, window, cx| {
+                .register_action(|workspace, action: &NewAcpThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
-                        panel.update(cx, |panel, cx| panel.new_gemini_thread(window, cx));
+                        panel.update(cx, |panel, cx| {
+                            panel.new_acp_thread(action.agent, window, cx)
+                        });
                     }
                 })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
@@ -889,37 +891,39 @@ impl AgentPanel {
         context_editor.focus_handle(cx).focus(window);
     }
 
-    // todo! new claude code too
-    fn new_gemini_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn new_acp_thread(
+        &mut self,
+        agent: crate::AcpAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let message_history = self.acp_message_history.clone();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let thread_view = cx.new_window_entity(|window, cx| {
-                crate::acp::AcpThreadView::new(
-                    agent_servers::Gemini,
-                    workspace.clone(),
-                    project,
-                    message_history,
-                    window,
-                    cx,
-                )
-            })?;
-            this.update_in(cx, |this, window, cx| {
-                this.set_active_view(
-                    ActiveView::AcpThread {
-                        thread_view: thread_view.clone(),
-                    },
-                    window,
-                    cx,
-                );
-            })
-            .log_err();
+        let server: Rc<dyn agent_servers::AgentServer> = match agent {
+            crate::AcpAgent::Gemini => Rc::new(agent_servers::Gemini),
+            crate::AcpAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+        };
 
-            anyhow::Ok(())
-        })
-        .detach();
+        let thread_view = cx.new(|cx| {
+            crate::acp::AcpThreadView::new(
+                server,
+                workspace.clone(),
+                project,
+                message_history,
+                window,
+                cx,
+            )
+        });
+
+        self.set_active_view(
+            ActiveView::AcpThread {
+                thread_view: thread_view.clone(),
+            },
+            window,
+            cx,
+        );
     }
 
     fn deploy_rules_library(
@@ -1851,7 +1855,20 @@ impl AgentPanel {
                         .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
                             this.separator()
                                 .header("External Agents")
-                                .action("New Claude Code Thread", NewAcpThread.boxed_clone())
+                                .action(
+                                    "New Gemini Thread",
+                                    NewAcpThread {
+                                        agent: crate::AcpAgent::Gemini,
+                                    }
+                                    .boxed_clone(),
+                                )
+                                .action(
+                                    "New Claude Code Thread",
+                                    NewAcpThread {
+                                        agent: crate::AcpAgent::ClaudeCode,
+                                    }
+                                    .boxed_clone(),
+                                )
                         });
                     menu
                 }))

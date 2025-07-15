@@ -84,7 +84,7 @@ enum ThreadState {
 
 impl AcpThreadView {
     pub fn new(
-        agent: impl AgentServer + 'static,
+        agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
@@ -159,8 +159,6 @@ impl AcpThreadView {
                 }
             }),
         );
-
-        let agent = Rc::new(agent);
 
         Self {
             agent: agent.clone(),

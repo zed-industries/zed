@@ -92,9 +92,9 @@ impl AgentConnection for ClaudeAgentConnection {
 }
 
 #[derive(Clone)]
-pub struct Claude;
+pub struct ClaudeCode;
 
-impl AgentServer for Claude {
+impl AgentServer for ClaudeCode {
     fn new_thread(
         &self,
         root_dir: &Path,

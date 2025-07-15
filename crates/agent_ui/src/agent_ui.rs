@@ -57,8 +57,6 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
-        /// Creates a new external agent conversation thread.
-        NewAcpThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
         /// Toggles the navigation menu for switching between threads and views.
@@ -131,6 +129,27 @@ actions!(
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
+}
+
+/// Creates a new external agent conversation thread.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewAcpThread {
+    /// Which agent to use for the conversation.
+    #[serde(default)]
+    agent: AcpAgent,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Deserialize, JsonSchema)]
+#[serde(rename = "snake_case")]
+enum AcpAgent {
+    // todo!
+    // #[default]
+    // LastUsed,
+    #[default]
+    Gemini,
+    ClaudeCode,
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
