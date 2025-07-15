@@ -159,6 +159,11 @@ impl MemoryView {
             open_context_menu: None,
         };
         this.change_query_bar_mode(false, window, cx);
+        cx.on_focus_out(&this.focus_handle, window, |this, _, window, cx| {
+            this.change_query_bar_mode(false, window, cx);
+            cx.notify();
+        })
+        .detach();
         this
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -583,16 +588,22 @@ impl MemoryView {
         else {
             return;
         };
+        let expr = format!("?${{{expr}}}");
         let reference = self.session.update(cx, |this, cx| {
             this.memory_reference_of_expr(selected_frame, expr, cx)
         });
         cx.spawn(async move |this, cx| {
-            if let Some(reference) = reference.await {
+            if let Some((reference, typ)) = reference.await {
                 _ = this.update(cx, |this, cx| {
-                    let Ok(address) = parse_int::parse::<u64>(&reference) else {
-                        return;
+                    let sizeof_expr = if typ.as_ref().is_some_and(|t| {
+                        t.chars()
+                            .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+                    }) {
+                        typ.as_deref()
+                    } else {
+                        None
                     };
-                    this.jump_to_address(address, cx);
+                    this.go_to_memory_reference(&reference, sizeof_expr, selected_frame, cx);
                 });
             }
         })
@@ -763,7 +774,7 @@ fn render_single_memory_view_line(
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
                                 let weak = weak.clone();
 
-                                this.bg(Color::Accent.color(cx)).when(
+                                this.bg(Color::Selected.color(cx).opacity(0.2)).when(
                                     !selection.is_dragging(),
                                     |this| {
                                         let selection = selection.drag().memory_range();
@@ -860,7 +871,7 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx))
+                                this.bg(Color::Selected.color(cx).opacity(0.2))
                             })
                         })
                         .child(
