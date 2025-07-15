@@ -12,7 +12,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent,
     Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero, KeyContext,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
     ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
