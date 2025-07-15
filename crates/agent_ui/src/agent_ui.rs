@@ -1,3 +1,4 @@
+mod acp;
 mod active_thread;
 mod agent_configuration;
 mod agent_diff;
@@ -56,6 +57,8 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
+        /// Creates a new external agent conversation thread.
+        NewAcpThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
         /// Toggles the navigation menu for switching between threads and views.
@@ -76,8 +79,6 @@ actions!(
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
-        /// Starts a chat conversation with the agent.
-        Chat,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.

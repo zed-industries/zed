@@ -5,9 +5,7 @@
     "build": {
       "label": "Build Zed",
       "command": "cargo",
-      "args": [
-        "build"
-      ]
+      "args": ["build"]
     }
   },
   {
@@ -16,9 +14,7 @@
     "build": {
       "label": "Build Zed",
       "command": "cargo",
-      "args": [
-        "build"
-      ]
+      "args": ["build"]
     }
-  },
+  }
 ]

@@ -1218,13 +1218,16 @@ or
 
 ### Drag And Drop Selection
 
-- Description: Whether to allow drag and drop text selection in buffer.
+- Description: Whether to allow drag and drop text selection in buffer. `delay` is the milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
 - Setting: `drag_and_drop_selection`
-- Default: `true`
+- Default:
 
-**Options**
-
-`boolean` values
+```json
+"drag_and_drop_selection": {
+  "enabled": true,
+  "delay": 300
+}
+```
 
 ## Editor Toolbar
 

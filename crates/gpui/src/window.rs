@@ -1369,6 +1369,31 @@ impl Window {
         });
     }
 
+    pub(crate) fn dispatch_keystroke_interceptors(
+        &mut self,
+        event: &dyn Any,
+        context_stack: Vec<KeyContext>,
+        cx: &mut App,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        cx.keystroke_interceptors
+            .clone()
+            .retain(&(), move |callback| {
+                (callback)(
+                    &KeystrokeEvent {
+                        keystroke: key_down_event.keystroke.clone(),
+                        action: None,
+                        context_stack: context_stack.clone(),
+                    },
+                    self,
+                    cx,
+                )
+            });
+    }
+
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
     pub fn defer(&self, cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'static) {
@@ -3522,6 +3547,13 @@ impl Window {
             return;
         };
 
+        cx.propagate_event = true;
+        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        if !cx.propagate_event {
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            return;
+        }
+
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
             currently_pending = PendingInput::default();
@@ -3570,7 +3602,6 @@ impl Window {
             return;
         }
 
-        cx.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {

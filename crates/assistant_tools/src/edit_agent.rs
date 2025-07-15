@@ -719,6 +719,7 @@ impl EditAgent {
             tools,
             stop: Vec::new(),
             temperature: None,
+            thinking_allowed: true,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

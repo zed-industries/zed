@@ -25,7 +25,7 @@ async-trait.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
-gpui = { workspace = true, features = ["screen-capture", "x11", "wayland"] }
+gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
@@ -45,7 +45,7 @@ livekit = { rev = "d2eade7a6b15d6dbdb38ba12a1ff7bf07fcebba4", git = "https://git
     "__rustls-tls"
 ] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.195.0"
+version = "0.196.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -23,6 +23,7 @@ activity_indicator.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 agent_settings.workspace = true
+agent_servers.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true

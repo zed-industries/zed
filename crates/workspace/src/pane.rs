@@ -1346,6 +1346,7 @@ impl Pane {
     pub fn close_inactive_items(
         &mut self,
         action: &CloseInactiveItems,
+        target_item_id: Option<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1353,7 +1354,11 @@ impl Pane {
             return Task::ready(Ok(()));
         }
 
-        let active_item_id = self.active_item_id();
+        let active_item_id = match target_item_id {
+            Some(result) => result,
+            None => self.active_item_id(),
+        };
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
@@ -2596,6 +2601,7 @@ impl Pane {
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_inactive_items(
                                             &close_inactive_items_action,
+                                            Some(item_id),
                                             window,
                                             cx,
                                         )
@@ -3505,7 +3511,7 @@ impl Render for Pane {
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseInactiveItems, window, cx| {
-                    pane.close_inactive_items(action, window, cx)
+                    pane.close_inactive_items(action, None, window, cx)
                         .detach_and_log_err(cx);
                 }),
             )
@@ -5841,6 +5847,7 @@ mod tests {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )
@@ -5848,6 +5855,43 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_running_close_inactive_items_via_an_inactive_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(
+                &CloseInactiveItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                Some(item_b.item_id()),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*"], cx);
     }
 
     #[gpui::test]
@@ -6206,6 +6250,7 @@ mod tests {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )

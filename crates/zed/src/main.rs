@@ -29,7 +29,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{Settings, SettingsStore, watch_config_file};
+use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
 use std::{
     env,
     io::{self, IsTerminal},
@@ -43,7 +43,7 @@ use theme::{
 };
 use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
-use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
+use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::{
     AppState, SerializedWorkspaceLocation, Toast, Workspace, WorkspaceSettings, WorkspaceStore,
     notifications::NotificationId,
@@ -167,16 +167,6 @@ pub fn main() {
     #[cfg(unix)]
     util::prevent_root_execution();
 
-    // Check if there is a pending installer
-    // If there is, run the installer and exit
-    // And we don't want to run the installer if we are not the first instance
-    #[cfg(target_os = "windows")]
-    let is_first_instance = crate::zed::windows_only_instance::is_first_instance();
-    #[cfg(target_os = "windows")]
-    if is_first_instance && auto_update::check_pending_installation() {
-        return;
-    }
-
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
@@ -188,6 +178,16 @@ pub fn main() {
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
+        return;
+    }
+
+    // Check if there is a pending installer
+    // If there is, run the installer and exit
+    // And we don't want to run the installer if we are not the first instance
+    #[cfg(target_os = "windows")]
+    let is_first_instance = crate::zed::windows_only_instance::is_first_instance();
+    #[cfg(target_os = "windows")]
+    if is_first_instance && auto_update::check_pending_installation() {
         return;
     }
 
@@ -441,10 +441,30 @@ pub fn main() {
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+
+        language_extension::init(
+            language_extension::LspAccess::ViaWorkspaces({
+                let workspace_store = workspace_store.clone();
+                Arc::new(move |cx: &mut App| {
+                    workspace_store.update(cx, |workspace_store, cx| {
+                        workspace_store
+                            .workspaces()
+                            .iter()
+                            .map(|workspace| {
+                                workspace.update(cx, |workspace, _, cx| {
+                                    workspace.project().read(cx).lsp_store()
+                                })
+                            })
+                            .collect()
+                    })
+                })
+            }),
+            extension_host_proxy.clone(),
+            languages.clone(),
+        );
 
         Client::set_global(client.clone(), cx);
 
@@ -520,6 +540,7 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        agent_servers::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -727,11 +748,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |mut cx| {
-            let paths_with_position =
-                derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
+            let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
             open_ssh_project(
                 connection_options,
-                paths_with_position.into_iter().map(|p| p.path).collect(),
+                paths,
                 app_state,
                 workspace::OpenOptions::default(),
                 &mut cx,

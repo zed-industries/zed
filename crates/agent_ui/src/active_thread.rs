@@ -787,6 +787,15 @@ impl ActiveThread {
                     .unwrap()
             }
         });
+
+        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
+            Some(cx.observe_release(&workspace, |this, _, cx| {
+                this.dismiss_notifications(cx);
+            }))
+        } else {
+            None
+        };
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -832,6 +841,10 @@ impl ActiveThread {
                     cx,
                 );
             }
+        }
+
+        if let Some(subscription) = workspace_subscription {
+            this._subscriptions.push(subscription);
         }
 
         this
@@ -1461,6 +1474,7 @@ impl ActiveThread {
                             &configured_model.model,
                             cx,
                         ),
+                        thinking_allowed: true,
                     };
 
                     Some(configured_model.model.count_tokens(request, cx))
@@ -2580,8 +2594,8 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::LightBulb)
-                                            .size(IconSize::XSmall)
+                                        Icon::new(IconName::ToolBulb)
+                                            .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
                                     .child(LoadingLabel::new("Thinking").size(LabelSize::Small)),
@@ -2994,7 +3008,7 @@ impl ActiveThread {
                                         .overflow_x_scroll()
                                         .child(
                                             Icon::new(tool_use.icon)
-                                                .size(IconSize::XSmall)
+                                                .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
                                         .child(

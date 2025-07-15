@@ -429,6 +429,8 @@ actions!(
         ToggleFold,
         /// Toggles recursive folding at the current position.
         ToggleFoldRecursive,
+        /// Toggles all folds in a buffer or all excerpts in multibuffer.
+        ToggleFoldAll,
         /// Formats the entire document.
         Format,
         /// Formats only the selected text.
@@ -650,6 +652,8 @@ actions!(
         SignatureHelpNext,
         /// Navigates to the previous signature in the signature help popup.
         SignatureHelpPrevious,
+        /// Sorts selected lines by length.
+        SortLinesByLength,
         /// Sorts selected lines case-insensitively.
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.

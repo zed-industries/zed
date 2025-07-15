@@ -117,7 +117,7 @@ use text::{Anchor, BufferId, Point};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
-    paths::{SanitizedPath, compare_paths},
+    paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
@@ -1159,9 +1159,11 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let ssh_proto = ssh.read(cx).proto_client();
-            let worktree_store =
-                cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
+            let (ssh_proto, path_style) =
+                ssh.read_with(cx, |ssh, _| (ssh.proto_client(), ssh.path_style()));
+            let worktree_store = cx.new(|_| {
+                WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID, path_style)
+            });
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1410,8 +1412,15 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
+        // todo(zjk)
+        // Set the proper path style based on the remote
         let worktree_store = cx.new(|_| {
-            WorktreeStore::remote(true, client.clone().into(), response.payload.project_id)
+            WorktreeStore::remote(
+                true,
+                client.clone().into(),
+                response.payload.project_id,
+                PathStyle::Posix,
+            )
         })?;
         let buffer_store = cx.new(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
@@ -3208,9 +3217,11 @@ impl Project {
         also_restart_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.stop_language_servers_for_buffers(buffers, also_restart_servers, cx)
-        })
+        self.lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.stop_language_servers_for_buffers(buffers, also_restart_servers, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     pub fn cancel_language_server_work_for_buffers(
@@ -3353,8 +3364,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3365,8 +3382,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.declarations(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3377,8 +3400,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3389,8 +3418,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.implementations(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -3401,8 +3436,14 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
+        });
+        cx.spawn(async move |_, _| {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -4039,7 +4080,8 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request_path = Path::new(path);
+            let path_style = ssh_client.read(cx).path_style();
+            let request_path = RemotePathBuf::from_str(path, path_style);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
