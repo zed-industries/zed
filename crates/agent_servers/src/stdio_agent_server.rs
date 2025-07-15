@@ -11,6 +11,11 @@ use std::{
 use util::{ResultExt, paths};
 
 pub trait StdioAgentServer: Send {
+    fn logo(&self) -> ui::IconName;
+    fn name(&self) -> &'static str;
+    fn empty_state_headline(&self) -> &'static str;
+    fn empty_state_message(&self) -> &'static str;
+
     fn command(
         &self,
         project: &Entity<Project>,
@@ -24,6 +29,22 @@ pub trait StdioAgentServer: Send {
 }
 
 impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
+    fn name(&self) -> &'static str {
+        self.name()
+    }
+
+    fn empty_state_headline(&self) -> &'static str {
+        self.empty_state_headline()
+    }
+
+    fn empty_state_message(&self) -> &'static str {
+        self.empty_state_message()
+    }
+
+    fn logo(&self) -> ui::IconName {
+        self.logo()
+    }
+
     fn new_thread(
         &self,
         root_dir: &Path,
@@ -33,6 +54,7 @@ impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
         let root_dir = root_dir.to_path_buf();
         let project = project.clone();
         let this = self.clone();
+        let title = self.name().into();
 
         cx.spawn(async move |cx| {
             let command = this.command(&project, cx).await?;
@@ -68,11 +90,16 @@ impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
                         Err(e) => Err(anyhow!(e)),
                         Ok(result) if result.success() => Ok(()),
                         Ok(result) => {
-                            if let Some(version) = this.version(&command).await.log_err()
-                                && !version.supported
+                            if let Some(AgentServerVersion::Unsupported {
+                                error_message,
+                                upgrade_message,
+                                upgrade_command,
+                            }) = this.version(&command).await.log_err()
                             {
                                 Err(anyhow!(LoadError::Unsupported {
-                                    current_version: version.current_version
+                                    error_message,
+                                    upgrade_message,
+                                    upgrade_command
                                 }))
                             } else {
                                 Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
@@ -83,7 +110,7 @@ impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
                     result
                 });
 
-                AcpThread::new(connection, Some(child_status), project.clone(), cx)
+                AcpThread::new(connection, title, Some(child_status), project.clone(), cx)
             })
         })
     }

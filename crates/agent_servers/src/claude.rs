@@ -95,6 +95,22 @@ impl AgentConnection for ClaudeAgentConnection {
 pub struct ClaudeCode;
 
 impl AgentServer for ClaudeCode {
+    fn name(&self) -> &'static str {
+        "Claude Code"
+    }
+
+    fn empty_state_headline(&self) -> &'static str {
+        self.name()
+    }
+
+    fn empty_state_message(&self) -> &'static str {
+        ""
+    }
+
+    fn logo(&self) -> ui::IconName {
+        ui::IconName::AiAnthropic
+    }
+
     fn new_thread(
         &self,
         root_dir: &Path,
@@ -103,6 +119,7 @@ impl AgentServer for ClaudeCode {
     ) -> Task<Result<Entity<AcpThread>>> {
         let project = project.clone();
         let root_dir = root_dir.to_path_buf();
+        let title = self.name().into();
         cx.spawn(async move |cx| {
             let delegate_rc = Rc::new(RefCell::new(None));
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
@@ -197,7 +214,7 @@ impl AgentServer for ClaudeCode {
                 };
 
                 connection._permissions_mcp_server = Some(permission_mcp_server);
-                acp_thread::AcpThread::new(connection, None, project.clone(), cx)
+                acp_thread::AcpThread::new(connection, title, None, project.clone(), cx)
             })
         })
     }

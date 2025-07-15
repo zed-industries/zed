@@ -160,6 +160,7 @@ dependencies = [
  "serde_json",
  "settings",
  "tempfile",
+ "ui",
  "util",
  "which 6.0.3",
  "workspace-hack",

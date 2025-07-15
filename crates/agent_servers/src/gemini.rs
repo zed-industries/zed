@@ -13,6 +13,22 @@ pub struct Gemini;
 const ACP_ARG: &str = "--acp";
 
 impl StdioAgentServer for Gemini {
+    fn name(&self) -> &'static str {
+        "Gemini"
+    }
+
+    fn empty_state_headline(&self) -> &'static str {
+        "Welcome to Gemini"
+    }
+
+    fn empty_state_message(&self) -> &'static str {
+        "Ask questions, edit files, run commands.\nBe specific for the best results."
+    }
+
+    fn logo(&self) -> ui::IconName {
+        ui::IconName::AiGemini
+    }
+
     async fn command(
         &self,
         project: &Entity<Project>,
@@ -82,12 +98,20 @@ impl StdioAgentServer for Gemini {
 
         let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
 
-        let current_version = String::from_utf8(version_output?.stdout)?.into();
+        let current_version = String::from_utf8(version_output?.stdout)?;
         let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
 
-        Ok(AgentServerVersion {
-            current_version,
-            supported,
-        })
+        if supported {
+            Ok(AgentServerVersion::Supported)
+        } else {
+            Ok(AgentServerVersion::Unsupported {
+                error_message: format!(
+                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
+                    current_version
+                ).into(),
+                upgrade_message: "Upgrade Gemini to Latest".into(),
+                upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
+            })
+        }
     }
 }

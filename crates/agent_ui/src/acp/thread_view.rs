@@ -1477,15 +1477,15 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_gemini_logo(&self) -> AnyElement {
-        Icon::new(IconName::AiGemini)
+    fn render_agent_logo(&self) -> AnyElement {
+        Icon::new(self.agent.logo())
             .color(Color::Muted)
             .size(IconSize::XLarge)
             .into_any_element()
     }
 
-    fn render_error_gemini_logo(&self) -> AnyElement {
-        let logo = Icon::new(IconName::Hammer)
+    fn render_error_agent_logo(&self) -> AnyElement {
+        let logo = Icon::new(self.agent.logo())
             .color(Color::Muted)
             .size(IconSize::XLarge)
             .into_any_element();
@@ -1509,44 +1509,44 @@ impl AcpThreadView {
             .size_full()
             .items_center()
             .justify_center()
-            .child(
-                if loading {
-                    h_flex()
-                        .justify_center()
-                        .child(self.render_gemini_logo())
-                        .with_animation(
-                            "pulsating_icon",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.4, 1.0)),
-                            |icon, delta| icon.opacity(delta),
-                        ).into_any()
-                } else {
-                    self.render_gemini_logo().into_any_element()
-                }
-            )
-            .child(
+            .child(if loading {
                 h_flex()
-                    .mt_4()
-                    .mb_1()
                     .justify_center()
-                    .child(Headline::new(if loading {
-                        "Connecting to Claude Code…"
+                    .child(self.render_agent_logo())
+                    .with_animation(
+                        "pulsating_icon",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 1.0)),
+                        |icon, delta| icon.opacity(delta),
+                    )
+                    .into_any()
+            } else {
+                self.render_agent_logo().into_any_element()
+            })
+            .child(
+                h_flex().mt_4().mb_1().justify_center().child(
+                    if loading {
+                        Headline::new(format!("Connecting to {}…", self.agent.name()))
                     } else {
-                        "Welcome to Claude Code"
-                    }).size(HeadlineSize::Medium)),
+                        Headline::new(self.agent.empty_state_headline())
+                    }
+                    .size(HeadlineSize::Medium),
+                ),
             )
             .child(
                 div()
                     .max_w_1_2()
                     .text_sm()
                     .text_center()
-                    .map(|this| if loading {
-                        this.invisible()
-                    } else {
-                        this.text_color(cx.theme().colors().text_muted)
+                    .map(|this| {
+                        if loading {
+                            this.invisible()
+                        } else {
+                            this.text_color(cx.theme().colors().text_muted)
+                        }
                     })
-                    .child("Ask questions, edit files, run commands.\nBe specific for the best results.")
+                    .child(self.agent.empty_state_message()),
             )
             .into_any()
     }
@@ -1555,7 +1555,7 @@ impl AcpThreadView {
         v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_error_gemini_logo())
+            .child(self.render_error_agent_logo())
             .child(
                 h_flex()
                     .mt_4()
@@ -1570,7 +1570,7 @@ impl AcpThreadView {
         let mut container = v_flex()
             .items_center()
             .justify_center()
-            .child(self.render_error_gemini_logo())
+            .child(self.render_error_agent_logo())
             .child(
                 v_flex()
                     .mt_4()
@@ -1586,43 +1586,47 @@ impl AcpThreadView {
                     ),
             );
 
-        if matches!(e, LoadError::Unsupported { .. }) {
-            container =
-                container.child(Button::new("upgrade", "Upgrade Gemini to Latest").on_click(
-                    cx.listener(|this, _, window, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                let project = workspace.project().read(cx);
-                                let cwd = project.first_project_directory(cx);
-                                let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                                let command =
-                                    "npm install -g @google/gemini-cli@latest".to_string();
-                                let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId("install".to_string()),
-                                    full_label: command.clone(),
-                                    label: command.clone(),
-                                    command: Some(command.clone()),
-                                    args: Vec::new(),
-                                    command_label: command.clone(),
-                                    cwd,
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: true,
-                                    reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
-                                    show_command: true,
-                                    show_rerun: false,
-                                };
-                                workspace
-                                    .spawn_in_terminal(spawn_in_terminal, window, cx)
-                                    .detach();
-                            })
-                            .ok();
-                    }),
-                ));
+        if let LoadError::Unsupported {
+            upgrade_message,
+            upgrade_command,
+            ..
+        } = &e
+        {
+            let upgrade_message = upgrade_message.clone();
+            let upgrade_command = upgrade_command.clone();
+            container = container.child(Button::new("upgrade", upgrade_message).on_click(
+                cx.listener(move |this, _, window, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| {
+                            let project = workspace.project().read(cx);
+                            let cwd = project.first_project_directory(cx);
+                            let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                            let spawn_in_terminal = task::SpawnInTerminal {
+                                id: task::TaskId("install".to_string()),
+                                full_label: upgrade_command.clone(),
+                                label: upgrade_command.clone(),
+                                command: Some(upgrade_command.clone()),
+                                args: Vec::new(),
+                                command_label: upgrade_command.clone(),
+                                cwd,
+                                env: Default::default(),
+                                use_new_terminal: true,
+                                allow_concurrent_runs: true,
+                                reveal: Default::default(),
+                                reveal_target: Default::default(),
+                                hide: Default::default(),
+                                shell,
+                                show_summary: true,
+                                show_command: true,
+                                show_rerun: false,
+                            };
+                            workspace
+                                .spawn_in_terminal(spawn_in_terminal, window, cx)
+                                .detach();
+                        })
+                        .ok();
+                }),
+            ));
         }
 
         container.into_any()
@@ -2278,17 +2282,22 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { .. } => v_flex()
-                    .p_2()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_pending_auth_state())
-                    .child(h_flex().mt_1p5().justify_center().child(
-                        Button::new("sign-in", "Sign in to Gemini").on_click(
-                            cx.listener(|this, _, window, cx| this.authenticate(window, cx)),
-                        ),
-                    )),
+                ThreadState::Unauthenticated { .. } => {
+                    v_flex()
+                        .p_2()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .child(self.render_pending_auth_state())
+                        .child(
+                            h_flex().mt_1p5().justify_center().child(
+                                Button::new("sign-in", format!("Sign in to {}", self.agent.name()))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.authenticate(window, cx)
+                                    })),
+                            ),
+                        )
+                }
                 ThreadState::Loading { .. } => {
                     v_flex().flex_1().child(self.render_empty_state(true, cx))
                 }

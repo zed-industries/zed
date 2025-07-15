@@ -8,20 +8,18 @@ pub use gemini::*;
 pub use settings::*;
 pub use stdio_agent_server::*;
 
-use gpui::{App, Task};
-
-pub fn init(cx: &mut App) {
-    settings::init(cx);
-}
-
 use acp_thread::AcpThread;
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{Entity, SharedString};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+pub fn init(cx: &mut App) {
+    settings::init(cx);
+}
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
@@ -32,12 +30,21 @@ pub struct AgentServerCommand {
     pub env: Option<HashMap<String, String>>,
 }
 
-pub struct AgentServerVersion {
-    pub current_version: SharedString,
-    pub supported: bool,
+pub enum AgentServerVersion {
+    Supported,
+    Unsupported {
+        error_message: SharedString,
+        upgrade_message: SharedString,
+        upgrade_command: String,
+    },
 }
 
 pub trait AgentServer: Send {
+    fn logo(&self) -> ui::IconName;
+    fn name(&self) -> &'static str;
+    fn empty_state_headline(&self) -> &'static str;
+    fn empty_state_message(&self) -> &'static str;
+
     fn new_thread(
         &self,
         root_dir: &Path,

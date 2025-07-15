@@ -479,7 +479,11 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    Unsupported { current_version: SharedString },
+    Unsupported {
+        error_message: SharedString,
+        upgrade_message: SharedString,
+        upgrade_command: String,
+    },
     Exited(i32),
     Other(SharedString),
 }
@@ -487,13 +491,7 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unsupported { current_version } => {
-                write!(
-                    f,
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                    current_version
-                )
-            }
+            LoadError::Unsupported { error_message, .. } => write!(f, "{}", error_message),
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
@@ -505,6 +503,7 @@ impl Error for LoadError {}
 impl AcpThread {
     pub fn new(
         connection: impl AgentConnection + 'static,
+        title: SharedString,
         child_status: Option<Task<Result<()>>>,
         project: Entity<Project>,
         cx: &mut Context<Self>,
@@ -515,7 +514,7 @@ impl AcpThread {
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
-            title: "ACP Thread".into(),
+            title,
             project,
             send_task: None,
             connection: Arc::new(connection),
