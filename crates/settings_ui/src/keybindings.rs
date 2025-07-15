@@ -1567,10 +1567,8 @@ impl KeybindingEditorModal {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
-        let action_name = format!(
-            "{}",
-            command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string()
-        );
+        let action_name =
+            command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string();
 
         v_flex().w(rems(34.)).elevation_3(cx).child(
             Modal::new("keybinding_editor_modal", None)
