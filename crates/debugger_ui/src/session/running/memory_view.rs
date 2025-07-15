@@ -769,7 +769,7 @@ fn render_single_memory_view_line(
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
                                 let weak = weak.clone();
 
-                                this.bg(Color::Accent.color(cx)).when(
+                                this.bg(Color::Selected.color(cx).opacity(0.4)).when(
                                     !selection.is_dragging(),
                                     |this| {
                                         let selection = selection.drag().memory_range();
@@ -866,7 +866,7 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx))
+                                this.bg(Color::Selected.color(cx).opacity(0.4))
                             })
                         })
                         .child(
