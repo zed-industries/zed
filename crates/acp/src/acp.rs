@@ -875,7 +875,7 @@ impl AcpThread {
         &self,
     ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
         let connection = self.connection.clone();
-        async move { connection.request(acp::InitializeParams).await }
+        async move { connection.initialize().await }
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
@@ -1839,8 +1839,12 @@ mod tests {
     }
 
     impl acp::Agent for FakeAgent {
-        async fn initialize(&self) -> Result<acp::InitializeResponse, acp::Error> {
+        async fn initialize(
+            &self,
+            params: acp::InitializeParams,
+        ) -> Result<acp::InitializeResponse, acp::Error> {
             Ok(acp::InitializeResponse {
+                protocol_version: params.protocol_version,
                 is_authenticated: true,
             })
         }
