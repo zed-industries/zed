@@ -999,9 +999,8 @@ impl ActiveThread {
             ThreadEvent::Stopped(reason) => {
                 match reason {
                     Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                        self.play_notification_sound(window, cx);
                         let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
-                        self.show_notification(
+                        self.notify_with_sound(
                             if used_tools {
                                 "Finished running tools"
                             } else {
@@ -1016,8 +1015,7 @@ impl ActiveThread {
                         // Don't notify for intermediate tool use
                     }
                     Ok(StopReason::Refusal) => {
-                        self.play_notification_sound(window, cx);
-                        self.show_notification(
+                        self.notify_with_sound(
                             "Language model refused to respond",
                             IconName::Warning,
                             window,
@@ -1025,8 +1023,7 @@ impl ActiveThread {
                         );
                     }
                     Err(_) => {
-                        self.play_notification_sound(window, cx);
-                        self.show_notification(
+                        self.notify_with_sound(
                             "Agent stopped due to an error",
                             IconName::Warning,
                             window,
@@ -1036,12 +1033,10 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.play_notification_sound(window, cx);
-                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
+                self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::ToolUseLimitReached => {
-                self.play_notification_sound(window, cx);
-                self.show_notification(
+                self.notify_with_sound(
                     "Consecutive tool use limit reached.",
                     IconName::Warning,
                     window,
@@ -1185,7 +1180,7 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::RetriesFailed { message, error } => {
-                self.show_notification(message, ui::IconName::Warning, window, cx);
+                self.notify_with_sound(message, ui::IconName::Warning, window, cx);
 
                 // Also show the error in the UI
                 let error_message = error
@@ -1250,6 +1245,17 @@ impl ActiveThread {
                 // Don't show anything
             }
         }
+    }
+
+    fn notify_with_sound(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        window: &mut Window,
+        cx: &mut Context<ActiveThread>,
+    ) {
+        self.play_notification_sound(window, cx);
+        self.show_notification(caption, icon, window, cx);
     }
 
     fn pop_up(
