@@ -729,7 +729,7 @@ fn get_dxgi_factory() -> Result<IDXGIFactory6> {
     #[cfg(debug_assertions)]
     let factory_flag = DXGI_CREATE_FACTORY_DEBUG;
     #[cfg(not(debug_assertions))]
-    let factory_flag = 0u32;
+    let factory_flag = DXGI_CREATE_FACTORY_FLAGS::default();
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
