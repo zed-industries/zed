@@ -9135,75 +9135,91 @@ impl LspStore {
 
         match progress.value {
             lsp::ProgressParamsValue::WorkDone(progress) => {
-                let language_server_status = if let Some(status) =
-                    self.language_server_statuses.get_mut(&language_server_id)
-                {
-                    status
-                } else {
-                    return;
-                };
-
-                if !language_server_status.progress_tokens.contains(&token) {
-                    return;
-                }
-
-                let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
-                    .as_ref()
-                    .map_or(false, |disk_based_token| {
-                        token.starts_with(disk_based_token)
-                    });
-
-                match progress {
-                    lsp::WorkDoneProgress::Begin(report) => {
-                        if is_disk_based_diagnostics_progress {
-                            self.disk_based_diagnostics_started(language_server_id, cx);
-                        }
-                        self.on_lsp_work_start(
-                            language_server_id,
-                            token.clone(),
-                            LanguageServerProgress {
-                                title: Some(report.title),
-                                is_disk_based_diagnostics_progress,
-                                is_cancellable: report.cancellable.unwrap_or(false),
-                                message: report.message.clone(),
-                                percentage: report.percentage.map(|p| p as usize),
-                                last_update_at: cx.background_executor().now(),
-                            },
-                            cx,
-                        );
-                    }
-                    lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
-                        language_server_id,
-                        token,
-                        LanguageServerProgress {
-                            title: None,
-                            is_disk_based_diagnostics_progress,
-                            is_cancellable: report.cancellable.unwrap_or(false),
-                            message: report.message,
-                            percentage: report.percentage.map(|p| p as usize),
-                            last_update_at: cx.background_executor().now(),
-                        },
-                        cx,
-                    ),
-                    lsp::WorkDoneProgress::End(_) => {
-                        language_server_status.progress_tokens.remove(&token);
-                        self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                        if is_disk_based_diagnostics_progress {
-                            self.disk_based_diagnostics_finished(language_server_id, cx);
-                        }
-                    }
-                }
+                self.handle_work_done_progress(
+                    progress,
+                    language_server_id,
+                    disk_based_diagnostics_progress_token,
+                    token,
+                    cx,
+                );
             }
             lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
                 if let Some(LanguageServerState::Running {
-                    workspace_refresh_task: Some((_, progress_tx, ..)),
+                    workspace_refresh_task: Some(workspace_refresh_task),
                     ..
                 }) = self
                     .as_local_mut()
                     .and_then(|local| local.language_servers.get_mut(&language_server_id))
                 {
-                    progress_tx.try_send(()).ok();
+                    workspace_refresh_task.progress_tx.try_send(()).ok();
                     self.apply_workspace_diagnostic_report(language_server_id, report, cx)
+                }
+            }
+        }
+    }
+
+    fn handle_work_done_progress(
+        &mut self,
+        progress: lsp::WorkDoneProgress,
+        language_server_id: LanguageServerId,
+        disk_based_diagnostics_progress_token: Option<String>,
+        token: String,
+        cx: &mut Context<Self>,
+    ) {
+        let language_server_status =
+            if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
+                status
+            } else {
+                return;
+            };
+
+        if !language_server_status.progress_tokens.contains(&token) {
+            return;
+        }
+
+        let is_disk_based_diagnostics_progress = disk_based_diagnostics_progress_token
+            .as_ref()
+            .map_or(false, |disk_based_token| {
+                token.starts_with(disk_based_token)
+            });
+
+        match progress {
+            lsp::WorkDoneProgress::Begin(report) => {
+                if is_disk_based_diagnostics_progress {
+                    self.disk_based_diagnostics_started(language_server_id, cx);
+                }
+                self.on_lsp_work_start(
+                    language_server_id,
+                    token.clone(),
+                    LanguageServerProgress {
+                        title: Some(report.title),
+                        is_disk_based_diagnostics_progress,
+                        is_cancellable: report.cancellable.unwrap_or(false),
+                        message: report.message.clone(),
+                        percentage: report.percentage.map(|p| p as usize),
+                        last_update_at: cx.background_executor().now(),
+                    },
+                    cx,
+                );
+            }
+            lsp::WorkDoneProgress::Report(report) => self.on_lsp_work_progress(
+                language_server_id,
+                token,
+                LanguageServerProgress {
+                    title: None,
+                    is_disk_based_diagnostics_progress,
+                    is_cancellable: report.cancellable.unwrap_or(false),
+                    message: report.message,
+                    percentage: report.percentage.map(|p| p as usize),
+                    last_update_at: cx.background_executor().now(),
+                },
+                cx,
+            ),
+            lsp::WorkDoneProgress::End(_) => {
+                language_server_status.progress_tokens.remove(&token);
+                self.on_lsp_work_end(language_server_id, token.clone(), cx);
+                if is_disk_based_diagnostics_progress {
+                    self.disk_based_diagnostics_finished(language_server_id, cx);
                 }
             }
         }
@@ -11310,13 +11326,13 @@ impl LspStore {
 
     pub fn pull_workspace_diagnostics(&mut self, server_id: LanguageServerId) {
         if let Some(LanguageServerState::Running {
-            workspace_refresh_task: Some((tx, ..)),
+            workspace_refresh_task: Some(workspace_refresh_task),
             ..
         }) = self
             .as_local_mut()
             .and_then(|local| local.language_servers.get_mut(&server_id))
         {
-            tx.try_send(()).ok();
+            workspace_refresh_task.refresh_tx.try_send(()).ok();
         }
     }
 
@@ -11332,11 +11348,11 @@ impl LspStore {
             local.language_server_ids_for_buffer(buffer, cx)
         }) {
             if let Some(LanguageServerState::Running {
-                workspace_refresh_task: Some((tx, ..)),
+                workspace_refresh_task: Some(workspace_refresh_task),
                 ..
             }) = local.language_servers.get_mut(&server_id)
             {
-                tx.try_send(()).ok();
+                workspace_refresh_task.refresh_tx.try_send(()).ok();
             }
         }
     }
@@ -11464,7 +11480,7 @@ fn subscribe_to_binary_statuses(
 fn lsp_workspace_diagnostics_refresh(
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
-) -> Option<(mpsc::Sender<()>, mpsc::Sender<()>, Task<()>)> {
+) -> Option<WorkspaceRefreshTask> {
     let identifier = match server.capabilities().diagnostic_provider? {
         lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
             if !diagnostic_options.workspace_diagnostics {
@@ -11482,8 +11498,8 @@ fn lsp_workspace_diagnostics_refresh(
     };
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
-    let (mut tx, mut rx) = mpsc::channel(1);
-    tx.try_send(()).ok();
+    let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
+    refresh_tx.try_send(()).ok();
 
     let workspace_query_language_server = cx.spawn(async move |lsp_store, cx| {
         let mut attempts = 0;
@@ -11491,7 +11507,7 @@ fn lsp_workspace_diagnostics_refresh(
         let mut requests = 0;
 
         loop {
-            let Some(()) = rx.recv().await else {
+            let Some(()) = refresh_rx.recv().await else {
                 return;
             };
 
@@ -11584,7 +11600,11 @@ fn lsp_workspace_diagnostics_refresh(
         }
     });
 
-    Some((tx, progress_tx, workspace_query_language_server))
+    Some(WorkspaceRefreshTask {
+        refresh_tx,
+        progress_tx,
+        task: workspace_query_language_server,
+    })
 }
 
 fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completion) {
@@ -11954,6 +11974,13 @@ impl LanguageServerLogType {
     }
 }
 
+pub struct WorkspaceRefreshTask {
+    refresh_tx: mpsc::Sender<()>,
+    progress_tx: mpsc::Sender<()>,
+    #[allow(dead_code)]
+    task: Task<()>,
+}
+
 pub enum LanguageServerState {
     Starting {
         startup: Task<Option<Arc<LanguageServer>>>,
@@ -11965,7 +11992,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
-        workspace_refresh_task: Option<(mpsc::Sender<()>, mpsc::Sender<()>, Task<()>)>,
+        workspace_refresh_task: Option<WorkspaceRefreshTask>,
     },
 }
 

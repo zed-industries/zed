@@ -1131,7 +1131,7 @@ impl LanguageServer {
     /// ready causes the request to be timed out with the future's output message.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request_with_timer<T: request::Request, U: Future<Output = String> + Unpin>(
+    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
         &self,
         params: T::Params,
         timer: U,
@@ -1149,7 +1149,7 @@ impl LanguageServer {
         )
     }
 
-    fn request_internal_with_timer<T, U: Future<Output = String> + Unpin>(
+    fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
@@ -1160,6 +1160,7 @@ impl LanguageServer {
     where
         T::Result: 'static + Send,
         T: request::Request,
+        U: Future<Output = String>,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
