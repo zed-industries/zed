@@ -543,47 +543,6 @@ impl AcpThread {
         &self.project
     }
 
-    #[cfg(test)]
-    pub fn fake(
-        stdin: async_pipe::PipeWriter,
-        stdout: async_pipe::PipeReader,
-        project: Entity<Project>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let foreground_executor = cx.foreground_executor().clone();
-
-        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-            stdin,
-            stdout,
-            move |fut| {
-                foreground_executor.spawn(fut).detach();
-            },
-        );
-
-        let io_task = cx.background_spawn({
-            async move {
-                io_fut.await.log_err();
-                Ok(())
-            }
-        });
-
-        let child_status = Some(io_task);
-
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        Self {
-            action_log,
-            shared_buffers: Default::default(),
-            entries: Default::default(),
-            title: "ACP Thread".into(),
-            project,
-            send_task: None,
-            connection: Arc::new(connection),
-            child_status,
-        }
-    }
-
     pub fn title(&self) -> SharedString {
         self.title.clone()
     }
@@ -1793,34 +1752,34 @@ mod tests {
     ) -> Entity<AcpThread> {
         struct DevGemini;
 
-        // impl agent_server::AgentServer for DevGemini {
-        //     async fn command(
-        //         &self,
-        //         _project: &Entity<Project>,
-        //         _cx: &mut AsyncApp,
-        //     ) -> Result<agent_server::AgentServerCommand> {
-        //         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        //             .join("../../../gemini-cli/packages/cli")
-        //             .to_string_lossy()
-        //             .to_string();
+        impl agent_servers::AgentServer for DevGemini {
+            async fn command(
+                &self,
+                _project: &Entity<Project>,
+                _cx: &mut AsyncApp,
+            ) -> Result<agent_server::AgentServerCommand> {
+                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../gemini-cli/packages/cli")
+                    .to_string_lossy()
+                    .to_string();
 
-        //         Ok(AgentServerCommand {
-        //             path: "node".into(),
-        //             args: vec![cli_path, "--acp".into()],
-        //             env: None,
-        //         })
-        //     }
+                Ok(AgentServerCommand {
+                    path: "node".into(),
+                    args: vec![cli_path, "--acp".into()],
+                    env: None,
+                })
+            }
 
-        //     async fn version(
-        //         &self,
-        //         _command: &agent_server::AgentServerCommand,
-        //     ) -> Result<AgentServerVersion> {
-        //         Ok(AgentServerVersion {
-        //             current_version: "0.1.0".into(),
-        //             supported: true,
-        //         })
-        //     }
-        // }
+            async fn version(
+                &self,
+                _command: &agent_server::AgentServerCommand,
+            ) -> Result<AgentServerVersion> {
+                Ok(AgentServerVersion {
+                    current_version: "0.1.0".into(),
+                    supported: true,
+                })
+            }
+        }
 
         // let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
         //     .await
@@ -1840,7 +1799,27 @@ mod tests {
     ) -> (Entity<AcpThread>, Entity<FakeAcpServer>) {
         let (stdin_tx, stdin_rx) = async_pipe::pipe();
         let (stdout_tx, stdout_rx) = async_pipe::pipe();
-        let thread = cx.update(|cx| cx.new(|cx| AcpThread::fake(stdin_tx, stdout_rx, project, cx)));
+
+        let foreground_executor = cx.foreground_executor().clone();
+        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
+            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+            stdin_rx,
+            stdout_tx,
+            move |fut| {
+                foreground_executor.spawn(fut).detach();
+            },
+        );
+
+        let io_task = cx.background_spawn({
+            async move {
+                io_fut.await.log_err();
+                Ok(())
+            }
+        });
+
+        let thread = cx.update(|cx| {
+            cx.new(|cx| AcpThread::new(connection, "Test".into(), Some(io_task), project, cx))
+        });
         let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
         (thread, agent)
     }
