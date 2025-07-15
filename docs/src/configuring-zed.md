@@ -1249,6 +1249,157 @@ or
 
 Each option controls displaying of a particular toolbar element. If all elements are hidden, the editor toolbar is not displayed.
 
+## Workspace
+
+- Description: Configuration for workspace features including pinned tabs and pane management.
+- Setting: `workspace`
+- Default:
+
+```json
+"workspace": {
+  "pinned_tabs_on_separate_row": false,
+  "pinned_tab_size": "xsmall",
+  "max_pinned_tabs": null
+}
+```
+
+### Pinned Tabs on Separate Row
+
+- Description: When enabled, pinned tabs are displayed on a separate row above unpinned tabs, similar to VS Code behavior. This provides better visual separation and prevents pinned tabs from being pushed out of view by unpinned tabs.
+- Setting: `pinned_tabs_on_separate_row`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json
+{
+  "workspace": {
+    "pinned_tabs_on_separate_row": true
+  }
+}
+```
+
+### Pinned Tab Size
+
+- Description: Controls the width of pinned tabs. When set to `xsmall`, pinned tabs display only the file icon (when file icons are enabled) or a minimal text label, making them more compact than regular tabs.
+- Setting: `pinned_tab_size`
+- Default: `xsmall`
+
+**Options**
+
+1. Extra small pinned tabs (icon-only when file icons are enabled):
+
+```json
+{
+  "workspace": {
+    "pinned_tab_size": "xsmall"
+  }
+}
+```
+
+2. Normal-sized pinned tabs (same as unpinned tabs):
+
+```json
+{
+  "workspace": {
+    "pinned_tab_size": "normal"
+  }
+}
+```
+
+### Maximum Pinned Tabs
+
+- Description: Sets the maximum number of tabs that can be pinned per pane. When this limit is reached, attempting to pin additional tabs will unpin the oldest pinned tab to make room for the new one.
+- Setting: `max_pinned_tabs`
+- Default: `null` (no limit)
+
+**Options**
+
+`integer` values or `null` for unlimited
+
+**Example**
+
+```json
+{
+  "workspace": {
+    "max_pinned_tabs": 10
+  }
+}
+```
+
+## Pane Management
+
+Zed provides several features for managing panes (split views) in your workspace:
+
+### Pane Locking
+
+Pane locking prevents new items from being opened in a locked pane. This is useful when you want to keep specific files visible while opening other files in different panes.
+
+**Available Actions:**
+
+- `pane::ToggleLock` - Toggle lock state for the active pane
+- `workspace::LockAllPanes` - Lock all panes in the workspace
+- `workspace::UnlockAllPanes` - Unlock all panes in the workspace
+
+When a pane is locked:
+- A lock icon appears in the tab bar
+- New files open in the next available unlocked pane
+- If all panes are locked, a new pane is automatically created
+- The lock state persists across Zed sessions
+
+**Example Key Bindings:**
+
+```json
+{
+  "context": "Pane",
+  "bindings": {
+    "cmd-shift-l": "pane::ToggleLock"
+  }
+}
+```
+
+### Tab Pinning
+
+Tab pinning keeps important files easily accessible and prevents them from being accidentally closed.
+
+**Available Actions:**
+
+- `pane::TogglePinTab` - Pin/unpin the active tab
+- Right-click on any tab to access pin/unpin options
+
+**Pinned Tab Features:**
+
+- Visual indicator (pin icon) on pinned tabs
+- Pinned tabs cannot be closed with "Close Other Tabs" or "Close Tabs to the Right"
+- When `pinned_tabs_on_separate_row` is enabled, pinned tabs appear on a dedicated row
+- Drag and drop support for reordering within pinned/unpinned groups
+- Pinned state persists across sessions
+
+**Tips for VS Code Users:**
+
+If you're migrating from VS Code, enable these settings for a familiar experience:
+
+```json
+{
+  "workspace": {
+    "pinned_tabs_on_separate_row": true,
+    "pinned_tab_size": "xsmall"
+  },
+  "tabs": {
+    "file_icons": true
+  }
+}
+```
+
+This configuration will:
+- Display pinned tabs on a separate row like VS Code
+- Show only file icons for pinned tabs (when file icons are enabled)
+- Provide visual separation between pinned and unpinned tabs
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.

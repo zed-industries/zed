@@ -6761,4 +6761,228 @@ mod tests {
             "pane items do not match expectation"
         );
     }
+
+    #[gpui::test]
+    async fn test_pane_locking(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Initially pane should not be locked
+        assert!(!pane.read_with(cx, |pane, _| pane.is_locked()));
+
+        // Toggle lock on
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_lock(&ToggleLock, window, cx);
+        });
+        assert!(pane.read_with(cx, |pane, _| pane.is_locked()));
+
+        // Toggle lock off
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_lock(&ToggleLock, window, cx);
+        });
+        assert!(!pane.read_with(cx, |pane, _| pane.is_locked()));
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tabs_with_max_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Set max pinned tabs to 2
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.max_pinned_tabs = Some(2);
+            });
+        });
+
+        // Add 3 items and pin them all
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+
+        // Pin first item
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        // Pin second item
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        // Try to pin third item - should unpin the oldest (A) due to limit
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B!", "C*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tabs_drag_and_drop(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add items and pin some
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+
+        // Pin A and C
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "C!", "B", "D*"], cx);
+
+        // Move pinned tab C to position 0 (should stay within pinned group)
+        pane.update_in(cx, |pane, window, cx| {
+            pane.move_item(1, 0, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "A!", "B", "D*"], cx);
+
+        // Try to move unpinned tab B to pinned area (should not move)
+        pane.update_in(cx, |pane, window, cx| {
+            pane.move_item(2, 0, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "A!", "B", "D*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_inactive_items_preserves_pinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add items
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+
+        // Pin A and B
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        // Make D active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_d.item_id()).unwrap();
+            pane.activate_item(ix, false, false, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C", "D*"], cx);
+
+        // Close inactive items - should preserve pinned tabs A and B
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, window, cx)
+                .detach_and_log_err(cx);
+        });
+        
+        cx.run_until_parked();
+        assert_item_labels(&pane, ["A!", "B!", "D*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_items_to_the_right_preserves_pinned_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add items
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+
+        // Pin C and D
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_d.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "D!", "A", "B*"], cx);
+
+        // Activate A and close items to the right - should preserve pinned tabs
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.activate_item(ix, false, false, window, cx);
+            pane.close_items_to_the_right_by_id(Some(item_a.item_id()), &CloseItemsToTheRight, window, cx)
+                .detach_and_log_err(cx);
+        });
+        
+        cx.run_until_parked();
+        assert_item_labels(&pane, ["C!", "D!", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_serialization_with_pinned_and_locked_state(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add items and pin some
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+
+        // Pin A and C, lock the pane
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            pane.toggle_lock(&ToggleLock, window, cx);
+        });
+
+        // Verify initial state
+        assert_item_labels(&pane, ["A!", "C*!", "B"], cx);
+        assert!(pane.read_with(cx, |pane, _| pane.is_locked()));
+
+        // Serialize the pane
+        let serialized = pane.update_in(cx, |pane, window, cx| {
+            pane.serialize(
+                &project,
+                &Default::default(),
+                Default::default(),
+                window,
+                cx,
+            )
+        });
+
+        // Verify serialized state includes locked and pinned_count
+        assert_eq!(serialized.locked, true);
+        assert_eq!(serialized.pinned_count, 2);
+    }
 }

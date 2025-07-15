@@ -10748,4 +10748,139 @@ mod tests {
         });
         item
     }
+
+    #[gpui::test]
+    async fn test_lock_unlock_all_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Create additional panes
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, window, cx);
+            workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Down, window, cx);
+        });
+
+        // Verify we have 3 panes and none are locked
+        workspace.read_with(cx, |workspace, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 3);
+            for pane in &panes {
+                assert!(!pane.read(cx).is_locked());
+            }
+        });
+
+        // Lock all panes
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.lock_all_panes(&LockAllPanes, window, cx);
+        });
+
+        // Verify all panes are locked
+        workspace.read_with(cx, |workspace, cx| {
+            let panes = workspace.panes();
+            for pane in &panes {
+                assert!(pane.read(cx).is_locked());
+            }
+        });
+
+        // Unlock all panes
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.unlock_all_panes(&UnlockAllPanes, window, cx);
+        });
+
+        // Verify all panes are unlocked
+        workspace.read_with(cx, |workspace, cx| {
+            let panes = workspace.panes();
+            for pane in &panes {
+                assert!(!pane.read(cx).is_locked());
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_add_item_to_locked_pane_creates_new_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Lock the active pane
+        workspace.update_in(cx, |workspace, _, cx| {
+            workspace.active_pane().update(cx, |pane, _, cx| {
+                pane.set_locked(true, cx);
+            });
+        });
+
+        // Verify we have 1 locked pane
+        workspace.read_with(cx, |workspace, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 1);
+            assert!(panes[0].read(cx).is_locked());
+        });
+
+        // Add an item which should create a new pane
+        let item = cx.new(|cx| TestItem::new(cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane_or_new_pane(Box::new(item), None, true, window, cx);
+        });
+
+        // Verify we now have 2 panes
+        workspace.read_with(cx, |workspace, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 2);
+            // First pane should still be locked
+            assert!(panes[0].read(cx).is_locked());
+            // New pane should not be locked
+            assert!(!panes[1].read(cx).is_locked());
+            // New pane should be active and contain the item
+            assert_eq!(workspace.active_pane(), &panes[1]);
+            assert_eq!(panes[1].read(cx).items_len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_find_unlocked_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Create additional panes
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Right, window, cx);
+            workspace.split_and_clone(workspace.active_pane().clone(), SplitDirection::Down, window, cx);
+        });
+
+        let panes = workspace.read_with(cx, |workspace, _| workspace.panes());
+        assert_eq!(panes.len(), 3);
+
+        // Initially all panes are unlocked, should find the first one
+        workspace.read_with(cx, |workspace, cx| {
+            let found = workspace.find_unlocked_pane(cx);
+            assert_eq!(found, Some(panes[0].clone()));
+        });
+
+        // Lock first two panes
+        panes[0].update_in(cx, |pane, window, cx| pane.set_locked(true, cx));
+        panes[1].update_in(cx, |pane, window, cx| pane.set_locked(true, cx));
+
+        // Should find the third unlocked pane
+        workspace.read_with(cx, |workspace, cx| {
+            let found = workspace.find_unlocked_pane(cx);
+            assert_eq!(found, Some(panes[2].clone()));
+        });
+
+        // Lock all panes
+        panes[2].update_in(cx, |pane, window, cx| pane.set_locked(true, cx));
+
+        // Should find no unlocked pane
+        workspace.read_with(cx, |workspace, cx| {
+            let found = workspace.find_unlocked_pane(cx);
+            assert_eq!(found, None);
+        });
+    }
 }
