@@ -1134,7 +1134,7 @@
     "context": "KeybindEditorModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "menu::Confirm",
+      "ctrl-enter": "menu::Confirm",
       "escape": "menu::Cancel"
     }
   },
