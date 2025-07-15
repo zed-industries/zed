@@ -134,7 +134,7 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    project_settings::DiagnosticSeverity,
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
 };
 
 pub use git::blame::BlameRenderer;
@@ -15086,7 +15086,7 @@ impl Editor {
 
     pub fn go_to_diagnostic(
         &mut self,
-        _: &GoToDiagnostic,
+        action: &GoToDiagnostic,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -15094,12 +15094,12 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.go_to_diagnostic_impl(Direction::Next, window, cx)
+        self.go_to_diagnostic_impl(Direction::Next, action.severity, window, cx)
     }
 
     pub fn go_to_prev_diagnostic(
         &mut self,
-        _: &GoToPreviousDiagnostic,
+        action: &GoToPreviousDiagnostic,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -15107,12 +15107,13 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.go_to_diagnostic_impl(Direction::Prev, window, cx)
+        self.go_to_diagnostic_impl(Direction::Prev, action.severity, window, cx)
     }
 
     pub fn go_to_diagnostic_impl(
         &mut self,
         direction: Direction,
+        severity: GoToDiagnosticSeverityFilter,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -15128,9 +15129,11 @@ impl Editor {
 
         fn filtered(
             snapshot: EditorSnapshot,
+            severity: GoToDiagnosticSeverityFilter,
             diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
         ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
             diagnostics
+                .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
                 .filter(|entry| !entry.diagnostic.is_unnecessary)
                 .filter(move |entry| !snapshot.intersects_fold(entry.range.start))
@@ -15139,12 +15142,14 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let before = filtered(
             snapshot.clone(),
+            severity,
             buffer
                 .diagnostics_in_range(0..selection.start)
                 .filter(|entry| entry.range.start <= selection.start),
         );
         let after = filtered(
             snapshot,
+            severity,
             buffer
                 .diagnostics_in_range(selection.start..buffer.len())
                 .filter(|entry| entry.range.start >= selection.start),

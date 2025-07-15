@@ -33,6 +33,7 @@ use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    project_settings::GoToDiagnosticSeverityFilter,
     relativize_path,
 };
 use project_panel_settings::{
@@ -206,6 +207,24 @@ struct Trash {
     pub skip_prompt: bool,
 }
 
+/// Selects the next entry with diagnostics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
+#[serde(deny_unknown_fields)]
+struct SelectNextDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
+/// Selects the previous entry with diagnostics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
+#[serde(deny_unknown_fields)]
+struct SelectPrevDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
 actions!(
     project_panel,
     [
@@ -255,10 +274,6 @@ actions!(
         SelectNextGitEntry,
         /// Selects the previous entry with git changes.
         SelectPrevGitEntry,
-        /// Selects the next entry with diagnostics.
-        SelectNextDiagnostic,
-        /// Selects the previous entry with diagnostics.
-        SelectPrevDiagnostic,
         /// Selects the next directory.
         SelectNextDirectory,
         /// Selects the previous directory.
@@ -1954,7 +1969,7 @@ impl ProjectPanel {
 
     fn select_prev_diagnostic(
         &mut self,
-        _: &SelectPrevDiagnostic,
+        action: &SelectPrevDiagnostic,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1973,7 +1988,8 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );
@@ -1989,7 +2005,7 @@ impl ProjectPanel {
 
     fn select_next_diagnostic(
         &mut self,
-        _: &SelectNextDiagnostic,
+        action: &SelectNextDiagnostic,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2008,7 +2024,8 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );
