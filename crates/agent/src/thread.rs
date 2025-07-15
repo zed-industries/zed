@@ -4166,8 +4166,8 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, 1,
-                "Should only retry once for overloaded errors"
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Should retry MAX_RETRY_ATTEMPTS times for overloaded errors"
             );
         });
 
@@ -4180,7 +4180,9 @@ fn main() {{
                         && msg.ui_only
                         && msg.segments.iter().any(|seg| {
                             if let MessageSegment::Text(text) = seg {
-                                text.contains("overloaded") && text.contains("attempt 1 of 1")
+                                text.contains("overloaded")
+                                    && text
+                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
                             } else {
                                 false
                             }
@@ -4238,7 +4240,7 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                retry_state.max_attempts, 1,
                 "Should have correct max attempts"
             );
         });
@@ -4254,8 +4256,7 @@ fn main() {{
                             if let MessageSegment::Text(text) = seg {
                                 text.contains("internal")
                                     && text.contains("Fake")
-                                    && text
-                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
+                                    && text.contains("attempt 1 of 1")
                             } else {
                                 false
                             }
@@ -4293,7 +4294,7 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
-        // Create model that returns internal server error
+        // Create model that returns internal server error (which now uses fixed delay with 1 retry)
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
         // Insert a user message
@@ -4345,8 +4346,8 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Internal server errors should still use full retry attempts"
+                retry_state.max_attempts, 1,
+                "Internal server errors should only retry once"
             );
         });
 
@@ -4371,91 +4372,25 @@ fn main() {{
                 })
                 .count()
         });
-        assert_eq!(retry_count, 2, "Should have scheduled second retry");
-
-        // Check retry state updated
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
-            assert_eq!(retry_state.attempt, 2, "Should be second retry attempt");
-            assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have correct max attempts"
-            );
-        });
-
-        // Advance clock for second retry (exponential backoff)
-        cx.executor().advance_clock(BASE_RETRY_DELAY * 2);
-        cx.run_until_parked();
-
-        // Should have scheduled third retry
-        // Count all retry messages now
-        let retry_count = thread.update(cx, |thread, _| {
-            thread
-                .messages
-                .iter()
-                .filter(|m| {
-                    m.ui_only
-                        && m.segments.iter().any(|s| {
-                            if let MessageSegment::Text(text) = s {
-                                text.contains("Retrying") && text.contains("seconds")
-                            } else {
-                                false
-                            }
-                        })
-                })
-                .count()
-        });
         assert_eq!(
-            retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should have scheduled third retry"
+            retry_count, 1,
+            "Should have only one retry for internal server errors"
         );
 
-        // Check retry state updated
+        // For internal server errors, we only retry once and then give up
+        // Check that retry_state is cleared after the single retry
         thread.read_with(cx, |thread, _| {
-            assert!(thread.retry_state.is_some(), "Should have retry state");
-            let retry_state = thread.retry_state.as_ref().unwrap();
-            assert_eq!(
-                retry_state.attempt, MAX_RETRY_ATTEMPTS,
-                "Should be at max retry attempt"
-            );
-            assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have correct max attempts"
+            assert!(
+                thread.retry_state.is_none(),
+                "Retry state should be cleared after single retry"
             );
         });
 
-        // Advance clock for third retry (exponential backoff)
-        cx.executor().advance_clock(BASE_RETRY_DELAY * 4);
-        cx.run_until_parked();
-
-        // No more retries should be scheduled after clock was advanced.
-        let retry_count = thread.update(cx, |thread, _| {
-            thread
-                .messages
-                .iter()
-                .filter(|m| {
-                    m.ui_only
-                        && m.segments.iter().any(|s| {
-                            if let MessageSegment::Text(text) = s {
-                                text.contains("Retrying") && text.contains("seconds")
-                            } else {
-                                false
-                            }
-                        })
-                })
-                .count()
-        });
-        assert_eq!(
-            retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should not exceed max retries"
-        );
-
-        // Final completion count should be initial + max retries
+        // Verify total attempts (1 initial + 1 retry)
         assert_eq!(
             *completion_count.lock(),
-            (MAX_RETRY_ATTEMPTS + 1) as usize,
-            "Should have made initial + max retry attempts"
+            2,
+            "Should have attempted once plus 1 retry"
         );
     }
 
@@ -4493,21 +4428,11 @@ fn main() {{
         cx.run_until_parked();
 
         // Advance through all retries
-        for i in 0..MAX_RETRY_ATTEMPTS {
-            let delay = if i == 0 {
-                BASE_RETRY_DELAY
-            } else {
-                BASE_RETRY_DELAY * 2u32.pow(i as u32 - 1)
-            };
-            cx.executor().advance_clock(delay);
+        // ServerOverloaded now uses fixed delay, not exponential backoff
+        for _ in 0..MAX_RETRY_ATTEMPTS {
+            cx.executor().advance_clock(BASE_RETRY_DELAY);
             cx.run_until_parked();
         }
-
-        // After the 3rd retry is scheduled, we need to wait for it to execute and fail
-        // The 3rd retry has a delay of BASE_RETRY_DELAY_SECS * 4 (20 seconds)
-        let final_delay = BASE_RETRY_DELAY * 2u32.pow((MAX_RETRY_ATTEMPTS - 1) as u32);
-        cx.executor().advance_clock(final_delay);
-        cx.run_until_parked();
 
         let retry_count = thread.update(cx, |thread, _| {
             thread
@@ -4528,8 +4453,8 @@ fn main() {{
 
         // After max retries, should emit RetriesFailed event
         assert_eq!(
-            retry_count, 1,
-            "Should have attempted only 1 retry for overloaded errors"
+            retry_count, MAX_RETRY_ATTEMPTS as usize,
+            "Should have attempted MAX_RETRY_ATTEMPTS retries for overloaded errors"
         );
         assert!(
             *retries_failed.lock(),
@@ -4550,8 +4475,8 @@ fn main() {{
                 .filter(|msg| msg.ui_only && msg.role == Role::System)
                 .count();
             assert_eq!(
-                retry_messages, 1,
-                "Should have one retry message for overloaded errors"
+                retry_messages, MAX_RETRY_ATTEMPTS as usize,
+                "Should have MAX_RETRY_ATTEMPTS retry messages for overloaded errors"
             );
         });
     }
@@ -5054,7 +4979,7 @@ fn main() {{
             // Check that the message contains attempt count since we use retry_state
             if let Some(MessageSegment::Text(text)) = retry_message.segments.first() {
                 assert!(
-                    text.contains("attempt 1 of 3"),
+                    text.contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS)),
                     "Rate limit retry message should contain attempt count with MAX_RETRY_ATTEMPTS"
                 );
                 assert!(
