@@ -28,7 +28,7 @@ use std::{
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
+use workspace::{Item, SaveIntent, CloseActiveItem, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
@@ -207,6 +207,7 @@ actions!(
 #[action(namespace = vim, no_json, no_register)]
 struct VimEdit {
     pub filename: String,
+    pub replace_current: bool,
 }
 
 #[derive(Debug)]
@@ -440,6 +441,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             };
 
             let _ = workspace.update(cx, |workspace, cx| {
+
+                if action.replace_current {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                    }).detach_and_log_err(cx);
+                }
+
                 workspace
                     .open_path(project_path, None, true, window, cx)
                     .detach_and_log_err(cx);
@@ -1071,8 +1079,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
-        VimCommand::new(("tabe", "dit"), workspace::NewFile),
-        VimCommand::new(("tabnew", ""), workspace::NewFile),
+        VimCommand::new(("tabe", "dit"),editor::actions::ReloadFile)
+            .bang(editor::actions::ReloadFile)
+            .args(|_, args| Some(VimEdit { filename: args, replace_current: false }.boxed_clone())),
+        VimCommand::new(("tabnew", ""), editor::actions::ReloadFile)
+            .bang(editor::actions::ReloadFile)
+            .args(|_, args| Some(VimEdit { filename: args, replace_current: false }.boxed_clone())),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
@@ -1175,7 +1187,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile)
-            .args(|_, args| Some(VimEdit { filename: args }.boxed_clone())),
+            .args(|_, args| Some(VimEdit { filename: args, replace_current: true }.boxed_clone())),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
