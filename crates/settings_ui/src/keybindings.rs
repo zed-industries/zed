@@ -24,6 +24,7 @@ use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, ParentElement as _, Render,
     SharedString, Styled as _, Tooltip, Window, prelude::*,
 };
+use ui_input::SingleLineInput;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
     register_serializable_item,
@@ -637,6 +638,7 @@ impl KeymapEditor {
                     "Delete",
                     Box::new(DeleteBinding),
                 )
+                .separator()
                 .action("Copy Action", Box::new(CopyAction))
                 .action_disabled_when(
                     selected_binding_has_no_context,
@@ -1285,7 +1287,7 @@ struct KeybindingEditorModal {
     editing_keybind: ProcessedKeybinding,
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
-    context_editor: Entity<Editor>,
+    context_editor: Entity<SingleLineInput>,
     input_editor: Option<Entity<Editor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
@@ -1316,25 +1318,28 @@ impl KeybindingEditorModal {
         let keybind_editor = cx
             .new(|cx| KeystrokeInput::new(editing_keybind.keystrokes().map(Vec::from), window, cx));
 
-        let context_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+        let context_editor: Entity<SingleLineInput> = cx.new(|cx| {
+            let input = SingleLineInput::new(window, cx, "Keybinding Context")
+                .label("Edit Context")
+                .label_size(LabelSize::Default);
 
             if let Some(context) = editing_keybind
                 .context
                 .as_ref()
                 .and_then(KeybindContextString::local)
             {
-                editor.set_text(context.clone(), window, cx);
-            } else {
-                editor.set_placeholder_text("Keybinding context", cx);
+                input.editor().update(cx, |editor, cx| {
+                    editor.set_text(context.clone(), window, cx);
+                });
             }
 
-            cx.spawn(async |editor, cx| {
+            let editor_entity = input.editor().clone();
+            cx.spawn(async move |_input_handle, cx| {
                 let contexts = cx
                     .background_spawn(async { collect_contexts_from_assets() })
                     .await;
 
-                editor
+                editor_entity
                     .update(cx, |editor, _cx| {
                         editor.set_completion_provider(Some(std::rc::Rc::new(
                             KeyContextCompletionProvider { contexts },
@@ -1344,7 +1349,7 @@ impl KeybindingEditorModal {
             })
             .detach_and_log_err(cx);
 
-            editor
+            input
         });
 
         let input_editor = editing_keybind.action_schema.clone().map(|_schema| {
@@ -1354,7 +1359,7 @@ impl KeybindingEditorModal {
                     editor.set_text(input.text, window, cx);
                 } else {
                     // TODO: default value from schema?
-                    editor.set_placeholder_text("Action input", cx);
+                    editor.set_placeholder_text("Action Input", cx);
                 }
                 cx.spawn(async |editor, cx| {
                     let json_language = load_json_language(workspace, cx).await;
@@ -1431,7 +1436,7 @@ impl KeybindingEditorModal {
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         let new_context = self
             .context_editor
-            .read_with(cx, |editor, cx| editor.text(cx));
+            .read_with(cx, |input, cx| input.editor().read(cx).text(cx));
         let new_context = new_context.is_empty().not().then_some(new_context);
         let new_context_err = new_context.as_deref().and_then(|context| {
             gpui::KeyBindingContextPredicate::parse(context)
@@ -1533,17 +1538,6 @@ impl KeybindingEditorModal {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
-        let input_base = || {
-            div()
-                .w_full()
-                .py_1()
-                .px_2()
-                .min_h_8()
-                .rounded_md()
-                .bg(theme.editor_background)
-                .border_1()
-                .border_color(theme.border_variant)
-        };
 
         v_flex()
             .w(rems(34.))
@@ -1553,9 +1547,9 @@ impl Render for KeybindingEditorModal {
                     .p_3()
                     .child(Label::new("Edit Keystroke"))
                     .child(
-                        Label::new("Input the desired keystroke for the selected action.")
+                        Label::new("Record a new keystroke for the selected action.")
                             .color(Color::Muted)
-                            .mb_2(),
+                            .mb_1p5(),
                     )
                     .child(self.keybind_editor.clone()),
             )
@@ -1564,30 +1558,25 @@ impl Render for KeybindingEditorModal {
                     v_flex()
                         .p_3()
                         .pt_0()
-                        .child(Label::new("Edit Input"))
+                        .gap_1()
+                        .child(Label::new("Edit Arguments"))
                         .child(
-                            Label::new("Input the desired input to the binding.")
-                                .color(Color::Muted)
-                                .mb_2(),
-                        )
-                        .child(input_base().child(editor)),
+                            div()
+                                .w_full()
+                                .py_1()
+                                .px_1p5()
+                                .rounded_lg()
+                                .bg(theme.editor_background)
+                                .border_1()
+                                .border_color(theme.border_variant)
+                                .child(editor),
+                        ),
                 )
             })
-            .child(
-                v_flex()
-                    .p_3()
-                    .pt_0()
-                    .child(Label::new("Edit Context"))
-                    .child(
-                        Label::new("Input the desired context for the binding.")
-                            .color(Color::Muted)
-                            .mb_2(),
-                    )
-                    .child(input_base().child(self.context_editor.clone())),
-            )
+            .child(v_flex().p_3().pt_0().child(self.context_editor.clone()))
             .when_some(self.error.as_ref(), |this, error| {
                 this.child(
-                    div().p_2().child(
+                    div().p_3().pt_0().child(
                         Banner::new()
                             .map(|banner| match error {
                                 InputError::Error(_) => banner.severity(ui::Severity::Error),
@@ -2009,7 +1998,7 @@ impl Render for KeystrokeInput {
             .theme()
             .colors()
             .editor_background
-            .blend(cx.theme().colors().text_accent.opacity(0.05));
+            .blend(cx.theme().colors().text_accent.opacity(0.1));
 
         let recording_indicator = h_flex()
             .h_4()
@@ -2029,7 +2018,7 @@ impl Render for KeystrokeInput {
                     .color(Color::Error)
                     .with_animation(
                         "recording-pulse",
-                        Animation::new(std::time::Duration::from_secs(1))
+                        Animation::new(std::time::Duration::from_secs(2))
                             .repeat()
                             .with_easing(gpui::pulsating_between(0.4, 0.8)),
                         {
@@ -2055,7 +2044,7 @@ impl Render for KeystrokeInput {
             .w_full()
             .flex_1()
             .justify_between()
-            .rounded_md()
+            .rounded_lg()
             .overflow_hidden()
             .map(|this| {
                 if is_recording {
@@ -2119,7 +2108,7 @@ impl Render for KeystrokeInput {
                                 IconButton::new("record-btn", IconName::PlayFilled)
                                     .shape(ui::IconButtonShape::Square)
                                     .tooltip(Tooltip::text("Start Recording"))
-                                    .icon_color(Color::Muted)
+                                    .when(!is_focused, |this| this.icon_color(Color::Muted))
                                     .on_click(cx.listener(|this, _event, window, _cx| {
                                         this.inner_focus_handle.focus(window);
                                     })),
@@ -2130,7 +2119,9 @@ impl Render for KeystrokeInput {
                         IconButton::new("clear-btn", IconName::Delete)
                             .shape(ui::IconButtonShape::Square)
                             .tooltip(Tooltip::text("Clear Keystrokes"))
-                            .when(!is_recording, |this| this.icon_color(Color::Muted))
+                            .when(!is_recording || !is_focused, |this| {
+                                this.icon_color(Color::Muted)
+                            })
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.keystrokes.clear();
                                 cx.emit(());

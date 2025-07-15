@@ -37,6 +37,7 @@ theme.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
