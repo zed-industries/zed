@@ -191,7 +191,7 @@ impl AcpThreadView {
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let thread = match agent_servers::Gemini
+            let thread = match agent_servers::Claude
                 .new_thread(&root_dir, &project, cx)
                 .await
             {

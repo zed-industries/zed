@@ -91,9 +91,9 @@ impl AgentConnection for ClaudeAgentConnection {
     }
 }
 
-struct ClaudeAgentServer;
+pub struct Claude;
 
-impl AgentServer for ClaudeAgentServer {
+impl AgentServer for Claude {
     async fn new_thread(
         self,
         root_dir: &Path,
@@ -199,7 +199,7 @@ impl AgentServer for ClaudeAgentServer {
     }
 }
 
-pub struct ClaudeAgentConnection {
+struct ClaudeAgentConnection {
     outgoing_tx: UnboundedSender<SdkMessage>,
     cx: AsyncApp,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
