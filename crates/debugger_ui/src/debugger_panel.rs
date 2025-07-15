@@ -1694,6 +1694,7 @@ impl Render for DebugPanel {
                                         category_filter: Some(
                                             zed_actions::ExtensionCategoryFilter::DebugAdapters,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,

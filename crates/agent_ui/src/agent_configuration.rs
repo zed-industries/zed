@@ -491,6 +491,7 @@ impl AgentConfiguration {
                                         category_filter: Some(
                                             ExtensionCategoryFilter::ContextServers,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,

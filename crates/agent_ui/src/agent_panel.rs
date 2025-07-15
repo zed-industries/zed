@@ -1778,6 +1778,7 @@ impl AgentPanel {
                                 category_filter: Some(
                                     zed_actions::ExtensionCategoryFilter::ContextServers,
                                 ),
+                                id: None,
                             }),
                         )
                         .action("Add Custom Server…", Box::new(AddContextServer))
