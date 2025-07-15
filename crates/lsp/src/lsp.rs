@@ -1507,6 +1507,8 @@ impl FakeLanguageServer {
             }
         });
 
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+
         (server, fake)
     }
     #[cfg(target_os = "windows")]
