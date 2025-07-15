@@ -1077,20 +1077,17 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
+                                    let action_name = binding.action_name.clone();
 
                                     let action = div()
-                                        .child(binding.action_name.clone())
                                         .id(("keymap action", index))
+                                        .child(command_palette::humanize_action_name(&action_name))
                                         .when(!context_menu_deployed, |this| {
                                             this.tooltip({
                                                 let action_name = binding.action_name.clone();
                                                 let action_docs = binding.action_docs;
                                                 move |_, cx| {
-                                                    let action_tooltip = Tooltip::new(
-                                                        command_palette::humanize_action_name(
-                                                            &action_name,
-                                                        ),
-                                                    );
+                                                    let action_tooltip = Tooltip::new(&action_name);
                                                     let action_tooltip = match action_docs {
                                                         Some(docs) => action_tooltip.meta(docs),
                                                         None => action_tooltip,
