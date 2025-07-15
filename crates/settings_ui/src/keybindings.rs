@@ -22,8 +22,9 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, Modal, ModalFooter, ModalHeader, IconButtonShape,
-    ParentElement as _, Render, SharedString, Styled as _, Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Modal,
+    ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _,
+    Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use workspace::{
@@ -1105,7 +1106,7 @@ impl Render for KeymapEditor {
                                         base_button_style(index, IconName::Warning)
                                             .tooltip(|window, cx| {
                                                 Tooltip::with_meta(
-                                                    "Click to edit keybind",
+                                                    "Edit Keybinding",
                                                     None,
                                                     "Use alt+click to show conflicts",
                                                     window,
@@ -1132,7 +1133,7 @@ impl Render for KeymapEditor {
                                     .unwrap_or_else(|| {
                                         base_button_style(index, IconName::Pencil)
                                             .visible_on_hover(row_group_id(index))
-                                            .tooltip(Tooltip::text("Click to edit keybind"))
+                                            .tooltip(Tooltip::text("Edit Keybinding"))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
