@@ -850,7 +850,7 @@ impl KeymapEditor {
 
         match self.search_mode {
             SearchMode::KeyStroke => {
-                window.focus(&self.keystroke_editor.focus_handle(cx));
+                window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
             }
             SearchMode::Normal => {}
         }
@@ -967,63 +967,32 @@ impl Render for KeymapEditor {
             .gap_1()
             .bg(theme.colors().editor_background)
             .child(
-                h_flex()
+                v_flex()
                     .p_2()
-                    .gap_1()
-                    .key_context({
-                        let mut context = KeyContext::new_with_defaults();
-                        context.add("BufferSearchBar");
-                        context
-                    })
+                    .gap_2()
                     .child(
-                        div()
-                            .size_full()
-                            .h_8()
-                            .pl_2()
-                            .pr_1()
-                            .py_1()
-                            .border_1()
-                            .border_color(theme.colors().border)
-                            .rounded_lg()
-                            .child(self.filter_editor.clone()),
-                    )
-                    .child(
-                        // TODO: Ask Mikyala if there's a way to get have items be aligned by horizontally
-                        // without embedding a h_flex in another h_flex
                         h_flex()
-                            .when(self.keybinding_conflict_state.any_conflicts(), |this| {
-                                this.child(
-                                    IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                        .tooltip({
-                                            let filter_state = self.filter_state;
-
-                                            move |window, cx| {
-                                                Tooltip::for_action(
-                                                    match filter_state {
-                                                        FilterState::All => "Show conflicts",
-                                                        FilterState::Conflicts => "Hide conflicts",
-                                                    },
-                                                    &ToggleConflictFilter,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .selected_icon_color(Color::Error)
-                                        .toggle_state(matches!(
-                                            self.filter_state,
-                                            FilterState::Conflicts
-                                        ))
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                ToggleConflictFilter.boxed_clone(),
-                                                cx,
-                                            );
-                                        }),
-                                )
-                            })
+                            .gap_2()
+                            .child(
+                                div()
+                                    .key_context({
+                                        let mut context = KeyContext::new_with_defaults();
+                                        context.add("BufferSearchBar");
+                                        context
+                                    })
+                                    .size_full()
+                                    .h_8()
+                                    .pl_2()
+                                    .pr_1()
+                                    .py_1()
+                                    .border_1()
+                                    .border_color(theme.colors().border)
+                                    .rounded_lg()
+                                    .child(self.filter_editor.clone()),
+                            )
                             .child(
                                 IconButton::new("KeymapEditorToggleFiltersIcon", IconName::Filter)
+                                    .shape(ui::IconButtonShape::Square)
                                     .tooltip(|window, cx| {
                                         Tooltip::for_action(
                                             "Toggle Keystroke Search",
@@ -1039,18 +1008,54 @@ impl Render for KeymapEditor {
                                             cx,
                                         );
                                     }),
-                            ),
-                    ),
+                            )
+                            .when(self.keybinding_conflict_state.any_conflicts(), |this| {
+                                this.child(
+                                    IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .tooltip({
+                                            let filter_state = self.filter_state;
+
+                                            move |window, cx| {
+                                                Tooltip::for_action(
+                                                    match filter_state {
+                                                        FilterState::All => "Show Conflicts",
+                                                        FilterState::Conflicts => "Hide Conflicts",
+                                                    },
+                                                    &ToggleConflictFilter,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .selected_icon_color(Color::Warning)
+                                        .toggle_state(matches!(
+                                            self.filter_state,
+                                            FilterState::Conflicts
+                                        ))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                ToggleConflictFilter.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                )
+                            }),
+                    )
+                    .when(matches!(self.search_mode, SearchMode::KeyStroke), |this| {
+                        this.child(
+                            div()
+                                .map(|this| {
+                                    if self.keybinding_conflict_state.any_conflicts() {
+                                        this.pr(rems_from_px(54.))
+                                    } else {
+                                        this.pr_7()
+                                    }
+                                })
+                                .child(self.keystroke_editor.clone()),
+                        )
+                    }),
             )
-            .when(matches!(self.search_mode, SearchMode::KeyStroke), |this| {
-                this.child(
-                    div()
-                        .child(self.keystroke_editor.clone())
-                        .border_1()
-                        .border_color(theme.colors().border)
-                        .rounded_lg(),
-                )
-            })
             .child(
                 Table::new()
                     .interactable(&self.table_interaction_state)
@@ -2023,6 +2028,10 @@ impl KeystrokeInput {
                 false,
             ))
         })
+    }
+
+    fn recording_focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.inner_focus_handle.clone()
     }
 }
 
