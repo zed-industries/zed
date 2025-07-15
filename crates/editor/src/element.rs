@@ -7787,46 +7787,13 @@ impl Element for EditorElement {
                 editor.set_style(self.style.clone(), window, cx);
 
                 let layout_id = match editor.mode {
-                    EditorMode::SingleLine { auto_width } => {
+                    EditorMode::SingleLine => {
                         let rem_size = window.rem_size();
-
                         let height = self.style.text.line_height_in_pixels(rem_size);
-                        if auto_width {
-                            let editor_handle = cx.entity().clone();
-                            let style = self.style.clone();
-                            window.request_measured_layout(
-                                Style::default(),
-                                move |_, _, window, cx| {
-                                    let editor_snapshot = editor_handle
-                                        .update(cx, |editor, cx| editor.snapshot(window, cx));
-                                    let line = Self::layout_lines(
-                                        DisplayRow(0)..DisplayRow(1),
-                                        &editor_snapshot,
-                                        &style,
-                                        px(f32::MAX),
-                                        |_| false, // Single lines never soft wrap
-                                        window,
-                                        cx,
-                                    )
-                                    .pop()
-                                    .unwrap();
-
-                                    let font_id =
-                                        window.text_system().resolve_font(&style.text.font());
-                                    let font_size =
-                                        style.text.font_size.to_pixels(window.rem_size());
-                                    let em_width =
-                                        window.text_system().em_width(font_id, font_size).unwrap();
-
-                                    size(line.width + em_width, height)
-                                },
-                            )
-                        } else {
-                            let mut style = Style::default();
-                            style.size.height = height.into();
-                            style.size.width = relative(1.).into();
-                            window.request_layout(style, None, cx)
-                        }
+                        let mut style = Style::default();
+                        style.size.height = height.into();
+                        style.size.width = relative(1.).into();
+                        window.request_layout(style, None, cx)
                     }
                     EditorMode::AutoHeight {
                         min_lines,
@@ -10390,7 +10357,7 @@ mod tests {
         });
 
         for editor_mode_without_invisibles in [
-            EditorMode::SingleLine { auto_width: false },
+            EditorMode::SingleLine,
             EditorMode::AutoHeight {
                 min_lines: 1,
                 max_lines: Some(100),
