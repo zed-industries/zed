@@ -56,24 +56,54 @@ impl ActionLog {
         self.tracked_buffers
             .values()
             .filter_map(|tracked| {
-                if tracked.unnotified_user_edits.is_empty() {
-                    None
-                } else {
-                    Some((
-                        tracked.buffer.clone(),
-                        tracked.unnotified_user_edits.clone(),
-                    ))
+                let text_with_latest_user_edits = tracked.diff_base.to_string();
+                let text_with_last_seen_user_edits = tracked.last_seen_base.to_string();
+                if text_with_latest_user_edits == text_with_last_seen_user_edits {
+                    return None;
                 }
+                let unnotified_user_edits = language::line_diff(
+                    &text_with_last_seen_user_edits,
+                    &text_with_latest_user_edits,
+                )
+                .into_iter()
+                .map(|(old, new)| Edit { old, new })
+                .collect();
+
+                Some((tracked.buffer.clone(), Patch::new(unnotified_user_edits)))
             })
             .collect()
     }
 
     pub fn user_edits_since_last_read_patch(&self, cx: &Context<Self>) -> String {
-        self.user_edits_since_last_read()
-            .iter()
-            .map(|(buffer, patch)| self.format_patch(patch.clone(), buffer.clone(), cx))
-            .collect::<Vec<String>>()
-            .join("\n")
+        self.tracked_buffers
+            .values()
+            .filter_map(|tracked| {
+                let text_with_latest_user_edits = tracked.diff_base.to_string();
+                let text_with_last_seen_user_edits = tracked.last_seen_base.to_string();
+                if text_with_latest_user_edits == text_with_last_seen_user_edits {
+                    return None;
+                }
+                let patch = language::unified_diff(
+                    &text_with_last_seen_user_edits,
+                    &text_with_latest_user_edits,
+                );
+
+                let buffer = tracked.buffer.clone();
+                let file_path = buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| file.full_path(cx).to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
+
+                let mut result = String::new();
+                result.push_str(&format!("--- a/{}\n", file_path));
+                result.push_str(&format!("+++ b/{}\n", file_path));
+                result.push_str(&format!("{}", patch));
+
+                Some(result)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     fn format_patch(
@@ -86,7 +116,7 @@ impl ActionLog {
             .tracked_buffers
             .get(&buffer)
             .expect("buffer should be tracked");
-        let old_text = &tracked_buffer.last_read_rope;
+        let old_text = &tracked_buffer.last_seen_base;
         let new_snapshot = buffer.read(cx).snapshot();
 
         // Get file path for header
@@ -192,26 +222,26 @@ impl ActionLog {
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
-                let last_read_rope;
+                let last_seen_base;
                 let unreviewed_edits;
                 if is_created {
                     diff_base = Rope::default();
-                    last_read_rope = Rope::default();
+                    last_seen_base = Rope::default();
                     unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
                     }])
                 } else {
-                    let current_rope = buffer.read(cx).as_rope().clone();
+                    let current_rope = buffer.read(cx).as_rope();
                     diff_base = current_rope.clone();
-                    last_read_rope = current_rope;
+                    last_seen_base = current_rope.clone();
                     unreviewed_edits = Patch::default();
                 }
                 let unnotified_user_edits = Patch::default();
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     diff_base,
-                    last_read_rope,
+                    last_seen_base,
                     unreviewed_edits,
                     snapshot: text_snapshot.clone(),
                     status,
@@ -372,14 +402,6 @@ impl ActionLog {
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
-                dbg!(&edits);
-                if let ChangeAuthor::User = author {
-                    edits
-                        .iter()
-                        .cloned()
-                        .for_each(|edit| tracked_buffer.unnotified_user_edits.push(edit));
-                    dbg!(&tracked_buffer.unnotified_user_edits);
-                }
                 async move {
                     if let ChangeAuthor::User = author {
                         apply_non_conflicting_edits(
@@ -579,7 +601,7 @@ impl ActionLog {
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         // TODO: move to track_buffer_internal?
         // Update the last read state to current buffer state
-        tracked_buffer.last_read_rope = buffer.read(cx).as_rope().clone();
+        tracked_buffer.last_seen_base = buffer.read(cx).as_rope().clone();
         tracked_buffer.unnotified_user_edits = Patch::default();
     }
 
@@ -1037,7 +1059,7 @@ enum TrackedBufferStatus {
 struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
-    last_read_rope: Rope,
+    last_seen_base: Rope,
     unreviewed_edits: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
@@ -2425,8 +2447,11 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), json!({"test.txt": "line1\nline2\nline3\n"}))
-            .await;
+        fs.insert_tree(
+            path!("/dir"),
+            json!({"test.txt": "line 1\nline 2\nline 3\n"}),
+        )
+        .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
@@ -2449,7 +2474,7 @@ mod tests {
             // Make some edits to create a patch
             buffer.update(cx, |buffer, cx| {
                 buffer
-                    .edit([(Point::new(1, 0)..Point::new(1, 5), "CHANGED")], None, cx)
+                    .edit([(Point::new(1, 0)..Point::new(1, 6), "CHANGED")], None, cx)
                     .unwrap(); // Replace "line2" with "CHANGED"
             });
         });
@@ -2460,15 +2485,16 @@ mod tests {
         let patch = action_log.update(cx, |log, cx| log.user_edits_since_last_read_patch(cx));
 
         // Verify the patch format contains expected unified diff elements
-        // TODO: add context lines
         assert_eq!(
             patch,
             indoc! {"
             --- a/dir/test.txt
             +++ b/dir/test.txt
-            @@ -2,1 +2,1 @@
-            -line2
+            @@ -1,3 +1,3 @@
+             line 1
+            -line 2
             +CHANGED
+             line 3
             "}
         );
 
