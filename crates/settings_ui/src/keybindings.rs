@@ -2106,18 +2106,22 @@ impl KeystrokeInput {
         return &self.keystrokes;
     }
 
-    fn render_keystrokes(&self) -> impl Iterator<Item = Div> {
-        let (keystrokes, color) = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
+    fn render_keystrokes(&self, is_recording: bool) -> impl Iterator<Item = Div> {
+        let keystrokes = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
             && self.keystrokes.is_empty()
         {
-            (placeholders, Color::Placeholder)
+            if is_recording {
+                &[]
+            } else {
+                placeholders.as_slice()
+            }
         } else {
-            (&self.keystrokes, Color::Default)
+            &self.keystrokes
         };
         keystrokes.iter().map(move |keystroke| {
             h_flex().children(ui::render_keystroke(
                 keystroke,
-                Some(color),
+                Some(Color::Default),
                 Some(rems(0.875).into()),
                 ui::PlatformStyle::platform(),
                 false,
@@ -2306,7 +2310,7 @@ impl Render for KeystrokeInput {
                     .justify_center()
                     .flex_wrap()
                     .gap(ui::DynamicSpacing::Base04.rems(cx))
-                    .children(self.render_keystrokes()),
+                    .children(self.render_keystrokes(is_recording)),
             )
             .child(
                 h_flex()
