@@ -997,23 +997,23 @@ impl Render for KeymapEditor {
                                     .child(self.filter_editor.clone()),
                             )
                             .child(
-                                IconButton::new("KeymapEditorToggleFiltersIcon", IconName::Filter)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(|window, cx| {
-                                        Tooltip::for_action(
-                                            "Toggle Keystroke Search",
-                                            &ToggleKeystrokeSearch,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .toggle_state(matches!(self.search_mode, SearchMode::KeyStroke))
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(
-                                            ToggleKeystrokeSearch.boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
+                                IconButton::new(
+                                    "KeymapEditorToggleFiltersIcon",
+                                    IconName::Keyboard,
+                                )
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "Search by Keystroke",
+                                        &ToggleKeystrokeSearch,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .toggle_state(matches!(self.search_mode, SearchMode::KeyStroke))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(ToggleKeystrokeSearch.boxed_clone(), cx);
+                                }),
                             )
                             .when(self.keybinding_conflict_state.any_conflicts(), |this| {
                                 this.child(
