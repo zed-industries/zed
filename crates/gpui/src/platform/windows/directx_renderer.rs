@@ -1029,9 +1029,7 @@ fn update_buffer_capacity(
     if pipeline.buffer_size >= data_size {
         return None;
     }
-    println!("buffer too small: {} < {}", pipeline.buffer_size, data_size);
     let buffer_size = data_size.next_power_of_two();
-    println!("New size: {}", buffer_size);
     let buffer = create_buffer(device, element_size, buffer_size).unwrap();
     let view = create_buffer_view(device, &buffer).unwrap();
     Some((buffer, buffer_size, view))
@@ -1045,12 +1043,7 @@ fn update_paths_buffer_capacity(
     if pipeline.buffer_size >= data_size {
         return None;
     }
-    println!(
-        "Paths buffer too small: {} < {}",
-        pipeline.buffer_size, data_size
-    );
     let buffer_size = data_size.next_power_of_two();
-    println!("Paths New size: {}", buffer_size);
     let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), buffer_size).unwrap();
     let view = create_buffer_view(device, &buffer).unwrap();
     Some((buffer, buffer_size, view))
@@ -1064,12 +1057,7 @@ fn update_paths_vertex_capacity(
     if pipeline.vertex_buffer_size >= vertex_size {
         return None;
     }
-    println!(
-        "Paths vertex buffer too small: {} < {}",
-        pipeline.vertex_buffer_size, vertex_size
-    );
     let vertex_size = vertex_size.next_power_of_two();
-    println!("Paths vertex New size: {}", vertex_size);
     let buffer = create_buffer(
         device,
         std::mem::size_of::<PathVertex<ScaledPixels>>(),
@@ -1088,12 +1076,7 @@ fn update_indirect_buffer_capacity(
     if pipeline.indirect_buffer_size >= data_size {
         return None;
     }
-    println!(
-        "Indirect buffer too small: {} < {}",
-        pipeline.indirect_buffer_size, data_size
-    );
     let buffer_size = data_size.next_power_of_two();
-    println!("Indirect New size: {}", buffer_size);
     let buffer = create_indirect_draw_buffer(device, data_size as u32).unwrap();
     Some((buffer, buffer_size))
 }
@@ -1237,7 +1220,6 @@ mod shader_resources {
     use windows_core::{HSTRING, PCSTR};
 
     pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
-        println!("Building shader: {}", entry);
         unsafe {
             let mut entry = entry.to_owned();
             let mut target = target.to_owned();
@@ -1251,11 +1233,6 @@ mod shader_resources {
             target.push_str("\0");
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
-            println!(
-                "Compiling shader: {} with target: {}",
-                entry_point.display(),
-                target_cstr.display()
-            );
             #[cfg(debug_assertions)]
             let compile_flag = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
             #[cfg(not(debug_assertions))]
