@@ -1129,5 +1129,21 @@
       "escape escape escape": "keystroke_input::StopRecording",
       "delete": "keystroke_input::ClearKeystrokes"
     }
+  },
+  {
+    "context": "KeybindEditorModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "menu::Confirm",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "KeybindEditorModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext"
+    }
   }
 ]

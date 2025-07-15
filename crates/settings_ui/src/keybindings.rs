@@ -1451,6 +1451,7 @@ struct KeybindingEditorModal {
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
     workspace: WeakEntity<Workspace>,
+    focus_state: KeybindingEditorModalFocusState,
 }
 
 impl ModalView for KeybindingEditorModal {}
@@ -1539,6 +1540,14 @@ impl KeybindingEditorModal {
             })
         });
 
+        let focus_state = KeybindingEditorModalFocusState::new(
+            keybind_editor.read_with(cx, |keybind_editor, cx| keybind_editor.focus_handle(cx)),
+            input_editor.as_ref().map(|input_editor| {
+                input_editor.read_with(cx, |input_editor, cx| input_editor.focus_handle(cx))
+            }),
+            context_editor.read_with(cx, |context_editor, cx| context_editor.focus_handle(cx)),
+        );
+
         Self {
             creating: create,
             editing_keybind,
@@ -1550,6 +1559,7 @@ impl KeybindingEditorModal {
             error: None,
             keymap_editor,
             workspace,
+            focus_state,
         }
     }
 
@@ -1731,6 +1741,33 @@ impl KeybindingEditorModal {
         })
         .detach();
     }
+
+    fn key_context(&self) -> KeyContext {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("KeybindEditorModal");
+        key_context
+    }
+
+    fn focus_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_state.focus_next(window, cx);
+    }
+
+    fn focus_prev(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_state.focus_previous(window, cx);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        self.save(cx);
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent)
+    }
 }
 
 impl Render for KeybindingEditorModal {
@@ -1739,93 +1776,156 @@ impl Render for KeybindingEditorModal {
         let action_name =
             command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string();
 
-        v_flex().w(rems(34.)).elevation_3(cx).child(
-            Modal::new("keybinding_editor_modal", None)
-                .header(
-                    ModalHeader::new().child(
-                        v_flex()
-                            .pb_1p5()
-                            .mb_1()
-                            .gap_0p5()
-                            .border_b_1()
-                            .border_color(theme.border_variant)
-                            .child(Label::new(action_name))
-                            .when_some(self.editing_keybind.action_docs, |this, docs| {
-                                this.child(
-                                    Label::new(docs).size(LabelSize::Small).color(Color::Muted),
-                                )
-                            }),
-                    ),
-                )
-                .section(
-                    Section::new().child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                v_flex()
-                                    .child(Label::new("Edit Keystroke"))
-                                    .gap_1()
-                                    .child(self.keybind_editor.clone()),
-                            )
-                            .when_some(self.input_editor.clone(), |this, editor| {
-                                this.child(
+        v_flex()
+            .w(rems(34.))
+            .elevation_3(cx)
+            .key_context(self.key_context())
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_prev))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .child(
+                Modal::new("keybinding_editor_modal", None)
+                    .header(
+                        ModalHeader::new().child(
+                            v_flex()
+                                .pb_1p5()
+                                .mb_1()
+                                .gap_0p5()
+                                .border_b_1()
+                                .border_color(theme.border_variant)
+                                .child(Label::new(action_name))
+                                .when_some(self.editing_keybind.action_docs, |this, docs| {
+                                    this.child(
+                                        Label::new(docs).size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                }),
+                        ),
+                    )
+                    .section(
+                        Section::new().child(
+                            v_flex()
+                                .gap_2()
+                                .child(
                                     v_flex()
-                                        .mt_1p5()
+                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(Label::new("Edit Arguments"))
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .py_1()
-                                                .px_1p5()
-                                                .rounded_lg()
-                                                .bg(theme.editor_background)
-                                                .border_1()
-                                                .border_color(theme.border_variant)
-                                                .child(editor),
-                                        ),
+                                        .child(self.keybind_editor.clone()),
                                 )
-                            })
-                            .child(self.context_editor.clone())
-                            .when_some(self.error.as_ref(), |this, error| {
-                                this.child(
-                                    Banner::new()
-                                        .map(|banner| match error {
-                                            InputError::Error(_) => {
-                                                banner.severity(ui::Severity::Error)
-                                            }
-                                            InputError::Warning(_) => {
-                                                banner.severity(ui::Severity::Warning)
-                                            }
-                                        })
-                                        // For some reason, the div overflows its container to the
-                                        //right. The padding accounts for that.
-                                        .child(
-                                            div()
-                                                .size_full()
-                                                .pr_2()
-                                                .child(Label::new(error.content())),
-                                        ),
+                                .when_some(self.input_editor.clone(), |this, editor| {
+                                    this.child(
+                                        v_flex()
+                                            .mt_1p5()
+                                            .gap_1()
+                                            .child(Label::new("Edit Arguments"))
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .py_1()
+                                                    .px_1p5()
+                                                    .rounded_lg()
+                                                    .bg(theme.editor_background)
+                                                    .border_1()
+                                                    .border_color(theme.border_variant)
+                                                    .child(editor),
+                                            ),
+                                    )
+                                })
+                                .child(self.context_editor.clone())
+                                .when_some(self.error.as_ref(), |this, error| {
+                                    this.child(
+                                        Banner::new()
+                                            .map(|banner| match error {
+                                                InputError::Error(_) => {
+                                                    banner.severity(ui::Severity::Error)
+                                                }
+                                                InputError::Warning(_) => {
+                                                    banner.severity(ui::Severity::Warning)
+                                                }
+                                            })
+                                            // For some reason, the div overflows its container to the
+                                            //right. The padding accounts for that.
+                                            .child(
+                                                div()
+                                                    .size_full()
+                                                    .pr_2()
+                                                    .child(Label::new(error.content())),
+                                            ),
+                                    )
+                                }),
+                        ),
+                    )
+                    .footer(
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                                 )
-                            }),
+                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                    |this, _event, _window, cx| {
+                                        this.save(cx);
+                                    },
+                                ))),
+                        ),
                     ),
-                )
-                .footer(
-                    ModalFooter::new().end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Button::new("cancel", "Cancel")
-                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                            )
-                            .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                |this, _event, _window, cx| {
-                                    this.save(cx);
-                                },
-                            ))),
-                    ),
-                ),
-        )
+            )
+    }
+}
+
+struct KeybindingEditorModalFocusState {
+    handles: Vec<FocusHandle>,
+}
+
+impl KeybindingEditorModalFocusState {
+    fn new(
+        keystrokes: FocusHandle,
+        action_input: Option<FocusHandle>,
+        context: FocusHandle,
+    ) -> Self {
+        Self {
+            handles: Vec::from_iter(
+                [Some(keystrokes), action_input, Some(context)]
+                    .into_iter()
+                    .flatten(),
+            ),
+        }
+    }
+
+    fn focused_index(&self, window: &Window, cx: &App) -> Option<i32> {
+        self.handles
+            .iter()
+            .position(|handle| handle.contains_focused(window, cx))
+            .map(|i| i as i32)
+    }
+
+    fn focus_index(&self, mut index: i32, window: &mut Window) {
+        if index < 0 {
+            index = self.handles.len() as i32 - 1;
+        }
+        if index >= self.handles.len() as i32 {
+            index = 0;
+        }
+        window.focus(&self.handles[index as usize]);
+    }
+
+    fn focus_next(&self, window: &mut Window, cx: &App) {
+        let index_to_focus = if let Some(index) = self.focused_index(window, cx) {
+            index + 1
+        } else {
+            0
+        };
+        self.focus_index(index_to_focus, window);
+    }
+
+    fn focus_previous(&self, window: &mut Window, cx: &App) {
+        let index_to_focus = if let Some(index) = self.focused_index(window, cx) {
+            index - 1
+        } else {
+            self.handles.len() as i32 - 1
+        };
+        self.focus_index(index_to_focus, window);
     }
 }
 
@@ -2207,24 +2307,23 @@ impl KeystrokeInput {
         cx: &mut Context<Self>,
     ) {
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
-        if close_keystroke_result == CloseKeystrokeResult::Close {
-            return;
-        }
-        if let Some(last) = self.keystrokes.last()
-            && last.key.is_empty()
-            && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
-        {
-            self.keystrokes.pop();
-        }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-            if close_keystroke_result == CloseKeystrokeResult::Partial
-                && self.close_keystrokes_start.is_none()
+        if close_keystroke_result != CloseKeystrokeResult::Close {
+            if let Some(last) = self.keystrokes.last()
+                && last.key.is_empty()
+                && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
             {
-                self.close_keystrokes_start = Some(self.keystrokes.len());
+                self.keystrokes.pop();
             }
-            self.keystrokes.push(keystroke.clone());
             if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-                self.keystrokes.push(Self::dummy(keystroke.modifiers));
+                if close_keystroke_result == CloseKeystrokeResult::Partial
+                    && self.close_keystrokes_start.is_none()
+                {
+                    self.close_keystrokes_start = Some(self.keystrokes.len());
+                }
+                self.keystrokes.push(keystroke.clone());
+                if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                    self.keystrokes.push(Self::dummy(keystroke.modifiers));
+                }
             }
         }
         self.keystrokes_changed(cx);
