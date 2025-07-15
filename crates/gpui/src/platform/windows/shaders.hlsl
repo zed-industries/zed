@@ -889,7 +889,15 @@ struct PathSprite {
 
 struct PathVertexOutput {
     float4 position: SV_Position;
+    nointerpolation uint sprite_id: TEXCOORD0;
+    nointerpolation float4 solid_color: COLOR0;
+    nointerpolation float4 color0: COLOR1;
+    nointerpolation float4 color1: COLOR2;
     float4 clip_distance: SV_ClipDistance;
+};
+
+struct PathFragmentInput {
+    float4 position: SV_Position;
     nointerpolation uint sprite_id: TEXCOORD0;
     nointerpolation float4 solid_color: COLOR0;
     nointerpolation float4 color0: COLOR1;
@@ -923,12 +931,7 @@ PathVertexOutput paths_vertex(PathVertexInput input) {
     return output;
 }
 
-float4 paths_fragment(PathVertexOutput input): SV_Target {
-    float4 zero = 0.0;
-    if (any(input.clip_distance < zero)) {
-        return zero;
-    }
-
+float4 paths_fragment(PathFragmentInput input): SV_Target {
     PathSprite sprite = path_sprites[input.sprite_id];
     Background background = sprite.color;
     float4 color = gradient_color(background, input.position.xy, sprite.bounds,

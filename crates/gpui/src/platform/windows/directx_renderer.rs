@@ -1,8 +1,7 @@
-use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
+use std::sync::Arc;
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
-use collections::FxHasher;
 // #[cfg(not(feature = "enable-renderdoc"))]
 // use windows::Win32::Graphics::DirectComposition::*;
 use windows::{
