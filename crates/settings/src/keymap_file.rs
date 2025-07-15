@@ -623,7 +623,7 @@ impl KeymapFile {
                 target_keybind_source,
             } if target_keybind_source != KeybindSource::User => {
                 target.action_name = gpui::NoAction.name();
-                target.input.take();
+                target.action_arguments.take();
                 operation = KeybindUpdateOperation::Add(target);
             }
             _ => {}
@@ -848,17 +848,17 @@ pub struct KeybindUpdateTarget<'a> {
     pub keystrokes: &'a [Keystroke],
     pub action_name: &'a str,
     pub use_key_equivalents: bool,
-    pub input: Option<&'a str>,
+    pub action_arguments: Option<&'a str>,
 }
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
         let action_name: Value = self.action_name.into();
-        let value = match self.input {
-            Some(input) => {
-                let input = serde_json::from_str::<Value>(input)
-                    .context("Failed to parse action input as JSON")?;
-                serde_json::json!([action_name, input])
+        let value = match self.action_arguments {
+            Some(args) => {
+                let args = serde_json::from_str::<Value>(args)
+                    .context("Failed to parse action arguments as JSON")?;
+                serde_json::json!([action_name, args])
             }
             None => action_name,
         };
@@ -986,7 +986,7 @@ mod tests {
                 action_name: "zed::SomeAction",
                 context: None,
                 use_key_equivalents: false,
-                input: None,
+                action_arguments: None,
             }),
             r#"[
                 {
@@ -1012,7 +1012,7 @@ mod tests {
                 action_name: "zed::SomeOtherAction",
                 context: None,
                 use_key_equivalents: false,
-                input: None,
+                action_arguments: None,
             }),
             r#"[
                 {
@@ -1043,7 +1043,7 @@ mod tests {
                 action_name: "zed::SomeOtherAction",
                 context: None,
                 use_key_equivalents: false,
-                input: Some(r#"{"foo": "bar"}"#),
+                action_arguments: Some(r#"{"foo": "bar"}"#),
             }),
             r#"[
                 {
@@ -1079,7 +1079,7 @@ mod tests {
                 action_name: "zed::SomeOtherAction",
                 context: Some("Zed > Editor && some_condition = true"),
                 use_key_equivalents: true,
-                input: Some(r#"{"foo": "bar"}"#),
+                action_arguments: Some(r#"{"foo": "bar"}"#),
             }),
             r#"[
                 {
@@ -1118,14 +1118,14 @@ mod tests {
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::Base,
             },
@@ -1164,14 +1164,14 @@ mod tests {
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1205,14 +1205,14 @@ mod tests {
                     action_name: "zed::SomeNonexistentAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1248,14 +1248,14 @@ mod tests {
                     action_name: "zed::SomeAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("ctrl-b"),
                     action_name: "zed::SomeOtherAction",
                     context: None,
                     use_key_equivalents: false,
-                    input: Some(r#"{"foo": "bar"}"#),
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1293,14 +1293,14 @@ mod tests {
                     action_name: "foo::bar",
                     context: Some("SomeContext"),
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("c"),
                     action_name: "foo::baz",
                     context: Some("SomeOtherContext"),
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1337,14 +1337,14 @@ mod tests {
                     action_name: "foo::bar",
                     context: Some("SomeContext"),
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 source: KeybindUpdateTarget {
                     keystrokes: &parse_keystrokes("c"),
                     action_name: "foo::baz",
                     context: Some("SomeOtherContext"),
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1376,7 +1376,7 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
                     use_key_equivalents: false,
-                    input: None,
+                    action_arguments: None,
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1408,7 +1408,7 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
                     use_key_equivalents: false,
-                    input: Some("true"),
+                    action_arguments: Some("true"),
                 },
                 target_keybind_source: KeybindSource::User,
             },
@@ -1451,7 +1451,7 @@ mod tests {
                     keystrokes: &parse_keystrokes("a"),
                     action_name: "foo::bar",
                     use_key_equivalents: false,
-                    input: Some("true"),
+                    action_arguments: Some("true"),
                 },
                 target_keybind_source: KeybindSource::User,
             },
