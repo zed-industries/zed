@@ -467,7 +467,9 @@ impl Project {
     }
 
     fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
-        let shell = std::path::Path::new(shell.unwrap_or(""))
+        let shell_env = std::env::var("SHELL").ok();
+        let shell_path = shell.or_else(|| shell_env.as_deref());
+        let shell = std::path::Path::new(shell_path.unwrap_or(""))
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
