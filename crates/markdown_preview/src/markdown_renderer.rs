@@ -124,9 +124,9 @@ impl RenderContext {
             .line_height(relative(1.6));
 
         if self.indent > 0 {
-            element.pb(self.scaled_rems(1.0)) // More breathing room
+            element.pb(self.scaled_rems(0.5)) // More breathing room
         } else {
-            element.pb(self.scaled_rems(1.2)) // Even more for top-level
+            element.pb(self.scaled_rems(0.8)) // Even more for top-level
         }
     }
 }
@@ -139,7 +139,7 @@ pub fn render_parsed_markdown(
 ) -> Div {
     let mut cx = RenderContext::new(workspace, window, cx);
 
-    v_flex().gap_3().children(
+    v_flex().gap_0().children(
         parsed
             .children
             .iter()
@@ -209,6 +209,21 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
         .into_any_element()
 }
 
+// A tighter paragraph renderer for use inside list items.
+fn render_markdown_paragraph_tight(
+    parsed: &MarkdownParagraph,
+    cx: &mut RenderContext,
+) -> AnyElement {
+    div()
+        .text_size(cx.scaled_rems(1.0))
+        .line_height(relative(1.6))
+        .pb(cx.scaled_rems(0.1))
+        .children(render_markdown_text(parsed, cx))
+        .flex()
+        .flex_col()
+        .into_any_element()
+}
+
 fn render_markdown_list_item(
     parsed: &ParsedMarkdownListItem,
     cx: &mut RenderContext,
@@ -261,11 +276,16 @@ fn render_markdown_list_item(
     };
     let bullet = div().mr(cx.scaled_rems(0.5)).child(bullet);
 
+    // replaced indent hack; paragraphs in lists will be rendered tightly
     let contents: Vec<AnyElement> = parsed
         .content
         .iter()
-        .map(|c| render_markdown_block(c, cx))
+        .map(|c| match c {
+            ParsedMarkdownElement::Paragraph(p) => render_markdown_paragraph_tight(p, cx),
+            _ => render_markdown_block(c, cx),
+        })
         .collect();
+    // indent hack removed
 
     let item = h_flex()
         .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
@@ -275,7 +295,7 @@ fn render_markdown_list_item(
             div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
         ]);
 
-    cx.with_common_p(item).into_any()
+    item.into_any()
 }
 
 /// # MarkdownCheckbox ///
