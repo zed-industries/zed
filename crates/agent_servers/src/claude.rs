@@ -441,7 +441,7 @@ enum SdkMessage {
     },
     // Emitted as the first message at the start of a conversation
     System {
-        api_key_source: String,
+        api_key_source: Option<String>,
         cwd: String,
         session_id: String,
         tools: Vec<String>,
