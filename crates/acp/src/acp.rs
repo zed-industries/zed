@@ -875,7 +875,7 @@ impl AcpThread {
         &self,
     ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
         let connection = self.connection.clone();
-        async move { connection.request(acp::InitializeParams).await }
+        async move { connection.initialize().await }
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
