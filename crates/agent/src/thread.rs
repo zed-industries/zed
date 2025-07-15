@@ -21,6 +21,7 @@ use gpui::{
     AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
     WeakEntity, Window,
 };
+use http_client::StatusCode;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
@@ -1979,27 +1980,13 @@ impl Thread {
                                         });
                                         cx.notify();
                                     }
-                                    RateLimitExceeded {
-                                        retry_after: Some(retry_after),
-                                        ..
-                                    }
-                                    | ServerOverloaded {
-                                        retry_after: Some(retry_after),
-                                        ..
-                                    } => {
-                                        thread.handle_rate_limit_error(
+                                    RateLimitExceeded { retry_after, .. }
+                                    | ServerOverloaded { retry_after, .. } => {
+                                        // Use provided retry_after if available, otherwise default to 5 seconds
+                                        let delay = retry_after.unwrap_or(Duration::from_secs(5));
+                                        retry_scheduled = thread.handle_retryable_error_with_delay(
                                             &completion_error,
-                                            *retry_after,
-                                            model.clone(),
-                                            intent,
-                                            window,
-                                            cx,
-                                        );
-                                        retry_scheduled = true;
-                                    }
-                                    RateLimitExceeded { .. } | ServerOverloaded { .. } => {
-                                        retry_scheduled = thread.handle_retryable_error(
-                                            &completion_error,
+                                            Some(delay),
                                             model.clone(),
                                             intent,
                                             window,
@@ -2011,7 +1998,8 @@ impl Thread {
                                     }
                                     ApiInternalServerError { .. }
                                     | ApiReadResponseError { .. }
-                                    | HttpSend { .. } => {
+                                    | HttpSend { .. }
+                                    | DeserializeResponse { .. } => {
                                         retry_scheduled = thread.handle_retryable_error(
                                             &completion_error,
                                             model.clone(),
@@ -2023,19 +2011,63 @@ impl Thread {
                                             emit_generic_error(error, cx);
                                         }
                                     }
+                                    HttpResponseError { status_code, .. } => {
+                                        // Retry on 5xx errors and specific 4xx errors
+                                        if status_code.is_server_error()
+                                            || *status_code == StatusCode::BAD_REQUEST
+                                            || *status_code == StatusCode::TOO_MANY_REQUESTS
+                                        {
+                                            // For these errors, retry once after 5 seconds
+                                            retry_scheduled = thread
+                                                .handle_retryable_error_with_delay(
+                                                    &completion_error,
+                                                    Some(Duration::from_secs(5)),
+                                                    model.clone(),
+                                                    intent,
+                                                    window,
+                                                    cx,
+                                                );
+                                            if !retry_scheduled {
+                                                emit_generic_error(error, cx);
+                                            }
+                                        } else {
+                                            emit_generic_error(error, cx);
+                                        }
+                                    }
                                     NoApiKey { .. }
-                                    | HttpResponseError { .. }
                                     | BadRequestFormat { .. }
                                     | AuthenticationError { .. }
                                     | PermissionError { .. }
                                     | ApiEndpointNotFound { .. }
                                     | SerializeRequest { .. }
                                     | BuildRequestBody { .. }
-                                    | DeserializeResponse { .. }
                                     | Other { .. } => emit_generic_error(error, cx),
                                 }
                             } else {
-                                emit_generic_error(error, cx);
+                                // Check for connection errors in generic error messages
+                                let error_str = error.to_string();
+                                if error_str.contains("error decoding response body")
+                                    || error_str.contains("error reading a body from connection")
+                                    || error_str.contains("Connection reset by peer")
+                                    || error_str.contains("completion request failed")
+                                {
+                                    // Retry connection errors once after 5 seconds
+                                    retry_scheduled = thread.handle_retryable_error_with_delay(
+                                        &LanguageModelCompletionError::Other(anyhow::anyhow!(
+                                            "{}", error_str
+                                        )),
+                                        Some(Duration::from_secs(5)),
+                                        model.clone(),
+                                        intent,
+                                        window,
+                                        cx,
+                                    );
+                                    if !retry_scheduled {
+                                        emit_generic_error(error, cx);
+                                    }
+                                } else {
+                                    emit_generic_error(error, cx);
+                                }
                             }
 
                             if !retry_scheduled {
@@ -2045,7 +2077,38 @@ impl Thread {
                     }
 
                     if !retry_scheduled {
-                        cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
+                        cx.emit(ThreadEvent::Stopped(
+                            result
+                                .as_ref()
+                                .map(|r| *r)
+                                .map_err(|e| Arc::new(anyhow!("{}", e))),
+                        ));
+
+                        // Show notification if window is not active and thread stopped
+                        if let Some(window) = window {
+                            if !window
+                                .update(cx, |_, window, _| window.is_window_active())
+                                .unwrap_or(true)
+                            {
+                                if let Err(error) = &result {
+                                    let error_message = error
+                                        .chain()
+                                        .map(|err| err.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                        header: "Thread stopped in background".into(),
+                                        message: SharedString::from(error_message),
+                                    }));
+                                } else {
+                                    // Thread completed successfully but window wasn't active
+                                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                        header: "Thread completed".into(),
+                                        message: "The agent has finished working.".into(),
+                                    }));
+                                }
+                            }
+                        }
                     }
 
                     if let Some((request_callback, (request, response_events))) = thread
@@ -2162,50 +2225,6 @@ impl Thread {
         });
     }
 
-    fn handle_rate_limit_error(
-        &mut self,
-        error: &LanguageModelCompletionError,
-        retry_after: Duration,
-        model: Arc<dyn LanguageModel>,
-        intent: CompletionIntent,
-        window: Option<AnyWindowHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        // For rate limit errors, we only retry once with the specified duration
-        let retry_message = format!("{error}. Retrying in {} seconds…", retry_after.as_secs());
-        log::warn!(
-            "Retrying completion request in {} seconds: {error:?}",
-            retry_after.as_secs(),
-        );
-
-        // Add a UI-only message instead of a regular message
-        let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
-            id,
-            role: Role::System,
-            segments: vec![MessageSegment::Text(retry_message)],
-            loaded_context: LoadedContext::default(),
-            creases: Vec::new(),
-            is_hidden: false,
-            ui_only: true,
-        });
-        cx.emit(ThreadEvent::MessageAdded(id));
-        // Schedule the retry
-        let thread_handle = cx.entity().downgrade();
-
-        cx.spawn(async move |_thread, cx| {
-            cx.background_executor().timer(retry_after).await;
-
-            thread_handle
-                .update(cx, |thread, cx| {
-                    // Retry the completion
-                    thread.send_to_model(model, intent, window, cx);
-                })
-                .log_err();
-        })
-        .detach();
-    }
-
     fn handle_retryable_error(
         &mut self,
         error: &LanguageModelCompletionError,
@@ -2226,9 +2245,36 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // For specific HTTP errors, limit to 1 retry attempt
+        let max_attempts = match error {
+            LanguageModelCompletionError::HttpResponseError { status_code, .. }
+                if *status_code == StatusCode::BAD_REQUEST
+                    || *status_code == StatusCode::TOO_MANY_REQUESTS
+                    || status_code.is_server_error() =>
+            {
+                1
+            }
+            LanguageModelCompletionError::RateLimitExceeded { .. }
+            | LanguageModelCompletionError::ServerOverloaded { .. } => 1,
+            LanguageModelCompletionError::DeserializeResponse { .. } => 1,
+            LanguageModelCompletionError::Other(error) => {
+                let error_str = error.to_string();
+                if error_str.contains("error decoding response body")
+                    || error_str.contains("error reading a body from connection")
+                    || error_str.contains("Connection reset by peer")
+                    || error_str.contains("completion request failed")
+                {
+                    1
+                } else {
+                    MAX_RETRY_ATTEMPTS
+                }
+            }
+            _ => MAX_RETRY_ATTEMPTS,
+        };
+
         let retry_state = self.retry_state.get_or_insert(RetryState {
             attempt: 0,
-            max_attempts: MAX_RETRY_ATTEMPTS,
+            max_attempts,
             intent,
         });
 
@@ -4191,8 +4237,8 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
-                "Should have default max attempts"
+                retry_state.max_attempts, 1,
+                "Should only retry once for overloaded errors"
             );
         });
 
@@ -4205,9 +4251,7 @@ fn main() {{
                         && msg.ui_only
                         && msg.segments.iter().any(|seg| {
                             if let MessageSegment::Text(text) = seg {
-                                text.contains("overloaded")
-                                    && text
-                                        .contains(&format!("attempt 1 of {}", MAX_RETRY_ATTEMPTS))
+                                text.contains("overloaded") && text.contains("attempt 1 of 1")
                             } else {
                                 false
                             }
@@ -4320,8 +4364,8 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
-        // Create model that returns overloaded error
-        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+        // Create model that returns internal server error (which still uses exponential backoff)
+        let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
 
         // Insert a user message
         thread.update(cx, |thread, cx| {
@@ -4371,6 +4415,10 @@ fn main() {{
             assert!(thread.retry_state.is_some(), "Should have retry state");
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
+            assert_eq!(
+                retry_state.max_attempts, MAX_RETRY_ATTEMPTS,
+                "Internal server errors should still use full retry attempts"
+            );
         });
 
         // Advance clock for first retry
@@ -4555,8 +4603,8 @@ fn main() {{
 
         // After max retries, should emit RetriesFailed event
         assert_eq!(
-            retry_count, MAX_RETRY_ATTEMPTS as usize,
-            "Should have attempted max retries"
+            retry_count, 1,
+            "Should have attempted only 1 retry for overloaded errors"
         );
         assert!(
             *retries_failed.lock(),
@@ -4577,8 +4625,8 @@ fn main() {{
                 .filter(|msg| msg.ui_only && msg.role == Role::System)
                 .count();
             assert_eq!(
-                retry_messages, MAX_RETRY_ATTEMPTS as usize,
-                "Should have one retry message per attempt"
+                retry_messages, 1,
+                "Should have one retry message for overloaded errors"
             );
         });
     }
@@ -5039,8 +5087,8 @@ fn main() {{
 
         thread.read_with(cx, |thread, _| {
             assert!(
-                thread.retry_state.is_none(),
-                "Rate limit errors should not set retry_state"
+                thread.retry_state.is_some(),
+                "Rate limit errors should now set retry_state"
             );
         });
 
@@ -5074,18 +5122,15 @@ fn main() {{
                 .find(|msg| msg.role == Role::System && msg.ui_only)
                 .expect("Should have a retry message");
 
-            // Check that the message doesn't contain attempt count
+            // Check that the message now contains attempt count since we use retry_state
             if let Some(MessageSegment::Text(text)) = retry_message.segments.first() {
                 assert!(
-                    !text.contains("attempt"),
-                    "Rate limit retry message should not contain attempt count"
+                    text.contains("attempt"),
+                    "Rate limit retry message should now contain attempt count"
                 );
                 assert!(
-                    text.contains(&format!(
-                        "Retrying in {} seconds",
-                        TEST_RATE_LIMIT_RETRY_SECS
-                    )),
-                    "Rate limit retry message should contain retry delay"
+                    text.contains("Retrying"),
+                    "Rate limit retry message should contain retry text"
                 );
             }
         });
