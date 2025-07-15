@@ -2269,17 +2269,14 @@ impl Thread {
             // Max retries exceeded
             self.retry_state = None;
 
-            let notification_text = if max_attempts == 1 {
-                "Failed after retrying.".into()
-            } else {
-                format!("Failed after retrying {} times.", max_attempts).into()
-            };
+            let notification_text = "Agent stopped due to an error".into();
 
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
 
             cx.emit(ThreadEvent::RetriesFailed {
                 message: notification_text,
+                error: Arc::new(anyhow::Error::msg(error.to_string())),
             });
 
             false
@@ -3239,6 +3236,7 @@ pub enum ThreadEvent {
     ProfileChanged,
     RetriesFailed {
         message: SharedString,
+        error: Arc<anyhow::Error>,
     },
 }
 
