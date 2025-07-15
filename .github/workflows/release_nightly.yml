@@ -12,6 +12,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+  DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
 
 jobs:
   style:
@@ -91,9 +94,6 @@ jobs:
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -125,10 +125,6 @@ jobs:
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -164,10 +160,6 @@ jobs:
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -198,9 +190,6 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     name: Build Zed on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
@@ -257,8 +246,6 @@ jobs:
       ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
       CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
       ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
@@ -275,9 +262,6 @@ jobs:
           $version = git rev-parse --short HEAD
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
-
-      - name: Install trusted signing
-        uses: ./.github/actions/install_trusted_signing
 
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}

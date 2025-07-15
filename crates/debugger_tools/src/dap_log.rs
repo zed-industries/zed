@@ -32,12 +32,19 @@ use workspace::{
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum View {
+    AdapterLogs,
+    RpcMessages,
+    InitializationSequence,
+}
+
 struct DapLogView {
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
     log_store: Entity<LogStore>,
     editor_subscriptions: Vec<Subscription>,
-    current_view: Option<(SessionId, LogKind)>,
+    current_view: Option<(SessionId, View)>,
     project: Entity<Project>,
     _subscriptions: Vec<Subscription>,
 }
@@ -77,6 +84,7 @@ struct DebugAdapterState {
     id: SessionId,
     log_messages: VecDeque<SharedString>,
     rpc_messages: RpcMessages,
+    session_label: SharedString,
     adapter_name: DebugAdapterName,
     has_adapter_logs: bool,
     is_terminated: bool,
@@ -121,12 +129,18 @@ impl MessageKind {
 }
 
 impl DebugAdapterState {
-    fn new(id: SessionId, adapter_name: DebugAdapterName, has_adapter_logs: bool) -> Self {
+    fn new(
+        id: SessionId,
+        adapter_name: DebugAdapterName,
+        session_label: SharedString,
+        has_adapter_logs: bool,
+    ) -> Self {
         Self {
             id,
             log_messages: VecDeque::new(),
             rpc_messages: RpcMessages::new(),
             adapter_name,
+            session_label,
             has_adapter_logs,
             is_terminated: false,
         }
@@ -371,18 +385,22 @@ impl LogStore {
                 return None;
             };
 
-            let (adapter_name, has_adapter_logs) = session.read_with(cx, |session, _| {
-                (
-                    session.adapter(),
-                    session
-                        .adapter_client()
-                        .map_or(false, |client| client.has_adapter_logs()),
-                )
-            });
+            let (adapter_name, session_label, has_adapter_logs) =
+                session.read_with(cx, |session, _| {
+                    (
+                        session.adapter(),
+                        session.label(),
+                        session
+                            .adapter_client()
+                            .map_or(false, |client| client.has_adapter_logs()),
+                    )
+                });
 
             state.insert(DebugAdapterState::new(
                 id.session_id,
                 adapter_name,
+                session_label
+                    .unwrap_or_else(|| format!("Session {} (child)", id.session_id.0).into()),
                 has_adapter_logs,
             ));
 
@@ -506,12 +524,13 @@ impl Render for DapLogToolbarItemView {
                 current_client
                     .map(|sub_item| {
                         Cow::Owned(format!(
-                            "{} ({}) - {}",
+                            "{} - {} - {}",
                             sub_item.adapter_name,
-                            sub_item.session_id.0,
+                            sub_item.session_label,
                             match sub_item.selected_entry {
-                                LogKind::Adapter => ADAPTER_LOGS,
-                                LogKind::Rpc => RPC_MESSAGES,
+                                View::AdapterLogs => ADAPTER_LOGS,
+                                View::RpcMessages => RPC_MESSAGES,
+                                View::InitializationSequence => INITIALIZATION_SEQUENCE,
                             }
                         ))
                     })
@@ -529,8 +548,8 @@ impl Render for DapLogToolbarItemView {
                                 .pl_2()
                                 .child(
                                     Label::new(format!(
-                                        "{}. {}",
-                                        row.session_id.0, row.adapter_name,
+                                        "{} - {}",
+                                        row.adapter_name, row.session_label
                                     ))
                                     .color(workspace::ui::Color::Muted),
                                 )
@@ -669,9 +688,16 @@ impl DapLogView {
 
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, event, cx| match event {
             Event::NewLogEntry { id, entry, kind } => {
-                if log_view.current_view == Some((id.session_id, *kind))
-                    && log_view.project == *id.project
-                {
+                let is_current_view = match (log_view.current_view, *kind) {
+                    (Some((i, View::AdapterLogs)), LogKind::Adapter)
+                    | (Some((i, View::RpcMessages)), LogKind::Rpc)
+                        if i == id.session_id =>
+                    {
+                        log_view.project == *id.project
+                    }
+                    _ => false,
+                };
+                if is_current_view {
                     log_view.editor.update(cx, |editor, cx| {
                         editor.set_read_only(false);
                         let last_point = editor.buffer().read(cx).len(cx);
@@ -768,10 +794,11 @@ impl DapLogView {
                     .map(|state| DapMenuItem {
                         session_id: state.id,
                         adapter_name: state.adapter_name.clone(),
+                        session_label: state.session_label.clone(),
                         has_adapter_logs: state.has_adapter_logs,
                         selected_entry: self
                             .current_view
-                            .map_or(LogKind::Adapter, |(_, kind)| kind),
+                            .map_or(View::AdapterLogs, |(_, kind)| kind),
                     })
                     .collect::<Vec<_>>()
             })
@@ -789,7 +816,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((id.session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, View::RpcMessages));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -830,7 +857,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(message_log) = message_log {
-            self.current_view = Some((id.session_id, LogKind::Adapter));
+            self.current_view = Some((id.session_id, View::AdapterLogs));
             let (editor, editor_subscriptions) = Self::editor_for_logs(message_log, window, cx);
             editor
                 .read(cx)
@@ -859,7 +886,7 @@ impl DapLogView {
                 .map(|state| log_contents(state.iter().cloned()))
         });
         if let Some(rpc_log) = rpc_log {
-            self.current_view = Some((id.session_id, LogKind::Rpc));
+            self.current_view = Some((id.session_id, View::InitializationSequence));
             let (editor, editor_subscriptions) = Self::editor_for_logs(rpc_log, window, cx);
             let language = self.project.read(cx).languages().language_for_name("JSON");
             editor
@@ -899,11 +926,12 @@ fn log_contents(lines: impl Iterator<Item = SharedString>) -> String {
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct DapMenuItem {
-    pub session_id: SessionId,
-    pub adapter_name: DebugAdapterName,
-    pub has_adapter_logs: bool,
-    pub selected_entry: LogKind,
+struct DapMenuItem {
+    session_id: SessionId,
+    session_label: SharedString,
+    adapter_name: DebugAdapterName,
+    has_adapter_logs: bool,
+    selected_entry: View,
 }
 
 const ADAPTER_LOGS: &str = "Adapter Logs";

@@ -21,6 +21,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+  DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
 
 jobs:
   job_spec:
@@ -52,9 +55,10 @@ jobs:
           fi
           # Specify anything which should skip full CI in this regex:
           # - docs/
+          # - script/update_top_ranking_issues/
           # - .github/ISSUE_TEMPLATE/
           # - .github/workflows/  (except .github/workflows/ci.yml)
-          SKIP_REGEX='^(docs/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
+          SKIP_REGEX='^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
           if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -vP "$SKIP_REGEX") ]]; then
             echo "run_tests=true" >> $GITHUB_OUTPUT
           else
@@ -71,7 +75,7 @@ jobs:
             echo "run_license=false" >> $GITHUB_OUTPUT
           fi
           NIX_REGEX='^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)'
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep "$NIX_REGEX") ]]; then
+          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -P "$NIX_REGEX") ]]; then
             echo "run_nix=true" >> $GITHUB_OUTPUT
           else
             echo "run_nix=false" >> $GITHUB_OUTPUT
@@ -390,7 +394,7 @@ jobs:
 
   windows_tests:
     timeout-minutes: 60
-    name: (Windows) Run Tests
+    name: (Windows) Run Clippy and tests
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
@@ -492,9 +496,6 @@ jobs:
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -577,10 +578,6 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -634,10 +631,6 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -690,16 +683,12 @@ jobs:
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
     name: Build Zed on FreeBSD
-    # env:
-    #   MYTOKEN : ${{ secrets.MYTOKEN }}
-    #   MYTOKEN2: "value2"
     steps:
       - uses: actions/checkout@v4
       - name: Build FreeBSD remote-server
         id: freebsd-build
         uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
         with:
-          # envs: "MYTOKEN MYTOKEN2"
           usesh: true
           release: 13.5
           copyback: true
@@ -766,8 +755,6 @@ jobs:
       ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
       CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
       ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
@@ -784,9 +771,6 @@ jobs:
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel.ps1
 
-      - name: Install trusted signing
-        uses: ./.github/actions/install_trusted_signing
-
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
@@ -800,7 +784,8 @@ jobs:
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
+        # Re-enable when we are ready to publish windows preview releases
+        if: false && ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}

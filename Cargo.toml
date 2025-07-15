@@ -2,9 +2,11 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/acp",
     "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
+    "crates/agent_servers",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
@@ -177,6 +179,7 @@ members = [
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
+    "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
@@ -216,10 +219,12 @@ edition = "2024"
 # Workspace member crates
 #
 
-activity_indicator = { path = "crates/activity_indicator" }
+acp = { path = "crates/acp" }
 agent = { path = "crates/agent" }
+activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
+agent_servers = { path = "crates/agent_servers" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -390,6 +395,7 @@ web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
+x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }
@@ -400,6 +406,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
+agentic-coding-protocol = { version = "0.0.9" }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -487,7 +494,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "6add7052b598ea1f40f7e8913622c3958b009b60" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 moka = { version = "0.12.10", features = ["sync"] }
@@ -502,6 +509,7 @@ ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
+parse_int = "0.9"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
@@ -541,7 +549,8 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
+# When updating scap rev, also update it in .config/hakari.toml
+scap = { git = "https://github.com/zed-industries/scap", rev = "270538dc780f5240723233ff901e1054641ed318", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

@@ -2,7 +2,6 @@ use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
-use feature_flags::{FeatureFlagAppExt as _, ZedCloudFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -137,7 +136,6 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
 
         Self {
             client: client.clone(),
@@ -165,47 +163,10 @@ impl State {
                             .await;
                     }
 
-                    let response = Self::fetch_models(client, llm_api_token, use_cloud).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            let mut models = Vec::new();
-
-                            for model in response.models {
-                                models.push(Arc::new(model.clone()));
-
-                                // Right now we represent thinking variants of models as separate models on the client,
-                                // so we need to insert variants for any model that supports thinking.
-                                if model.supports_thinking {
-                                    models.push(Arc::new(zed_llm_client::LanguageModel {
-                                        id: zed_llm_client::LanguageModelId(
-                                            format!("{}-thinking", model.id).into(),
-                                        ),
-                                        display_name: format!("{} Thinking", model.display_name),
-                                        ..model
-                                    }));
-                                }
-                            }
-
-                            this.default_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_model)
-                                .cloned();
-                            this.default_fast_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_fast_model)
-                                .cloned();
-                            this.recommended_models = response
-                                .recommended_models
-                                .iter()
-                                .filter_map(|id| models.iter().find(|model| &model.id == id))
-                                .cloned()
-                                .collect();
-                            this.models = models;
-                            cx.notify();
-                        })
-                    })??;
-
-                    anyhow::Ok(())
+                    let response = Self::fetch_models(client, llm_api_token).await?;
+                    this.update(cx, |this, cx| {
+                        this.update_models(response, cx);
+                    })
                 })
                 .await
                 .context("failed to fetch Zed models")
@@ -216,12 +177,15 @@ impl State {
             }),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
-                |this, _listener, _event, cx| {
+                move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(async move |_this, _cx| {
+                    cx.spawn(async move |this, cx| {
                         llm_api_token.refresh(&client).await?;
-                        anyhow::Ok(())
+                        let response = Self::fetch_models(client, llm_api_token).await?;
+                        this.update(cx, |this, cx| {
+                            this.update_models(response, cx);
+                        })
                     })
                     .detach_and_log_err(cx);
                 },
@@ -264,21 +228,51 @@ impl State {
         }));
     }
 
+    fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
+        let mut models = Vec::new();
+
+        for model in response.models {
+            models.push(Arc::new(model.clone()));
+
+            // Right now we represent thinking variants of models as separate models on the client,
+            // so we need to insert variants for any model that supports thinking.
+            if model.supports_thinking {
+                models.push(Arc::new(zed_llm_client::LanguageModel {
+                    id: zed_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
+                    display_name: format!("{} Thinking", model.display_name),
+                    ..model
+                }));
+            }
+        }
+
+        self.default_model = models
+            .iter()
+            .find(|model| model.id == response.default_model)
+            .cloned();
+        self.default_fast_model = models
+            .iter()
+            .find(|model| model.id == response.default_fast_model)
+            .cloned();
+        self.recommended_models = response
+            .recommended_models
+            .iter()
+            .filter_map(|id| models.iter().find(|model| &model.id == id))
+            .cloned()
+            .collect();
+        self.models = models;
+        cx.notify();
+    }
+
     async fn fetch_models(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
-        use_cloud: bool,
     ) -> Result<ListModelsResponse> {
         let http_client = &client.http_client();
         let token = llm_api_token.acquire(&client).await?;
 
         let request = http_client::Request::builder()
             .method(Method::GET)
-            .uri(
-                http_client
-                    .build_zed_llm_url("/models", &[], use_cloud)?
-                    .as_ref(),
-            )
+            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
             .header("Authorization", format!("Bearer {token}"))
             .body(AsyncBody::empty())?;
         let mut response = http_client
@@ -542,7 +536,6 @@ impl CloudLanguageModel {
         llm_api_token: LlmApiToken,
         app_version: Option<SemanticVersion>,
         body: CompletionBody,
-        use_cloud: bool,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
 
@@ -550,11 +543,9 @@ impl CloudLanguageModel {
         let mut refreshed_token = false;
 
         loop {
-            let request_builder = http_client::Request::builder().method(Method::POST).uri(
-                http_client
-                    .build_zed_llm_url("/completions", &[], use_cloud)?
-                    .as_ref(),
-            );
+            let request_builder = http_client::Request::builder()
+                .method(Method::POST)
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
             let request_builder = if let Some(app_version) = app_version {
                 request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
             } else {
@@ -781,7 +772,6 @@ impl LanguageModel for CloudLanguageModel {
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
-                let use_cloud = cx.has_flag::<ZedCloudFeatureFlag>();
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -797,7 +787,7 @@ impl LanguageModel for CloudLanguageModel {
                         .method(Method::POST)
                         .uri(
                             http_client
-                                .build_zed_llm_url("/count_tokens", &[], use_cloud)?
+                                .build_zed_llm_url("/count_tokens", &[])?
                                 .as_ref(),
                         )
                         .header("Content-Type", "application/json")
@@ -846,9 +836,7 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
-        let use_cloud = cx
-            .update(|cx| cx.has_flag::<ZedCloudFeatureFlag>())
-            .unwrap_or(false);
+        let thinking_allowed = request.thinking_allowed;
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -856,7 +844,7 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if self.model.id.0.ends_with("-thinking") {
+                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }
@@ -886,7 +874,6 @@ impl LanguageModel for CloudLanguageModel {
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
                         },
-                        use_cloud,
                     )
                     .await
                     .map_err(|err| match err.downcast::<ApiError>() {
@@ -939,7 +926,6 @@ impl LanguageModel for CloudLanguageModel {
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
                         },
-                        use_cloud,
                     )
                     .await?;
 
@@ -980,7 +966,6 @@ impl LanguageModel for CloudLanguageModel {
                             provider_request: serde_json::to_value(&request)
                                 .map_err(|e| anyhow!(e))?,
                         },
-                        use_cloud,
                     )
                     .await?;
 

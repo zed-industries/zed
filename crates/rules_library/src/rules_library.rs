@@ -611,7 +611,7 @@ impl RulesLibrary {
                 this.update_in(cx, |this, window, cx| match rule {
                     Ok(rule) => {
                         let title_editor = cx.new(|cx| {
-                            let mut editor = Editor::auto_width(window, cx);
+                            let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
@@ -981,6 +981,7 @@ impl RulesLibrary {
                                     tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
+                                    thinking_allowed: true,
                                 },
                                 cx,
                             )

@@ -52,6 +52,10 @@ impl IndexedDocsRegistry {
         );
     }
 
+    pub fn unregister_provider(&self, provider_id: &ProviderId) {
+        self.stores_by_provider.write().remove(provider_id);
+    }
+
     pub fn get_provider_store(&self, provider_id: ProviderId) -> Option<Arc<IndexedDocsStore>> {
         self.stores_by_provider.read().get(&provider_id).cloned()
     }

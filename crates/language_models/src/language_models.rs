@@ -23,6 +23,7 @@ use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::vercel::VercelLanguageModelProvider;
+use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
@@ -147,5 +148,6 @@ fn register_language_model_providers(
         VercelLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
+    registry.register_provider(XAiLanguageModelProvider::new(client.http_client(), cx), cx);
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 }

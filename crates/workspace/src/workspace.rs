@@ -2777,6 +2777,7 @@ impl Workspace {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    None,
                     window,
                     cx,
                 )
@@ -3841,11 +3842,13 @@ impl Workspace {
                 if *local {
                     self.unfollow_in_pane(&pane, window, cx);
                 }
+                serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
+                } else if *local {
+                    self.set_active_pane(&pane, window, cx);
                 }
-                serialize_workspace = *focus_changed || pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
@@ -6657,6 +6660,10 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
+
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+        &self.workspaces
+    }
 }
 
 impl ViewId {
@@ -9448,6 +9455,7 @@ mod tests {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },
+                None,
                 window,
                 cx,
             )
