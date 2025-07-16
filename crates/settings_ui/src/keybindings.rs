@@ -66,6 +66,8 @@ actions!(
         ToggleConflictFilter,
         /// Toggle Keystroke search
         ToggleKeystrokeSearch,
+        /// Toggles exact matching for keystroke search
+        ToggleExactKeystrokeMatching,
     ]
 );
 
@@ -176,14 +178,16 @@ impl KeymapEventChannel {
 enum SearchMode {
     #[default]
     Normal,
-    KeyStroke,
+    KeyStroke {
+        exact_match: bool,
+    },
 }
 
 impl SearchMode {
     fn invert(&self) -> Self {
         match self {
-            SearchMode::Normal => SearchMode::KeyStroke,
-            SearchMode::KeyStroke => SearchMode::Normal,
+            SearchMode::Normal => SearchMode::KeyStroke { exact_match: false },
+            SearchMode::KeyStroke { .. } => SearchMode::Normal,
         }
     }
 }
@@ -204,7 +208,11 @@ impl FilterState {
     }
 }
 
-type ActionMapping = (SharedString, Option<SharedString>);
+#[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
+struct ActionMapping {
+    keystroke_text: SharedString,
+    context: Option<SharedString>,
+}
 
 #[derive(Default)]
 struct ConflictState {
@@ -255,6 +263,12 @@ impl ConflictState {
                 let mut indices = indices.iter().filter(|&idx| *idx != keybind_idx).peekable();
                 indices.peek().is_some().then(|| indices.copied().collect())
             })
+    }
+
+    fn will_conflict(&self, action_mapping: ActionMapping) -> Option<Vec<usize>> {
+        self.action_keybind_mapping
+            .get(&action_mapping)
+            .and_then(|indices| indices.is_empty().not().then_some(indices.clone()))
     }
 
     fn has_conflict(&self, candidate_idx: &usize) -> bool {
@@ -375,7 +389,7 @@ impl KeymapEditor {
 
     fn current_keystroke_query(&self, cx: &App) -> Vec<Keystroke> {
         match self.search_mode {
-            SearchMode::KeyStroke => self
+            SearchMode::KeyStroke { .. } => self
                 .keystroke_editor
                 .read(cx)
                 .keystrokes()
@@ -432,17 +446,27 @@ impl KeymapEditor {
             }
 
             match this.search_mode {
-                SearchMode::KeyStroke => {
+                SearchMode::KeyStroke { exact_match } => {
                     matches.retain(|item| {
                         this.keybindings[item.candidate_id]
                             .keystrokes()
                             .is_some_and(|keystrokes| {
-                                keystroke_query.iter().all(|key| {
-                                    keystrokes.iter().any(|keystroke| {
-                                        keystroke.key == key.key
-                                            && keystroke.modifiers == key.modifiers
+                                if exact_match {
+                                    keystroke_query.len() == keystrokes.len()
+                                        && keystroke_query.iter().zip(keystrokes).all(
+                                            |(query, keystroke)| {
+                                                query.key == keystroke.key
+                                                    && query.modifiers == keystroke.modifiers
+                                            },
+                                        )
+                                } else {
+                                    keystroke_query.iter().all(|key| {
+                                        keystrokes.iter().any(|keystroke| {
+                                            keystroke.key == key.key
+                                                && keystroke.modifiers == key.modifiers
+                                        })
                                     })
-                                })
+                                }
                             })
                     });
                 }
@@ -699,7 +723,12 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let weak = cx.weak_entity();
         self.context_menu = self.selected_binding().map(|selected_binding| {
+            let key_strokes = selected_binding
+                .keystrokes()
+                .map(Vec::from)
+                .unwrap_or_default();
             let selected_binding_has_no_context = selected_binding
                 .context
                 .as_ref()
@@ -727,6 +756,22 @@ impl KeymapEditor {
                     "Copy Context",
                     Box::new(CopyContext),
                 )
+                .entry("Show matching keybindings", None, {
+                    let weak = weak.clone();
+                    let key_strokes = key_strokes.clone();
+
+                    move |_, cx| {
+                        weak.update(cx, |this, cx| {
+                            this.filter_state = FilterState::All;
+                            this.search_mode = SearchMode::KeyStroke { exact_match: true };
+
+                            this.keystroke_editor.update(cx, |editor, cx| {
+                                editor.set_keystrokes(key_strokes.clone(), cx);
+                            });
+                        })
+                        .ok();
+                    }
+                })
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
@@ -943,16 +988,31 @@ impl KeymapEditor {
 
         // Update the keystroke editor to turn the `search` bool on
         self.keystroke_editor.update(cx, |keystroke_editor, cx| {
-            keystroke_editor.set_search_mode(self.search_mode == SearchMode::KeyStroke);
+            keystroke_editor
+                .set_search_mode(matches!(self.search_mode, SearchMode::KeyStroke { .. }));
             cx.notify();
         });
 
         match self.search_mode {
-            SearchMode::KeyStroke => {
+            SearchMode::KeyStroke { .. } => {
                 window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
             }
             SearchMode::Normal => {}
         }
+    }
+
+    fn toggle_exact_keystroke_matching(
+        &mut self,
+        _: &ToggleExactKeystrokeMatching,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SearchMode::KeyStroke { exact_match } = &mut self.search_mode else {
+            return;
+        };
+
+        *exact_match = !(*exact_match);
+        self.on_query_changed(cx);
     }
 }
 
@@ -970,13 +1030,14 @@ struct ProcessedKeybinding {
 
 impl ProcessedKeybinding {
     fn get_action_mapping(&self) -> ActionMapping {
-        (
-            self.keystroke_text.clone(),
-            self.context
+        ActionMapping {
+            keystroke_text: self.keystroke_text.clone(),
+            context: self
+                .context
                 .as_ref()
                 .and_then(|context| context.local())
                 .cloned(),
-        )
+        }
     }
 
     fn keystrokes(&self) -> Option<&[Keystroke]> {
@@ -1061,6 +1122,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .on_action(cx.listener(Self::toggle_conflict_filter))
             .on_action(cx.listener(Self::toggle_keystroke_search))
+            .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
             .size_full()
             .p_2()
             .gap_1()
@@ -1103,7 +1165,10 @@ impl Render for KeymapEditor {
                                         cx,
                                     )
                                 })
-                                .toggle_state(matches!(self.search_mode, SearchMode::KeyStroke))
+                                .toggle_state(matches!(
+                                    self.search_mode,
+                                    SearchMode::KeyStroke { .. }
+                                ))
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(ToggleKeystrokeSearch.boxed_clone(), cx);
                                 }),
@@ -1141,19 +1206,43 @@ impl Render for KeymapEditor {
                                 )
                             }),
                     )
-                    .when(matches!(self.search_mode, SearchMode::KeyStroke), |this| {
-                        this.child(
-                            div()
-                                .map(|this| {
-                                    if self.keybinding_conflict_state.any_conflicts() {
-                                        this.pr(rems_from_px(54.))
-                                    } else {
-                                        this.pr_7()
-                                    }
-                                })
-                                .child(self.keystroke_editor.clone()),
-                        )
-                    }),
+                    .when_some(
+                        match self.search_mode {
+                            SearchMode::Normal => None,
+                            SearchMode::KeyStroke { exact_match } => Some(exact_match),
+                        },
+                        |this, exact_match| {
+                            this.child(
+                                h_flex()
+                                    .map(|this| {
+                                        if self.keybinding_conflict_state.any_conflicts() {
+                                            this.pr(rems_from_px(54.))
+                                        } else {
+                                            this.pr_7()
+                                        }
+                                    })
+                                    .child(self.keystroke_editor.clone())
+                                    .child(
+                                        div().p_1().child(
+                                            IconButton::new(
+                                                "keystrokes-exact-match",
+                                                IconName::Equal,
+                                            )
+                                            .shape(IconButtonShape::Square)
+                                            .toggle_state(exact_match)
+                                            .on_click(
+                                                cx.listener(|_, _, window, cx| {
+                                                    window.dispatch_action(
+                                                        ToggleExactKeystrokeMatching.boxed_clone(),
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        ),
+                                    ),
+                            )
+                        },
+                    ),
             )
             .child(
                 Table::new()
@@ -1650,20 +1739,23 @@ impl KeybindingEditorModal {
             Ok(input) => input,
         };
 
-        let action_mapping: ActionMapping = (
-            ui::text_for_keystrokes(&new_keystrokes, cx).into(),
-            new_context
-                .as_ref()
-                .map(Into::into)
-                .or_else(|| existing_keybind.get_action_mapping().1),
-        );
+        let action_mapping = ActionMapping {
+            keystroke_text: ui::text_for_keystrokes(&new_keystrokes, cx).into(),
+            context: new_context.as_ref().map(Into::into),
+        };
 
-        if let Some(conflicting_indices) = self
-            .keymap_editor
-            .read(cx)
-            .keybinding_conflict_state
-            .conflicting_indices_for_mapping(action_mapping, self.editing_keybind_idx)
-        {
+        let conflicting_indices = if self.creating {
+            self.keymap_editor
+                .read(cx)
+                .keybinding_conflict_state
+                .will_conflict(action_mapping)
+        } else {
+            self.keymap_editor
+                .read(cx)
+                .keybinding_conflict_state
+                .conflicting_indices_for_mapping(action_mapping, self.editing_keybind_idx)
+        };
+        if let Some(conflicting_indices) = conflicting_indices {
             let first_conflicting_index = conflicting_indices[0];
             let conflicting_action_name = self
                 .keymap_editor
@@ -1739,10 +1831,11 @@ impl KeybindingEditorModal {
                 .log_err();
             } else {
                 this.update(cx, |this, cx| {
-                    let action_mapping = (
-                        ui::text_for_keystrokes(new_keystrokes.as_slice(), cx).into(),
-                        new_context.map(SharedString::from),
-                    );
+                    let action_mapping = ActionMapping {
+                        keystroke_text: ui::text_for_keystrokes(new_keystrokes.as_slice(), cx)
+                            .into(),
+                        context: new_context.map(SharedString::from),
+                    };
 
                     this.keymap_editor.update(cx, |keymap, cx| {
                         keymap.previous_edit = Some(PreviousEdit::Keybinding {
@@ -2221,6 +2314,11 @@ impl KeystrokeInput {
         }
     }
 
+    fn set_keystrokes(&mut self, keystrokes: Vec<Keystroke>, cx: &mut Context<Self>) {
+        self.keystrokes = keystrokes;
+        self.keystrokes_changed(cx);
+    }
+
     fn dummy(modifiers: Modifiers) -> Keystroke {
         return Keystroke {
             modifiers,
@@ -2438,14 +2536,11 @@ impl KeystrokeInput {
     fn clear_keystrokes(
         &mut self,
         _: &ClearKeystrokes,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.outer_focus_handle.is_focused(window) {
-            return;
-        }
         self.keystrokes.clear();
-        cx.notify();
+        self.keystrokes_changed(cx);
     }
 }
 

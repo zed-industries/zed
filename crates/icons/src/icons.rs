@@ -107,6 +107,7 @@ pub enum IconName {
     Ellipsis,
     EllipsisVertical,
     Envelope,
+    Equal,
     Eraser,
     Escape,
     Exit,
