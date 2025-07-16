@@ -462,10 +462,20 @@ impl KeymapEditor {
                                 } else {
                                     let key_press_query =
                                         KeyPressIterator::new(keystroke_query.as_slice());
+                                    let mut last_match_idx = 0;
 
                                     key_press_query.into_iter().all(|key| {
                                         let key_presses = KeyPressIterator::new(keystrokes);
-                                        key_presses.into_iter().any(|keystroke| keystroke == key)
+                                        key_presses.into_iter().enumerate().any(
+                                            |(index, keystroke)| {
+                                                if last_match_idx > index || keystroke != key {
+                                                    return false;
+                                                }
+
+                                                last_match_idx = index;
+                                                true
+                                            },
+                                        )
                                     })
                                 }
                             })
