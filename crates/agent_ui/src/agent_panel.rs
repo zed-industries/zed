@@ -3084,7 +3084,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
 struct OnboardingUpsell;
 
 impl Dismissable for OnboardingUpsell {
-    const KEY: &'static str = "dismissed-upsell";
+    const KEY: &'static str = "dismissed-trial-upsell";
 }
 
 struct TrialEndUpsell;
