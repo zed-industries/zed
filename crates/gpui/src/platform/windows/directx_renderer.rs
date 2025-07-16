@@ -19,7 +19,8 @@ use windows::{
 use crate::*;
 
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
-const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+// const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
@@ -1200,7 +1201,6 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
     let desc = D3D11_RASTERIZER_DESC {
         FillMode: D3D11_FILL_SOLID,
         CullMode: D3D11_CULL_NONE,
-        // FrontCounterClockwise: true.into(),
         FrontCounterClockwise: false.into(),
         DepthBias: 0,
         DepthBiasClamp: 0.0,
