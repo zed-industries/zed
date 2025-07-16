@@ -285,59 +285,19 @@ impl DirectXRenderer {
             });
         }
 
-        update_paths_buffer_capacity(
-            &self.pipelines.paths_pipeline,
-            sprites.len(),
+        self.pipelines.paths_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_paths_pipeline_buffer(&mut self.pipelines.paths_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.paths_pipeline.buffer,
             &sprites,
-        )?;
-        update_paths_vertex_capacity(
-            &mut self.pipelines.paths_pipeline,
-            vertices.len(),
-            &self.devices.device,
-        )
-        .map(|input| update_paths_pipeline_vertex(&mut self.pipelines.paths_pipeline, input));
-        update_buffer(
-            &self.devices.device_context,
-            self.pipelines
-                .paths_pipeline
-                .vertex_buffer
-                .as_ref()
-                .unwrap(),
             &vertices,
-        )?;
-        update_indirect_buffer_capacity(
-            &self.pipelines.paths_pipeline,
-            draw_indirect_commands.len(),
-            &self.devices.device,
-        )
-        .map(|input| update_paths_indirect_buffer(&mut self.pipelines.paths_pipeline, input));
-        update_buffer(
-            &self.devices.device_context,
-            &self.pipelines.paths_pipeline.indirect_draw_buffer,
             &draw_indirect_commands,
         )?;
-        prepare_indirect_draws(
+        self.pipelines.paths_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.paths_pipeline,
+            paths.len(),
             &self.context.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-        )?;
-
-        for i in 0..paths.len() {
-            draw_indirect(
-                &self.devices.device_context,
-                &self.pipelines.paths_pipeline.indirect_draw_buffer,
-                (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
-            );
-        }
-        Ok(())
+        )
     }
 
     fn draw_underlines(&mut self, underlines: &[Underline]) -> Result<()> {
@@ -634,18 +594,19 @@ impl<T> PipelineState<T> {
     ) -> Result<()> {
         if self.buffer_size < data.len() {
             let new_buffer_size = data.len().next_power_of_two();
+            log::info!(
+                "Updating {} buffer size from {} to {}",
+                self.label,
+                self.buffer_size,
+                new_buffer_size
+            );
             let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
             let view = create_buffer_view(device, &buffer)?;
             self.buffer = buffer;
             self.view = view;
+            self.buffer_size = new_buffer_size;
         }
-        unsafe {
-            let mut dest = std::mem::zeroed();
-            device_context.Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
-            std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
-            device_context.Unmap(&self.buffer, 0);
-        }
-        Ok(())
+        update_buffer(device_context, &self.buffer, data)
     }
 
     fn draw(
@@ -783,6 +744,101 @@ impl PathsPipelineState {
             input_layout,
             view,
         })
+    }
+
+    fn update_buffer(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        buffer_data: &[PathSprite],
+        vertices_data: &[PathVertex<ScaledPixels>],
+        draw_commands: &[DrawInstancedIndirectArgs],
+    ) -> Result<()> {
+        if self.buffer_size < buffer_data.len() {
+            let new_buffer_size = buffer_data.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline buffer size from {} to {}",
+                self.buffer_size,
+                new_buffer_size
+            );
+            let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+            self.buffer_size = new_buffer_size;
+        }
+        update_buffer(device_context, &self.buffer, buffer_data)?;
+        if self.vertex_buffer_size < vertices_data.len() {
+            let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline vertex buffer size from {} to {}",
+                self.vertex_buffer_size,
+                new_vertex_buffer_size
+            );
+            let vertex_buffer = create_buffer(
+                device,
+                std::mem::size_of::<PathVertex<ScaledPixels>>(),
+                new_vertex_buffer_size,
+            )?;
+            self.vertex_buffer = Some(vertex_buffer);
+            self.vertex_buffer_size = new_vertex_buffer_size;
+        }
+        update_buffer(
+            device_context,
+            self.vertex_buffer.as_ref().unwrap(),
+            vertices_data,
+        )?;
+        if self.indirect_buffer_size < draw_commands.len() {
+            let new_indirect_buffer_size = draw_commands.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline indirect buffer size from {} to {}",
+                self.indirect_buffer_size,
+                new_indirect_buffer_size
+            );
+            let indirect_draw_buffer =
+                create_indirect_draw_buffer(device, new_indirect_buffer_size)?;
+            self.indirect_draw_buffer = indirect_draw_buffer;
+            self.indirect_buffer_size = new_indirect_buffer_size;
+        }
+        update_buffer(device_context, &self.indirect_draw_buffer, draw_commands)?;
+        Ok(())
+    }
+
+    fn draw(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        count: usize,
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+    ) -> Result<()> {
+        unsafe {
+            device_context.VSSetShaderResources(1, Some(&self.view));
+            device_context.PSSetShaderResources(1, Some(&self.view));
+            device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            device_context.RSSetViewports(Some(viewport));
+            device_context.VSSetShader(&self.vertex, None);
+            device_context.PSSetShader(&self.fragment, None);
+            device_context.VSSetConstantBuffers(0, Some(global_params));
+            device_context.PSSetConstantBuffers(0, Some(global_params));
+            const STRIDE: u32 = std::mem::size_of::<PathVertex<ScaledPixels>>() as u32;
+            device_context.IASetVertexBuffers(
+                0,
+                1,
+                Some(&self.vertex_buffer),
+                Some(&STRIDE),
+                Some(&0),
+            );
+            device_context.IASetInputLayout(&self.input_layout);
+        }
+        for i in 0..count {
+            unsafe {
+                device_context.DrawInstancedIndirect(
+                    &self.indirect_draw_buffer,
+                    (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1048,21 +1104,6 @@ fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: usize) -> Res
     Ok(buffer.unwrap())
 }
 
-fn update_global_params(
-    device_context: &ID3D11DeviceContext,
-    buffer: &[Option<ID3D11Buffer>; 1],
-    globals: GlobalParams,
-) -> Result<()> {
-    let buffer = buffer[0].as_ref().unwrap();
-    unsafe {
-        let mut data = std::mem::zeroed();
-        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
-        std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
-        device_context.Unmap(buffer, 0);
-    }
-    Ok(())
-}
-
 fn pre_draw(
     device_context: &ID3D11DeviceContext,
     global_params_buffer: &[Option<ID3D11Buffer>; 1],
@@ -1071,13 +1112,14 @@ fn pre_draw(
     clear_color: [f32; 4],
     blend_state: &ID3D11BlendState,
 ) -> Result<()> {
-    update_global_params(
+    let global_params = global_params_buffer[0].as_ref().unwrap();
+    update_buffer(
         device_context,
-        global_params_buffer,
-        GlobalParams {
+        global_params,
+        &[GlobalParams {
             viewport_size: [view_port[0].Width, view_port[0].Height],
             ..Default::default()
-        },
+        }],
     )?;
     unsafe {
         device_context.RSSetViewports(Some(view_port));
@@ -1086,70 +1128,6 @@ fn pre_draw(
         device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
     Ok(())
-}
-
-fn update_paths_buffer_capacity(
-    pipeline: &PathsPipelineState,
-    data_size: usize,
-    device: &ID3D11Device,
-) -> Option<(ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1])> {
-    if pipeline.buffer_size >= data_size {
-        return None;
-    }
-    let buffer_size = data_size.next_power_of_two();
-    let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), buffer_size).unwrap();
-    let view = create_buffer_view(device, &buffer).unwrap();
-    Some((buffer, buffer_size, view))
-}
-
-fn update_paths_vertex_capacity(
-    pipeline: &PathsPipelineState,
-    vertex_size: usize,
-    device: &ID3D11Device,
-) -> Option<(ID3D11Buffer, usize)> {
-    if pipeline.vertex_buffer_size >= vertex_size {
-        return None;
-    }
-    let vertex_size = vertex_size.next_power_of_two();
-    let buffer = create_buffer(
-        device,
-        std::mem::size_of::<PathVertex<ScaledPixels>>(),
-        vertex_size,
-    )
-    .unwrap();
-    Some((buffer, vertex_size))
-}
-
-fn update_indirect_buffer_capacity(
-    pipeline: &PathsPipelineState,
-    data_size: usize,
-    device: &ID3D11Device,
-) -> Option<(ID3D11Buffer, usize)> {
-    if pipeline.indirect_buffer_size >= data_size {
-        return None;
-    }
-    let buffer_size = data_size.next_power_of_two();
-    let buffer = create_indirect_draw_buffer(device, data_size).unwrap();
-    Some((buffer, buffer_size))
-}
-
-fn update_paths_pipeline_buffer(
-    pipeline: &mut PathsPipelineState,
-    input: (ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1]),
-) {
-    pipeline.buffer = input.0;
-    pipeline.buffer_size = input.1;
-    pipeline.view = input.2;
-}
-
-fn update_paths_pipeline_vertex(pipeline: &mut PathsPipelineState, input: (ID3D11Buffer, usize)) {
-    pipeline.vertex_buffer = Some(input.0);
-    pipeline.vertex_buffer_size = input.1;
-}
-
-fn update_paths_indirect_buffer(pipeline: &mut PathsPipelineState, input: (ID3D11Buffer, usize)) {
-    pipeline.indirect_draw_buffer = input.0;
-    pipeline.indirect_buffer_size = input.1;
 }
 
 fn update_buffer<T>(
@@ -1164,45 +1142,6 @@ fn update_buffer<T>(
         device_context.Unmap(buffer, 0);
     }
     Ok(())
-}
-
-fn prepare_indirect_draws(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PathsPipelineState,
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
-    topology: D3D_PRIMITIVE_TOPOLOGY,
-) -> Result<()> {
-    unsafe {
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
-        device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
-        const STRIDE: u32 = std::mem::size_of::<PathVertex<ScaledPixels>>() as u32;
-        device_context.IASetVertexBuffers(
-            0,
-            1,
-            Some(&pipeline.vertex_buffer),
-            Some(&STRIDE),
-            Some(&0),
-        );
-        device_context.IASetInputLayout(&pipeline.input_layout);
-    }
-    Ok(())
-}
-
-fn draw_indirect(
-    device_context: &ID3D11DeviceContext,
-    indirect_draw_buffer: &ID3D11Buffer,
-    offset: u32,
-) {
-    unsafe {
-        device_context.DrawInstancedIndirect(indirect_draw_buffer, offset);
-    }
 }
 
 const BUFFER_COUNT: usize = 3;
