@@ -881,6 +881,9 @@ pub struct KeybindUpdateTarget<'a> {
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
+        if self.action_name == gpui::NoAction.name() {
+            return Ok(Value::Null);
+        }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
             Some(args) => {
@@ -1557,7 +1560,7 @@ mod tests {
                 {
                     "context": "SomeContext",
                     "bindings": {
-                        "a": "zed::NoAction"
+                        "a": null
                     }
                 }
             ]"#
