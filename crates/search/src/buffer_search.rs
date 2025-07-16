@@ -45,6 +45,10 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
+    ("\\c", &SearchOptions::CASE_SENSITIVE, false),
+    ("\\C", &SearchOptions::CASE_SENSITIVE, true),
+];
 
 /// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
@@ -810,8 +814,20 @@ impl BufferSearchBar {
         });
     }
 
-    pub fn query(&self, cx: &App) -> String {
+    /// Returns the raw query string without any of the pattern items removed.
+    pub fn raw_query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
+    }
+
+    /// Returns the sanitized query string with pattern items removed.
+    pub fn query(&self, cx: &App) -> String {
+        // TODO: Probably replace this with a regex (\\[cC])? I assume
+        // performance is going to be not so great with a big list of pattern
+        // items.
+        PATTERN_ITEMS.iter().fold(
+            self.query_editor.read(cx).text(cx),
+            |string, (pattern, _, _)| string.replace(pattern, ""),
+        )
     }
 
     pub fn replacement(&self, cx: &mut App) -> String {
@@ -905,6 +921,17 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) {
         if !self.search_options.contains(search_option) {
+            self.toggle_search_option(search_option, window, cx)
+        }
+    }
+
+    pub fn disable_search_option(
+        &mut self,
+        search_option: SearchOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search_options.contains(search_option) {
             self.toggle_search_option(search_option, window, cx)
         }
     }
@@ -1032,6 +1059,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
+                self.apply_pattern_items(cx);
                 self.clear_matches(window, cx);
                 let search = self.update_matches(false, window, cx);
 
@@ -1439,6 +1467,28 @@ impl BufferSearchBar {
                 }
             }
         }
+    }
+
+    // Determines which pattern items are present in the search query and
+    // updates the search options accordingly.
+    fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
+        // Start from the default search options to ensure that any search
+        // option that is not to be updated does not changed.
+        // For example, if `\c` was present in the query and the case
+        // sensitivity was initially enabled, removing `\c` from the query
+        // should re-enable case sensitivity.
+        let mut search_options = self.default_options.clone();
+        let query = self.raw_query(cx);
+
+        for (pattern, search_option, value) in PATTERN_ITEMS {
+            match (query.contains(pattern), value) {
+                (true, true) => search_options.set(*search_option, value),
+                (true, false) => search_options.set(*search_option, value),
+                (false, _) => (),
+            }
+        }
+
+        self.set_search_options(search_options, cx);
     }
 
     fn adjust_query_regex_language(&self, cx: &mut App) {
