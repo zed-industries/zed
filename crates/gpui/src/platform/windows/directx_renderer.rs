@@ -45,12 +45,12 @@ struct DirectXContext {
 }
 
 struct DirectXRenderPipelines {
-    shadow_pipeline: PipelineState,
-    quad_pipeline: PipelineState,
+    shadow_pipeline: PipelineState<Shadow>,
+    quad_pipeline: PipelineState<Quad>,
     paths_pipeline: PathsPipelineState,
-    underline_pipeline: PipelineState,
-    mono_sprites: PipelineState,
-    poly_sprites: PipelineState,
+    underline_pipeline: PipelineState<Underline>,
+    mono_sprites: PipelineState<MonochromeSprite>,
+    poly_sprites: PipelineState<PolychromeSprite>,
 }
 
 struct DirectXGlobalElements {
@@ -225,16 +225,9 @@ impl DirectXRenderer {
         if shadows.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.shadow_pipeline,
-            std::mem::size_of::<Shadow>(),
-            shadows.len(),
+        self.pipelines.shadow_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.shadow_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.shadow_pipeline.buffer,
             shadows,
         )?;
         draw_normal(
@@ -252,16 +245,9 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.quad_pipeline,
-            std::mem::size_of::<Quad>(),
-            quads.len(),
+        self.pipelines.quad_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.quad_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.quad_pipeline.buffer,
             quads,
         )?;
         draw_normal(
@@ -364,16 +350,9 @@ impl DirectXRenderer {
         if underlines.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.underline_pipeline,
-            std::mem::size_of::<Underline>(),
-            underlines.len(),
+        self.pipelines.underline_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.underline_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.underline_pipeline.buffer,
             underlines,
         )?;
         draw_normal(
@@ -395,19 +374,12 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        update_buffer_capacity(
-            &self.pipelines.mono_sprites,
-            std::mem::size_of::<MonochromeSprite>(),
-            sprites.len(),
+        self.pipelines.mono_sprites.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.mono_sprites, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.mono_sprites.buffer,
             sprites,
         )?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
         draw_with_texture(
             &self.devices.device_context,
             &self.pipelines.mono_sprites,
@@ -427,19 +399,12 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        update_buffer_capacity(
-            &self.pipelines.poly_sprites,
-            std::mem::size_of::<PolychromeSprite>(),
-            sprites.len(),
+        self.pipelines.poly_sprites.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.poly_sprites, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.poly_sprites.buffer,
             sprites,
         )?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
         draw_with_texture(
             &self.devices.device_context,
             &self.pipelines.poly_sprites,
@@ -490,47 +455,35 @@ impl DirectXContext {
 
 impl DirectXRenderPipelines {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let shadow_pipeline = create_pipieline(
+        let shadow_pipeline = PipelineState::new(
             device,
+            "shadow_pipeline",
             "shadow_vertex",
             "shadow_fragment",
-            std::mem::size_of::<Shadow>(),
             32,
         )?;
-        let quad_pipeline = create_pipieline(
-            device,
-            "quad_vertex",
-            "quad_fragment",
-            std::mem::size_of::<Quad>(),
-            32,
-        )?;
-        // let paths_pipeline = create_pipieline(
-        //     device,
-        //     "paths_vertex",
-        //     "paths_fragment",
-        //     std::mem::size_of::<PathSprite>(),
-        //     32,
-        // )?;
+        let quad_pipeline =
+            PipelineState::new(device, "quad_pipeline", "quad_vertex", "quad_fragment", 32)?;
         let paths_pipeline = PathsPipelineState::new(device)?;
-        let underline_pipeline = create_pipieline(
+        let underline_pipeline = PipelineState::new(
             device,
+            "underline_pipeline",
             "underline_vertex",
             "underline_fragment",
-            std::mem::size_of::<Underline>(),
             32,
         )?;
-        let mono_sprites = create_pipieline(
+        let mono_sprites = PipelineState::new(
             device,
+            "monochrome_sprite_pipeline",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            std::mem::size_of::<MonochromeSprite>(),
             32,
         )?;
-        let poly_sprites = create_pipieline(
+        let poly_sprites = PipelineState::new(
             device,
+            "polychrome_sprite_pipeline",
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
-            std::mem::size_of::<PolychromeSprite>(),
             32,
         )?;
 
@@ -619,12 +572,14 @@ struct GlobalParams {
     _pad: u64,
 }
 
-struct PipelineState {
+struct PipelineState<T> {
+    label: &'static str,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
     view: [Option<ID3D11ShaderResourceView>; 1],
+    _marker: std::marker::PhantomData<T>,
 }
 
 struct PathsPipelineState {
@@ -638,6 +593,71 @@ struct PathsPipelineState {
     indirect_buffer_size: usize,
     input_layout: ID3D11InputLayout,
     view: [Option<ID3D11ShaderResourceView>; 1],
+}
+
+impl<T> PipelineState<T> {
+    fn new(
+        device: &ID3D11Device,
+        label: &'static str,
+        vertex_entry: &str,
+        fragment_entry: &str,
+        buffer_size: usize,
+    ) -> Result<Self> {
+        let vertex = {
+            let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            create_vertex_shader(device, bytes)?
+        };
+        let fragment = {
+            let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            create_fragment_shader(device, bytes)?
+        };
+        let buffer = create_buffer(device, std::mem::size_of::<T>(), buffer_size)?;
+        let view = create_buffer_view(device, &buffer)?;
+
+        Ok(PipelineState {
+            label,
+            vertex,
+            fragment,
+            buffer,
+            buffer_size,
+            view,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    fn update_buffer(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        data: &[T],
+    ) -> Result<()> {
+        if self.buffer_size < data.len() {
+            let new_buffer_size = data.len().next_power_of_two();
+            let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+        }
+        unsafe {
+            let mut dest = std::mem::zeroed();
+            device_context.Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
+            std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
+            device_context.Unmap(&self.buffer, 0);
+        }
+        Ok(())
+    }
 }
 
 impl PathsPipelineState {
@@ -933,44 +953,6 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     }
 }
 
-fn create_pipieline(
-    device: &ID3D11Device,
-    vertex_entry: &str,
-    fragment_entry: &str,
-    element_size: usize,
-    buffer_size: usize,
-) -> Result<PipelineState> {
-    let vertex = {
-        let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                shader_blob.GetBufferPointer() as *mut u8,
-                shader_blob.GetBufferSize(),
-            )
-        };
-        create_vertex_shader(device, bytes)?
-    };
-    let fragment = {
-        let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                shader_blob.GetBufferPointer() as *mut u8,
-                shader_blob.GetBufferSize(),
-            )
-        };
-        create_fragment_shader(device, bytes)?
-    };
-    let buffer = create_buffer(device, element_size, buffer_size)?;
-    let view = create_buffer_view(device, &buffer)?;
-    Ok(PipelineState {
-        vertex,
-        fragment,
-        buffer,
-        buffer_size,
-        view,
-    })
-}
-
 fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11VertexShader> {
     unsafe {
         let mut shader = None;
@@ -1068,21 +1050,6 @@ fn pre_draw(
     Ok(())
 }
 
-fn update_buffer_capacity(
-    pipeline: &PipelineState,
-    element_size: usize,
-    data_size: usize,
-    device: &ID3D11Device,
-) -> Option<(ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1])> {
-    if pipeline.buffer_size >= data_size {
-        return None;
-    }
-    let buffer_size = data_size.next_power_of_two();
-    let buffer = create_buffer(device, element_size, buffer_size).unwrap();
-    let view = create_buffer_view(device, &buffer).unwrap();
-    Some((buffer, buffer_size, view))
-}
-
 fn update_paths_buffer_capacity(
     pipeline: &PathsPipelineState,
     data_size: usize,
@@ -1126,15 +1093,6 @@ fn update_indirect_buffer_capacity(
     let buffer_size = data_size.next_power_of_two();
     let buffer = create_indirect_draw_buffer(device, data_size).unwrap();
     Some((buffer, buffer_size))
-}
-
-fn update_pipeline(
-    pipeline: &mut PipelineState,
-    input: (ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1]),
-) {
-    pipeline.buffer = input.0;
-    pipeline.buffer_size = input.1;
-    pipeline.view = input.2;
 }
 
 fn update_paths_pipeline_buffer(
@@ -1209,9 +1167,9 @@ fn draw_indirect(
     }
 }
 
-fn draw_normal(
+fn draw_normal<T>(
     device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState,
+    pipeline: &PipelineState<T>,
     viewport: &[D3D11_VIEWPORT],
     global_params: &[Option<ID3D11Buffer>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
@@ -1233,9 +1191,9 @@ fn draw_normal(
     Ok(())
 }
 
-fn draw_with_texture(
+fn draw_with_texture<T>(
     device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState,
+    pipeline: &PipelineState<T>,
     texture: &[Option<ID3D11ShaderResourceView>],
     viewport: &[D3D11_VIEWPORT],
     global_params: &[Option<ID3D11Buffer>],
