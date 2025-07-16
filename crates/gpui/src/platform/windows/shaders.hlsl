@@ -877,8 +877,8 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 */
 
 struct PathVertex {
-    float2 xy_position;
-    Bounds content_mask;
+    float2 xy_position: POSITION;
+    Bounds content_mask: TEXCOORD;
 };
 
 struct PathSprite {
@@ -903,11 +903,9 @@ struct PathFragmentInput {
     nointerpolation float4 color1: COLOR2;
 };
 
-StructuredBuffer<PathVertex> path_vertices: register(t1);
-StructuredBuffer<PathSprite> path_sprites: register(t2);
+StructuredBuffer<PathSprite> path_sprites: register(t1);
 
-PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
-    PathVertex v = path_vertices[vertex_id];
+PathVertexOutput paths_vertex(PathVertex v, uint instance_id: SV_InstanceID) {
     PathSprite sprite = path_sprites[instance_id];
 
     PathVertexOutput output;

@@ -324,7 +324,11 @@ impl DirectXRenderer {
         .map(|input| update_paths_pipeline_vertex(&mut self.pipelines.paths_pipeline, input));
         update_buffer(
             &self.devices.device_context,
-            &self.pipelines.paths_pipeline.vertex_buffer,
+            self.pipelines
+                .paths_pipeline
+                .vertex_buffer
+                .as_ref()
+                .unwrap(),
             &vertices,
         )?;
         update_indirect_buffer_capacity(
@@ -628,10 +632,11 @@ struct PathsPipelineState {
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
-    vertex_buffer: ID3D11Buffer,
+    vertex_buffer: Option<ID3D11Buffer>,
     vertex_buffer_size: usize,
     indirect_draw_buffer: ID3D11Buffer,
     indirect_buffer_size: usize,
+    input_layout: ID3D11InputLayout,
     view: [Option<ID3D11ShaderResourceView>; 1],
     vertex_view: [Option<ID3D11ShaderResourceView>; 1],
 }
@@ -663,7 +668,71 @@ impl PathsPipelineState {
         let vertex_buffer =
             create_buffer(device, std::mem::size_of::<PathVertex<ScaledPixels>>(), 32)?;
         let vertex_view = create_buffer_view(device, &vertex_buffer)?;
+        let vertex_buffer = Some(vertex_buffer);
         let indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
+        // Create input layout
+        let input_layout = unsafe {
+            let (vertex, shader_blob) = {
+                let shader_blob = shader_resources::build_shader_blob("paths_vertex", "vs_5_0")?;
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        shader_blob.GetBufferPointer() as *mut u8,
+                        shader_blob.GetBufferSize(),
+                    )
+                };
+                (create_vertex_shader(device, bytes)?, shader_blob)
+            };
+            let fragment = {
+                let shader_blob = shader_resources::build_shader_blob("paths_fragment", "ps_5_0")?;
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        shader_blob.GetBufferPointer() as *mut u8,
+                        shader_blob.GetBufferSize(),
+                    )
+                };
+                create_fragment_shader(device, bytes)?
+            };
+            let shader_bytes = std::slice::from_raw_parts(
+                shader_blob.GetBufferPointer() as *const u8,
+                shader_blob.GetBufferSize(),
+            );
+            let mut layout = None;
+            device.CreateInputLayout(
+                &[
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("POSITION"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 0,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("TEXCOORD"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 8,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("TEXCOORD"),
+                        SemanticIndex: 1,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 16,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                ],
+                shader_bytes,
+                Some(&mut layout),
+            )?;
+            layout.unwrap()
+        };
+
         Ok(Self {
             vertex,
             fragment,
@@ -673,6 +742,7 @@ impl PathsPipelineState {
             vertex_buffer_size: 32,
             indirect_draw_buffer,
             indirect_buffer_size: 32,
+            input_layout,
             view,
             vertex_view,
         })
@@ -965,11 +1035,11 @@ fn create_buffer_view(
     Ok([view])
 }
 
-fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: u32) -> Result<ID3D11Buffer> {
+fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: usize) -> Result<ID3D11Buffer> {
     let desc = D3D11_BUFFER_DESC {
-        ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
+        ByteWidth: (std::mem::size_of::<DrawInstancedIndirectArgs>() * buffer_size) as u32,
         Usage: D3D11_USAGE_DYNAMIC,
-        BindFlags: D3D11_BIND_INDEX_BUFFER.0 as u32,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
         MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
         StructureByteStride: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32,
@@ -1076,7 +1146,7 @@ fn update_indirect_buffer_capacity(
         return None;
     }
     let buffer_size = data_size.next_power_of_two();
-    let buffer = create_indirect_draw_buffer(device, data_size as u32).unwrap();
+    let buffer = create_indirect_draw_buffer(device, data_size).unwrap();
     Some((buffer, buffer_size))
 }
 
@@ -1102,7 +1172,7 @@ fn update_paths_pipeline_vertex(
     pipeline: &mut PathsPipelineState,
     input: (ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1]),
 ) {
-    pipeline.vertex_buffer = input.0;
+    pipeline.vertex_buffer = Some(input.0);
     pipeline.vertex_buffer_size = input.1;
     pipeline.vertex_view = input.2;
 }
@@ -1134,15 +1204,24 @@ fn prepare_indirect_draws(
     topology: D3D_PRIMITIVE_TOPOLOGY,
 ) -> Result<()> {
     unsafe {
-        device_context.VSSetShaderResources(1, Some(&pipeline.vertex_view));
-        device_context.VSSetShaderResources(2, Some(&pipeline.view));
-        device_context.PSSetShaderResources(2, Some(&pipeline.view));
+        device_context.VSSetShaderResources(1, Some(&pipeline.view));
+        device_context.PSSetShaderResources(1, Some(&pipeline.view));
         device_context.IASetPrimitiveTopology(topology);
         device_context.RSSetViewports(Some(viewport));
         device_context.VSSetShader(&pipeline.vertex, None);
         device_context.PSSetShader(&pipeline.fragment, None);
         device_context.VSSetConstantBuffers(0, Some(global_params));
         device_context.PSSetConstantBuffers(0, Some(global_params));
+        let stride = std::mem::size_of::<PathVertex<ScaledPixels>>() as u32;
+        let offset = 0u32;
+        device_context.IASetVertexBuffers(
+            0,
+            1,
+            Some(&pipeline.vertex_buffer),
+            Some(&stride),
+            Some(&offset),
+        );
+        device_context.IASetInputLayout(&pipeline.input_layout);
     }
     Ok(())
 }
