@@ -873,6 +873,8 @@ impl Render for PanelButtons {
                     (action, icon_tooltip.into())
                 };
 
+                let focus_handle = dock.focus_handle(cx);
+
                 Some(
                     right_click_menu(name)
                         .menu(move |window, cx| {
@@ -909,6 +911,7 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
+                                        window.focus(&focus_handle);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
