@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use acp_thread::AcpClientDelegate;
 use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
@@ -19,7 +19,7 @@ use util::debug_panic;
 
 use crate::claude::{
     McpServerConfig,
-    tools::{ClaudeTool, EditToolParams, EditToolResponse},
+    tools::{ClaudeTool, EditToolParams, EditToolResponse, ReadToolParams, ReadToolResponse},
 };
 
 pub struct ClaudeMcpServer {
@@ -43,22 +43,6 @@ struct PermissionToolParams {
 struct PermissionToolResponse {
     behavior: PermissionToolBehavior,
     updated_input: serde_json::Value,
-}
-
-#[derive(Deserialize, JsonSchema, Debug)]
-struct ReadToolParams {
-    /// The absolute path to the file to read.
-    abs_path: PathBuf,
-    /// Which line to start reading from. Omit to start from the begining.
-    offset: Option<u32>,
-    /// How many lines to read. Omit for the whole file.
-    limit: Option<u32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReadToolResponse {
-    content: String,
 }
 
 #[derive(Serialize)]

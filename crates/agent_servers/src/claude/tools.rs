@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use agentic_coding_protocol::{self as acp, PushToolCallParams, ToolCallLocation};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::ResultExt;
 
 pub enum ClaudeTool {
-    Edit { params: Option<EditToolParams> },
-    ReadFile,
+    Edit(Option<EditToolParams>),
+    ReadFile(Option<ReadToolParams>),
     ListDirectory,
     Glob,
     Grep,
@@ -21,12 +22,10 @@ impl ClaudeTool {
     pub fn infer(tool_name: &str, input: serde_json::Value) -> Self {
         match tool_name {
             // Known tools
-            "mcp__zed__Read" => Self::ReadFile,
-            "mcp__zed__Edit" => Self::Edit {
-                params: serde_json::from_value(input).ok(),
-            },
-            "MultiEdit" => Self::Edit { params: None },
-            "Write" => Self::Edit { params: None },
+            "mcp__zed__Read" => Self::ReadFile(serde_json::from_value(input).log_err()),
+            "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
+            "MultiEdit" => Self::Edit(None),
+            "Write" => Self::Edit(None),
             "LS" => Self::ListDirectory,
             "Glob" => Self::Glob,
             "Grep" => Self::Grep,
@@ -41,7 +40,7 @@ impl ClaudeTool {
                 let tool_name = tool_name.to_lowercase();
 
                 if tool_name.contains("edit") || tool_name.contains("write") {
-                    Self::Edit { params: None }
+                    Self::Edit(None)
                 } else if tool_name.contains("web") {
                     Self::Web
                 } else if tool_name.contains("todo") {
@@ -81,8 +80,8 @@ impl ClaudeTool {
 
     pub fn icon(&self) -> acp::Icon {
         match self {
-            Self::Edit { .. } => acp::Icon::Pencil,
-            Self::ReadFile => acp::Icon::FileSearch,
+            Self::Edit(_) => acp::Icon::Pencil,
+            Self::ReadFile(_) => acp::Icon::FileSearch,
             Self::ListDirectory => acp::Icon::Folder,
             Self::Glob => acp::Icon::FileSearch,
             Self::Grep => acp::Icon::Regex,
@@ -96,7 +95,7 @@ impl ClaudeTool {
 
     pub fn confirmation(&self, description: Option<String>) -> acp::ToolCallConfirmation {
         match &self {
-            Self::Edit { .. } => acp::ToolCallConfirmation::Edit { description },
+            Self::Edit(_) => acp::ToolCallConfirmation::Edit { description },
             Self::Web => acp::ToolCallConfirmation::Fetch {
                 urls: vec![],
                 description,
@@ -107,7 +106,7 @@ impl ClaudeTool {
             | Self::Grep
             | Self::Todo
             | Self::Subagent
-            | Self::ReadFile
+            | Self::ReadFile(_)
             | Self::Other => acp::ToolCallConfirmation::Other {
                 description: description.unwrap_or("".to_string()),
             },
@@ -116,14 +115,18 @@ impl ClaudeTool {
 
     pub fn locations(&self) -> Vec<acp::ToolCallLocation> {
         match &self {
-            Self::Edit {
-                params: Some(EditToolParams { abs_path, .. }),
-            } => vec![ToolCallLocation {
+            Self::Edit(Some(EditToolParams { abs_path, .. })) => vec![ToolCallLocation {
                 path: abs_path.clone(),
                 line: None,
             }],
-            Self::Edit { params: None }
-            | Self::ReadFile
+            Self::ReadFile(Some(ReadToolParams {
+                abs_path, offset, ..
+            })) => vec![ToolCallLocation {
+                path: abs_path.clone(),
+                line: *offset,
+            }],
+            Self::Edit(None)
+            | Self::ReadFile(None)
             | Self::ListDirectory
             | Self::Glob
             | Self::Grep
@@ -149,3 +152,19 @@ pub struct EditToolParams {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditToolResponse;
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct ReadToolParams {
+    /// The absolute path to the file to read.
+    pub abs_path: PathBuf,
+    /// Which line to start reading from. Omit to start from the begining.
+    pub offset: Option<u32>,
+    /// How many lines to read. Omit for the whole file.
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadToolResponse {
+    pub content: String,
+}
