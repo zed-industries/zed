@@ -72,18 +72,12 @@ impl SearchHistory {
     }
 
     pub fn next(&mut self, cursor: &mut SearchHistoryCursor) -> Option<&str> {
-        let history_size = self.history.len();
-        if history_size == 0 {
-            return None;
-        }
-
         let selected = cursor.selection?;
-        if selected == history_size - 1 {
-            return None;
-        }
         let next_index = selected + 1;
+
+        let next = self.history.get(next_index)?;
         cursor.selection = Some(next_index);
-        Some(&self.history[next_index])
+        Some(next)
     }
 
     pub fn current(&self, cursor: &SearchHistoryCursor) -> Option<&str> {
@@ -92,25 +86,17 @@ impl SearchHistory {
             .and_then(|selected_ix| self.history.get(selected_ix).map(|s| s.as_str()))
     }
 
+    /// Get the previous history entry using the given `SearchHistoryCursor`.
+    /// Uses the last element in the history when there is no cursor.
     pub fn previous(&mut self, cursor: &mut SearchHistoryCursor) -> Option<&str> {
-        let history_size = self.history.len();
-        if history_size == 0 {
-            return None;
-        }
-
         let prev_index = match cursor.selection {
-            Some(selected_index) => {
-                if selected_index == 0 {
-                    return None;
-                } else {
-                    selected_index - 1
-                }
-            }
-            None => history_size - 1,
+            Some(index) => index.checked_sub(1)?,
+            None => self.history.len().checked_sub(1)?,
         };
 
+        let previous = self.history.get(prev_index)?;
         cursor.selection = Some(prev_index);
-        Some(&self.history[prev_index])
+        Some(previous)
     }
 }
 

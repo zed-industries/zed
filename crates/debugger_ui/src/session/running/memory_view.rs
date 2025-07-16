@@ -1,4 +1,10 @@
-use std::{fmt::Write, ops::RangeInclusive, sync::LazyLock, time::Duration};
+use std::{
+    cell::LazyCell,
+    fmt::Write,
+    ops::RangeInclusive,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
@@ -8,7 +14,7 @@ use gpui::{
     deferred, point, size, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
-use project::debugger::{MemoryCell, session::Session};
+use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
@@ -20,7 +26,7 @@ use ui::{
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::session::running::stack_frame_list::StackFrameList;
+use crate::{ToggleDataBreakpoint, session::running::stack_frame_list::StackFrameList};
 
 actions!(debugger, [GoToSelectedAddress]);
 
@@ -153,6 +159,11 @@ impl MemoryView {
             open_context_menu: None,
         };
         this.change_query_bar_mode(false, window, cx);
+        cx.on_focus_out(&this.focus_handle, window, |this, _, window, cx| {
+            this.change_query_bar_mode(false, window, cx);
+            cx.notify();
+        })
+        .detach();
         this
     }
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -446,6 +457,48 @@ impl MemoryView {
         }
     }
 
+    fn toggle_data_breakpoint(
+        &mut self,
+        _: &crate::ToggleDataBreakpoint,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(SelectedMemoryRange::DragComplete(selection)) = self.view_state.selection.clone()
+        else {
+            return;
+        };
+        let range = selection.memory_range();
+        let context = Arc::new(DataBreakpointContext::Address {
+            address: range.start().to_string(),
+            bytes: Some(*range.end() - *range.start()),
+        });
+
+        self.session.update(cx, |this, cx| {
+            let data_breakpoint_info = this.data_breakpoint_info(context.clone(), None, cx);
+            cx.spawn(async move |this, cx| {
+                if let Some(info) = data_breakpoint_info.await {
+                    let Some(data_id) = info.data_id.clone() else {
+                        return;
+                    };
+                    _ = this.update(cx, |this, cx| {
+                        this.create_data_breakpoint(
+                            context,
+                            data_id.clone(),
+                            dap::DataBreakpoint {
+                                data_id,
+                                access_type: None,
+                                condition: None,
+                                hit_condition: None,
+                            },
+                            cx,
+                        );
+                    });
+                }
+            })
+            .detach();
+        })
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
             // Go into memory writing mode.
@@ -535,16 +588,22 @@ impl MemoryView {
         else {
             return;
         };
+        let expr = format!("?${{{expr}}}");
         let reference = self.session.update(cx, |this, cx| {
             this.memory_reference_of_expr(selected_frame, expr, cx)
         });
         cx.spawn(async move |this, cx| {
-            if let Some(reference) = reference.await {
+            if let Some((reference, typ)) = reference.await {
                 _ = this.update(cx, |this, cx| {
-                    let Ok(address) = parse_int::parse::<u64>(&reference) else {
-                        return;
+                    let sizeof_expr = if typ.as_ref().is_some_and(|t| {
+                        t.chars()
+                            .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+                    }) {
+                        typ.as_deref()
+                    } else {
+                        None
                     };
-                    this.jump_to_address(address, cx);
+                    this.go_to_memory_reference(&reference, sizeof_expr, selected_frame, cx);
                 });
             }
         })
@@ -599,18 +658,30 @@ impl MemoryView {
         let session = self.session.clone();
         let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
             let range_too_large = range.end() - range.start() > std::mem::size_of::<u64>() as u64;
-            let memory_unreadable = |cx| {
+            let caps = session.read(cx).capabilities();
+            let supports_data_breakpoints = caps.supports_data_breakpoints.unwrap_or_default()
+                && caps.supports_data_breakpoint_bytes.unwrap_or_default();
+            let memory_unreadable = LazyCell::new(|| {
                 session.update(cx, |this, cx| {
                     this.read_memory(range.clone(), cx)
                         .any(|cell| cell.0.is_none())
                 })
-            };
-            menu.action_disabled_when(
-                range_too_large || memory_unreadable(cx),
+            });
+
+            let mut menu = menu.action_disabled_when(
+                range_too_large || *memory_unreadable,
                 "Go To Selected Address",
                 GoToSelectedAddress.boxed_clone(),
-            )
-            .context(self.focus_handle.clone())
+            );
+
+            if supports_data_breakpoints {
+                menu = menu.action_disabled_when(
+                    *memory_unreadable,
+                    "Set Data Breakpoint",
+                    ToggleDataBreakpoint.boxed_clone(),
+                );
+            }
+            menu.context(self.focus_handle.clone())
         });
 
         cx.focus_view(&context_menu, window);
@@ -703,7 +774,7 @@ fn render_single_memory_view_line(
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
                                 let weak = weak.clone();
 
-                                this.bg(Color::Accent.color(cx)).when(
+                                this.bg(Color::Selected.color(cx).opacity(0.2)).when(
                                     !selection.is_dragging(),
                                     |this| {
                                         let selection = selection.drag().memory_range();
@@ -800,7 +871,7 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx))
+                                this.bg(Color::Selected.color(cx).opacity(0.2))
                             })
                         })
                         .child(
@@ -834,6 +905,7 @@ impl Render for MemoryView {
             .on_action(cx.listener(Self::go_to_address))
             .p_1()
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::toggle_data_breakpoint))
             .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::page_up))
             .size_full()

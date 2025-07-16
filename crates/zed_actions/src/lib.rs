@@ -76,6 +76,9 @@ pub struct Extensions {
     /// Filters the extensions page down to extensions that are in the specified category.
     #[serde(default)]
     pub category_filter: Option<ExtensionCategoryFilter>,
+    /// Focuses just the extension with the specified ID.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// Decreases the font size in the editor buffer.

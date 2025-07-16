@@ -3,8 +3,8 @@ use std::{ops::Range, rc::Rc, time::Duration};
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AppContext, Axis, Context, Entity, FocusHandle, Length, ListHorizontalSizingBehavior,
-    ListSizingBehavior, MouseButton, Task, UniformListScrollHandle, WeakEntity, transparent_black,
-    uniform_list,
+    ListSizingBehavior, MouseButton, Point, Task, UniformListScrollHandle, WeakEntity,
+    transparent_black, uniform_list,
 };
 use settings::Settings as _;
 use ui::{
@@ -88,6 +88,28 @@ impl TableInteractionState {
             this.update_scrollbar_visibility(cx);
             this
         })
+    }
+
+    pub fn get_scrollbar_offset(&self, axis: Axis) -> Point<Pixels> {
+        match axis {
+            Axis::Vertical => self.vertical_scrollbar.state.scroll_handle().offset(),
+            Axis::Horizontal => self.horizontal_scrollbar.state.scroll_handle().offset(),
+        }
+    }
+
+    pub fn set_scrollbar_offset(&self, axis: Axis, offset: Point<Pixels>) {
+        match axis {
+            Axis::Vertical => self
+                .vertical_scrollbar
+                .state
+                .scroll_handle()
+                .set_offset(offset),
+            Axis::Horizontal => self
+                .horizontal_scrollbar
+                .state
+                .scroll_handle()
+                .set_offset(offset),
+        }
     }
 
     fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {

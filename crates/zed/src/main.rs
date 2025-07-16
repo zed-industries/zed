@@ -746,6 +746,23 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
+    if let Some(extension) = request.extension_id {
+        cx.spawn(async move |cx| {
+            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+            workspace.update(cx, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(zed_actions::Extensions {
+                        category_filter: None,
+                        id: Some(extension),
+                    }),
+                    cx,
+                );
+            })
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |mut cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
@@ -1391,7 +1408,6 @@ fn dump_all_gpui_actions() {
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),

@@ -497,16 +497,24 @@ impl TerminalElement {
     /// Checks if a character is a decorative block/box-like character that should
     /// preserve its exact colors without contrast adjustment.
     ///
-    /// Fixes https://github.com/zed-industries/zed/issues/34234 - we can
-    /// expand this list if we run into more similar cases, but the goal
-    /// is to be conservative here.
+    /// This specifically targets characters used as visual connectors, separators,
+    /// and borders where color matching with adjacent backgrounds is critical.
+    /// Regular icons (git, folders, etc.) are excluded as they need to remain readable.
+    ///
+    /// Fixes https://github.com/zed-industries/zed/issues/34234
     fn is_decorative_character(ch: char) -> bool {
         matches!(
             ch as u32,
-            // 0x2500..=0x257F Box Drawing
-            // 0x2580..=0x259F Block Elements
-            // 0x25A0..=0x25D7 Geometric Shapes (block/box-like subset)
-            0x2500..=0x25D7
+            // Unicode Box Drawing and Block Elements
+            0x2500..=0x257F // Box Drawing (└ ┐ ─ │ etc.)
+            | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
+            | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc. - includes triangular/circular separators)
+
+            // Private Use Area - Powerline separator symbols only
+            | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
+            | 0xE0B8..=0xE0BF // Additional Powerline separators: angles, flames, etc.
+            | 0xE0C0..=0xE0C8 // Powerline separators: pixelated triangles, curves
+            | 0xE0CC..=0xE0D4 // Powerline separators: rounded triangles, ice/lego style
         )
     }
 
@@ -1623,16 +1631,26 @@ mod tests {
 
         // The specific character from the issue
         assert!(TerminalElement::is_decorative_character('◗')); // U+25D7
+        assert!(TerminalElement::is_decorative_character('◘')); // U+25D8 (now included in Geometric Shapes)
+        assert!(TerminalElement::is_decorative_character('◙')); // U+25D9 (now included in Geometric Shapes)
+
+        // Powerline symbols (Private Use Area)
+        assert!(TerminalElement::is_decorative_character('\u{E0B0}')); // Powerline right triangle
+        assert!(TerminalElement::is_decorative_character('\u{E0B2}')); // Powerline left triangle
+        assert!(TerminalElement::is_decorative_character('\u{E0B4}')); // Powerline right half circle (the actual issue!)
+        assert!(TerminalElement::is_decorative_character('\u{E0B6}')); // Powerline left half circle
 
         // Characters that should NOT be considered decorative
-        assert!(!TerminalElement::is_decorative_character('A'));
-        assert!(!TerminalElement::is_decorative_character('a'));
-        assert!(!TerminalElement::is_decorative_character('0'));
-        assert!(!TerminalElement::is_decorative_character(' '));
+        assert!(!TerminalElement::is_decorative_character('A')); // Regular letter
+        assert!(!TerminalElement::is_decorative_character('$')); // Symbol
+        assert!(!TerminalElement::is_decorative_character(' ')); // Space
         assert!(!TerminalElement::is_decorative_character('←')); // U+2190 (Arrow, not in our ranges)
         assert!(!TerminalElement::is_decorative_character('→')); // U+2192 (Arrow, not in our ranges)
-        assert!(!TerminalElement::is_decorative_character('◘')); // U+25D8 (Just outside our range)
-        assert!(!TerminalElement::is_decorative_character('◙')); // U+25D9 (Just outside our range)
+        assert!(!TerminalElement::is_decorative_character('\u{F00C}')); // Font Awesome check (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{E711}')); // Devicons (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{EA71}')); // Codicons folder (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{F401}')); // Octicons (icon, needs contrast)
+        assert!(!TerminalElement::is_decorative_character('\u{1F600}')); // Emoji (not in our ranges)
     }
 
     #[test]
@@ -1649,8 +1667,8 @@ mod tests {
 
         // Geometric Shapes subset boundaries
         assert!(TerminalElement::is_decorative_character('\u{25A0}')); // First char
-        assert!(TerminalElement::is_decorative_character('\u{25D7}')); // Last char (◗)
-        assert!(!TerminalElement::is_decorative_character('\u{25D8}')); // Just after
+        assert!(TerminalElement::is_decorative_character('\u{25FF}')); // Last char
+        assert!(!TerminalElement::is_decorative_character('\u{2600}')); // Just after
     }
 
     #[test]

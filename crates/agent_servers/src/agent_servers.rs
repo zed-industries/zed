@@ -56,7 +56,7 @@ pub trait AgentServer: Send {
     ) -> impl Future<Output = Result<AgentServerVersion>> + Send;
 }
 
-const GEMINI_ACP_ARG: &str = "--acp";
+const GEMINI_ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
     async fn command(
