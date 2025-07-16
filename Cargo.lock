@@ -16451,6 +16451,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "settings_ui",
  "smallvec",
  "story",
  "telemetry",
