@@ -11,10 +11,13 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
+    // Preprocess LaTeX math syntax before markdown parsing
+    let preprocessed_input = preprocess_math_syntax(markdown_input);
+
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
 
-    let parser = Parser::new_ext(markdown_input, options);
+    let parser = Parser::new_ext(&preprocessed_input, options);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -24,6 +27,61 @@ pub async fn parse_markdown(
     ParsedMarkdown {
         children: renderer.parsed,
     }
+}
+
+/// Preprocesses markdown to convert LaTeX-style math delimiters to markdown code blocks
+fn preprocess_math_syntax(input: &str) -> String {
+    let mut result = String::new();
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((i, ch)) = chars.next() {
+        if ch == '$' {
+            // Check for block math ($$)
+            if let Some((_, next_ch)) = chars.peek() {
+                if *next_ch == '$' {
+                    // Skip the second $
+                    chars.next();
+
+                    // Find closing $$
+                    let remaining = &input[i + 2..];
+                    if let Some(end_pos) = find_closing_double_dollar(remaining) {
+                        let math_content = &remaining[..end_pos];
+                        result.push_str("\n```math\n");
+                        result.push_str(math_content);
+                        result.push_str("\n```\n");
+
+                        // Skip ahead past the closing $$
+                        let skip_count = end_pos + 2; // +2 for the closing $$
+                        for _ in 0..skip_count {
+                            chars.next();
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Single $ - leave as-is for custom inline math parsing
+            // This will be handled by the text parser later
+        }
+
+        result.push(ch);
+    }
+
+    result
+}
+
+fn find_closing_double_dollar(text: &str) -> Option<usize> {
+    let mut chars = text.char_indices();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '$' {
+            if let Some((_, next_ch)) = chars.next() {
+                if next_ch == '$' {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
 }
 
 struct MarkdownParser<'a> {
@@ -406,13 +464,83 @@ impl<'a> MarkdownParser<'a> {
             self.cursor += 1;
         }
         if !text.is_empty() {
-            markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                source_range: source_range.clone(),
-                contents: text,
-                highlights,
-                regions,
-                region_ranges,
-            }));
+            // Check if text contains inline math
+            if text.contains('$') {
+                let mut current_pos = 0;
+
+                while current_pos < text.len() {
+                    if let Some(start_pos) = text[current_pos..].find('$') {
+                        let abs_start_pos = current_pos + start_pos;
+
+                        // Add text before math
+                        if start_pos > 0 {
+                            let before_text = text[current_pos..abs_start_pos].to_string();
+                            markdown_text_like.push(MarkdownParagraphChunk::Text(
+                                ParsedMarkdownText {
+                                    source_range: source_range.clone(),
+                                    contents: before_text,
+                                    highlights: vec![],
+                                    region_ranges: vec![],
+                                    regions: vec![],
+                                },
+                            ));
+                        }
+
+                        // Look for closing $
+                        let search_start = abs_start_pos + 1;
+                        if let Some(end_pos) = text[search_start..].find('$') {
+                            let abs_end_pos = search_start + end_pos;
+                            let math_content = text[search_start..abs_end_pos].to_string();
+                            if !math_content.is_empty() {
+                                markdown_text_like.push(MarkdownParagraphChunk::InlineMath(
+                                    ParsedMarkdownInlineMath {
+                                        source_range: source_range.clone(),
+                                        contents: math_content.into(),
+                                    },
+                                ));
+                            }
+                            current_pos = abs_end_pos + 1;
+                        } else {
+                            // No closing $, treat as regular text
+                            let remaining_text = text[current_pos..].to_string();
+                            markdown_text_like.push(MarkdownParagraphChunk::Text(
+                                ParsedMarkdownText {
+                                    source_range: source_range.clone(),
+                                    contents: remaining_text,
+                                    highlights: vec![],
+                                    region_ranges: vec![],
+                                    regions: vec![],
+                                },
+                            ));
+                            break;
+                        }
+                    } else {
+                        // No more $ found, add remaining text
+                        let remaining_text = text[current_pos..].to_string();
+                        if !remaining_text.is_empty() {
+                            markdown_text_like.push(MarkdownParagraphChunk::Text(
+                                ParsedMarkdownText {
+                                    source_range: source_range.clone(),
+                                    contents: remaining_text,
+                                    highlights: vec![],
+                                    region_ranges: vec![],
+                                    regions: vec![],
+                                },
+                            ));
+                        }
+                        break;
+                    }
+                }
+            } else {
+                // No math, add text with original formatting
+                markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range: source_range.clone(),
+                    contents: text,
+                    highlights,
+                    regions,
+                    region_ranges,
+                }));
+            }
         }
         markdown_text_like
     }

@@ -480,6 +480,7 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
             MarkdownParagraphChunk::Text(text) => text.contents.len(),
             // TODO: Scale column width based on image size
             MarkdownParagraphChunk::Image(_) => 1,
+            MarkdownParagraphChunk::InlineMath(math) => math.contents.len(),
         })
         .sum()
 }
@@ -768,6 +769,97 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 any_element.push(element);
             }
 
+            MarkdownParagraphChunk::InlineMath(inline_math) => {
+                // Render inline math using the same SVG generation as block math
+                let svg_content = match typst_math_to_svg(&inline_math.contents) {
+                    Ok(svg) => svg,
+                    Err(err) => {
+                        info!("Inline math rendering failed: {}", err);
+                        // Fallback to raw text with styling
+                        let element_id = cx.next_id(&inline_math.source_range);
+                        let fallback_element = div()
+                            .id(element_id)
+                            .px_1()
+                            .border_1()
+                            .border_color(cx.border_color)
+                            .bg(cx.code_span_background_color)
+                            .rounded_sm()
+                            .font_family(cx.buffer_font_family.clone())
+                            .text_color(cx.text_color)
+                            .child(format!("${} $", inline_math.contents))
+                            .into_any();
+                        any_element.push(fallback_element);
+                        continue;
+                    }
+                };
+
+                // Create inline image for math
+                let svg_content_clone = svg_content.clone();
+                let image_source = ImageSource::Custom(Arc::new(move |_window, _cx| {
+                    let tree = match usvg::Tree::from_data(
+                        svg_content_clone.as_bytes(),
+                        &usvg::Options::default(),
+                    ) {
+                        Ok(tree) => tree,
+                        Err(e) => {
+                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "SVG parse error: {}",
+                                e
+                            )))));
+                        }
+                    };
+
+                    let size = tree.size();
+                    let width = size.width() as u32;
+                    let height = size.height() as u32;
+
+                    if width == 0 || height == 0 {
+                        return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                            "Invalid SVG dimensions"
+                        )))));
+                    }
+
+                    let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
+                        Some(pixmap) => pixmap,
+                        None => {
+                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "Failed to create pixmap"
+                            )))));
+                        }
+                    };
+
+                    resvg::render(
+                        &tree,
+                        resvg::tiny_skia::Transform::identity(),
+                        &mut pixmap.as_mut(),
+                    );
+
+                    let rgba_data = pixmap.take();
+                    let rgba_image = match image::RgbaImage::from_raw(width, height, rgba_data) {
+                        Some(img) => img,
+                        None => {
+                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "Failed to create RGBA image"
+                            )))));
+                        }
+                    };
+
+                    let frame = image::Frame::new(rgba_image.into());
+                    let render_image = RenderImage::new(vec![frame]);
+
+                    Some(Ok(Arc::new(render_image)))
+                }));
+
+                let element_id = cx.next_id(&inline_math.source_range);
+                let math_element = div()
+                    .id(element_id)
+                    .flex()
+                    .items_center()
+                    .child(img(image_source).max_h(px(30.0)))
+                    .into_any();
+                any_element.push(math_element);
+            }
+
             MarkdownParagraphChunk::Image(image) => {
                 let image_resource = match image.link.clone() {
                     Link::Web { url } => Resource::Uri(url.into()),
@@ -886,9 +978,9 @@ impl MathWorld {
             FileId::new(None, VirtualPath::new("main.typ")),
             format!(
                 r#"#set page(width: auto, height: auto, margin: 8pt)
-        #show math.equation: set text(font: "{}", size: 14pt, fill: white)
-        #set text(font: "{}", size: 14pt)
-        $ {} $"#,
+#show math.equation: set text(font: "{}", size: 14pt, fill: white)
+#set text(font: "{}", size: 14pt, fill: white)
+$ {} $"#,
                 selected_font, selected_font, content
             ),
         );

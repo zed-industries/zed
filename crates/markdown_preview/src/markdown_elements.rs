@@ -29,6 +29,7 @@ impl ParsedMarkdownElement {
             Self::Paragraph(text) => match text.get(0)? {
                 MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
+                MarkdownParagraphChunk::InlineMath(math) => math.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
             Self::MathBlock(math_block) => math_block.source_range.clone(),
@@ -51,9 +52,17 @@ pub struct ParsedMarkdownMathBlock {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownInlineMath {
+    pub source_range: Range<usize>,
+    pub contents: SharedString,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum MarkdownParagraphChunk {
     Text(ParsedMarkdownText),
     Image(Image),
+    InlineMath(ParsedMarkdownInlineMath),
 }
 
 #[derive(Debug)]
