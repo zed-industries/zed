@@ -1313,7 +1313,15 @@ impl Render for KeymapEditor {
 
                                     let action = div()
                                         .id(("keymap action", index))
-                                        .child(command_palette::humanize_action_name(&action_name))
+                                        .child({
+                                            if action_name == gpui::NoAction.name() {
+                                                muted_styled_text("<null>".into(), cx)
+                                                    .into_any_element()
+                                            } else {
+                                                command_palette::humanize_action_name(&action_name)
+                                                    .into_any_element()
+                                            }
+                                        })
                                         .when(!context_menu_deployed, |this| {
                                             this.tooltip({
                                                 let action_name = binding.action_name.clone();
