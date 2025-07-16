@@ -10,7 +10,7 @@ use std::{
 };
 use util::{ResultExt, paths};
 
-pub trait StdioAgentServer: Send {
+pub trait StdioAgentServer: Send + Clone {
     fn logo(&self) -> ui::IconName;
     fn name(&self) -> &'static str;
     fn empty_state_headline(&self) -> &'static str;
@@ -28,7 +28,7 @@ pub trait StdioAgentServer: Send {
     ) -> impl Future<Output = Result<AgentServerVersion>> + Send;
 }
 
-impl<T: StdioAgentServer + Clone + 'static> AgentServer for T {
+impl<T: StdioAgentServer + 'static> AgentServer for T {
     fn name(&self) -> &'static str {
         self.name()
     }

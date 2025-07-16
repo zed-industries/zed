@@ -5,6 +5,10 @@ edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support"]
+gemini = []
+
 [lints]
 workspace = true
 
@@ -34,3 +38,10 @@ util.workspace = true
 watch.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+language.workspace = true
+indoc.workspace = true
+acp_thread = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }

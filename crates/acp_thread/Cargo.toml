@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 test-support = ["gpui/test-support", "project/test-support"]
-gemini = []
 
 [dependencies]
 agentic-coding-protocol.workspace = true

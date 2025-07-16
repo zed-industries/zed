@@ -101,7 +101,7 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         format!(
             "## Assistant\n\n{}\n\n",
             self.chunks
@@ -830,7 +830,7 @@ impl AcpThread {
         self.request(acp::AuthenticateParams)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,
         message: &str,
@@ -1213,7 +1213,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{future::BoxedLocal, stream::StreamExt as _};
-    use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+    use std::{cell::RefCell, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1459,265 +1459,6 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_basic(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        thread
-            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
-            .await
-            .unwrap();
-
-        thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.entries.len(), 2);
-            assert!(matches!(
-                thread.entries[0],
-                AgentThreadEntry::UserMessage(_)
-            ));
-            assert!(matches!(
-                thread.entries[1],
-                AgentThreadEntry::AssistantMessage(_)
-            ));
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_path_mentions(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-        let tempdir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tempdir.path().join("foo.rs"),
-            indoc! {"
-                fn main() {
-                    println!(\"Hello, world!\");
-                }
-            "},
-        )
-        .expect("failed to write file");
-        let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-        let thread = gemini_acp_thread(project.clone(), tempdir.path(), cx).await;
-        thread
-            .update(cx, |thread, cx| {
-                thread.send(
-                    acp::SendUserMessageParams {
-                        chunks: vec![
-                            acp::UserMessageChunk::Text {
-                                text: "Read the file ".into(),
-                            },
-                            acp::UserMessageChunk::Path {
-                                path: Path::new("foo.rs").into(),
-                            },
-                            acp::UserMessageChunk::Text {
-                                text: " and tell me what the content of the println! is".into(),
-                            },
-                        ],
-                    },
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.entries.len(), 3);
-            assert!(matches!(
-                thread.entries[0],
-                AgentThreadEntry::UserMessage(_)
-            ));
-            assert!(matches!(thread.entries[1], AgentThreadEntry::ToolCall(_)));
-            let AgentThreadEntry::AssistantMessage(assistant_message) = &thread.entries[2] else {
-                panic!("Expected AssistantMessage")
-            };
-            assert!(
-                assistant_message.to_markdown(cx).contains("Hello, world!"),
-                "unexpected assistant message: {:?}",
-                assistant_message.to_markdown(cx)
-            );
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_tool_call(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/private/tmp"),
-            json!({"foo": "Lorem ipsum dolor", "bar": "bar", "baz": "baz"}),
-        )
-        .await;
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        thread
-            .update(cx, |thread, cx| {
-                thread.send_raw(
-                    "Read the '/private/tmp/foo' file and tell me what you see.",
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, _cx| {
-            assert!(matches!(
-                &thread.entries()[2],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
-                    ..
-                })
-            ));
-
-            assert!(matches!(
-                thread.entries[3],
-                AgentThreadEntry::AssistantMessage(_)
-            ));
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_tool_call_with_confirmation(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        let full_turn = thread.update(cx, |thread, cx| {
-            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
-        });
-
-        run_until_first_tool_call(&thread, cx).await;
-
-        let tool_call_id = thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                status:
-                    ToolCallStatus::WaitingForConfirmation {
-                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                        ..
-                    },
-                ..
-            }) = &thread.entries()[2]
-            else {
-                panic!();
-            };
-
-            assert_eq!(root_command, "echo");
-
-            *id
-        });
-
-        thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
-
-            assert!(matches!(
-                &thread.entries()[2],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
-                    ..
-                })
-            ));
-        });
-
-        full_turn.await.unwrap();
-
-        thread.read_with(cx, |thread, cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                content: Some(ToolCallContent::Markdown { markdown }),
-                status: ToolCallStatus::Allowed { .. },
-                ..
-            }) = &thread.entries()[2]
-            else {
-                panic!();
-            };
-
-            markdown.read_with(cx, |md, _cx| {
-                assert!(
-                    md.source().contains("Hello, world!"),
-                    r#"Expected '{}' to contain "Hello, world!""#,
-                    md.source()
-                );
-            });
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_cancel(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        let full_turn = thread.update(cx, |thread, cx| {
-            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
-        });
-
-        let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
-
-        thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                status:
-                    ToolCallStatus::WaitingForConfirmation {
-                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                        ..
-                    },
-                ..
-            }) = &thread.entries()[first_tool_call_ix]
-            else {
-                panic!("{:?}", thread.entries()[1]);
-            };
-
-            assert_eq!(root_command, "echo");
-
-            *id
-        });
-
-        thread
-            .update(cx, |thread, cx| thread.cancel(cx))
-            .await
-            .unwrap();
-        full_turn.await.unwrap();
-        thread.read_with(cx, |thread, _| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Canceled,
-                ..
-            }) = &thread.entries()[first_tool_call_ix]
-            else {
-                panic!();
-            };
-        });
-
-        thread
-            .update(cx, |thread, cx| {
-                thread.send_raw(r#"Stop running and say goodbye to me."#, cx)
-            })
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, _| {
-            assert!(matches!(
-                &thread.entries().last().unwrap(),
-                AgentThreadEntry::AssistantMessage(..),
-            ))
-        });
-    }
-
     async fn run_until_first_tool_call(
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
@@ -1745,54 +1486,6 @@ mod tests {
         }
     }
 
-    pub async fn gemini_acp_thread(
-        project: Entity<Project>,
-        current_dir: impl AsRef<Path>,
-        cx: &mut TestAppContext,
-    ) -> Entity<AcpThread> {
-        // struct DevGemini;
-
-        // impl agent_servers::AgentServer for DevGemini {
-        //     async fn command(
-        //         &self,
-        //         _project: &Entity<Project>,
-        //         _cx: &mut AsyncApp,
-        //     ) -> Result<agent_server::AgentServerCommand> {
-        //         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        //             .join("../../../gemini-cli/packages/cli")
-        //             .to_string_lossy()
-        //             .to_string();
-
-        //         Ok(AgentServerCommand {
-        //             path: "node".into(),
-        //             args: vec![cli_path, "--acp".into()],
-        //             env: None,
-        //         })
-        //     }
-
-        //     async fn version(
-        //         &self,
-        //         _command: &agent_servers::AgentServerCommand,
-        //     ) -> Result<AgentServerVersion> {
-        //         Ok(agent_servers::AgentServerVersion {
-        //             current_version: "0.1.0".into(),
-        //             supported: true,
-        //         })
-        //     }
-        // }
-
-        // let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
-        //     .await
-        //     .unwrap();
-
-        // thread
-        //     .update(cx, |thread, _| thread.initialize())
-        //     .await
-        //     .unwrap();
-        // thread
-        todo!()
-    }
-
     pub fn fake_acp_thread(
         project: Entity<Project>,
         cx: &mut TestAppContext,
@@ -1817,7 +1510,7 @@ mod tests {
                     Ok(())
                 }
             });
-            cx.new(|cx| AcpThread::new(connection, "Test".into(), Some(io_task), project, cx))
+            AcpThread::new(connection, "Test".into(), Some(io_task), project, cx)
         });
         let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
         (thread, agent)
