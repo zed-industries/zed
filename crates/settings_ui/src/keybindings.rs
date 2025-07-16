@@ -294,7 +294,7 @@ impl KeymapEditor {
 
         let keystroke_editor = cx.new(|cx| {
             let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
-            keystroke_editor.highlight_on_focus = false;
+            keystroke_editor.search = true;
             keystroke_editor
         });
 
@@ -972,18 +972,16 @@ impl KeymapEditor {
         self.search_mode = self.search_mode.invert();
         self.on_query_changed(cx);
 
-        // Update the keystroke editor to turn the `search` bool on
-        self.keystroke_editor.update(cx, |keystroke_editor, cx| {
-            keystroke_editor
-                .set_search_mode(matches!(self.search_mode, SearchMode::KeyStroke { .. }));
-            cx.notify();
-        });
-
         match self.search_mode {
             SearchMode::KeyStroke { .. } => {
                 window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
             }
-            SearchMode::Normal => {}
+            SearchMode::Normal => {
+                self.keystroke_editor.update(cx, |editor, cx| {
+                    editor.clear_keystrokes(&ClearKeystrokes, window, cx)
+                });
+                window.focus(&self.filter_editor.focus_handle(cx));
+            }
         }
     }
 
@@ -2298,7 +2296,6 @@ enum KeyPress<'a> {
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
-    highlight_on_focus: bool,
     outer_focus_handle: FocusHandle,
     inner_focus_handle: FocusHandle,
     intercept_subscription: Option<Subscription>,
@@ -2326,7 +2323,6 @@ impl KeystrokeInput {
         Self {
             keystrokes: Vec::new(),
             placeholder_keystrokes,
-            highlight_on_focus: true,
             inner_focus_handle,
             outer_focus_handle,
             intercept_subscription: None,
@@ -2543,10 +2539,6 @@ impl KeystrokeInput {
         self.inner_focus_handle.clone()
     }
 
-    fn set_search_mode(&mut self, search: bool) {
-        self.search = search;
-    }
-
     fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
         if !self.outer_focus_handle.is_focused(window) {
             return;
@@ -2706,7 +2698,7 @@ impl Render for KeystrokeInput {
                     .track_focus(&self.inner_focus_handle)
                     .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
                     .size_full()
-                    .when(self.highlight_on_focus, |this| {
+                    .when(!self.search, |this| {
                         this.focus(|mut style| {
                             style.border_color = Some(colors.border_focused);
                             style
