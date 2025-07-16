@@ -1314,9 +1314,9 @@ impl Render for KeymapEditor {
                                             .icon_color(Color::Warning)
                                             .tooltip(|window, cx| {
                                                 Tooltip::with_meta(
-                                                    "Edit Keybinding",
-                                                    None,
-                                                    "Use alt+click to show conflicts",
+                                                    "View conflicts",
+                                                    Some(&ToggleConflictFilter),
+                                                    "Use alt+click to show all conflicts",
                                                     window,
                                                     cx,
                                                 )
@@ -1341,7 +1341,10 @@ impl Render for KeymapEditor {
                                     .unwrap_or_else(|| {
                                         base_button_style(index, IconName::Pencil)
                                             .visible_on_hover(row_group_id(index))
-                                            .tooltip(Tooltip::text("Edit Keybinding"))
+                                            .tooltip(Tooltip::for_action_title(
+                                                "Edit Keybinding",
+                                                &EditBinding,
+                                            ))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);

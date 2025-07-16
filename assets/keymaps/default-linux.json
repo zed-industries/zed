@@ -1118,7 +1118,9 @@
       "ctrl-f": "search::FocusSearch",
       "alt-find": "keymap_editor::ToggleKeystrokeSearch",
       "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
-      "alt-c": "keymap_editor::ToggleConflictFilter"
+      "alt-c": "keymap_editor::ToggleConflictFilter",
+      "enter": "keymap_editor::EditBinding",
+      "alt-enter": "keymap_editor::CreateBinding"
     }
   },
   {
