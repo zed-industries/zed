@@ -4,7 +4,6 @@ use collections::HashMap;
 use project::Project;
 use std::cell::RefCell;
 use std::fmt::Display;
-use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -133,11 +132,14 @@ impl AgentServer for ClaudeCode {
             );
             let mcp_config = McpConfig { mcp_servers };
 
-            let mut mcp_config_file = tempfile::Builder::new().tempfile()?;
-            // todo! async
-            mcp_config_file.write_all(serde_json::to_string(&mcp_config)?.as_bytes())?;
-            mcp_config_file.flush()?;
-            let mcp_config_path = mcp_config_file.into_temp_path();
+            let mcp_config_file = tempfile::NamedTempFile::new()?;
+            let (mcp_config_file, mcp_config_path) = mcp_config_file.into_parts();
+
+            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
+            mcp_config_file
+                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
+                .await?;
+            mcp_config_file.flush().await?;
 
             let command = which::which("claude")?;
 
