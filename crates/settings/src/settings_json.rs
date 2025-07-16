@@ -437,17 +437,19 @@ pub fn append_top_level_array_value_in_json_text(
     );
     debug_assert_eq!(cursor.node().kind(), "]");
     let close_bracket_start = cursor.node().start_byte();
-    cursor.goto_previous_sibling();
-    while (cursor.node().is_extra() || cursor.node().is_missing()) && cursor.goto_previous_sibling()
-    {
-    }
+    while cursor.goto_previous_sibling()
+        && (cursor.node().is_extra() || cursor.node().is_missing())
+        && !cursor.node().is_error()
+    {}
 
     let mut comma_range = None;
     let mut prev_item_range = None;
 
-    if cursor.node().kind() == "," {
+    if cursor.node().kind() == "," || is_error_of_kind(&mut cursor, ",") {
         comma_range = Some(cursor.node().byte_range());
-        while cursor.goto_previous_sibling() && cursor.node().is_extra() {}
+        while cursor.goto_previous_sibling()
+            && (cursor.node().is_extra() || cursor.node().is_missing())
+        {}
 
         debug_assert_ne!(cursor.node().kind(), "[");
         prev_item_range = Some(cursor.node().range());
@@ -514,6 +516,17 @@ pub fn append_top_level_array_value_in_json_text(
         replace_value.push('\n');
     }
     return Ok((replace_range, replace_value));
+
+    fn is_error_of_kind(cursor: &mut tree_sitter::TreeCursor<'_>, kind: &str) -> bool {
+        if cursor.node().kind() != "ERROR" {
+            return false;
+        }
+
+        let descendant_index = cursor.descendant_index();
+        let res = cursor.goto_first_child() && cursor.node().kind() == kind;
+        cursor.goto_descendant(descendant_index);
+        return res;
+    }
 }
 
 pub fn to_pretty_json(

@@ -961,6 +961,7 @@ impl From<KeybindSource> for KeyBindingMetaIndex {
 
 #[cfg(test)]
 mod tests {
+    use gpui::Keystroke;
     use unindent::Unindent;
 
     use crate::{
@@ -983,29 +984,28 @@ mod tests {
         KeymapFile::parse(json).unwrap();
     }
 
+    #[track_caller]
+    fn check_keymap_update(
+        input: impl ToString,
+        operation: KeybindUpdateOperation,
+        expected: impl ToString,
+    ) {
+        let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
+            .expect("Update succeeded");
+        pretty_assertions::assert_eq!(expected.to_string(), result);
+    }
+
+    #[track_caller]
+    fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
+        return keystrokes
+            .split(' ')
+            .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
+            .collect();
+    }
+
     #[test]
     fn keymap_update() {
-        use gpui::Keystroke;
-
         zlog::init_test();
-        #[track_caller]
-        fn check_keymap_update(
-            input: impl ToString,
-            operation: KeybindUpdateOperation,
-            expected: impl ToString,
-        ) {
-            let result = KeymapFile::update_keybinding(operation, input.to_string(), 4)
-                .expect("Update succeeded");
-            pretty_assertions::assert_eq!(expected.to_string(), result);
-        }
-
-        #[track_caller]
-        fn parse_keystrokes(keystrokes: &str) -> Vec<Keystroke> {
-            return keystrokes
-                .split(' ')
-                .map(|s| Keystroke::parse(s).expect("Keystrokes valid"))
-                .collect();
-        }
 
         check_keymap_update(
             "[]",
@@ -1479,7 +1479,10 @@ mod tests {
             ]"#
             .unindent(),
         );
+    }
 
+    #[test]
+    fn test_append() {
         check_keymap_update(
             r#"[
                 {
@@ -1499,8 +1502,8 @@ mod tests {
                     action_arguments: Some("true"),
                 },
                 from: Some(KeybindUpdateTarget {
-                    context: Some("SomeContext"),
-                    keystrokes: &parse_keystrokes("a"),
+                    context: Some("SomeOtherContext"),
+                    keystrokes: &parse_keystrokes("b"),
                     action_name: "foo::bar",
                     action_arguments: None,
                 }),
@@ -1517,9 +1520,12 @@ mod tests {
                     "context": "SomeContext",
                     "use_key_equivalents": true,
                     "bindings": {
-                        "a": "foo::baz",
+                        "a": [
+                            "foo::baz",
+                            true
+                        ]
                     }
-                },
+                }
             ]"#
             .unindent(),
         );
