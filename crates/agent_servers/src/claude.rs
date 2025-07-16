@@ -12,7 +12,7 @@ use agentic_coding_protocol::{
     self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion,
     StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
@@ -26,9 +26,9 @@ use gpui::{App, AppContext, Entity, Task};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::AgentServer;
 use crate::claude::mcp_server::ClaudeMcpServer;
 use crate::claude::tools::ClaudeTool;
+use crate::{AgentServer, find_bin_in_path};
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 impl AgentConnection for ClaudeAgentConnection {
@@ -147,7 +147,9 @@ impl AgentServer for ClaudeCode {
                 .await?;
             mcp_config_file.flush().await?;
 
-            let command = which::which("claude")?;
+            let command = find_bin_in_path("claude", &project, cx)
+                .await
+                .context("Failed to find claude binary")?;
 
             let mut child = util::command::new_smol_command(&command)
                 .args([
