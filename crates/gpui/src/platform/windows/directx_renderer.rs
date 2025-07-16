@@ -230,13 +230,10 @@ impl DirectXRenderer {
             &self.devices.device_context,
             shadows,
         )?;
-        draw_normal(
+        self.pipelines.shadow_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.shadow_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             shadows.len() as u32,
         )
     }
@@ -250,13 +247,10 @@ impl DirectXRenderer {
             &self.devices.device_context,
             quads,
         )?;
-        draw_normal(
+        self.pipelines.quad_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.quad_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             quads.len() as u32,
         )
     }
@@ -355,13 +349,10 @@ impl DirectXRenderer {
             &self.devices.device_context,
             underlines,
         )?;
-        draw_normal(
+        self.pipelines.underline_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.underline_pipeline,
             &self.context.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             underlines.len() as u32,
         )
     }
@@ -380,9 +371,8 @@ impl DirectXRenderer {
             sprites,
         )?;
         let texture_view = self.atlas.get_texture_view(texture_id);
-        draw_with_texture(
+        self.pipelines.mono_sprites.draw_with_texture(
             &self.devices.device_context,
-            &self.pipelines.mono_sprites,
             &texture_view,
             &self.context.viewport,
             &self.globals.global_params_buffer,
@@ -405,9 +395,8 @@ impl DirectXRenderer {
             sprites,
         )?;
         let texture_view = self.atlas.get_texture_view(texture_id);
-        draw_with_texture(
+        self.pipelines.poly_sprites.draw_with_texture(
             &self.devices.device_context,
-            &self.pipelines.poly_sprites,
             &texture_view,
             &self.context.viewport,
             &self.globals.global_params_buffer,
@@ -655,6 +644,55 @@ impl<T> PipelineState<T> {
             device_context.Map(&self.buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
             std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
             device_context.Unmap(&self.buffer, 0);
+        }
+        Ok(())
+    }
+
+    fn draw(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        instance_count: u32,
+    ) -> Result<()> {
+        unsafe {
+            device_context.VSSetShaderResources(1, Some(&self.view));
+            device_context.PSSetShaderResources(1, Some(&self.view));
+            device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            device_context.RSSetViewports(Some(viewport));
+            device_context.VSSetShader(&self.vertex, None);
+            device_context.PSSetShader(&self.fragment, None);
+            device_context.VSSetConstantBuffers(0, Some(global_params));
+            device_context.PSSetConstantBuffers(0, Some(global_params));
+
+            device_context.DrawInstanced(4, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_with_texture(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        texture: &[Option<ID3D11ShaderResourceView>],
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        sampler: &[Option<ID3D11SamplerState>],
+        instance_count: u32,
+    ) -> Result<()> {
+        unsafe {
+            device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            device_context.RSSetViewports(Some(viewport));
+            device_context.VSSetShader(&self.vertex, None);
+            device_context.PSSetShader(&self.fragment, None);
+            device_context.VSSetConstantBuffers(0, Some(global_params));
+            device_context.PSSetConstantBuffers(0, Some(global_params));
+            device_context.VSSetShaderResources(1, Some(&self.view));
+            device_context.PSSetShaderResources(1, Some(&self.view));
+            device_context.PSSetSamplers(0, Some(sampler));
+            device_context.VSSetShaderResources(0, Some(texture));
+            device_context.PSSetShaderResources(0, Some(texture));
+
+            device_context.DrawInstanced(4, instance_count, 0, 0);
         }
         Ok(())
     }
@@ -1165,57 +1203,6 @@ fn draw_indirect(
     unsafe {
         device_context.DrawInstancedIndirect(indirect_draw_buffer, offset);
     }
-}
-
-fn draw_normal<T>(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState<T>,
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
-    topology: D3D_PRIMITIVE_TOPOLOGY,
-    vertex_count: u32,
-    instance_count: u32,
-) -> Result<()> {
-    unsafe {
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
-        device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
-
-        device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
-    }
-    Ok(())
-}
-
-fn draw_with_texture<T>(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState<T>,
-    texture: &[Option<ID3D11ShaderResourceView>],
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
-    sampler: &[Option<ID3D11SamplerState>],
-    instance_count: u32,
-) -> Result<()> {
-    unsafe {
-        device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetSamplers(0, Some(sampler));
-        device_context.VSSetShaderResources(0, Some(texture));
-        device_context.PSSetShaderResources(0, Some(texture));
-
-        device_context.DrawInstanced(4, instance_count, 0, 0);
-    }
-    Ok(())
 }
 
 const BUFFER_COUNT: usize = 3;
