@@ -112,7 +112,8 @@ To disable this behavior use:
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
-    "show_sign_in": true            // Show/hide sign-in button
+    "show_sign_in": true,           // Show/hide sign-in button
+    "show_menus": false             // Show/hide menus
   },
 ```
 
@@ -120,6 +121,13 @@ To disable this behavior use:
 
 ```json
 {
+  // Force usage of Zed build in path prompts (file and directory pickers)
+  // instead of OS native pickers (false).
+  "use_system_path_prompts": true,
+  // Force usage of Zed built in confirmation prompts ("Do you want to save?")
+  // instead of OS native prompts (false). On linux this is ignored (always false).
+  "use_system_prompts": true,
+
   // Whether to use the system provided dialogs for Open and Save As (true) or
   // Zed's built-in keyboard-first pickers (false)
   "use_system_path_prompts": true,

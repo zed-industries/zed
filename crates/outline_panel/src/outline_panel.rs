@@ -19,10 +19,10 @@ use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
+    scroll::{Autoscroll, ScrollAnchor, ScrollbarAutoHide},
 };
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -65,17 +65,28 @@ use worktree::{Entry, ProjectEntryId, WorktreeId};
 actions!(
     outline_panel,
     [
+        /// Collapses all entries in the outline tree.
         CollapseAllEntries,
+        /// Collapses the currently selected entry.
         CollapseSelectedEntry,
+        /// Expands all entries in the outline tree.
         ExpandAllEntries,
+        /// Expands the currently selected entry.
         ExpandSelectedEntry,
+        /// Folds the selected directory.
         FoldDirectory,
+        /// Opens the selected entry in the editor.
         OpenSelectedEntry,
+        /// Reveals the selected item in the system file manager.
         RevealInFileManager,
+        /// Selects the parent of the current entry.
         SelectParent,
+        /// Toggles the pin status of the active editor.
         ToggleActiveEditorPin,
-        ToggleFocus,
+        /// Unfolds the selected directory.
         UnfoldDirectory,
+        /// Toggles focus on the outline panel.
+        ToggleFocus,
     ]
 );
 
@@ -1099,7 +1110,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
+                            SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
@@ -4573,53 +4584,52 @@ impl OutlinePanel {
                 .track_scroll(self.scroll_handle.clone())
                 .when(show_indent_guides, |list| {
                     list.with_decoration(
-                        ui::indent_guides(
-                            cx.entity().clone(),
-                            px(indent_size),
-                            IndentGuideColors::panel(cx),
-                            |outline_panel, range, _, _| {
-                                let entries = outline_panel.cached_entries.get(range);
-                                if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
-                                } else {
-                                    smallvec::SmallVec::new()
-                                }
-                            },
-                        )
-                        .with_render_fn(
-                            cx.entity().clone(),
-                            move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: Pixels = px(14.);
+                        ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
+                            .with_compute_indents_fn(
+                                cx.entity().clone(),
+                                |outline_panel, range, _, _| {
+                                    let entries = outline_panel.cached_entries.get(range);
+                                    if let Some(entries) = entries {
+                                        entries.into_iter().map(|item| item.depth).collect()
+                                    } else {
+                                        smallvec::SmallVec::new()
+                                    }
+                                },
+                            )
+                            .with_render_fn(
+                                cx.entity().clone(),
+                                move |outline_panel, params, _, _| {
+                                    const LEFT_OFFSET: Pixels = px(14.);
 
-                                let indent_size = params.indent_size;
-                                let item_height = params.item_height;
-                                let active_indent_guide_ix = find_active_indent_guide_ix(
-                                    outline_panel,
-                                    &params.indent_guides,
-                                );
+                                    let indent_size = params.indent_size;
+                                    let item_height = params.item_height;
+                                    let active_indent_guide_ix = find_active_indent_guide_ix(
+                                        outline_panel,
+                                        &params.indent_guides,
+                                    );
 
-                                params
-                                    .indent_guides
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(ix, layout)| {
-                                        let bounds = Bounds::new(
-                                            point(
-                                                layout.offset.x * indent_size + LEFT_OFFSET,
-                                                layout.offset.y * item_height,
-                                            ),
-                                            size(px(1.), layout.length * item_height),
-                                        );
-                                        ui::RenderedIndentGuide {
-                                            bounds,
-                                            layout,
-                                            is_active: active_indent_guide_ix == Some(ix),
-                                            hitbox: None,
-                                        }
-                                    })
-                                    .collect()
-                            },
-                        ),
+                                    params
+                                        .indent_guides
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(ix, layout)| {
+                                            let bounds = Bounds::new(
+                                                point(
+                                                    layout.offset.x * indent_size + LEFT_OFFSET,
+                                                    layout.offset.y * item_height,
+                                                ),
+                                                size(px(1.), layout.length * item_height),
+                                            );
+                                            ui::RenderedIndentGuide {
+                                                bounds,
+                                                layout,
+                                                is_active: active_indent_guide_ix == Some(ix),
+                                                hitbox: None,
+                                            }
+                                        })
+                                        .collect()
+                                },
+                            ),
                     )
                 })
             };

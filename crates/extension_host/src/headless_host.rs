@@ -1,13 +1,17 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use client::{TypedEnvelope, proto};
+use client::{
+    TypedEnvelope,
+    proto::{self, FromProto},
+};
 use collections::{HashMap, HashSet};
 use extension::{
-    Extension, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
-    ExtensionManifest,
+    Extension, ExtensionDebugAdapterProviderProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
+use futures::future::join_all;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
@@ -125,7 +129,7 @@ impl HeadlessExtensionStore {
 
         let manifest = Arc::new(ExtensionManifest::load(fs.clone(), &extension_dir).await?);
 
-        debug_assert!(!manifest.languages.is_empty() || !manifest.language_servers.is_empty());
+        debug_assert!(!manifest.languages.is_empty() || manifest.allow_remote_load());
 
         if manifest.version.as_ref() != extension.version.as_str() {
             anyhow::bail!(
@@ -165,12 +169,13 @@ impl HeadlessExtensionStore {
             })?;
         }
 
-        if manifest.language_servers.is_empty() {
+        if !manifest.allow_remote_load() {
             return Ok(());
         }
 
-        let wasm_extension: Arc<dyn Extension> =
-            Arc::new(WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?);
+        let wasm_extension: Arc<dyn Extension> = Arc::new(
+            WasmExtension::load(extension_dir.clone(), &manifest, wasm_host.clone(), &cx).await?,
+        );
 
         for (language_server_id, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
@@ -186,6 +191,28 @@ impl HeadlessExtensionStore {
                     );
                 })?;
             }
+            log::info!("Loaded language server: {}", language_server_id);
+        }
+
+        for (debug_adapter, meta) in &manifest.debug_adapters {
+            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, meta);
+
+            this.update(cx, |this, _cx| {
+                this.proxy.register_debug_adapter(
+                    wasm_extension.clone(),
+                    debug_adapter.clone(),
+                    &extension_dir.join(schema_path),
+                );
+            })?;
+            log::info!("Loaded debug adapter: {}", debug_adapter);
+        }
+
+        for debug_locator in manifest.debug_locators.keys() {
+            this.update(cx, |this, _cx| {
+                this.proxy
+                    .register_debug_locator(wasm_extension.clone(), debug_locator.clone());
+            })?;
+            log::info!("Loaded debug locator: {}", debug_locator);
         }
 
         Ok(())
@@ -204,18 +231,27 @@ impl HeadlessExtensionStore {
             .unwrap_or_default();
         self.proxy.remove_languages(&languages_to_remove, &[]);
 
-        for (language_server_name, language) in self
+        let servers_to_remove = self
             .loaded_language_servers
             .remove(extension_id)
-            .unwrap_or_default()
-        {
-            self.proxy
-                .remove_language_server(&language, &language_server_name);
-        }
-
+            .unwrap_or_default();
+        let proxy = self.proxy.clone();
         let path = self.extension_dir.join(&extension_id.to_string());
         let fs = self.fs.clone();
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |_, cx| {
+            let mut removal_tasks = Vec::with_capacity(servers_to_remove.len());
+            cx.update(|cx| {
+                for (language_server_name, language) in servers_to_remove {
+                    removal_tasks.push(proxy.remove_language_server(
+                        &language,
+                        &language_server_name,
+                        cx,
+                    ));
+                }
+            })
+            .ok();
+            let _ = join_all(removal_tasks).await;
+
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -224,6 +260,7 @@ impl HeadlessExtensionStore {
                 },
             )
             .await
+            .with_context(|| format!("Removing directory {path:?}"))
         })
     }
 
@@ -305,7 +342,7 @@ impl HeadlessExtensionStore {
                         version: extension.version,
                         dev: extension.dev,
                     },
-                    PathBuf::from(envelope.payload.tmp_dir),
+                    PathBuf::from_proto(envelope.payload.tmp_dir),
                     cx,
                 )
             })?

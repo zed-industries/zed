@@ -59,7 +59,8 @@
       "alt->": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
-      "alt-^": "editor::JoinLines" // join-line
+      "alt-^": "editor::JoinLines", // join-line
+      "alt-q": "editor::Rewrap" // fill-paragraph
     }
   },
   {
@@ -88,6 +89,20 @@
       "alt-<": "editor::SelectToBeginning",
       "alt->": "editor::SelectToEnd",
       "ctrl-g": "editor::Cancel"
+    }
+  },
+  {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ContextMenuPrevious",
+      "ctrl-n": "editor::ContextMenuNext"
+    }
+  },
+  {
+    "context": "Editor && showing_signature_help && !showing_completions",
+    "bindings": {
+      "ctrl-p": "editor::SignatureHelpPrevious",
+      "ctrl-n": "editor::SignatureHelpNext"
     }
   },
   {

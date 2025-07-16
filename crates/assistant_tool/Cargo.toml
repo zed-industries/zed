@@ -22,6 +22,7 @@ gpui.workspace = true
 icons.workspace = true
 language.workspace = true
 language_model.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 regex.workspace = true

@@ -120,6 +120,8 @@ git submodule add https://github.com/your-username/foobar-zed.git extensions/foo
 git add extensions/foobar
 ```
 
+> All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
+
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 
 ```toml

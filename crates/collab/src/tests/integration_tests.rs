@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_context_editor::ContextStore;
+use assistant_context::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
@@ -4591,14 +4591,13 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                        vec![Formatter::External {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                        Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }]
-                        .into(),
+                        },
                     )));
                 });
             });
@@ -4699,8 +4698,8 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                    Formatter::LanguageServer { name: None },
                 )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
@@ -4822,7 +4821,7 @@ async fn test_definition(
     );
 
     let definitions_1 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4853,7 +4852,7 @@ async fn test_definition(
     );
 
     let definitions_2 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 33, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4890,7 +4889,7 @@ async fn test_definition(
     );
 
     let type_definitions = project_b
-        .update(cx_b, |p, cx| p.type_definition(&buffer_b, 7, cx))
+        .update(cx_b, |p, cx| p.type_definitions(&buffer_b, 7, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -5058,7 +5057,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    references.await.unwrap_err();
+    assert_eq!(references.await.unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
@@ -5642,7 +5641,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let definitions;
     let buffer_b2;
     if rng.r#gen() {
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
                 p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
@@ -5656,7 +5655,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
             })
             .await
             .unwrap();
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
     let definitions = definitions.await.unwrap();
