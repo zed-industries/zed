@@ -1505,13 +1505,20 @@ impl KeybindingEditorModal {
             }
 
             let editor_entity = input.editor().clone();
+            let workspace = workspace.clone();
             cx.spawn(async move |_input_handle, cx| {
                 let contexts = cx
                     .background_spawn(async { collect_contexts_from_assets() })
                     .await;
 
+                let language = load_keybind_context_language(workspace, cx).await;
                 editor_entity
-                    .update(cx, |editor, _cx| {
+                    .update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language), cx);
+                            });
+                        }
                         editor.set_completion_provider(Some(std::rc::Rc::new(
                             KeyContextCompletionProvider { contexts },
                         )));
