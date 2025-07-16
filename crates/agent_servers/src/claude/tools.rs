@@ -11,11 +11,11 @@ pub enum ClaudeTool {
     ListDirectory,
     Glob,
     Grep,
-    Terminal,
+    Terminal(Option<BashToolParams>),
     Web,
     Todo,
     Subagent,
-    Other,
+    Other { input: serde_json::Value },
 }
 
 impl ClaudeTool {
@@ -29,7 +29,7 @@ impl ClaudeTool {
             "LS" => Self::ListDirectory,
             "Glob" => Self::Glob,
             "Grep" => Self::Grep,
-            "Bash" => Self::Terminal,
+            "Bash" => Self::Terminal(serde_json::from_value(dbg!(input)).log_err()),
             "WebFetch" => Self::Web,
             "WebSearch" => Self::Web,
             "TodoWrite" => Self::Todo,
@@ -46,34 +46,43 @@ impl ClaudeTool {
                 } else if tool_name.contains("todo") {
                     Self::Todo
                 } else if tool_name.contains("terminal") {
-                    Self::Terminal
+                    Self::Terminal(None)
                 } else {
-                    Self::Other
+                    Self::Other { input }
                 }
             }
         }
     }
 
-    pub fn custom_label(tool_name: &str) -> Option<String> {
-        if let Some(server_tool) = tool_name.strip_prefix("mcp__") {
-            let mut split = server_tool.split("__");
-            let server = split.next()?;
-            let tool_name = split.next()?;
-            Some(format!("{}: {}", server, tool_name))
-        } else {
-            None
-        }
-    }
-
     pub fn tool_call_params(tool_name: String, input: serde_json::Value) -> PushToolCallParams {
-        let formatted = serde_json::to_string_pretty(&input).unwrap();
-        let markdown = format!("```json\n{}\n```", formatted);
         let inferred_tool = Self::infer(&tool_name, input);
 
+        let (content, label) = match &inferred_tool {
+            ClaudeTool::Terminal(Some(params)) => (None, format!("`{}`", params.command)),
+            ClaudeTool::Terminal(None)
+            | ClaudeTool::ReadFile(_)
+            | ClaudeTool::ListDirectory
+            | ClaudeTool::Edit(_)
+            | ClaudeTool::Glob
+            | ClaudeTool::Grep
+            | ClaudeTool::Web
+            | ClaudeTool::Todo
+            | ClaudeTool::Subagent => (None, tool_name),
+            ClaudeTool::Other { input } => (
+                Some(acp::ToolCallContent::Markdown {
+                    markdown: format!(
+                        "```json\n{}```",
+                        serde_json::to_string_pretty(&input).unwrap_or("{}".to_string())
+                    ),
+                }),
+                tool_name,
+            ),
+        };
+
         PushToolCallParams {
-            label: Self::custom_label(&tool_name).unwrap_or(tool_name),
+            label,
+            content,
             icon: inferred_tool.icon(),
-            content: Some(acp::ToolCallContent::Markdown { markdown }),
             locations: inferred_tool.locations(),
         }
     }
@@ -85,11 +94,11 @@ impl ClaudeTool {
             Self::ListDirectory => acp::Icon::Folder,
             Self::Glob => acp::Icon::FileSearch,
             Self::Grep => acp::Icon::Regex,
-            Self::Terminal => acp::Icon::Terminal,
+            Self::Terminal(_) => acp::Icon::Terminal,
             Self::Web => acp::Icon::Globe,
             Self::Todo => acp::Icon::LightBulb,
             Self::Subagent => acp::Icon::Hammer,
-            Self::Other => acp::Icon::Hammer,
+            Self::Other { .. } => acp::Icon::Hammer,
         }
     }
 
@@ -100,14 +109,22 @@ impl ClaudeTool {
                 urls: vec![],
                 description,
             },
-            Self::Terminal
+            Self::Terminal(Some(BashToolParams {
+                description,
+                command,
+            })) => acp::ToolCallConfirmation::Execute {
+                command: command.clone(),
+                root_command: command.clone(),
+                description: Some(description.clone()),
+            },
+            Self::Terminal(None)
             | Self::ListDirectory
             | Self::Glob
             | Self::Grep
             | Self::Todo
             | Self::Subagent
             | Self::ReadFile(_)
-            | Self::Other => acp::ToolCallConfirmation::Other {
+            | Self::Other { .. } => acp::ToolCallConfirmation::Other {
                 description: description.unwrap_or("".to_string()),
             },
         }
@@ -130,11 +147,11 @@ impl ClaudeTool {
             | Self::ListDirectory
             | Self::Glob
             | Self::Grep
-            | Self::Terminal
+            | Self::Terminal(_)
             | Self::Web
             | Self::Todo
             | Self::Subagent
-            | Self::Other => vec![],
+            | Self::Other { .. } => vec![],
         }
     }
 }
@@ -167,4 +184,10 @@ pub struct ReadToolParams {
 #[serde(rename_all = "camelCase")]
 pub struct ReadToolResponse {
     pub content: String,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct BashToolParams {
+    pub description: String,
+    pub command: String,
 }
