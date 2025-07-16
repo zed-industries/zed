@@ -1,4 +1,4 @@
-mod permission_mcp_server;
+mod mcp_server;
 
 use collections::HashMap;
 use project::Project;
@@ -27,12 +27,11 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 use crate::AgentServer;
-use crate::claude::permission_mcp_server::PermissionMcpServer;
+use crate::claude::mcp_server::ClaudeMcpServer;
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 impl AgentConnection for ClaudeAgentConnection {
     /// Send a request to the agent and wait for a response.
-
     fn request_any(
         &self,
         params: AnyAgentRequest,
@@ -125,11 +124,11 @@ impl AgentServer for ClaudeCode {
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let permission_mcp_server =
-                PermissionMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
+                ClaudeMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
-                permission_mcp_server::SERVER_NAME.to_string(),
+                mcp_server::SERVER_NAME.to_string(),
                 permission_mcp_server.server_config()?,
             );
             let mcp_config = McpConfig { mcp_servers };
@@ -151,12 +150,12 @@ impl AgentServer for ClaudeCode {
                     "--print",
                     "--verbose",
                     "--mcp-config",
-                    &mcp_config_path.to_string_lossy().to_string(),
+                    mcp_config_path.to_string_lossy().as_ref(),
                     "--permission-prompt-tool",
                     &format!(
                         "mcp__{}__{}",
-                        permission_mcp_server::SERVER_NAME,
-                        permission_mcp_server::TOOL_NAME
+                        mcp_server::SERVER_NAME,
+                        mcp_server::PERMISSION_TOOL
                     ),
                     "--allowedTools",
                     "mcp__zed__Read,mcp__zed__Edit",
@@ -210,10 +209,10 @@ impl AgentServer for ClaudeCode {
                     outgoing_tx,
                     end_turn_tx,
                     _handler_task: handler_task,
-                    _permissions_mcp_server: None,
+                    _mcp_server: None,
                 };
 
-                connection._permissions_mcp_server = Some(permission_mcp_server);
+                connection._mcp_server = Some(permission_mcp_server);
                 acp_thread::AcpThread::new(connection, title, None, project.clone(), cx)
             })
         })
@@ -223,7 +222,7 @@ impl AgentServer for ClaudeCode {
 struct ClaudeAgentConnection {
     outgoing_tx: UnboundedSender<SdkMessage>,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
-    _permissions_mcp_server: Option<PermissionMcpServer>,
+    _mcp_server: Option<ClaudeMcpServer>,
     _handler_task: Task<()>,
 }
 
@@ -266,7 +265,8 @@ impl ClaudeAgentConnection {
                             content,
                             tool_use_id,
                         } => {
-                            if let Some(id) = tool_id_map.borrow_mut().remove(&tool_use_id) {
+                            let id = tool_id_map.borrow_mut().remove(&tool_use_id);
+                            if let Some(id) = id {
                                 delegate
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
