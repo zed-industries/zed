@@ -1,5 +1,5 @@
 use std::{
-    ops::{Not, Range},
+    ops::{Not as _, Range},
     sync::Arc,
 };
 
@@ -1602,32 +1602,45 @@ impl KeybindingEditorModal {
         Ok(action_arguments)
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
-        let existing_keybind = self.editing_keybind.clone();
-        let fs = self.fs.clone();
+    fn validate_keystrokes(&self, cx: &App) -> anyhow::Result<Vec<Keystroke>> {
         let new_keystrokes = self
             .keybind_editor
             .read_with(cx, |editor, _| editor.keystrokes().to_vec());
-        if new_keystrokes.is_empty() {
-            self.set_error(InputError::error("Keystrokes cannot be empty"), cx);
-            return;
-        }
-        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+        anyhow::ensure!(!new_keystrokes.is_empty(), "Keystrokes cannot be empty");
+        Ok(new_keystrokes)
+    }
+
+    fn validate_context(&self, cx: &App) -> anyhow::Result<Option<String>> {
         let new_context = self
             .context_editor
             .read_with(cx, |input, cx| input.editor().read(cx).text(cx));
-        let new_context = new_context.is_empty().not().then_some(new_context);
-        let new_context_err = new_context.as_deref().and_then(|context| {
-            gpui::KeyBindingContextPredicate::parse(context)
-                .context("Failed to parse key context")
-                .err()
-        });
-        if let Some(err) = new_context_err {
-            // TODO: store and display as separate error
-            // TODO: also, should be validating on keystroke
-            self.set_error(InputError::error(err.to_string()), cx);
-            return;
-        }
+        let Some(context) = new_context.is_empty().not().then_some(new_context) else {
+            return Ok(None);
+        };
+        gpui::KeyBindingContextPredicate::parse(&context).context("Failed to parse key context")?;
+
+        Ok(Some(context))
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        let existing_keybind = self.editing_keybind.clone();
+        let fs = self.fs.clone();
+        let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
+        let new_keystrokes = match self.validate_keystrokes(cx) {
+            Err(err) => {
+                self.set_error(InputError::error(err.to_string()), cx);
+                return;
+            }
+            Ok(keystrokes) => keystrokes,
+        };
+
+        let new_context = match self.validate_context(cx) {
+            Err(err) => {
+                self.set_error(InputError::error(err.to_string()), cx);
+                return;
+            }
+            Ok(context) => context,
+        };
 
         let new_action_args = match self.validate_action_arguments(cx) {
             Err(input_err) => {
@@ -2064,46 +2077,45 @@ async fn save_keybinding_update(
         .await
         .context("Failed to load keymap file")?;
 
-    let operation = if !create {
-        let existing_keystrokes = existing.keystrokes().unwrap_or_default();
-        let existing_context = existing
-            .context
-            .as_ref()
-            .and_then(KeybindContextString::local_str);
-        let existing_args = existing
-            .action_arguments
-            .as_ref()
-            .map(|args| args.text.as_ref());
+    let existing_keystrokes = existing.keystrokes().unwrap_or_default();
+    let existing_context = existing
+        .context
+        .as_ref()
+        .and_then(KeybindContextString::local_str);
+    let existing_args = existing
+        .action_arguments
+        .as_ref()
+        .map(|args| args.text.as_ref());
 
+    let target = settings::KeybindUpdateTarget {
+        context: existing_context,
+        keystrokes: existing_keystrokes,
+        action_name: &existing.action_name,
+        action_arguments: existing_args,
+    };
+
+    let source = settings::KeybindUpdateTarget {
+        context: new_context,
+        keystrokes: new_keystrokes,
+        action_name: &existing.action_name,
+        action_arguments: new_args,
+    };
+
+    let operation = if !create {
         settings::KeybindUpdateOperation::Replace {
-            target: settings::KeybindUpdateTarget {
-                context: existing_context,
-                keystrokes: existing_keystrokes,
-                action_name: &existing.action_name,
-                use_key_equivalents: false,
-                action_arguments: existing_args,
-            },
+            target,
             target_keybind_source: existing
                 .source
                 .as_ref()
                 .map(|(source, _name)| *source)
                 .unwrap_or(KeybindSource::User),
-            source: settings::KeybindUpdateTarget {
-                context: new_context,
-                keystrokes: new_keystrokes,
-                action_name: &existing.action_name,
-                use_key_equivalents: false,
-                action_arguments: new_args,
-            },
+            source,
         }
     } else {
-        settings::KeybindUpdateOperation::Add(settings::KeybindUpdateTarget {
-            context: new_context,
-            keystrokes: new_keystrokes,
-            action_name: &existing.action_name,
-            use_key_equivalents: false,
-            action_arguments: new_args,
-        })
+        settings::KeybindUpdateOperation::Add {
+            source,
+            from: Some(target),
+        }
     };
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
@@ -2137,7 +2149,6 @@ async fn remove_keybinding(
                 .and_then(KeybindContextString::local_str),
             keystrokes,
             action_name: &existing.action_name,
-            use_key_equivalents: false,
             action_arguments: existing
                 .action_arguments
                 .as_ref()
