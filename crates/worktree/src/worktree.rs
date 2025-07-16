@@ -1666,17 +1666,31 @@ impl LocalWorktree {
 
         cx.spawn(async move |this, cx| {
             write.await?;
-            let entry = this
-                .update(cx, |this, cx| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(path.clone(), None, cx)
-                })?
-                .await?;
+            
+            // Start refresh asynchronously but don't wait for it to complete
+            let refresh_task = this.update(cx, |this, cx| {
+                this.as_local_mut()
+                    .unwrap()
+                    .refresh_entry(path.clone(), None, cx)
+            })?;
+            
+            // Spawn refresh in background - don't block save completion
+            cx.background_spawn(async move {
+                refresh_task.await.log_err();
+            })
+            .detach();
+            
             let worktree = this.upgrade().context("worktree dropped")?;
+            
+            // Try to get existing entry first
+            let entry = this.read_with(cx, |this, _| {
+                this.entry_for_path(&path).cloned()
+            })?;
+            
             if let Some(entry) = entry {
                 Ok(File::for_entry(entry, worktree))
             } else {
+                // If no entry exists, create a minimal File representation
                 let metadata = fs
                     .metadata(&abs_path)
                     .await
