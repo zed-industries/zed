@@ -27,7 +27,9 @@ pub struct ClaudeMcpServer {
 }
 
 pub const SERVER_NAME: &str = "zed";
-pub const PERMISSION_TOOL: &str = "request_confirmation";
+pub const READ_TOOL: &str = "Read";
+pub const EDIT_TOOL: &str = "Edit";
+pub const PERMISSION_TOOL: &str = "Confirmation";
 
 #[derive(Deserialize, JsonSchema, Debug)]
 struct PermissionToolParams {
@@ -129,7 +131,7 @@ impl ClaudeMcpServer {
                         annotations: None,
                     },
                     Tool {
-                        name: "Read".into(),
+                        name: READ_TOOL.into(),
                         input_schema: schemars::schema_for!(ReadToolParams).into(),
                         description: Some("Read the contents of a file. In sessions with mcp__zed__Read always use it instead of Read as it contains the most up-to-date contents.".to_string()),
                         annotations: Some(ToolAnnotations {
@@ -143,7 +145,7 @@ impl ClaudeMcpServer {
                         }),
                     },
                     Tool {
-                        name: "Edit".into(),
+                        name: EDIT_TOOL.into(),
                         input_schema: schemars::schema_for!(EditToolParams).into(),
                         // todo!() do we need this?
                         // Performs exact string replacements in files.
@@ -196,7 +198,7 @@ impl ClaudeMcpServer {
                     is_error: None,
                     meta: None,
                 })
-            } else if request.name.as_str() == "Read" {
+            } else if request.name.as_str() == READ_TOOL {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
@@ -208,7 +210,7 @@ impl ClaudeMcpServer {
                     is_error: None,
                     meta: None,
                 })
-            } else if request.name.as_str() == "Edit" {
+            } else if request.name.as_str() == EDIT_TOOL {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
