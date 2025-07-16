@@ -5880,6 +5880,20 @@ dependencies = [
 
 [[package]]
 name = "fontdb"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e32eac81c1135c1df01d4e6d4233c47ba11f6a6d07f33e0bba09d18797077770"
+dependencies = [
+ "fontconfig-parser",
+ "log",
+ "memmap2",
+ "slotmap",
+ "tinyvec",
+ "ttf-parser 0.21.1",
+]
+
+[[package]]
+name = "fontdb"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
@@ -7405,7 +7419,7 @@ dependencies = [
  "raw-window-handle",
  "refineable",
  "reqwest_client",
- "resvg",
+ "resvg 0.45.1",
  "scap",
  "schemars",
  "seahash",
@@ -10080,17 +10094,20 @@ dependencies = [
  "fs",
  "gpui",
  "handlebars 4.5.0",
+ "image 0.25.6",
  "language",
  "linkify",
  "log",
  "pretty_assertions",
  "pulldown-cmark 0.12.2",
+ "resvg 0.42.0",
  "settings",
  "smallvec",
  "theme",
  "typst",
  "typst-svg",
  "ui",
+ "usvg 0.42.0",
  "util",
  "workspace",
  "workspace-hack",
@@ -13856,6 +13873,22 @@ dependencies = [
  "smol",
  "tokio",
  "workspace-hack",
+]
+
+[[package]]
+name = "resvg"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "944d052815156ac8fa77eaac055220e95ba0b01fa8887108ca710c03805d9051"
+dependencies = [
+ "gif",
+ "jpeg-decoder",
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes 0.15.3",
+ "tiny-skia",
+ "usvg 0.42.0",
 ]
 
 [[package]]
@@ -18000,6 +18033,33 @@ dependencies = [
  "usvg-parser",
  "usvg-text-layout",
  "usvg-tree",
+ "xmlwriter",
+]
+
+[[package]]
+name = "usvg"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b84ea542ae85c715f07b082438a4231c3760539d902e11d093847a0b22963032"
+dependencies = [
+ "base64 0.22.1",
+ "data-url",
+ "flate2",
+ "fontdb 0.18.0",
+ "imagesize 0.12.0",
+ "kurbo 0.11.1",
+ "log",
+ "pico-args",
+ "roxmltree 0.20.0",
+ "rustybuzz 0.14.1",
+ "simplecss",
+ "siphasher 1.0.1",
+ "strict-num",
+ "svgtypes 0.15.3",
+ "tiny-skia-path",
+ "unicode-bidi",
+ "unicode-script",
+ "unicode-vo",
  "xmlwriter",
 ]
 

@@ -5,13 +5,14 @@ use crate::markdown_elements::{
     ParsedMarkdownMathBlock, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
     ParsedMarkdownTableRow,
 };
+use anyhow;
 use comemo::Prehashed;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img,
+    ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageCacheError, ImageSource,
+    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, RenderImage,
+    Resource, SharedString, Styled, StyledText, TextStyle, WeakEntity, Window, div, img, px,
 };
 use settings::Settings;
 use std::{
@@ -26,7 +27,7 @@ use typst::{
     syntax::{FileId, Source, VirtualPath},
     text::{Font, FontBook},
 };
-use typst_svg::svg;
+use typst_svg::svg as typst_svg;
 // Logging for math rendering
 use log::info;
 use ui::{
@@ -884,8 +885,9 @@ impl MathWorld {
         let main_source = Source::new(
             FileId::new(None, VirtualPath::new("main.typ")),
             format!(
-                r#"#show math.equation: set text(font: "{}")
-#set text(font: "{}")
+                r#"#set page(width: auto, height: auto, margin: 8pt)
+#show math.equation: set text(font: "{}", size: 14pt)
+#set text(font: "{}", size: 14pt)
 $ {} $"#,
                 selected_font, selected_font, content
             ),
@@ -978,7 +980,7 @@ fn typst_math_to_svg(math_content: &str) -> Result<String, String> {
 
     // Convert to SVG
     if let Some(page) = document.pages.first() {
-        let svg_content = svg(&page.frame);
+        let svg_content = typst_svg(&page.frame);
         info!(
             "Successfully generated SVG with {} characters",
             svg_content.len()
@@ -1019,39 +1021,134 @@ fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) 
         }
     };
 
-    // For now, we'll create a placeholder that shows we have SVG content
-    // In a full implementation, you'd need to integrate SVG rendering into GPUI
+    // Convert SVG to bitmap using resvg and render as image
+    let svg_content_clone = svg_content.clone();
+    let image_source = ImageSource::Custom(Arc::new(move |_window, _cx| {
+        info!("Custom image source called for math rendering");
+
+        // Parse SVG and convert to bitmap
+        let tree =
+            match usvg::Tree::from_data(svg_content_clone.as_bytes(), &usvg::Options::default()) {
+                Ok(tree) => {
+                    info!("Successfully parsed SVG tree");
+                    tree
+                }
+                Err(e) => {
+                    info!("Failed to parse SVG: {}", e);
+                    return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                        "SVG parse error: {}",
+                        e
+                    )))));
+                }
+            };
+
+        let size = tree.size();
+        let width = size.width() as u32;
+        let height = size.height() as u32;
+        info!("SVG dimensions: {}x{}", width, height);
+
+        if width == 0 || height == 0 {
+            info!("Invalid SVG dimensions: {}x{}", width, height);
+            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                "Invalid SVG dimensions"
+            )))));
+        }
+
+        let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
+            Some(pixmap) => {
+                info!("Created pixmap successfully");
+                pixmap
+            }
+            None => {
+                info!("Failed to create pixmap");
+                return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                    "Failed to create pixmap"
+                )))));
+            }
+        };
+
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::identity(),
+            &mut pixmap.as_mut(),
+        );
+        info!("Rendered SVG to pixmap");
+
+        // Convert to RGBA8 and create Frame
+        let rgba_data = pixmap.take();
+        info!("Extracted RGBA data: {} bytes", rgba_data.len());
+
+        let rgba_image = match image::RgbaImage::from_raw(width, height, rgba_data) {
+            Some(img) => {
+                info!("Created RGBA image successfully");
+                img
+            }
+            None => {
+                info!("Failed to create RGBA image from raw data");
+                return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                    "Failed to create RGBA image"
+                )))));
+            }
+        };
+
+        let frame = image::Frame::new(rgba_image.into());
+        let render_image = RenderImage::new(vec![frame]);
+        info!("Created RenderImage with ID: {:?}", render_image.id);
+
+        Some(Ok(Arc::new(render_image)))
+    }));
+
+    info!("About to render math image element");
+
+    // Render the image with explicit sizing to ensure visibility
     div()
         .p_2()
         .border_1()
         .border_color(cx.border_color)
         .bg(cx.code_block_background_color)
         .rounded_md()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_2()
         .child(
             div()
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(
-                    div()
-                        .text_color(cx.text_color)
-                        .child("📐 Math rendered with STIX Two Math"),
-                )
+                .child(div().text_xl().text_color(cx.text_color).child("📐"))
                 .child(
                     div()
                         .text_sm()
-                        .font_family(cx.buffer_font_family.clone())
                         .text_color(cx.text_color)
-                        .child(format!("({} chars SVG)", svg_content.len())),
+                        .child("Math Expression (STIX Two Math):"),
                 ),
         )
         .child(
             div()
-                .mt_2()
+                .max_w(px(600.0))
+                .max_h(px(200.0))
+                .border_1()
+                .border_color(cx.text_color)
+                .bg(cx.code_block_background_color)
+                .flex()
+                .items_center()
+                .justify_center()
+                .overflow_hidden()
+                .child(img(image_source).max_w_full().max_h_full()),
+        )
+        .child(
+            div()
                 .text_xs()
                 .font_family(cx.buffer_font_family.clone())
                 .text_color(cx.text_color)
                 .child(format!("Input: {}", math.contents)),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.text_color)
+                .child(format!("SVG: {} chars", svg_content.len())),
         )
         .into_any()
 }
