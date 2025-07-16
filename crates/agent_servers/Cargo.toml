@@ -20,7 +20,6 @@ doctest = false
 acp_thread.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
 context_server.workspace = true
 futures.workspace = true

@@ -142,7 +142,6 @@ dependencies = [
  "acp_thread",
  "agentic-coding-protocol",
  "anyhow",
- "async-trait",
  "collections",
  "context_server",
  "env_logger 0.11.8",
