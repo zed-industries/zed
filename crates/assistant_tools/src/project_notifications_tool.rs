@@ -116,14 +116,6 @@ fn fit_patch_to_size(patch: &str, max_size: usize) -> String {
     filenames.join("")
 }
 
-// fn parse_patch(patch: String) -> Vec<Patch> {
-//     let res = split_patch(&patch)
-//         .into_iter()
-//         .map(|patch| diffy::Patch::from_str(patch.as_ref()).unwrap())
-//         .collect();
-//     res
-// }
-
 /// Split a potentially multi-file patch into multiple single-file patches
 fn split_patch(patch: &str) -> Vec<String> {
     let mut result = Vec::new();
@@ -146,7 +138,7 @@ fn split_patch(patch: &str) -> Vec<String> {
 }
 
 fn compress_patch(patch: &str) -> anyhow::Result<String> {
-    let patch = diffy::Patch::from_str(patch.as_ref())?;
+    let patch = diffy::Patch::from_str(patch)?;
     let mut out = String::new();
 
     writeln!(out, "--- {}", patch.original().unwrap_or("a"))?;
@@ -315,10 +307,17 @@ mod tests {
         line 10
        -line 11
        +line eleven
+
+
+       --- a/dir/another.txt
+       +++ b/dir/another.txt
+       @@ -100,1 +1,1 @@
+       -before
+       +after
        "};
 
         // When the size deficit can be compensated by dropping the body,
-        // then the body should be trimmed
+        // then the body should be trimmed for larger files first
         let limit = patch.len() - 10;
         let compressed = fit_patch_to_size(patch, limit);
         let expected = indoc! {"
@@ -328,7 +327,13 @@ mod tests {
        [...skipped...]
        @@ -10,2 +10,2 @@
        [...skipped...]
-       "};
+
+
+       --- a/dir/another.txt
+       +++ b/dir/another.txt
+       @@ -100,1 +1,1 @@
+       -before
+       +after"};
         assert_eq!(compressed, expected);
 
         // When the size deficit is too large, then only file paths
@@ -336,6 +341,7 @@ mod tests {
         let limit = 10;
         let compressed = fit_patch_to_size(patch, limit);
         let expected = indoc! {"
+       - dir/another.txt
        - dir/test.txt
        "};
         assert_eq!(compressed, expected);
