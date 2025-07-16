@@ -10,7 +10,7 @@ use crate::AllAgentServersSettings;
 #[derive(Clone)]
 pub struct Gemini;
 
-const ACP_ARG: &str = "--acp";
+const ACP_ARG: &str = "--experimental-acp";
 
 impl StdioAgentServer for Gemini {
     fn name(&self) -> &'static str {
