@@ -30,8 +30,8 @@ const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 const OLLAMA_SITE: &str = "https://ollama.com/";
 
-const PROVIDER_ID: &str = "ollama";
-const PROVIDER_NAME: &str = "Ollama";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -181,11 +181,11 @@ impl LanguageModelProviderState for OllamaLanguageModelProvider {
 
 impl LanguageModelProvider for OllamaLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -334,7 +334,10 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
-            think: self.model.supports_thinking,
+            think: self
+                .model
+                .supports_thinking
+                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -350,11 +353,11 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -453,7 +456,7 @@ fn map_to_language_model_completion_events(
             let delta = match response {
                 Ok(delta) => delta,
                 Err(e) => {
-                    let event = Err(LanguageModelCompletionError::Other(anyhow!(e)));
+                    let event = Err(LanguageModelCompletionError::from(anyhow!(e)));
                     return Some((vec![event], state));
                 }
             };

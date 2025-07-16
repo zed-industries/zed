@@ -1,5 +1,5 @@
 use crate::{
-    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
+    AnchorRangeExt, DisplayPoint, Editor, MultiBuffer, RowExt,
     display_map::{HighlightKey, ToDisplayPoint},
 };
 use buffer_diff::DiffHunkStatusKind;
@@ -362,7 +362,7 @@ impl EditorTestContext {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update_in(&mut self.cx, |editor, window, cx| {
             editor.set_text(unmarked_text, window, cx);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });
@@ -379,7 +379,7 @@ impl EditorTestContext {
         let (unmarked_text, selection_ranges) = marked_text_ranges(marked_text, true);
         self.editor.update_in(&mut self.cx, |editor, window, cx| {
             assert_eq!(editor.text(cx), unmarked_text);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges(selection_ranges)
             })
         });

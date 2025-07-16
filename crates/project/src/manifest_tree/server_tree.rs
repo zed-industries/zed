@@ -74,6 +74,7 @@ impl LanguageServerTreeNode {
     pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
         self.0.upgrade()?.id.get().copied()
     }
+
     /// Returns a language server ID for this node if it has already been initialized; otherwise runs the provided closure to initialize the language server node in a tree.
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
@@ -86,6 +87,11 @@ impl LanguageServerTreeNode {
                 .id
                 .get_or_init(|| init(LaunchDisposition::from(&*this))),
         )
+    }
+
+    /// Returns a language server name as the language server adapter would return.
+    pub fn name(&self) -> Option<LanguageServerName> {
+        self.0.upgrade().map(|node| node.name.clone())
     }
 }
 

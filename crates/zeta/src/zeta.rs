@@ -72,7 +72,13 @@ const MAX_EVENT_TOKENS: usize = 500;
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-actions!(edit_prediction, [ClearHistory]);
+actions!(
+    edit_prediction,
+    [
+        /// Clears the edit prediction history.
+        ClearHistory
+    ]
+);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);

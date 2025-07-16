@@ -1,9 +1,10 @@
 use anyhow::{Context as _, bail};
-use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Visitor},
 };
+use std::borrow::Cow;
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -11,18 +12,13 @@ use std::{
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
-    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let b = (hex & 0xFF) as f32 / 255.0;
+    let [_, r, g, b] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
-    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex & 0xFF) as f32 / 255.0;
+    let [r, g, b, a] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a }
 }
 
@@ -62,14 +58,14 @@ impl Rgba {
         if other.a >= 1.0 {
             other
         } else if other.a <= 0.0 {
-            return *self;
+            *self
         } else {
-            return Rgba {
+            Rgba {
                 r: (self.r * (1.0 - other.a)) + (other.r * other.a),
                 g: (self.g * (1.0 - other.a)) + (other.g * other.a),
                 b: (self.b * (1.0 - other.a)) + (other.b * other.a),
                 a: self.a,
-            };
+            }
         }
     }
 }
@@ -99,22 +95,14 @@ impl Visitor<'_> for RgbaVisitor {
 }
 
 impl JsonSchema for Rgba {
-    fn schema_name() -> String {
-        "Rgba".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        "Rgba".into()
     }
 
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(
-                    r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$".to_string(),
-                ),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
         })
     }
 }
@@ -501,12 +489,12 @@ impl Hsla {
         if alpha >= 1.0 {
             other
         } else if alpha <= 0.0 {
-            return self;
+            self
         } else {
             let converted_self = Rgba::from(self);
             let converted_other = Rgba::from(other);
             let blended_rgb = converted_self.blend(converted_other);
-            return Hsla::from(blended_rgb);
+            Hsla::from(blended_rgb)
         }
     }
 
@@ -629,11 +617,11 @@ impl From<Rgba> for Hsla {
 }
 
 impl JsonSchema for Hsla {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         Rgba::schema_name()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         Rgba::json_schema(generator)
     }
 }

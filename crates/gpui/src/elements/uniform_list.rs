@@ -7,8 +7,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, GlobalElementId,
     Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Overflow, Pixels, ScrollHandle, Size, StyleRefinement, Styled, Window,
-    point, size,
+    ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size, StyleRefinement, Styled,
+    Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -88,6 +88,8 @@ pub enum ScrollStrategy {
     /// May not be possible if there's not enough list items above the item scrolled to:
     /// in this case, the element will be placed at the closest possible position.
     Center,
+    /// Scrolls the element to be at the given item index from the top of the viewport.
+    ToPosition(usize),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -139,6 +141,15 @@ impl UniformListScrollHandle {
         this.deferred_scroll_to_item
             .map(|(ix, _)| ix)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
+    }
+
+    /// Checks if the list can be scrolled vertically.
+    pub fn is_scrollable(&self) -> bool {
+        if let Some(size) = self.0.borrow().last_item_size {
+            size.contents.height > size.item.height
+        } else {
+            false
+        }
     }
 }
 
@@ -345,6 +356,15 @@ impl Element for UniformList {
                                     }
                                 }
                             }
+                            ScrollStrategy::ToPosition(sticky_index) => {
+                                let target_y_in_viewport = item_height * sticky_index;
+                                let target_scroll_top = item_top - target_y_in_viewport;
+                                let max_scroll_top =
+                                    (content_height - list_height).max(Pixels::ZERO);
+                                let new_scroll_top =
+                                    target_scroll_top.clamp(Pixels::ZERO, max_scroll_top);
+                                updated_scroll_offset.y = -new_scroll_top;
+                            }
                         }
                         scroll_offset = *updated_scroll_offset
                     }
@@ -354,6 +374,7 @@ impl Element for UniformList {
                     let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
                         / item_height)
                         .ceil() as usize;
+
                     let visible_range = first_visible_element_ix
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
@@ -409,6 +430,7 @@ impl Element for UniformList {
                             let mut decoration = decoration.as_ref().compute(
                                 visible_range.clone(),
                                 bounds,
+                                scroll_offset,
                                 item_height,
                                 self.item_count,
                                 window,
@@ -476,6 +498,7 @@ pub trait UniformListDecoration {
         &self,
         visible_range: Range<usize>,
         bounds: Bounds<Pixels>,
+        scroll_offset: Point<Pixels>,
         item_height: Pixels,
         item_count: usize,
         window: &mut Window,

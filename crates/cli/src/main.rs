@@ -130,11 +130,18 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
     // Exit flatpak sandbox if needed
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     {
         flatpak::try_restart_to_host();
         flatpak::ld_extra_libs();
@@ -158,7 +165,7 @@ fn main() -> Result<()> {
         paths::set_custom_data_dir(dir);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
@@ -308,19 +315,19 @@ fn main() -> Result<()> {
     });
 
     let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
-        stdin_tmp_file.map(|tmp_file| {
+        stdin_tmp_file.map(|mut tmp_file| {
             thread::spawn(move || {
-                let stdin = std::io::stdin().lock();
-                if io::IsTerminal::is_terminal(&stdin) {
-                    return Ok(());
+                let mut stdin = std::io::stdin().lock();
+                if !io::IsTerminal::is_terminal(&stdin) {
+                    io::copy(&mut stdin, &mut tmp_file)?;
                 }
-                return pipe_to_tmp(stdin, tmp_file);
+                Ok(())
             })
         });
 
-    let anonymous_fd_pipe_handles: Vec<JoinHandle<anyhow::Result<()>>> = anonymous_fd_tmp_files
+    let anonymous_fd_pipe_handles: Vec<_> = anonymous_fd_tmp_files
         .into_iter()
-        .map(|(file, tmp_file)| thread::spawn(move || pipe_to_tmp(file, tmp_file)))
+        .map(|(mut file, mut tmp_file)| thread::spawn(move || io::copy(&mut file, &mut tmp_file)))
         .collect();
 
     if args.foreground {
@@ -342,22 +349,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn pipe_to_tmp(mut src: impl io::Read, mut dest: fs::File) -> Result<()> {
-    let mut buffer = [0; 8 * 1024];
-    loop {
-        let bytes_read = match src.read(&mut buffer) {
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-            res => res?,
-        };
-        if bytes_read == 0 {
-            break;
-        }
-        io::Write::write_all(&mut dest, &buffer[..bytes_read])?;
-    }
-    io::Write::flush(&mut dest)?;
-    Ok(())
-}
-
 fn anonymous_fd(path: &str) -> Option<fs::File> {
     #[cfg(target_os = "linux")]
     {
@@ -374,7 +365,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         use std::os::{
             fd::{self, FromRawFd},
@@ -392,7 +383,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         let file = unsafe { fs::File::from_raw_fd(fd) };
         return Some(file);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         _ = path;
         // not implemented for bsd, windows. Could be, but isn't yet
@@ -537,7 +528,7 @@ mod linux {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(target_os = "linux")]
 mod flatpak {
     use std::ffi::OsString;
     use std::path::PathBuf;

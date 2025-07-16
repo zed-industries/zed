@@ -3322,7 +3322,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3389,7 +3389,7 @@ impl Repository {
                     let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path) {
                         if buffer
                             .read(cx)
                             .file()
@@ -3749,7 +3749,7 @@ impl Repository {
                         let buffer_id = git_store
                             .buffer_store
                             .read(cx)
-                            .get_by_path(&project_path?, cx)?
+                            .get_by_path(&project_path?)?
                             .read(cx)
                             .remote_id();
                         let diff_state = git_store.diffs.get(&buffer_id)?;
@@ -4556,7 +4556,9 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
+    let statuses = backend
+        .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
+        .await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
