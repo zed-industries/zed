@@ -297,6 +297,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
+    humanized_action_names: HashMap<&'static str, SharedString>,
 }
 
 enum PreviousEdit {
@@ -309,7 +310,7 @@ enum PreviousEdit {
     /// and if we don't find it, we scroll to 0 and don't set a selected index
     Keybinding {
         action_mapping: ActionMapping,
-        action_name: SharedString,
+        action_name: &'static str,
         /// The scrollbar position to fallback to if we don't find the keybinding during a refresh
         /// this can happen if there's a filter applied to the search and the keybinding modification
         /// filters the binding from the search results
@@ -360,6 +361,14 @@ impl KeymapEditor {
         })
         .detach();
 
+        let humanized_action_names =
+            HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+                (
+                    action_name,
+                    command_palette::humanize_action_name(action_name).into(),
+                )
+            }));
+
         let mut this = Self {
             workspace,
             keybindings: vec![],
@@ -376,6 +385,7 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
+            humanized_action_names,
         };
 
         this.on_keymap_changed(cx);
@@ -487,7 +497,7 @@ impl KeymapEditor {
                         Some(Default) => 3,
                         None => 4,
                     };
-                    return (source_precedence, keybind.action_name.as_ref());
+                    return (source_precedence, keybind.action_name);
                 });
             }
             this.selected_index.take();
@@ -557,7 +567,7 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
-                action_name: action_name.into(),
+                action_name,
                 action_arguments,
                 action_docs,
                 action_schema: action_schema.get(action_name).cloned(),
@@ -574,7 +584,7 @@ impl KeymapEditor {
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
-                action_name: action_name.into(),
+                action_name,
                 action_arguments: None,
                 action_docs: action_documentation.get(action_name).copied(),
                 action_schema: action_schema.get(action_name).cloned(),
@@ -1024,7 +1034,7 @@ impl KeymapEditor {
 struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
-    action_name: SharedString,
+    action_name: &'static str,
     action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
     action_schema: Option<schemars::Schema>,
@@ -1270,7 +1280,7 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    let action_name = binding.action_name.clone();
+                                    let action_name = binding.action_name;
 
                                     let icon = (this.filter_state != FilterState::Conflicts
                                         && this.has_conflict(index))
@@ -1317,13 +1327,26 @@ impl Render for KeymapEditor {
 
                                     let action = div()
                                         .id(("keymap action", index))
-                                        .child(command_palette::humanize_action_name(&action_name))
+                                        .child({
+                                            if action_name != gpui::NoAction.name() {
+                                                this.humanized_action_names
+                                                    .get(action_name)
+                                                    .cloned()
+                                                    .unwrap_or(action_name.into())
+                                                    .into_any_element()
+                                            } else {
+                                                const NULL: SharedString =
+                                                    SharedString::new_static("<null>");
+                                                muted_styled_text(NULL.clone(), cx)
+                                                    .into_any_element()
+                                            }
+                                        })
                                         .when(!context_menu_deployed, |this| {
                                             this.tooltip({
-                                                let action_name = binding.action_name.clone();
+                                                let action_name = binding.action_name;
                                                 let action_docs = binding.action_docs;
                                                 move |_, cx| {
-                                                    let action_tooltip = Tooltip::new(&action_name);
+                                                    let action_tooltip = Tooltip::new(action_name);
                                                     let action_tooltip = match action_docs {
                                                         Some(docs) => action_tooltip.meta(docs),
                                                         None => action_tooltip,
@@ -1773,7 +1796,7 @@ impl KeybindingEditorModal {
                 .read(cx)
                 .keybindings
                 .get(first_conflicting_index)
-                .map(|keybind| keybind.action_name.clone());
+                .map(|keybind| keybind.action_name);
 
             let warning_message = match conflicting_action_name {
                 Some(name) => {
@@ -1823,7 +1846,7 @@ impl KeybindingEditorModal {
             .log_err();
 
         cx.spawn(async move |this, cx| {
-            let action_name = existing_keybind.action_name.clone();
+            let action_name = existing_keybind.action_name;
 
             if let Err(err) = save_keybinding_update(
                 create,

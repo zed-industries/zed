@@ -881,6 +881,9 @@ pub struct KeybindUpdateTarget<'a> {
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
+        if self.action_name == gpui::NoAction.name() {
+            return Ok(Value::Null);
+        }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
             Some(args) => {
@@ -1479,10 +1482,6 @@ mod tests {
             ]"#
             .unindent(),
         );
-    }
-
-    #[test]
-    fn test_append() {
         check_keymap_update(
             r#"[
                 {
@@ -1524,6 +1523,44 @@ mod tests {
                             "foo::baz",
                             true
                         ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::baz",
+                    action_arguments: Some("true"),
+                },
+                target_keybind_source: KeybindSource::Default,
+            },
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": null
                     }
                 }
             ]"#
