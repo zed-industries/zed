@@ -724,8 +724,13 @@ impl KeymapEditor {
             .map(|r#match| r#match.candidate_id)
     }
 
+    fn selected_keybind_and_index(&self) -> Option<(&ProcessedKeybinding, usize)> {
+        self.selected_keybind_index()
+            .map(|keybind_index| (&self.keybindings[keybind_index], keybind_index))
+    }
+
     fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
-        self.selected_keybind_idx()
+        self.selected_keybind_index()
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
     }
 
@@ -880,22 +885,16 @@ impl KeymapEditor {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_edit_keybinding_modal(false, window, cx);
-    }
-
     fn open_edit_keybinding_modal(
         &mut self,
         create: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((keybind_idx, keybind)) = self
-            .selected_keybind_idx()
-            .zip(self.selected_binding().cloned())
-        else {
+        let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
         };
+        let keybind = keybind.clone();
         let keymap_editor = cx.entity();
 
         let arguments = keybind
@@ -925,7 +924,7 @@ impl KeymapEditor {
                     let modal = KeybindingEditorModal::new(
                         create,
                         keybind,
-                        keybind_idx,
+                        keybind_index,
                         keymap_editor,
                         workspace_weak,
                         fs,
@@ -1155,7 +1154,6 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
-            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
             .on_action(cx.listener(Self::delete_binding))
