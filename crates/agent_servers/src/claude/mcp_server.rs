@@ -189,7 +189,6 @@ impl ClaudeMcpServer {
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
-            // todo! wait until ready instead
             let Some(delegate) = delegate_watch.recv().await? else {
                 debug_panic!("Sent None delegate");
                 anyhow::bail!("Server not available");
