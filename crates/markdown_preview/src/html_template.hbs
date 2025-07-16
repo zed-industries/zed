@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    {{#if mathjax}}
+    <!-- MathJax CDN -->
+    <script async
+      src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+    </script>
+    {{/if}}
+    <style> /* optional: some default styling */ </style>
+  </head>
+  <body>
+    {{{content}}}
+  </body>
+</html>
