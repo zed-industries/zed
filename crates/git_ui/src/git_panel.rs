@@ -175,6 +175,8 @@ pub enum Event {
 struct SerializedGitPanel {
     width: Option<Pixels>,
     #[serde(default)]
+    amend_pending: bool,
+    #[serde(default)]
     signoff_enabled: bool,
 }
 
@@ -694,16 +696,36 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", GIT_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
+        let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
+
+        let Some(serialization_key) = self
+            .workspace
+            .read_with(cx, |workspace, _| Self::serialization_key(workspace))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        GIT_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
                             width,
+                            amend_pending,
                             signoff_enabled,
                         })?,
                     )
@@ -4201,13 +4223,23 @@ impl GitPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&GIT_PANEL_KEY) })
-            .await
-            .context("loading git panel")
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| Self::serialization_key(workspace))
+            .ok()
             .flatten()
-            .and_then(|panel| serde_json::from_str::<SerializedGitPanel>(&panel).log_err());
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("loading git panel")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedGitPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = GitPanel::new(workspace, window, cx);
@@ -4215,6 +4247,7 @@ impl GitPanel {
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
                     panel.width = serialized_panel.width;
+                    panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
                     cx.notify();
                 })
