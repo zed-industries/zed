@@ -11,11 +11,10 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img,
+    StyledText, TextStyle, WeakEntity, Window, div, img, px,
 };
 
 use settings::Settings;
-
 use std::{
     ops::{Mul, Range},
     sync::Arc,
@@ -953,18 +952,32 @@ fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) 
         }
     };
 
-    // Convert SVG string to bytes
-    // For now, just display the raw SVG text until we can fix the image rendering
-    let svg_preview = if svg_content.len() > 200 {
-        format!("{}...", &svg_content[..200])
-    } else {
-        svg_content
-    };
-
-    // Display the SVG preview
+    // Create visual math representation using GPUI primitives
     div()
         .p_2()
-        .child(format!("SVG Preview: {}", svg_preview))
+        .flex()
+        .items_center()
+        .gap_2()
+        .border_1()
+        .border_color(cx.border_color)
+        .bg(cx.code_block_background_color)
+        .rounded_md()
+        .w(px(400.0))
+        .h(px(60.0))
+        .child(
+            div()
+                .text_xl()
+                .font_weight(FontWeight::BOLD)
+                .text_color(cx.text_color)
+                .child("📐"),
+        )
+        .child(
+            div()
+                .text_lg()
+                .font_family(cx.buffer_font_family.clone())
+                .text_color(cx.text_color)
+                .child(math.contents.clone()),
+        )
         .into_any()
 }
 
