@@ -1,8 +1,9 @@
 use crate::markdown_elements::{
     HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
-    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
-    ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
+    ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType,
+    ParsedMarkdownMathBlock, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
+    ParsedMarkdownTableRow,
 };
 use fs::normalize_path;
 use gpui::{
@@ -156,6 +157,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
+        MathBlock(math) => render_markdown_math(math, cx),
     }
 }
 
@@ -824,6 +826,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(cx.scaled_rems(0.125)).bg(cx.border_color);
     div().py(cx.scaled_rems(0.5)).child(rule).into_any()
+}
+
+fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) -> AnyElement {
+    div()
+        .p_2()
+        .border_1()
+        .border_color(cx.border_color)
+        .child(format!("Hello Sam - Math content: {}", math.contents))
+        .into_any()
 }
 
 struct InteractiveMarkdownElementTooltip {

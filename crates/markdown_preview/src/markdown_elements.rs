@@ -15,6 +15,7 @@ pub enum ParsedMarkdownElement {
     /// A paragraph of text and other inline elements.
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
+    MathBlock(ParsedMarkdownMathBlock),
 }
 
 impl ParsedMarkdownElement {
@@ -30,6 +31,7 @@ impl ParsedMarkdownElement {
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
+            Self::MathBlock(math_block) => math_block.source_range.clone(),
         })
     }
 
@@ -39,6 +41,13 @@ impl ParsedMarkdownElement {
 }
 
 pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownMathBlock {
+    pub source_range: Range<usize>,
+    pub contents: SharedString,
+}
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]

@@ -172,8 +172,13 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await;
-                    Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    if language.as_deref() == Some("math") {
+                        let math_block = self.parse_math_block().await;
+                        Some(vec![ParsedMarkdownElement::MathBlock(math_block)])
+                    } else {
+                        let code_block = self.parse_code_block(language).await;
+                        Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    }
                 }
                 _ => None,
             },
@@ -741,6 +746,36 @@ impl<'a> MarkdownParser<'a> {
             contents: code.into(),
             language,
             highlights,
+        }
+    }
+
+    async fn parse_math_block(&mut self) -> ParsedMarkdownMathBlock {
+        let (_event, source_range) = self.previous().unwrap();
+        let source_range = source_range.clone();
+        let mut contents = String::new();
+
+        while !self.eof() {
+            let (current, _source_range) = self.current().unwrap();
+            match current {
+                Event::Text(text) => {
+                    contents.push_str(text);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        contents = contents.strip_suffix('\n').unwrap_or(&contents).to_string();
+
+        ParsedMarkdownMathBlock {
+            source_range,
+            contents: contents.into(),
         }
     }
 }
