@@ -132,6 +132,7 @@ pub(crate) fn create_editor(
             placement: Some(ContextMenuPlacement::Above),
         });
         editor.register_addon(ContextCreasesAddon::new());
+        editor.scroll_manager.set_forbid_horizontal_scroll(true);
         editor
     });
 
