@@ -34,6 +34,7 @@ search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-rust.workspace = true
