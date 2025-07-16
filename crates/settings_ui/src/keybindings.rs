@@ -460,11 +460,12 @@ impl KeymapEditor {
                                             },
                                         )
                                 } else {
-                                    keystroke_query.iter().all(|key| {
-                                        keystrokes.iter().any(|keystroke| {
-                                            keystroke.key == key.key
-                                                && keystroke.modifiers == key.modifiers
-                                        })
+                                    let key_press_query =
+                                        KeyPressIterator::new(keystroke_query.as_slice());
+
+                                    key_press_query.into_iter().all(|key| {
+                                        let key_presses = KeyPressIterator::new(keystrokes);
+                                        key_presses.into_iter().any(|keystroke| keystroke == key)
                                     })
                                 }
                             })
@@ -2273,6 +2274,16 @@ enum CloseKeystrokeResult {
     None,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+enum KeyPress {
+    Alt,
+    Control,
+    Function,
+    Shift,
+    Platform,
+    Key(String),
+}
+
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
@@ -2913,6 +2924,75 @@ mod persistence {
                 SELECT item_id
                 FROM keybinding_editors
                 WHERE item_id = ? AND workspace_id = ?
+            }
+        }
+    }
+}
+
+/// Iterator that yields KeyPress values from a slice of Keystrokes
+struct KeyPressIterator<'a> {
+    keystrokes: &'a [Keystroke],
+    current_keystroke_index: usize,
+    current_key_press_index: usize,
+}
+
+impl<'a> KeyPressIterator<'a> {
+    fn new(keystrokes: &'a [Keystroke]) -> Self {
+        Self {
+            keystrokes,
+            current_keystroke_index: 0,
+            current_key_press_index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for KeyPressIterator<'a> {
+    type Item = KeyPress;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let keystroke = self.keystrokes.get(self.current_keystroke_index)?;
+
+            match self.current_key_press_index {
+                0 => {
+                    self.current_key_press_index = 1;
+                    if keystroke.modifiers.platform {
+                        return Some(KeyPress::Platform);
+                    }
+                }
+                1 => {
+                    self.current_key_press_index = 2;
+                    if keystroke.modifiers.alt {
+                        return Some(KeyPress::Alt);
+                    }
+                }
+                2 => {
+                    self.current_key_press_index = 3;
+                    if keystroke.modifiers.control {
+                        return Some(KeyPress::Control);
+                    }
+                }
+                3 => {
+                    self.current_key_press_index = 4;
+                    if keystroke.modifiers.shift {
+                        return Some(KeyPress::Shift);
+                    }
+                }
+                4 => {
+                    self.current_key_press_index = 5;
+                    if keystroke.modifiers.function {
+                        return Some(KeyPress::Function);
+                    }
+                }
+                _ => {
+                    self.current_keystroke_index += 1;
+                    self.current_key_press_index = 0;
+
+                    if keystroke.key.is_empty() {
+                        continue;
+                    }
+                    return Some(KeyPress::Key(keystroke.key.clone()));
+                }
             }
         }
     }
