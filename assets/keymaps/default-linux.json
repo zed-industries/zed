@@ -269,10 +269,10 @@
     }
   },
   {
-    "context": "AgentPanel && acp_thread",
+    "context": "AgentPanel && external_agent_thread",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-n": "agent::NewAcpThread",
+      "ctrl-n": "agent::NewExternalAgentThread",
       "ctrl-alt-t": "agent::NewThread"
     }
   },

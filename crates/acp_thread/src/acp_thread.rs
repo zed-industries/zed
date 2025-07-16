@@ -1112,7 +1112,6 @@ impl AcpClientDelegate {
         Self { thread, cx }
     }
 
-    // todo! allow this via ACP?
     pub async fn request_existing_tool_call_confirmation(
         &self,
         tool_call_id: ToolCallId,
