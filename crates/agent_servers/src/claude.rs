@@ -273,32 +273,19 @@ impl ClaudeAgentConnection {
                         } => {
                             let id = tool_id_map.borrow_mut().remove(&tool_use_id);
                             if let Some(id) = id {
+                                // For now we only include text content
+                                let mut all_text_content = String::new();
+                                for item in content {
+                                    all_text_content.push_str(&item.text_content());
+                                }
+
                                 delegate
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
-                                        content: match &*content {
-                                            MessageContent::Text { text }
-                                            | MessageContent::UntaggedText(text) => {
-                                                Some(ToolCallContent::Markdown {
-                                                    markdown: text.to_string(),
-                                                })
-                                            }
-                                            MessageContent::Image
-                                            | MessageContent::Document
-                                            | MessageContent::Thinking
-                                            | MessageContent::RedactedThinking
-                                            | MessageContent::ToolUse { .. }
-                                            | MessageContent::ToolResult { .. }
-                                            | MessageContent::WebSearchToolResult => {
-                                                Some(ToolCallContent::Markdown {
-                                                    markdown: format!(
-                                                        "Unsupported tool content: {:?}",
-                                                        content
-                                                    ),
-                                                })
-                                            }
-                                        },
+                                        content: Some(ToolCallContent::Markdown {
+                                            markdown: all_text_content,
+                                        }),
                                     })
                                     .await
                                     .log_err();
@@ -411,7 +398,7 @@ enum MessageContent {
         input: serde_json::Value,
     },
     ToolResult {
-        content: Box<MessageContent>,
+        content: Vec<MessageContent>,
         tool_use_id: String,
     },
     WebSearchToolResult,
@@ -419,6 +406,28 @@ enum MessageContent {
     UntaggedText(String),
 }
 
+impl MessageContent {
+    pub fn text_content(&self) -> String {
+        match self {
+            MessageContent::Text { text } => text.to_string(),
+            MessageContent::UntaggedText(text) => text.to_string(),
+            MessageContent::ToolResult { content, .. } => {
+                let mut all = String::new();
+                for item in content {
+                    all.push_str(&item.text_content());
+                }
+                all
+            }
+            // TODO
+            MessageContent::Image
+            | MessageContent::Document
+            | MessageContent::Thinking
+            | MessageContent::RedactedThinking
+            | MessageContent::ToolUse { .. }
+            | MessageContent::WebSearchToolResult => format!("Unsupported content: {:?}", &self),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Usage {
@@ -474,12 +483,14 @@ enum SdkMessage {
     },
     // Emitted as the first message at the start of a conversation
     System {
-        api_key_source: Option<String>,
         cwd: String,
         session_id: String,
         tools: Vec<String>,
-        mcp_servers: Vec<McpServer>,
         model: String,
+        mcp_servers: Vec<McpServer>,
+        #[serde(rename = "apiKeySource")]
+        api_key_source: String,
+        #[serde(rename = "permissionMode")]
         permission_mode: PermissionMode,
     },
 }
@@ -509,6 +520,7 @@ struct McpServer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 enum PermissionMode {
     Default,
     AcceptEdits,
