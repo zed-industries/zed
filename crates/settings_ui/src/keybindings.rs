@@ -2545,6 +2545,8 @@ impl KeystrokeInput {
                 if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
+            } else if close_keystroke_result != CloseKeystrokeResult::Partial {
+                self.clear_keystrokes(&ClearKeystrokes, window, cx);
             }
         }
         self.keystrokes_changed(cx);
