@@ -6,7 +6,6 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, Editor, EditorEvent};
-use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -33,7 +32,6 @@ use workspace::{
 };
 
 use crate::{
-    SettingsUiFeatureFlag,
     keybindings::persistence::KEYBINDING_EDITORS,
     ui_components::table::{Table, TableInteractionState},
 };
@@ -48,7 +46,6 @@ actions!(
     ]
 );
 
-const KEYMAP_EDITOR_NAMESPACE: &'static str = "keymap_editor";
 actions!(
     keymap_editor,
     [
@@ -114,42 +111,6 @@ pub fn init(cx: &mut App) {
                 .detach();
         })
     });
-
-    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else { return };
-
-        let keymap_ui_actions = [std::any::TypeId::of::<OpenKeymapEditor>()];
-
-        command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&keymap_ui_actions);
-            filter.hide_namespace(KEYMAP_EDITOR_NAMESPACE);
-        });
-
-        cx.observe_flag::<SettingsUiFeatureFlag, _>(
-            window,
-            move |is_enabled, _workspace, _, cx| {
-                if is_enabled {
-                    command_palette_hooks::CommandPaletteFilter::update_global(
-                        cx,
-                        |filter, _cx| {
-                            filter.show_action_types(keymap_ui_actions.iter());
-                            filter.show_namespace(KEYMAP_EDITOR_NAMESPACE);
-                        },
-                    );
-                } else {
-                    command_palette_hooks::CommandPaletteFilter::update_global(
-                        cx,
-                        |filter, _cx| {
-                            filter.hide_action_types(&keymap_ui_actions);
-                            filter.hide_namespace(KEYMAP_EDITOR_NAMESPACE);
-                        },
-                    );
-                }
-            },
-        )
-        .detach();
-    })
-    .detach();
 
     register_serializable_item::<KeymapEditor>(cx);
 }
