@@ -14720,6 +14720,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "tree-sitter-json",
  "tree-sitter-rust",
