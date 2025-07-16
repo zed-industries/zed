@@ -10040,7 +10040,7 @@ fn compute_auto_height_layout(
     let text_width = width - gutter_dimensions.width;
     let overscroll = size(em_width, px(0.));
 
-    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
+    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - 2 * em_width;
     if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
         if editor.set_wrap_width(Some(editor_width), cx) {
             snapshot = editor.snapshot(window, cx);
