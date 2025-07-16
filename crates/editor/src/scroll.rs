@@ -298,7 +298,11 @@ impl ScrollManager {
                     }
                 },
             ),
-            anchor: self.anchor.anchor,
+            anchor: if self.forbid_horizontal_scroll() || self.forbid_vertical_scroll() {
+                self.anchor.anchor
+            } else {
+                anchor.anchor
+            },
         };
 
         self.autoscroll_request.take();
