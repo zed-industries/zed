@@ -770,11 +770,24 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::InlineMath(inline_math) => {
+                info!(
+                    "Rendering inline math: '{}' (SHOULD BE BETWEEN PAIRED $ SYMBOLS)",
+                    inline_math.contents
+                );
                 // Render inline math using the same SVG generation as block math
                 let svg_content = match typst_math_to_svg(&inline_math.contents) {
-                    Ok(svg) => svg,
+                    Ok(svg) => {
+                        info!(
+                            "Inline math SVG generated successfully: {} chars",
+                            svg.len()
+                        );
+                        svg
+                    }
                     Err(err) => {
-                        info!("Inline math rendering failed: {}", err);
+                        info!(
+                            "Inline math rendering failed: {} - Using fallback styling",
+                            err
+                        );
                         // Fallback to raw text with styling
                         let element_id = cx.next_id(&inline_math.source_range);
                         let fallback_element = div()
@@ -851,6 +864,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 }));
 
                 let element_id = cx.next_id(&inline_math.source_range);
+                info!("Creating inline math image element");
                 let math_element = div()
                     .id(element_id)
                     .flex()
@@ -858,6 +872,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     .child(img(image_source).max_h(px(30.0)))
                     .into_any();
                 any_element.push(math_element);
+                info!("Added inline math element to result");
             }
 
             MarkdownParagraphChunk::Image(image) => {
