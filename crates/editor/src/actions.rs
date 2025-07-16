@@ -279,30 +279,77 @@ impl TextSource {
     }
 
     pub fn label(&self, cx: &App) -> String {
-        // TODO - diff - line location
         match self {
             TextSource::Clipboard(_) => Self::clipboard_label(),
-            TextSource::Editor(editor) => editor.read(cx).buffer().read(cx).title(cx).to_string(),
+            TextSource::Editor(editor) => {
+                let editor = editor.read(cx);
+                let title = editor.buffer().read(cx).title(cx).to_string();
+                let selection_location_text = Self::selection_location_text(editor, cx);
+                match selection_location_text {
+                    Some(selection_location_text) => {
+                        format!("{} ({})", title, selection_location_text)
+                    }
+                    None => title,
+                }
+            }
         }
     }
 
     pub fn path(&self, cx: &App) -> String {
-        // TODO - diff - line location
         match self {
             TextSource::Clipboard(_) => Self::clipboard_label(),
-            TextSource::Editor(editor) => editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .map(|b| {
-                    b.read(cx)
-                        .file()
-                        .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
-                })
-                .flatten()
-                .unwrap_or("untitled".into()),
+            TextSource::Editor(editor) => {
+                let editor = editor.read(cx);
+                let path = editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .map(|b| {
+                        b.read(cx)
+                            .file()
+                            .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    })
+                    .flatten()
+                    .unwrap_or("untitled".into());
+
+                let selection_location_text = Self::selection_location_text(editor, cx);
+                match selection_location_text {
+                    Some(selection_location_text) => {
+                        format!("{} ({})", path, selection_location_text)
+                    }
+                    None => path,
+                }
+            }
         }
+    }
+
+    pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
+        let buffer = editor.buffer.read(cx).snapshot(cx);
+        let Some(first_selection) = editor.selections.disjoint.first() else {
+            return None;
+        };
+
+        let selection_start = first_selection.start.to_point(&buffer);
+        let selection_end = first_selection.end.to_point(&buffer);
+
+        let start_row = selection_start.row;
+        let start_column = selection_start.column;
+        let end_row = selection_end.row;
+        let end_column = selection_end.column;
+
+        let range_text = if start_row == end_row {
+            format!("L{}:{}-{}", start_row + 1, start_column + 1, end_column + 1)
+        } else {
+            format!(
+                "L{}:{}-L{}:{}",
+                start_row + 1,
+                start_column + 1,
+                end_row + 1,
+                end_column + 1
+            )
+        };
+
+        Some(range_text)
     }
 }
 

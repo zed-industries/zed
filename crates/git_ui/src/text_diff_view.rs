@@ -146,12 +146,6 @@ impl TextDiffView {
         Some(task)
     }
 
-    // TODO - diff - allow to be bidirectionally edited
-    // TODO - diff - make sure breadcrumbs work
-    // TODO - diff - make sure tabs have dynamic titles
-    // TODO - diff - allow to be saved?
-    // TODO - diff - single line diffs should work, do we need to adjust indenting when not selecting the entire line?
-
     pub fn new(
         old_text_source: TextSource,
         new_text_source: TextSource,
@@ -633,3 +627,7 @@ mod tests {
     //     })
     // }
 }
+
+// TODO - diff - single line diffs should work, do we need to adjust indenting when not selecting the entire line?
+// TODO - diff - adjusting highlight in original file should adjust what is shown in the diff view?
+// TODO - diff - editing the source should keep the diff in tact, but it currently loses the diff when editing
