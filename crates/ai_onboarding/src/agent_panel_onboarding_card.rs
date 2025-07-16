@@ -3,11 +3,11 @@ use smallvec::SmallVec;
 use ui::{Vector, VectorName, prelude::*};
 
 #[derive(IntoElement)]
-pub struct OnboardingContainer {
+pub struct AgentPanelOnboardingCard {
     children: SmallVec<[AnyElement; 2]>,
 }
 
-impl OnboardingContainer {
+impl AgentPanelOnboardingCard {
     pub fn new() -> Self {
         Self {
             children: SmallVec::new(),
@@ -15,13 +15,13 @@ impl OnboardingContainer {
     }
 }
 
-impl ParentElement for OnboardingContainer {
+impl ParentElement for AgentPanelOnboardingCard {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
     }
 }
 
-impl RenderOnce for OnboardingContainer {
+impl RenderOnce for AgentPanelOnboardingCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .m_4()

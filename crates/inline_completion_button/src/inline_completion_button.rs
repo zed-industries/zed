@@ -239,16 +239,13 @@ impl Render for InlineCompletionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                let current_user_terms_accepted =
-                    self.user_store.read(cx).current_user_has_accepted_terms();
-
-                if !current_user_terms_accepted.unwrap_or(false) {
-                    let signed_in = current_user_terms_accepted.is_some();
-                    let tooltip_meta = if signed_in {
-                        "Accept the Terms of Service to use"
-                    } else {
-                        "Sign in to use"
-                    };
+                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                    let tooltip_meta =
+                        match self.user_store.read(cx).current_user_has_accepted_terms() {
+                            Some(true) => "Choose a Plan",
+                            Some(false) => "Accept the Terms of Service",
+                            None => "Sign In",
+                        };
 
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)

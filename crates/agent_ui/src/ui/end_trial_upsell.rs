@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ai_onboarding::OnboardingContainer;
+use ai_onboarding::AgentPanelOnboardingCard;
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::prelude::*;
@@ -18,7 +18,7 @@ impl EndTrialUpsell {
 
 impl RenderOnce for EndTrialUpsell {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        OnboardingContainer::new()
+        AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro trial has expired."))
             .child(
                 Label::new("You've been automatically reset to the Free plan.")

@@ -5,7 +5,7 @@ use gpui::{Action, ClickEvent, Entity, IntoElement, ParentElement};
 use ui::{Divider, List, prelude::*};
 use zed_actions::agent::OpenConfiguration;
 
-use crate::{BulletItem, OnboardingContainer, ZedAiOnboarding};
+use crate::{AgentPanelOnboardingCard, BulletItem, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
@@ -64,7 +64,7 @@ impl Render for AgentPanelOnboarding {
                     .on_click(cx.listener(Self::configure_providers)),
             );
 
-        OnboardingContainer::new()
+        AgentPanelOnboardingCard::new()
             .child(ZedAiOnboarding::new(
                 self.client.clone(),
                 &self.user_store,

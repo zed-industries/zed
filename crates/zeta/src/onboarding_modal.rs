@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
+use crate::{ZedPredictUpsell, onboarding_event};
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
+use db::kvp::Dismissable;
 use fs::Fs;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
@@ -16,9 +17,7 @@ use workspace::{ModalView, Workspace};
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
     onboarding: Entity<EditPredictionOnboarding>,
-    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
-    data_collection_expanded: bool,
 }
 
 pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
@@ -36,7 +35,6 @@ impl ZedPredictModal {
         workspace: &mut Workspace,
         user_store: Entity<UserStore>,
         client: Arc<Client>,
-        fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -52,6 +50,7 @@ impl ZedPredictModal {
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {
+                                ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                             }
@@ -59,6 +58,7 @@ impl ZedPredictModal {
                         Arc::new({
                             let this = weak_entity.clone();
                             move |window, cx| {
+                                ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 copilot::initiate_sign_in(window, cx);
@@ -67,9 +67,7 @@ impl ZedPredictModal {
                         cx,
                     )
                 }),
-                fs,
                 focus_handle: cx.focus_handle(),
-                data_collection_expanded: false,
             }
         });
     }
@@ -137,6 +135,7 @@ impl ZedPredictModal {
     // }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        ZedPredictUpsell::set_dismissed(true, cx);
         cx.emit(DismissEvent);
     }
 }
@@ -165,12 +164,6 @@ impl Render for ZedPredictModal {
             .max_h(max_height)
             .p_4()
             .gap_2()
-            .when(self.data_collection_expanded, |element| {
-                element.overflow_y_scroll()
-            })
-            .when(!self.data_collection_expanded, |element| {
-                element.overflow_hidden()
-            })
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))

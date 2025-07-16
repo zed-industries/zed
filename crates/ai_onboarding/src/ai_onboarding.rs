@@ -1,11 +1,11 @@
-mod agent_panel_onboarding;
-mod edit_prediction_onboarding;
-mod onboarding_container;
+mod agent_panel_onboarding_card;
+mod agent_panel_onboarding_content;
+mod edit_prediction_onboarding_content;
 mod young_account_banner;
 
-pub use agent_panel_onboarding::AgentPanelOnboarding;
-pub use edit_prediction_onboarding::EditPredictionOnboarding;
-pub use onboarding_container::OnboardingContainer;
+pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
+pub use agent_panel_onboarding_content::AgentPanelOnboarding;
+pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use young_account_banner::YoungAccountBanner;
 
 use std::sync::Arc;
