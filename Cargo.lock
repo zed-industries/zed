@@ -779,6 +779,7 @@ dependencies = [
  "collections",
  "component",
  "derive_more 0.99.19",
+ "diffy",
  "editor",
  "feature_flags",
  "fs",
