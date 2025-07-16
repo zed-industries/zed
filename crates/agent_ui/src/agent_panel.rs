@@ -2184,8 +2184,10 @@ impl AgentPanel {
             .update(cx, |this, cx| this.recent_entries(6, cx));
 
         let model_registry = LanguageModelRegistry::read_global(cx);
+
         let configuration_error =
             model_registry.configuration_error(model_registry.default_model(), cx);
+
         let no_error = configuration_error.is_none();
         let focus_handle = self.focus_handle(cx);
 
@@ -2193,11 +2195,9 @@ impl AgentPanel {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .when(recent_history.is_empty(), |this| {
-                let configuration_error_ref = &configuration_error;
                 this.child(
                     v_flex()
                         .size_full()
-                        .max_w_64()
                         .mx_auto()
                         .justify_center()
                         .items_center()
@@ -2205,120 +2205,91 @@ impl AgentPanel {
                         .child(h_flex().child(Headline::new("Welcome to the Agent Panel")))
                         .when(no_error, |parent| {
                             parent
+                                .child(h_flex().child(
+                                    Label::new("Ask and build anything.").color(Color::Muted),
+                                ))
                                 .child(
-                                    h_flex().child(
-                                        Label::new("Ask and build anything.")
-                                            .color(Color::Muted)
-                                            .mb_2p5(),
-                                    ),
-                                )
-                                .child(
-                                    Button::new("context", "Add Context")
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::FileCode)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ToggleContextPicker,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                ToggleContextPicker.boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    Button::new("mode", "Switch Model")
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::DatabaseZap)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ToggleModelSelector,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                ToggleModelSelector.boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    Button::new("settings", "View Settings")
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::Settings)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &OpenConfiguration,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                OpenConfiguration.boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
+                                    v_flex()
+                                        .mt_2()
+                                        .gap_1()
+                                        .max_w_48()
+                                        .child(
+                                            Button::new("context", "Add Context")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::FileCode)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .full_width()
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &ToggleContextPicker,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                ))
+                                                .on_click(|_event, window, cx| {
+                                                    window.dispatch_action(
+                                                        ToggleContextPicker.boxed_clone(),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("mode", "Switch Model")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::DatabaseZap)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .full_width()
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &ToggleModelSelector,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                ))
+                                                .on_click(|_event, window, cx| {
+                                                    window.dispatch_action(
+                                                        ToggleModelSelector.boxed_clone(),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("settings", "View Settings")
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::Settings)
+                                                .icon_position(IconPosition::Start)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .full_width()
+                                                .key_binding(KeyBinding::for_action_in(
+                                                    &OpenConfiguration,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                ))
+                                                .on_click(|_event, window, cx| {
+                                                    window.dispatch_action(
+                                                        OpenConfiguration.boxed_clone(),
+                                                        cx,
+                                                    )
+                                                }),
+                                        ),
                                 )
                         })
-                        .map(|parent| match configuration_error_ref {
-                            Some(
-                                err @ (ConfigurationError::ModelNotFound
-                                | ConfigurationError::ProviderNotAuthenticated(_)
-                                | ConfigurationError::NoProvider),
-                            ) => parent
-                                .child(h_flex().child(
-                                    Label::new(err.to_string()).color(Color::Muted).mb_2p5(),
-                                ))
-                                .child(
-                                    Button::new("settings", "Configure a Provider")
-                                        .icon(IconName::Settings)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .full_width()
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &OpenConfiguration,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ))
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                OpenConfiguration.boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
-                                ),
-                            Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                                parent.children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadFreshStart,
-                                    cx,
-                                ))
-                            }
-                            None => parent,
+                        .when_some(configuration_error.as_ref(), |this, err| {
+                            this.child(self.render_configuration_error(
+                                err,
+                                &focus_handle,
+                                window,
+                                cx,
+                            ))
                         }),
                 )
             })
             .when(!recent_history.is_empty(), |parent| {
                 let focus_handle = focus_handle.clone();
-                let configuration_error_ref = &configuration_error;
-
                 parent
                     .overflow_hidden()
                     .p_1p5()
@@ -2381,47 +2352,53 @@ impl AgentPanel {
                                 },
                             )),
                     )
-                    .map(|parent| match configuration_error_ref {
-                        Some(
-                            err @ (ConfigurationError::ModelNotFound
-                            | ConfigurationError::ProviderNotAuthenticated(_)
-                            | ConfigurationError::NoProvider),
-                        ) => parent.child(
-                            Banner::new()
-                                .severity(ui::Severity::Warning)
-                                .child(Label::new(err.to_string()).size(LabelSize::Small))
-                                .action_slot(
-                                    Button::new("settings", "Configure Provider")
-                                        .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &OpenConfiguration,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        )
-                                        .on_click(|_event, window, cx| {
-                                            window.dispatch_action(
-                                                OpenConfiguration.boxed_clone(),
-                                                cx,
-                                            )
-                                        }),
-                                ),
-                        ),
-                        Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                            parent.child(Banner::new().severity(ui::Severity::Warning).child(
-                                h_flex().w_full().children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadEmptyState,
-                                    cx,
-                                )),
-                            ))
-                        }
-                        None => parent,
+                    .when_some(configuration_error.as_ref(), |this, err| {
+                        this.child(self.render_configuration_error(err, &focus_handle, window, cx))
                     })
             })
+    }
+
+    fn render_configuration_error(
+        &self,
+        configuration_error: &ConfigurationError,
+        focus_handle: &FocusHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        match configuration_error {
+            ConfigurationError::ModelNotFound
+            | ConfigurationError::ProviderNotAuthenticated(_)
+            | ConfigurationError::NoProvider => Banner::new()
+                .severity(ui::Severity::Warning)
+                .child(Label::new(configuration_error.to_string()))
+                .action_slot(
+                    Button::new("settings", "Configure Provider")
+                        .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                        .label_size(LabelSize::Small)
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &OpenConfiguration,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_event, window, cx| {
+                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                        }),
+                ),
+            ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
+                Banner::new().severity(ui::Severity::Warning).child(
+                    h_flex().w_full().children(
+                        provider.render_accept_terms(
+                            LanguageModelProviderTosView::ThreadEmptyState,
+                            cx,
+                        ),
+                    ),
+                )
+            }
+        }
     }
 
     fn render_tool_use_limit_reached(
@@ -2911,12 +2888,36 @@ impl Render for AgentPanel {
                     context_editor,
                     buffer_search_bar,
                     ..
-                } => parent.child(self.render_prompt_editor(
-                    context_editor,
-                    buffer_search_bar,
-                    window,
-                    cx,
-                )),
+                } => {
+                    let model_registry = LanguageModelRegistry::read_global(cx);
+                    let configuration_error =
+                        model_registry.configuration_error(model_registry.default_model(), cx);
+                    parent
+                        .map(|this| {
+                            if !self.should_render_onboarding(cx)
+                                && let Some(err) = configuration_error.as_ref()
+                            {
+                                this.child(
+                                    div().bg(cx.theme().colors().editor_background).p_2().child(
+                                        self.render_configuration_error(
+                                            err,
+                                            &self.focus_handle(cx),
+                                            window,
+                                            cx,
+                                        ),
+                                    ),
+                                )
+                            } else {
+                                this
+                            }
+                        })
+                        .child(self.render_prompt_editor(
+                            context_editor,
+                            buffer_search_bar,
+                            window,
+                            cx,
+                        ))
+                }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             });
 

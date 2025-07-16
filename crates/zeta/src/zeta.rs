@@ -106,7 +106,7 @@ impl Dismissable for ZedPredictUpsell {
         // before, by checking the data collection choice which was written to
         // the database once the user clicked on "Accept and Enable"
         if KEY_VALUE_STORE
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
             .map_or(false, |s| s.is_some())
         {
