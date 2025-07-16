@@ -68,7 +68,7 @@ impl AgentConnection for ClaudeAgentConnection {
                     outgoing_tx.unbounded_send(SdkMessage::User {
                         message: Message {
                             role: Role::User,
-                            content: vec![MessageContent::Text { text: content }],
+                            content: Content::UntaggedText(content),
                             id: None,
                             model: None,
                             stop_reason: None,
@@ -243,9 +243,9 @@ impl ClaudeAgentConnection {
     ) {
         match message {
             SdkMessage::Assistant { message, .. } | SdkMessage::User { message, .. } => {
-                for chunk in message.content {
+                for chunk in message.content.chunks() {
                     match chunk {
-                        MessageContent::Text { text } | MessageContent::UntaggedText(text) => {
+                        ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
                             delegate
                                 .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
                                     chunk: acp::AssistantMessageChunk::Text { text },
@@ -253,7 +253,7 @@ impl ClaudeAgentConnection {
                                 .await
                                 .log_err();
                         }
-                        MessageContent::ToolUse { id, name, input } => {
+                        ContentChunk::ToolUse { id, name, input } => {
                             let formatted = serde_json::to_string_pretty(&input).unwrap();
                             let markdown = format!("```json\n{}\n```", formatted);
                             let icon = ClaudeTool::infer(&name).icon();
@@ -271,35 +271,30 @@ impl ClaudeAgentConnection {
                                 tool_id_map.borrow_mut().insert(id, resp.id);
                             }
                         }
-                        MessageContent::ToolResult {
+                        ContentChunk::ToolResult {
                             content,
                             tool_use_id,
                         } => {
                             let id = tool_id_map.borrow_mut().remove(&tool_use_id);
                             if let Some(id) = id {
-                                // For now we only include text content
-                                let mut all_text_content = String::new();
-                                for item in content {
-                                    all_text_content.push_str(&item.text_content());
-                                }
-
                                 delegate
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
                                         content: Some(ToolCallContent::Markdown {
-                                            markdown: all_text_content,
+                                            // For now we only include text content
+                                            markdown: content.to_string(),
                                         }),
                                     })
                                     .await
                                     .log_err();
                             }
                         }
-                        MessageContent::Image
-                        | MessageContent::Document
-                        | MessageContent::Thinking
-                        | MessageContent::RedactedThinking
-                        | MessageContent::WebSearchToolResult => {
+                        ContentChunk::Image
+                        | ContentChunk::Document
+                        | ContentChunk::Thinking
+                        | ContentChunk::RedactedThinking
+                        | ContentChunk::WebSearchToolResult => {
                             delegate
                                 .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
                                     chunk: acp::AssistantMessageChunk::Text {
@@ -373,7 +368,7 @@ impl ClaudeAgentConnection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Message {
     role: Role,
-    content: Vec<MessageContent>,
+    content: Content,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -387,48 +382,74 @@ struct Message {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Content {
+    UntaggedText(String),
+    Chunks(Vec<ContentChunk>),
+}
+
+impl Content {
+    pub fn chunks(self) -> impl Iterator<Item = ContentChunk> {
+        match self {
+            Self::Chunks(chunks) => chunks.into_iter(),
+            Self::UntaggedText(text) => vec![ContentChunk::Text { text: text.clone() }].into_iter(),
+        }
+    }
+}
+
+impl Display for Content {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Content::UntaggedText(txt) => write!(f, "{}", txt),
+            Content::Chunks(chunks) => {
+                for chunk in chunks {
+                    write!(f, "{}", chunk)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum MessageContent {
+enum ContentChunk {
     Text {
         text: String,
     },
-    Image,
-    Document,
-    Thinking,
-    RedactedThinking,
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
     },
     ToolResult {
-        content: Vec<MessageContent>,
+        content: Content,
         tool_use_id: String,
     },
+    // TODO
+    Image,
+    Document,
+    Thinking,
+    RedactedThinking,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
 }
 
-impl MessageContent {
-    pub fn text_content(&self) -> String {
+impl Display for ContentChunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MessageContent::Text { text } => text.to_string(),
-            MessageContent::UntaggedText(text) => text.to_string(),
-            MessageContent::ToolResult { content, .. } => {
-                let mut all = String::new();
-                for item in content {
-                    all.push_str(&item.text_content());
-                }
-                all
+            ContentChunk::Text { text } => write!(f, "{}", text),
+            ContentChunk::UntaggedText(text) => write!(f, "{}", text),
+            ContentChunk::ToolResult { content, .. } => write!(f, "{}", content.to_string()),
+            ContentChunk::Image
+            | ContentChunk::Document
+            | ContentChunk::Thinking
+            | ContentChunk::RedactedThinking
+            | ContentChunk::ToolUse { .. }
+            | ContentChunk::WebSearchToolResult => {
+                write!(f, "\n{:?}\n", &self)
             }
-            // TODO
-            MessageContent::Image
-            | MessageContent::Document
-            | MessageContent::Thinking
-            | MessageContent::RedactedThinking
-            | MessageContent::ToolUse { .. }
-            | MessageContent::WebSearchToolResult => format!("Unsupported content: {:?}", &self),
         }
     }
 }
@@ -545,4 +566,122 @@ struct McpServerConfig {
     args: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     env: Option<HashMap<String, String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_deserialize_content_untagged_text() {
+        let json = json!("Hello, world!");
+        let content: Content = serde_json::from_value(json).unwrap();
+        match content {
+            Content::UntaggedText(text) => assert_eq!(text, "Hello, world!"),
+            _ => panic!("Expected UntaggedText variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_content_chunks() {
+        let json = json!([
+            {
+                "type": "text",
+                "text": "Hello"
+            },
+            {
+                "type": "tool_use",
+                "id": "tool_123",
+                "name": "calculator",
+                "input": {"operation": "add", "a": 1, "b": 2}
+            }
+        ]);
+        let content: Content = serde_json::from_value(json).unwrap();
+        match content {
+            Content::Chunks(chunks) => {
+                assert_eq!(chunks.len(), 2);
+                match &chunks[0] {
+                    ContentChunk::Text { text } => assert_eq!(text, "Hello"),
+                    _ => panic!("Expected Text chunk"),
+                }
+                match &chunks[1] {
+                    ContentChunk::ToolUse { id, name, input } => {
+                        assert_eq!(id, "tool_123");
+                        assert_eq!(name, "calculator");
+                        assert_eq!(input["operation"], "add");
+                        assert_eq!(input["a"], 1);
+                        assert_eq!(input["b"], 2);
+                    }
+                    _ => panic!("Expected ToolUse chunk"),
+                }
+            }
+            _ => panic!("Expected Chunks variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_tool_result_untagged_text() {
+        let json = json!({
+            "type": "tool_result",
+            "content": "Result content",
+            "tool_use_id": "tool_456"
+        });
+        let chunk: ContentChunk = serde_json::from_value(json).unwrap();
+        match chunk {
+            ContentChunk::ToolResult {
+                content,
+                tool_use_id,
+            } => {
+                match content {
+                    Content::UntaggedText(text) => assert_eq!(text, "Result content"),
+                    _ => panic!("Expected UntaggedText content"),
+                }
+                assert_eq!(tool_use_id, "tool_456");
+            }
+            _ => panic!("Expected ToolResult variant"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_tool_result_chunks() {
+        let json = json!({
+            "type": "tool_result",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Processing complete"
+                },
+                {
+                    "type": "text",
+                    "text": "Result: 42"
+                }
+            ],
+            "tool_use_id": "tool_789"
+        });
+        let chunk: ContentChunk = serde_json::from_value(json).unwrap();
+        match chunk {
+            ContentChunk::ToolResult {
+                content,
+                tool_use_id,
+            } => {
+                match content {
+                    Content::Chunks(chunks) => {
+                        assert_eq!(chunks.len(), 2);
+                        match &chunks[0] {
+                            ContentChunk::Text { text } => assert_eq!(text, "Processing complete"),
+                            _ => panic!("Expected Text chunk"),
+                        }
+                        match &chunks[1] {
+                            ContentChunk::Text { text } => assert_eq!(text, "Result: 42"),
+                            _ => panic!("Expected Text chunk"),
+                        }
+                    }
+                    _ => panic!("Expected Chunks content"),
+                }
+                assert_eq!(tool_use_id, "tool_789");
+            }
+            _ => panic!("Expected ToolResult variant"),
+        }
+    }
 }
