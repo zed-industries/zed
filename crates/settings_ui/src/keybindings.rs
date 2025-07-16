@@ -505,7 +505,7 @@ impl KeymapEditor {
 
     fn process_bindings(
         json_language: Arc<Language>,
-        rust_language: Arc<Language>,
+        zed_keybind_context_language: Arc<Language>,
         cx: &mut App,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
@@ -536,7 +536,10 @@ impl KeymapEditor {
             let context = key_binding
                 .predicate()
                 .map(|predicate| {
-                    KeybindContextString::Local(predicate.to_string().into(), rust_language.clone())
+                    KeybindContextString::Local(
+                        predicate.to_string().into(),
+                        zed_keybind_context_language.clone(),
+                    )
                 })
                 .unwrap_or(KeybindContextString::Global);
 
@@ -588,11 +591,12 @@ impl KeymapEditor {
         let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
             let json_language = load_json_language(workspace.clone(), cx).await;
-            let rust_language = load_rust_language(workspace.clone(), cx).await;
+            let zed_keybind_context_language =
+                load_keybind_context_language(workspace.clone(), cx).await;
 
             let (action_query, keystroke_query) = this.update(cx, |this, cx| {
                 let (key_bindings, string_match_candidates) =
-                    Self::process_bindings(json_language, rust_language, cx);
+                    Self::process_bindings(json_language, zed_keybind_context_language, cx);
 
                 this.keybinding_conflict_state = ConflictState::new(&key_bindings);
 
@@ -1590,13 +1594,20 @@ impl KeybindingEditorModal {
             }
 
             let editor_entity = input.editor().clone();
+            let workspace = workspace.clone();
             cx.spawn(async move |_input_handle, cx| {
                 let contexts = cx
                     .background_spawn(async { collect_contexts_from_assets() })
                     .await;
 
+                let language = load_keybind_context_language(workspace, cx).await;
                 editor_entity
-                    .update(cx, |editor, _cx| {
+                    .update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(language), cx);
+                            });
+                        }
                         editor.set_completion_provider(Some(std::rc::Rc::new(
                             KeyContextCompletionProvider { contexts },
                         )));
@@ -2131,25 +2142,31 @@ async fn load_json_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp)
     });
 }
 
-async fn load_rust_language(workspace: WeakEntity<Workspace>, cx: &mut AsyncApp) -> Arc<Language> {
-    let rust_language_task = workspace
+async fn load_keybind_context_language(
+    workspace: WeakEntity<Workspace>,
+    cx: &mut AsyncApp,
+) -> Arc<Language> {
+    let language_task = workspace
         .read_with(cx, |workspace, cx| {
             workspace
                 .project()
                 .read(cx)
                 .languages()
-                .language_for_name("Rust")
+                .language_for_name("Zed Keybind Context")
         })
-        .context("Failed to load Rust language")
+        .context("Failed to load Zed Keybind Context language")
         .log_err();
-    let rust_language = match rust_language_task {
-        Some(task) => task.await.context("Failed to load Rust language").log_err(),
+    let language = match language_task {
+        Some(task) => task
+            .await
+            .context("Failed to load Zed Keybind Context language")
+            .log_err(),
         None => None,
     };
-    return rust_language.unwrap_or_else(|| {
+    return language.unwrap_or_else(|| {
         Arc::new(Language::new(
             LanguageConfig {
-                name: "Rust".into(),
+                name: "Zed Keybind Context".into(),
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
