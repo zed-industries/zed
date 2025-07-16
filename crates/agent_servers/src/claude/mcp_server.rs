@@ -1,7 +1,9 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use acp_thread::AcpClientDelegate;
-use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
+use agentic_coding_protocol::{
+    self as acp, Client, PushToolCallParams, ReadTextFileParams, WriteTextFileParams,
+};
 use anyhow::{Context, Result};
 use collections::HashMap;
 use context_server::{
@@ -294,46 +296,49 @@ impl ClaudeMcpServer {
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
-        match params.tool_use_id {
-            Some(tool_use_id) => {
-                let Some(tool_call_id) = tool_id_map.borrow().get(&tool_use_id).cloned() else {
-                    return Task::ready(Err(anyhow::anyhow!("Tool call ID not found")));
-                };
+        cx.spawn(async move |_cx| {
+            let tool_call_id = match params.tool_use_id {
+                Some(tool_use_id) => tool_id_map
+                    .borrow()
+                    .get(&tool_use_id)
+                    .cloned()
+                    .context("Tool call ID not found")?,
 
-                cx.spawn(async move |_cx| {
-                    let outcome = delegate
-                        .request_existing_tool_call_confirmation(
-                            tool_call_id,
-                            // todo!
-                            acp::ToolCallConfirmation::Edit { description: None },
-                        )
-                        .await?;
+                None => {
+                    delegate
+                        .push_tool_call(PushToolCallParams {
+                            label: params.tool_name,
+                            icon: acp::Icon::Hammer,
+                            content: None,
+                            locations: vec![],
+                        })
+                        .await?
+                        .id
+                }
+            };
 
-                    match outcome {
-                        acp::ToolCallConfirmationOutcome::Allow
-                        | acp::ToolCallConfirmationOutcome::AlwaysAllow
-                        | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
-                        | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
-                            Ok(PermissionToolResponse {
-                                behavior: PermissionToolBehavior::Allow,
-                                updated_input: params.input,
-                            })
-                        }
-                        acp::ToolCallConfirmationOutcome::Reject
-                        | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
-                            behavior: PermissionToolBehavior::Deny,
-                            updated_input: params.input,
-                        }),
-                    }
-                })
-            }
-            None => {
-                // todo!
-                Task::ready(Ok(PermissionToolResponse {
+            let outcome = delegate
+                .request_existing_tool_call_confirmation(
+                    tool_call_id,
+                    // todo!
+                    acp::ToolCallConfirmation::Edit { description: None },
+                )
+                .await?;
+
+            match outcome {
+                acp::ToolCallConfirmationOutcome::Allow
+                | acp::ToolCallConfirmationOutcome::AlwaysAllow
+                | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
+                | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => Ok(PermissionToolResponse {
                     behavior: PermissionToolBehavior::Allow,
                     updated_input: params.input,
-                }))
+                }),
+                acp::ToolCallConfirmationOutcome::Reject
+                | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
+                    behavior: PermissionToolBehavior::Deny,
+                    updated_input: params.input,
+                }),
             }
-        }
+        })
     }
 }
