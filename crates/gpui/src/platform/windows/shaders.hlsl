@@ -879,6 +879,7 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 struct PathVertex {
     float2 xy_position: POSITION;
     Bounds content_mask: TEXCOORD;
+    uint idx: GLOBALIDX;
 };
 
 struct PathSprite {
@@ -905,13 +906,13 @@ struct PathFragmentInput {
 
 StructuredBuffer<PathSprite> path_sprites: register(t1);
 
-PathVertexOutput paths_vertex(PathVertex v, uint instance_id: SV_InstanceID) {
-    PathSprite sprite = path_sprites[instance_id];
+PathVertexOutput paths_vertex(PathVertex input) {
+    PathSprite sprite = path_sprites[input.idx];
 
     PathVertexOutput output;
-    output.position = to_device_position_impl(v.xy_position);
-    output.clip_distance = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
-    output.sprite_id = instance_id;
+    output.position = to_device_position_impl(input.xy_position);
+    output.clip_distance = distance_from_clip_rect_impl(input.xy_position, input.content_mask);
+    output.sprite_id = input.idx;
 
     GradientColor gradient = prepare_gradient_color(
         sprite.color.tag,

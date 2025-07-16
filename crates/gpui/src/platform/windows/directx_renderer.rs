@@ -371,11 +371,10 @@ impl DirectXRenderer {
             });
             start_vertex_location += path.vertices.len() as u32;
 
-            vertices.extend(path.vertices.iter().map(|v| PathVertex {
+            vertices.extend(path.vertices.iter().map(|v| DirectXPathVertex {
                 xy_position: v.xy_position,
-                content_mask: ContentMask {
-                    bounds: path.content_mask.bounds,
-                },
+                content_mask: path.content_mask.bounds,
+                sprite_index: i as u32,
             }));
 
             sprites.push(PathSprite {
@@ -796,7 +795,7 @@ impl PathsPipelineState {
         let view = create_buffer_view(device, &buffer)?;
         let vertex_buffer = Some(create_buffer(
             device,
-            std::mem::size_of::<PathVertex<ScaledPixels>>(),
+            std::mem::size_of::<DirectXPathVertex>(),
             32,
         )?);
         let indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
@@ -836,6 +835,15 @@ impl PathsPipelineState {
                         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
                         InstanceDataStepRate: 0,
                     },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("GLOBALIDX"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32_UINT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 24,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
                 ],
                 shader_bytes,
                 Some(&mut layout),
@@ -862,7 +870,7 @@ impl PathsPipelineState {
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
         buffer_data: &[PathSprite],
-        vertices_data: &[PathVertex<ScaledPixels>],
+        vertices_data: &[DirectXPathVertex],
         draw_commands: &[DrawInstancedIndirectArgs],
     ) -> Result<()> {
         if self.buffer_size < buffer_data.len() {
@@ -888,7 +896,7 @@ impl PathsPipelineState {
             );
             let vertex_buffer = create_buffer(
                 device,
-                std::mem::size_of::<PathVertex<ScaledPixels>>(),
+                std::mem::size_of::<DirectXPathVertex>(),
                 new_vertex_buffer_size,
             )?;
             self.vertex_buffer = Some(vertex_buffer);
@@ -932,7 +940,7 @@ impl PathsPipelineState {
             global_params,
         );
         unsafe {
-            const STRIDE: u32 = std::mem::size_of::<PathVertex<ScaledPixels>>() as u32;
+            const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
             device_context.IASetVertexBuffers(
                 0,
                 1,
@@ -952,6 +960,13 @@ impl PathsPipelineState {
         }
         Ok(())
     }
+}
+
+#[repr(C)]
+struct DirectXPathVertex {
+    xy_position: Point<ScaledPixels>,
+    content_mask: Bounds<ScaledPixels>,
+    sprite_index: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
