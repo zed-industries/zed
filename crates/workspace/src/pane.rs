@@ -3241,7 +3241,7 @@ impl Pane {
 
                     if let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
                         if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
+                            to_pane = workspace.split_pane(to_pane.clone(), split_direction, window, cx);
                         }
                         workspace.open_paths(
                             paths,
@@ -3254,14 +3254,25 @@ impl Pane {
                             cx,
                         )
                     }) {
+
                         let opened_items: Vec<_> = open_task.await;
-                        _ = workspace.update(cx, |workspace, cx| {
+                        let new_pane_item_count = to_pane.read_with(cx, |pane, _cx| { pane.items_len() }).unwrap();
+
+                        _ = workspace.update_in(cx, |workspace, window, cx| {
+
+                            if new_pane_item_count == 0 {
+                                let old_pane = workspace.active_pane.clone();
+                                workspace.remove_pane(to_pane, Some(old_pane), window, cx);
+                                cx.notify();
+                            }
+
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(&e, cx);
                                 }
                             }
                         });
+
                     }
                 })
                 .detach();
