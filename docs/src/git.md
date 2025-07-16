@@ -151,3 +151,17 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
+
+## Git CLI Configuration
+
+If you would like to also use Zed for your [git commit message editor](https://git-scm.com/book/en/v2/Customizing-Git-Git-Configuration#_core_editor) when committing from the command line you can use `zed --wait`:
+
+```sh
+git config --global core.editor "zed --wait"
+```
+
+Or add the following to your shell environment (in `~/.zshrc`, `~/.bashrc`, etc):
+
+```sh
+export GIT_EDITOR="zed --wait"
+```

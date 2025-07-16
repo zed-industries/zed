@@ -11,8 +11,6 @@ dependencies = [
  "assistant_tool",
  "async-pipe",
  "buffer_diff",
- "collections",
- "context_server",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -20,10 +18,8 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "log",
  "markdown",
  "project",
- "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -31,7 +27,6 @@ dependencies = [
  "tempfile",
  "ui",
  "util",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -763,6 +758,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "icons",
+ "indoc",
  "language",
  "language_model",
  "log",
@@ -796,6 +792,7 @@ dependencies = [
  "collections",
  "component",
  "derive_more 0.99.19",
+ "diffy",
  "editor",
  "feature_flags",
  "fs",
@@ -10311,12 +10308,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "gpui",
  "net",
- "parking_lot",
  "smol",
- "tempfile",
- "util",
  "workspace-hack",
 ]
 
@@ -14752,6 +14745,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "tree-sitter-json",
  "tree-sitter-rust",
@@ -16483,6 +16477,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "settings_ui",
  "smallvec",
  "story",
  "telemetry",
@@ -20127,7 +20122,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.196.0"
+version = "0.197.0"
 dependencies = [
  "activity_indicator",
  "agent",

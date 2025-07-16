@@ -30,6 +30,7 @@ use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
+use settings_ui::keybindings;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
@@ -683,7 +684,7 @@ impl TitleBar {
                         )
                         .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -727,7 +728,7 @@ impl TitleBar {
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                            .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

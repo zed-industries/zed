@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use axum::routing::put;
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},
@@ -27,8 +28,8 @@ use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::llm::db::subscription_usage_meter::{self, CompletionMode};
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
     StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
@@ -47,14 +48,8 @@ use crate::{
 
 pub fn router() -> Router {
     Router::new()
-        .route(
-            "/billing/preferences",
-            get(get_billing_preferences).put(update_billing_preferences),
-        )
-        .route(
-            "/billing/subscriptions",
-            get(list_billing_subscriptions).post(create_billing_subscription),
-        )
+        .route("/billing/preferences", put(update_billing_preferences))
+        .route("/billing/subscriptions", post(create_billing_subscription))
         .route(
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
@@ -66,54 +61,12 @@ pub fn router() -> Router {
         .route("/billing/usage", get(get_current_usage))
 }
 
-#[derive(Debug, Deserialize)]
-struct GetBillingPreferencesParams {
-    github_user_id: i32,
-}
-
 #[derive(Debug, Serialize)]
 struct BillingPreferencesResponse {
     trial_started_at: Option<String>,
     max_monthly_llm_usage_spending_in_cents: i32,
     model_request_overages_enabled: bool,
     model_request_overages_spend_limit_in_cents: i32,
-}
-
-async fn get_billing_preferences(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetBillingPreferencesParams>,
-) -> Result<Json<BillingPreferencesResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(params.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
-    let preferences = app.db.get_billing_preferences(user.id).await?;
-
-    Ok(Json(BillingPreferencesResponse {
-        trial_started_at: billing_customer
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| {
-                trial_started_at
-                    .and_utc()
-                    .to_rfc3339_opts(SecondsFormat::Millis, true)
-            }),
-        max_monthly_llm_usage_spending_in_cents: preferences
-            .as_ref()
-            .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
-                preferences.max_monthly_llm_usage_spending_in_cents
-            }),
-        model_request_overages_enabled: preferences.as_ref().map_or(false, |preferences| {
-            preferences.model_request_overages_enabled
-        }),
-        model_request_overages_spend_limit_in_cents: preferences
-            .as_ref()
-            .map_or(0, |preferences| {
-                preferences.model_request_overages_spend_limit_in_cents
-            }),
-    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,90 +160,6 @@ async fn update_billing_preferences(
         model_request_overages_enabled: billing_preferences.model_request_overages_enabled,
         model_request_overages_spend_limit_in_cents: billing_preferences
             .model_request_overages_spend_limit_in_cents,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-struct ListBillingSubscriptionsParams {
-    github_user_id: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct BillingSubscriptionJson {
-    id: BillingSubscriptionId,
-    name: String,
-    status: StripeSubscriptionStatus,
-    period: Option<BillingSubscriptionPeriodJson>,
-    trial_end_at: Option<String>,
-    cancel_at: Option<String>,
-    /// Whether this subscription can be canceled.
-    is_cancelable: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct BillingSubscriptionPeriodJson {
-    start_at: String,
-    end_at: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ListBillingSubscriptionsResponse {
-    subscriptions: Vec<BillingSubscriptionJson>,
-}
-
-async fn list_billing_subscriptions(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<ListBillingSubscriptionsParams>,
-) -> Result<Json<ListBillingSubscriptionsResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(params.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let subscriptions = app.db.get_billing_subscriptions(user.id).await?;
-
-    Ok(Json(ListBillingSubscriptionsResponse {
-        subscriptions: subscriptions
-            .into_iter()
-            .map(|subscription| BillingSubscriptionJson {
-                id: subscription.id,
-                name: match subscription.kind {
-                    Some(SubscriptionKind::ZedPro) => "Zed Pro".to_string(),
-                    Some(SubscriptionKind::ZedProTrial) => "Zed Pro (Trial)".to_string(),
-                    Some(SubscriptionKind::ZedFree) => "Zed Free".to_string(),
-                    None => "Zed LLM Usage".to_string(),
-                },
-                status: subscription.stripe_subscription_status,
-                period: maybe!({
-                    let start_at = subscription.current_period_start_at()?;
-                    let end_at = subscription.current_period_end_at()?;
-
-                    Some(BillingSubscriptionPeriodJson {
-                        start_at: start_at.to_rfc3339_opts(SecondsFormat::Millis, true),
-                        end_at: end_at.to_rfc3339_opts(SecondsFormat::Millis, true),
-                    })
-                }),
-                trial_end_at: if subscription.kind == Some(SubscriptionKind::ZedProTrial) {
-                    maybe!({
-                        let end_at = subscription.stripe_current_period_end?;
-                        let end_at = DateTime::from_timestamp(end_at, 0)?;
-
-                        Some(end_at.to_rfc3339_opts(SecondsFormat::Millis, true))
-                    })
-                } else {
-                    None
-                },
-                cancel_at: subscription.stripe_cancel_at.map(|cancel_at| {
-                    cancel_at
-                        .and_utc()
-                        .to_rfc3339_opts(SecondsFormat::Millis, true)
-                }),
-                is_cancelable: subscription.kind != Some(SubscriptionKind::ZedFree)
-                    && subscription.stripe_subscription_status.is_cancelable()
-                    && subscription.stripe_cancel_at.is_none(),
-            })
-            .collect(),
     }))
 }
 

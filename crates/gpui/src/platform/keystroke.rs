@@ -417,6 +417,17 @@ impl Modifiers {
         self.control || self.alt || self.shift || self.platform || self.function
     }
 
+    /// Returns the XOR of two modifier sets
+    pub fn xor(&self, other: &Modifiers) -> Modifiers {
+        Modifiers {
+            control: self.control ^ other.control,
+            alt: self.alt ^ other.alt,
+            shift: self.shift ^ other.shift,
+            platform: self.platform ^ other.platform,
+            function: self.function ^ other.function,
+        }
+    }
+
     /// Whether the semantically 'secondary' modifier key is pressed.
     ///
     /// On macOS, this is the command key.
