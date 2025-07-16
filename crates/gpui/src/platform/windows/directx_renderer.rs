@@ -18,7 +18,7 @@ use windows::{
 
 use crate::*;
 
-const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
+const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 
 pub(crate) struct DirectXRenderer {
@@ -41,7 +41,8 @@ pub(crate) struct DirectXDevices {
 
 struct DirectXContext {
     swap_chain: ManuallyDrop<IDXGISwapChain1>,
-    back_buffer: [Option<ID3D11RenderTargetView>; 1],
+    render_target: ManuallyDrop<ID3D11Texture2D>,
+    render_target_view: [Option<ID3D11RenderTargetView>; 1],
     msaa_target: ID3D11Texture2D,
     msaa_view: ID3D11RenderTargetView,
     viewport: [D3D11_VIEWPORT; 1],
@@ -124,15 +125,48 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
-        pre_draw(
+    fn pre_draw(&self) -> Result<()> {
+        update_buffer(
             &self.devices.device_context,
-            &self.globals.global_params_buffer,
-            &self.context.viewport,
-            &self.context.back_buffer,
-            [0.0, 0.0, 0.0, 0.0],
-            &self.globals.blend_state,
+            self.globals.global_params_buffer[0].as_ref().unwrap(),
+            &[GlobalParams {
+                viewport_size: [
+                    self.context.viewport[0].Width,
+                    self.context.viewport[0].Height,
+                ],
+                ..Default::default()
+            }],
         )?;
+        unsafe {
+            self.devices
+                .device_context
+                .ClearRenderTargetView(&self.context.msaa_view, &[0.0; 4]);
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&[Some(self.context.msaa_view.clone())]), None);
+            self.devices
+                .device_context
+                .RSSetViewports(Some(&self.context.viewport));
+            self.devices.device_context.OMSetBlendState(
+                &self.globals.blend_state,
+                None,
+                0xFFFFFFFF,
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+        // pre_draw(
+        //     &self.devices.device_context,
+        //     &self.globals.global_params_buffer,
+        //     &self.context.viewport,
+        //     &self.context.back_buffer,
+        //     [0.0, 0.0, 0.0, 0.0],
+        //     &self.globals.blend_state,
+        // )?;
+        println!("Pre-draw: {:?}", self.context.render_target_view);
+        self.pre_draw()?;
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -157,28 +191,56 @@ impl DirectXRenderer {
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),))?;
         }
-        unsafe { self.context.swap_chain.Present(0, DXGI_PRESENT(0)) }.ok()?;
+        unsafe {
+            self.devices.device_context.ResolveSubresource(
+                &*self.context.render_target,
+                0,
+                &self.context.msaa_target,
+                0,
+                BACK_BUFFER_FORMAT,
+            );
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.context.render_target_view), None);
+            self.context.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
+        }
         Ok(())
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
-        unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
-        drop(self.context.back_buffer[0].take().unwrap());
+        println!("Resize: {:?}", self.context.render_target_view);
         unsafe {
-            self.context.swap_chain.ResizeBuffers(
-                BUFFER_COUNT as u32,
-                new_size.width.0 as u32,
-                new_size.height.0 as u32,
-                RENDER_TARGET_FORMAT,
-                DXGI_SWAP_CHAIN_FLAG(0),
-            )?;
+            self.devices.device_context.OMSetRenderTargets(None, None);
+            ManuallyDrop::drop(&mut self.context.render_target);
         }
-        let backbuffer = set_render_target_view(
-            &self.context.swap_chain,
-            &self.devices.device,
-            &self.devices.device_context,
-        )?;
-        self.context.back_buffer[0] = Some(backbuffer);
+        drop(self.context.render_target_view[0].take().unwrap());
+        unsafe {
+            self.context
+                .swap_chain
+                .ResizeBuffers(
+                    BUFFER_COUNT as u32,
+                    new_size.width.0 as u32,
+                    new_size.height.0 as u32,
+                    RENDER_TARGET_FORMAT,
+                    DXGI_SWAP_CHAIN_FLAG(0),
+                )
+                .unwrap();
+        }
+        // let backbuffer = set_render_target_view(
+        //     &self.context.swap_chain,
+        //     &self.devices.device,
+        //     &self.devices.device_context,
+        // )?;
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&self.context.swap_chain, &self.devices.device)
+                .unwrap();
+        self.context.render_target = render_target;
+        self.context.render_target_view = render_target_view;
+        unsafe {
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.context.render_target_view), None);
+        }
 
         let (msaa_target, msaa_view) = create_msaa_target_and_its_view(
             &self.devices.device,
@@ -420,18 +482,26 @@ impl DirectXContext {
         // let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
         // #[cfg(not(feature = "enable-renderdoc"))]
         // direct_composition.set_swap_chain(&swap_chain)?;
-        let back_buffer = [Some(set_render_target_view(
-            &swap_chain,
-            &devices.device,
-            &devices.device_context,
-        )?)];
+        let (render_target, render_target_view) =
+            create_render_target_and_its_view(&swap_chain, &devices.device)?;
+        // let back_buffer = [Some(set_render_target_view(
+        //     &swap_chain,
+        //     &devices.device,
+        //     &devices.device_context,
+        // )?)];
         let (msaa_target, msaa_view) = create_msaa_target_and_its_view(&devices.device, 1, 1)?;
         let viewport = set_viewport(&devices.device_context, 1.0, 1.0);
+        unsafe {
+            devices
+                .device_context
+                .OMSetRenderTargets(Some(&render_target_view), None);
+        }
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(Self {
             swap_chain,
-            back_buffer,
+            render_target,
+            render_target_view,
             msaa_target,
             msaa_view,
             viewport,
@@ -893,6 +963,7 @@ struct PathSprite {
 impl Drop for DirectXContext {
     fn drop(&mut self) {
         unsafe {
+            ManuallyDrop::drop(&mut self.render_target);
             ManuallyDrop::drop(&mut self.swap_chain);
         }
     }
@@ -1021,6 +1092,30 @@ fn create_swap_chain_default(
 }
 
 #[inline]
+fn create_render_target_and_its_view(
+    swap_chain: &IDXGISwapChain1,
+    device: &ID3D11Device,
+) -> Result<(
+    ManuallyDrop<ID3D11Texture2D>,
+    [Option<ID3D11RenderTargetView>; 1],
+)> {
+    let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
+    let desc = D3D11_RENDER_TARGET_VIEW_DESC {
+        Format: BACK_BUFFER_FORMAT,
+        ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
+        ..Default::default()
+    };
+    let mut render_target_view = None;
+    unsafe {
+        device.CreateRenderTargetView(&render_target, Some(&desc), Some(&mut render_target_view))?
+    };
+    Ok((
+        ManuallyDrop::new(render_target),
+        [Some(render_target_view.unwrap())],
+    ))
+}
+
+#[inline]
 fn set_render_target_view(
     swap_chain: &IDXGISwapChain1,
     device: &ID3D11Device,
@@ -1043,6 +1138,7 @@ fn set_render_target_view(
     Ok(back_buffer)
 }
 
+#[inline]
 fn create_msaa_target_and_its_view(
     device: &ID3D11Device,
     width: u32,
@@ -1111,7 +1207,8 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
         SlopeScaledDepthBias: 0.0,
         DepthClipEnable: true.into(),
         ScissorEnable: false.into(),
-        MultisampleEnable: false.into(),
+        // MultisampleEnable: false.into(),
+        MultisampleEnable: true.into(),
         AntialiasedLineEnable: false.into(),
     };
     let rasterizer_state = unsafe {
