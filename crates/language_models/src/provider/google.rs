@@ -95,7 +95,6 @@ pub struct State {
 }
 
 const GEMINI_API_KEY_VAR: &str = "GEMINI_API_KEY";
-const GOOGLE_API_KEY_VAR: &str = "GOOGLE_API_KEY";
 const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
@@ -152,8 +151,6 @@ impl State {
 
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR) {
-                (api_key, true)
-            } else if let Ok(api_key) = std::env::var(GOOGLE_API_KEY_VAR) {
                 (api_key, true)
             } else if let Ok(api_key) = std::env::var(GEMINI_API_KEY_VAR) {
                 (api_key, true)
@@ -941,7 +938,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR}, {GOOGLE_API_KEY_VAR} and {GOOGLE_AI_API_KEY_VAR} environment variables are unset.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR} and {GOOGLE_AI_API_KEY_VAR} environment variables are unset.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
