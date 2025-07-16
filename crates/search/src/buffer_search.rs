@@ -12,6 +12,7 @@ use editor::{
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
     actions::{Backtab, Tab},
 };
+use fancy_regex::Regex;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -45,6 +46,11 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+
+/// Array of supported pattern items and their corresponding search options and
+/// value.
+/// When any of the patterns is present in the search query, the corresponding
+/// search option, and value, is applied.
 static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
     ("\\c", &SearchOptions::CASE_SENSITIVE, false),
     ("\\C", &SearchOptions::CASE_SENSITIVE, true),
@@ -126,6 +132,7 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
+    pattern_items_regex: Regex,
 }
 
 impl BufferSearchBar {
@@ -739,6 +746,15 @@ impl BufferSearchBar {
             .detach_and_log_err(cx);
         }
 
+        let pattern_items_regex = Regex::new(
+            &PATTERN_ITEMS
+                .iter()
+                .map(|(pattern, _, _)| fancy_regex::escape(pattern))
+                .collect::<Vec<_>>()
+                .join("|"),
+        )
+        .unwrap();
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -766,6 +782,7 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
+            pattern_items_regex,
         }
     }
 
@@ -914,13 +931,9 @@ impl BufferSearchBar {
 
     /// Returns the sanitized query string with pattern items removed.
     pub fn query(&self, cx: &App) -> String {
-        // TODO: Probably replace this with a regex (\\[cC])? I assume
-        // performance is going to be not so great with a big list of pattern
-        // items.
-        PATTERN_ITEMS.iter().fold(
-            self.query_editor.read(cx).text(cx),
-            |string, (pattern, _, _)| string.replace(pattern, ""),
-        )
+        self.pattern_items_regex
+            .replace_all(&self.raw_query(cx), "")
+            .into_owned()
     }
 
     pub fn replacement(&self, cx: &mut App) -> String {
