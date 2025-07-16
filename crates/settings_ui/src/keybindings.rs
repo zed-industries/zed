@@ -470,11 +470,22 @@ impl KeymapEditor {
                                             },
                                         )
                                 } else {
-                                    keystroke_query.iter().all(|key| {
-                                        keystrokes.iter().any(|keystroke| {
-                                            keystroke.key == key.key
-                                                && keystroke.modifiers == key.modifiers
-                                        })
+                                    let key_press_query =
+                                        KeyPressIterator::new(keystroke_query.as_slice());
+                                    let mut last_match_idx = 0;
+
+                                    key_press_query.into_iter().all(|key| {
+                                        let key_presses = KeyPressIterator::new(keystrokes);
+                                        key_presses.into_iter().enumerate().any(
+                                            |(index, keystroke)| {
+                                                if last_match_idx > index || keystroke != key {
+                                                    return false;
+                                                }
+
+                                                last_match_idx = index;
+                                                true
+                                            },
+                                        )
                                     })
                                 }
                             })
@@ -2313,6 +2324,16 @@ enum CloseKeystrokeResult {
     None,
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
+enum KeyPress<'a> {
+    Alt,
+    Control,
+    Function,
+    Shift,
+    Platform,
+    Key(&'a String),
+}
+
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
@@ -2322,6 +2343,7 @@ struct KeystrokeInput {
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
     search: bool,
+    /// Handles tripe escape to stop recording
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
 }
@@ -2443,11 +2465,14 @@ impl KeystrokeInput {
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
-            if !event.modifiers.modified() {
+            if self.search {
+                last.modifiers = last.modifiers.xor(&event.modifiers);
+            } else if !event.modifiers.modified() {
                 self.keystrokes.pop();
             } else {
                 last.modifiers = event.modifiers;
             }
+
             self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
@@ -2464,11 +2489,19 @@ impl KeystrokeInput {
     ) {
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
         if close_keystroke_result != CloseKeystrokeResult::Close {
-            if let Some(last) = self.keystrokes.last()
+            let key_len = self.keystrokes.len();
+            if let Some(last) = self.keystrokes.last_mut()
                 && last.key.is_empty()
-                && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
+                && key_len <= Self::KEYSTROKE_COUNT_MAX
             {
-                self.keystrokes.pop();
+                if self.search {
+                    last.key = keystroke.key.clone();
+                    self.keystrokes_changed(cx);
+                    cx.stop_propagation();
+                    return;
+                } else {
+                    self.keystrokes.pop();
+                }
             }
             if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                 if close_keystroke_result == CloseKeystrokeResult::Partial
@@ -2511,10 +2544,11 @@ impl KeystrokeInput {
         {
             return placeholders;
         }
-        if self
-            .keystrokes
-            .last()
-            .map_or(false, |last| last.key.is_empty())
+        if !self.search
+            && self
+                .keystrokes
+                .last()
+                .map_or(false, |last| last.key.is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
@@ -2953,6 +2987,75 @@ mod persistence {
                 SELECT item_id
                 FROM keybinding_editors
                 WHERE item_id = ? AND workspace_id = ?
+            }
+        }
+    }
+}
+
+/// Iterator that yields KeyPress values from a slice of Keystrokes
+struct KeyPressIterator<'a> {
+    keystrokes: &'a [Keystroke],
+    current_keystroke_index: usize,
+    current_key_press_index: usize,
+}
+
+impl<'a> KeyPressIterator<'a> {
+    fn new(keystrokes: &'a [Keystroke]) -> Self {
+        Self {
+            keystrokes,
+            current_keystroke_index: 0,
+            current_key_press_index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for KeyPressIterator<'a> {
+    type Item = KeyPress<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let keystroke = self.keystrokes.get(self.current_keystroke_index)?;
+
+            match self.current_key_press_index {
+                0 => {
+                    self.current_key_press_index = 1;
+                    if keystroke.modifiers.platform {
+                        return Some(KeyPress::Platform);
+                    }
+                }
+                1 => {
+                    self.current_key_press_index = 2;
+                    if keystroke.modifiers.alt {
+                        return Some(KeyPress::Alt);
+                    }
+                }
+                2 => {
+                    self.current_key_press_index = 3;
+                    if keystroke.modifiers.control {
+                        return Some(KeyPress::Control);
+                    }
+                }
+                3 => {
+                    self.current_key_press_index = 4;
+                    if keystroke.modifiers.shift {
+                        return Some(KeyPress::Shift);
+                    }
+                }
+                4 => {
+                    self.current_key_press_index = 5;
+                    if keystroke.modifiers.function {
+                        return Some(KeyPress::Function);
+                    }
+                }
+                _ => {
+                    self.current_keystroke_index += 1;
+                    self.current_key_press_index = 0;
+
+                    if keystroke.key.is_empty() {
+                        continue;
+                    }
+                    return Some(KeyPress::Key(&keystroke.key));
+                }
             }
         }
     }
