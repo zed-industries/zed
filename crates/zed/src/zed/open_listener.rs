@@ -37,6 +37,7 @@ pub struct OpenRequest {
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
     pub dock_menu_action: Option<usize>,
+    pub extension_id: Option<String>,
 }
 
 impl OpenRequest {
@@ -54,6 +55,8 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
+            } else if let Some(file) = url.strip_prefix("zed://extension/") {
+                this.extension_id = Some(file.to_string())
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {

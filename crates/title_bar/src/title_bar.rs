@@ -34,7 +34,7 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
+    Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
@@ -631,21 +631,55 @@ impl TitleBar {
                 // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
                 has_subscription_period
             });
+
+            let user_avatar = user.avatar_uri.clone();
+            let free_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.05));
+
+            let pro_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.2));
+
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _cx| {
-                        menu.link(
-                            format!(
-                                "Current Plan: {}",
-                                match plan {
-                                    None => "None",
-                                    Some(proto::Plan::Free) => "Zed Free",
-                                    Some(proto::Plan::ZedPro) => "Zed Pro",
-                                    Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
-                                }
-                            ),
-                            zed_actions::OpenAccountSettings.boxed_clone(),
+                        let user_login = user.github_login.clone();
+
+                        let (plan_name, label_color, bg_color) = match plan {
+                            None => ("None", Color::Default, free_chip_bg),
+                            Some(proto::Plan::Free) => ("Free", Color::Default, free_chip_bg),
+                            Some(proto::Plan::ZedProTrial) => {
+                                ("Pro Trial", Color::Accent, pro_chip_bg)
+                            }
+                            Some(proto::Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                        };
+
+                        menu.custom_entry(
+                            move |_window, _cx| {
+                                let user_login = user_login.clone();
+
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .child(Label::new(user_login))
+                                    .child(
+                                        Chip::new(plan_name.to_string())
+                                            .bg_color(bg_color)
+                                            .label_color(label_color),
+                                    )
+                                    .into_any_element()
+                            },
+                            move |_, cx| {
+                                cx.open_url("https://zed.dev/account");
+                            },
                         )
                         .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
@@ -675,7 +709,7 @@ impl TitleBar {
                                 .children(
                                     TitleBarSettings::get_global(cx)
                                         .show_user_picture
-                                        .then(|| Avatar::new(user.avatar_uri.clone())),
+                                        .then(|| Avatar::new(user_avatar)),
                                 )
                                 .child(
                                     Icon::new(IconName::ChevronDown)

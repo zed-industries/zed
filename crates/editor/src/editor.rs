@@ -356,6 +356,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
+            workspace.register_action(Editor::toggle_focus);
         },
     )
     .detach();
@@ -16952,6 +16953,18 @@ impl Editor {
         });
         self.request_autoscroll(Autoscroll::newest(), cx);
         cx.notify();
+    }
+
+    pub fn toggle_focus(
+        workspace: &mut Workspace,
+        _: &actions::ToggleFocus,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(item) = workspace.recent_active_item_by_type::<Self>(cx) else {
+            return;
+        };
+        workspace.activate_item(&item, true, true, window, cx);
     }
 
     pub fn toggle_fold(
