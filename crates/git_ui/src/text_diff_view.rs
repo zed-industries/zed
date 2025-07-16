@@ -150,6 +150,7 @@ impl TextDiffView {
     // TODO - diff - make sure breadcrumbs work
     // TODO - diff - make sure tabs have dynamic titles
     // TODO - diff - allow to be saved?
+    // TODO - diff - single line diffs should work, do we need to adjust indenting when not selecting the entire line?
 
     pub fn new(
         old_text_source: TextSource,
