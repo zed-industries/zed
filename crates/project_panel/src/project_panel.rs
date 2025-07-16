@@ -33,6 +33,7 @@ use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    project_settings::GoToDiagnosticSeverityFilter,
     relativize_path,
 };
 use project_panel_settings::{
@@ -107,6 +108,7 @@ pub struct ProjectPanel {
     hide_scrollbar_task: Option<Task<()>>,
     diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,
+    diagnostic_summary_update: Task<()>,
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
@@ -206,6 +208,24 @@ struct Trash {
     pub skip_prompt: bool,
 }
 
+/// Selects the next entry with diagnostics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
+#[serde(deny_unknown_fields)]
+struct SelectNextDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
+/// Selects the previous entry with diagnostics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = project_panel)]
+#[serde(deny_unknown_fields)]
+struct SelectPrevDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
 actions!(
     project_panel,
     [
@@ -255,10 +275,6 @@ actions!(
         SelectNextGitEntry,
         /// Selects the previous entry with git changes.
         SelectPrevGitEntry,
-        /// Selects the next entry with diagnostics.
-        SelectNextDiagnostic,
-        /// Selects the previous entry with diagnostics.
-        SelectPrevDiagnostic,
         /// Selects the next directory.
         SelectNextDirectory,
         /// Selects the previous directory.
@@ -302,6 +318,33 @@ pub fn init(cx: &mut App) {
                 panel.update(cx, |panel, cx| {
                     panel.collapse_all_entries(action, window, cx);
                 });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &Rename, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    if let Some(first_marked) = panel.marked_entries.first() {
+                        let first_marked = *first_marked;
+                        panel.marked_entries.clear();
+                        panel.selection = Some(first_marked);
+                    }
+                    panel.rename(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &Duplicate, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.duplicate(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &Delete, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| panel.delete(action, window, cx));
             }
         });
     })
@@ -405,8 +448,16 @@ impl ProjectPanel {
                 | project::Event::DiagnosticsUpdated { .. } => {
                     if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
                     {
-                        this.update_diagnostics(cx);
-                        cx.notify();
+                        this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(30))
+                                .await;
+                            this.update(cx, |this, cx| {
+                                this.update_diagnostics(cx);
+                                cx.notify();
+                            })
+                            .log_err();
+                        });
                     }
                 }
                 project::Event::WorktreeRemoved(id) => {
@@ -549,6 +600,7 @@ impl ProjectPanel {
                     .parent_entity(&cx.entity()),
                 max_width_item_index: None,
                 diagnostics: Default::default(),
+                diagnostic_summary_update: Task::ready(()),
                 scroll_handle,
                 mouse_down: false,
                 hover_expand_task: None,
@@ -1954,7 +2006,7 @@ impl ProjectPanel {
 
     fn select_prev_diagnostic(
         &mut self,
-        _: &SelectPrevDiagnostic,
+        action: &SelectPrevDiagnostic,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1973,7 +2025,8 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );
@@ -1989,7 +2042,7 @@ impl ProjectPanel {
 
     fn select_next_diagnostic(
         &mut self,
-        _: &SelectNextDiagnostic,
+        action: &SelectNextDiagnostic,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2008,7 +2061,8 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .contains_key(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
         );

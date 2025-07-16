@@ -3185,6 +3185,7 @@ dependencies = [
  "session",
  "settings",
  "sha2",
+ "smol",
  "sqlx",
  "strum 0.27.1",
  "subtle",
@@ -4413,12 +4414,15 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "hex",
  "indoc",
  "itertools 0.14.0",
  "language",
  "log",
  "menu",
+ "notifications",
  "parking_lot",
+ "parse_int",
  "paths",
  "picker",
  "pretty_assertions",
@@ -9074,7 +9078,6 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -9109,6 +9112,7 @@ dependencies = [
  "util",
  "vercel",
  "workspace-hack",
+ "x_ai",
  "zed_llm_client",
 ]
 
@@ -11333,6 +11337,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse_int"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c464266693329dd5a8715098c7f86e6c5fd5d985018b8318f53d9c6c2b21a31"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "partial-json-fixer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12375,6 +12388,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
+ "base64 0.22.1",
  "buffer_diff",
  "circular-buffer",
  "client",
@@ -12420,6 +12434,7 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "shlex",
+ "smallvec",
  "smol",
  "snippet",
  "snippet_provider",
@@ -14154,7 +14169,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=28dd306ff2e3374404936dec778fc1e975b8dd12#28dd306ff2e3374404936dec778fc1e975b8dd12"
+source = "git+https://github.com/zed-industries/scap?rev=270538dc780f5240723233ff901e1054641ed318#270538dc780f5240723233ff901e1054641ed318"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -14728,6 +14743,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "notifications",
  "paths",
  "project",
  "schemars",
@@ -14739,6 +14755,7 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-rust",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "workspace-hack",
@@ -18433,7 +18450,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -19752,9 +19768,7 @@ dependencies = [
  "wasmtime-cranelift",
  "wasmtime-environ",
  "winapi",
- "windows 0.61.1",
  "windows-core 0.61.0",
- "windows-future",
  "windows-numerics",
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
@@ -19859,6 +19873,17 @@ name = "x11rb-protocol"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec107c4503ea0b4a98ef47356329af139c0a4f7750e621cf2973cd3385ebcb3d"
+
+[[package]]
+name = "x_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
+]
 
 [[package]]
 name = "xattr"

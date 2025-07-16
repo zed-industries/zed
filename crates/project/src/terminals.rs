@@ -169,7 +169,7 @@ impl Project {
             .read(cx)
             .get_cli_environment()
             .unwrap_or_default();
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         match self.ssh_details(cx) {
             Some(SshDetails {
@@ -247,7 +247,7 @@ impl Project {
             .unwrap_or_default();
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
@@ -523,36 +523,47 @@ impl Project {
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
+            terminal_settings::ActivateScript::Pyenv => "pyenv",
             _ => "source",
         };
         let activate_script_name = match venv_settings.activate_script {
-            terminal_settings::ActivateScript::Default => "activate",
+            terminal_settings::ActivateScript::Default
+            | terminal_settings::ActivateScript::Pyenv => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
             terminal_settings::ActivateScript::PowerShell => "activate.ps1",
         };
-        let path = venv_base_directory
-            .join(match std::env::consts::OS {
-                "windows" => "Scripts",
-                _ => "bin",
-            })
-            .join(activate_script_name)
-            .to_string_lossy()
-            .to_string();
-        let quoted = shlex::try_quote(&path).ok()?;
+
         let line_ending = match std::env::consts::OS {
             "windows" => "\r",
             _ => "\n",
         };
-        smol::block_on(self.fs.metadata(path.as_ref()))
-            .ok()
-            .flatten()?;
 
-        Some(format!(
-            "{} {} ; clear{}",
-            activate_keyword, quoted, line_ending
-        ))
+        if venv_settings.venv_name.is_empty() {
+            let path = venv_base_directory
+                .join(match std::env::consts::OS {
+                    "windows" => "Scripts",
+                    _ => "bin",
+                })
+                .join(activate_script_name)
+                .to_string_lossy()
+                .to_string();
+            let quoted = shlex::try_quote(&path).ok()?;
+            smol::block_on(self.fs.metadata(path.as_ref()))
+                .ok()
+                .flatten()?;
+
+            Some(format!(
+                "{} {} ; clear{}",
+                activate_keyword, quoted, line_ending
+            ))
+        } else {
+            Some(format!(
+                "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
+                name = venv_settings.venv_name
+            ))
+        }
     }
 
     fn activate_python_virtual_environment(

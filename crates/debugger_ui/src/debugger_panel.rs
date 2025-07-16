@@ -2,6 +2,7 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::session::running::breakpoint_list::BreakpointList;
+
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
@@ -1759,6 +1760,7 @@ impl Render for DebugPanel {
                                         category_filter: Some(
                                             zed_actions::ExtensionCategoryFilter::DebugAdapters,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,
@@ -1804,6 +1806,7 @@ impl Render for DebugPanel {
                                                 .child(breakpoint_list)
                                                 .child(Divider::vertical())
                                                 .child(welcome_experience)
+                                                .child(Divider::vertical())
                                         } else {
                                             this.items_end()
                                                 .child(welcome_experience)

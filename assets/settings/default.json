@@ -84,7 +84,7 @@
   "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes horizontally. Defaults to "left"
+  // The direction that you want to split panes vertically. Defaults to "left"
   "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
@@ -1135,6 +1135,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -1669,6 +1670,10 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],

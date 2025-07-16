@@ -2,13 +2,14 @@ mod connection;
 pub use connection::*;
 
 pub use acp::ToolCallId;
+use agent_servers::AgentServer;
 use agentic_coding_protocol::{
     self as acp, AgentRequest, ToolCallConfirmationOutcome, UserMessageChunk,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
-use editor::{MultiBuffer, PathKey};
+use editor::{Bias, MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
@@ -718,6 +719,11 @@ impl AcpThread {
             status,
         };
 
+        let location = call.locations.last().cloned();
+        if let Some(location) = location {
+            self.set_project_location(location, cx)
+        }
+
         self.push_entry(AgentThreadEntry::ToolCall(call), cx);
 
         id
@@ -780,6 +786,11 @@ impl AcpThread {
             }
         }
 
+        let location = call.locations.last().cloned();
+        if let Some(location) = location {
+            self.set_project_location(location, cx)
+        }
+
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
     }
@@ -801,6 +812,37 @@ impl AcpThread {
         }
     }
 
+    pub fn set_project_location(&self, location: ToolCallLocation, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
+                return;
+            };
+            let buffer = project.open_buffer(path, cx);
+            cx.spawn(async move |project, cx| {
+                let buffer = buffer.await?;
+
+                project.update(cx, |project, cx| {
+                    let position = if let Some(line) = location.line {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
+                        snapshot.anchor_before(point)
+                    } else {
+                        Anchor::MIN
+                    };
+
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })
+            })
+            .detach_and_log_err(cx);
+        });
+    }
+
     /// Returns true if the last turn is awaiting tool authorization
     pub fn waiting_for_tool_confirmation(&self) -> bool {
         for entry in self.entries.iter().rev() {
@@ -820,10 +862,11 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
-        self.request(acp::InitializeParams {
-            protocol_version: acp::ProtocolVersion::latest(),
-        })
+    pub fn initialize(
+        &self,
+    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
+        let connection = self.connection.clone();
+        async move { connection.initialize().await }
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
@@ -1486,6 +1529,53 @@ mod tests {
         }
     }
 
+    pub async fn gemini_acp_thread(
+        project: Entity<Project>,
+        current_dir: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> Entity<AcpThread> {
+        struct DevGemini;
+
+        impl agent_servers::AgentServer for DevGemini {
+            async fn command(
+                &self,
+                _project: &Entity<Project>,
+                _cx: &mut AsyncApp,
+            ) -> Result<agent_servers::AgentServerCommand> {
+                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../gemini-cli/packages/cli")
+                    .to_string_lossy()
+                    .to_string();
+
+                Ok(AgentServerCommand {
+                    path: "node".into(),
+                    args: vec![cli_path, "--experimental-acp".into()],
+                    env: None,
+                })
+            }
+
+            async fn version(
+                &self,
+                _command: &agent_servers::AgentServerCommand,
+            ) -> Result<AgentServerVersion> {
+                Ok(AgentServerVersion {
+                    current_version: "0.1.0".into(),
+                    supported: true,
+                })
+            }
+        }
+
+        let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, _| thread.initialize())
+            .await
+            .unwrap();
+        thread
+    }
+
     pub fn fake_acp_thread(
         project: Entity<Project>,
         cx: &mut TestAppContext,
@@ -1540,10 +1630,10 @@ mod tests {
     impl acp::Agent for FakeAgent {
         async fn initialize(
             &self,
-            _params: acp::InitializeParams,
+            params: acp::InitializeParams,
         ) -> Result<acp::InitializeResponse, acp::Error> {
             Ok(acp::InitializeResponse {
-                protocol_version: ProtocolVersion::latest(),
+                protocol_version: params.protocol_version,
                 is_authenticated: true,
             })
         }

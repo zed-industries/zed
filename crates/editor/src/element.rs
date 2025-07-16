@@ -9,7 +9,7 @@ use crate::{
     LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
     PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
@@ -416,6 +416,7 @@ impl EditorElement {
         register_action(editor, window, Editor::fold_recursive);
         register_action(editor, window, Editor::toggle_fold);
         register_action(editor, window, Editor::toggle_fold_recursive);
+        register_action(editor, window, Editor::toggle_fold_all);
         register_action(editor, window, Editor::unfold_lines);
         register_action(editor, window, Editor::unfold_recursive);
         register_action(editor, window, Editor::unfold_all);
@@ -2093,16 +2094,19 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
-        if self.editor.read(cx).mode().is_minimap() {
-            return HashMap::default();
-        }
-
-        let max_severity = match ProjectSettings::get_global(cx)
-            .diagnostics
-            .inline
-            .max_severity
-            .unwrap_or_else(|| self.editor.read(cx).diagnostics_max_severity)
-            .into_lsp()
+        let max_severity = match self
+            .editor
+            .read(cx)
+            .inline_diagnostics_enabled()
+            .then(|| {
+                ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline
+                    .max_severity
+                    .unwrap_or_else(|| self.editor.read(cx).diagnostics_max_severity)
+                    .into_lsp()
+            })
+            .flatten()
         {
             Some(max_severity) => max_severity,
             None => return HashMap::default(),
@@ -2618,9 +2622,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
-        if self.editor.read(cx).mode().is_minimap() {
-            return None;
-        }
         let indent_guides = self.editor.update(cx, |editor, cx| {
             editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
@@ -3084,9 +3085,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
-        let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
-            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode.is_full()
-        });
+        let include_line_numbers = snapshot
+            .show_line_numbers
+            .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
         if !include_line_numbers {
             return Arc::default();
         }
@@ -3399,22 +3400,18 @@ impl EditorElement {
 
                 div()
                     .size_full()
-                    .children(
-                        (!snapshot.mode.is_minimap() || custom.render_in_minimap).then(|| {
-                            custom.render(&mut BlockContext {
-                                window,
-                                app: cx,
-                                anchor_x,
-                                margins: editor_margins,
-                                line_height,
-                                em_width,
-                                block_id,
-                                selected,
-                                max_width: text_hitbox.size.width.max(*scroll_width),
-                                editor_style: &self.style,
-                            })
-                        }),
-                    )
+                    .child(custom.render(&mut BlockContext {
+                        window,
+                        app: cx,
+                        anchor_x,
+                        margins: editor_margins,
+                        line_height,
+                        em_width,
+                        block_id,
+                        selected,
+                        max_width: text_hitbox.size.width.max(*scroll_width),
+                        editor_style: &self.style,
+                    }))
                     .into_any()
             }
 
@@ -3620,24 +3617,37 @@ impl EditorElement {
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
                                             move |window, cx| {
-                                                Tooltip::for_action_in(
+                                                Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
-                                                    &ToggleFold,
+                                                    Some(&ToggleFold),
+                                                    "Alt+click to toggle all",
                                                     &focus_handle,
                                                     window,
                                                     cx,
                                                 )
                                             }
                                         })
-                                        .on_click(move |_, _, cx| {
-                                            if is_folded {
+                                        .on_click(move |event, window, cx| {
+                                            if event.modifiers().alt {
+                                                // Alt+click toggles all buffers
                                                 editor.update(cx, |editor, cx| {
-                                                    editor.unfold_buffer(buffer_id, cx);
+                                                    editor.toggle_fold_all(
+                                                        &ToggleFoldAll,
+                                                        window,
+                                                        cx,
+                                                    );
                                                 });
                                             } else {
-                                                editor.update(cx, |editor, cx| {
-                                                    editor.fold_buffer(buffer_id, cx);
-                                                });
+                                                // Regular click toggles single buffer
+                                                if is_folded {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.unfold_buffer(buffer_id, cx);
+                                                    });
+                                                } else {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.fold_buffer(buffer_id, cx);
+                                                    });
+                                                }
                                             }
                                         }),
                                 ),
@@ -6762,7 +6772,7 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        if self.editor.read(cx).mode.is_minimap() {
+        if layout.mode.is_minimap() {
             return;
         }
 
@@ -7777,46 +7787,13 @@ impl Element for EditorElement {
                 editor.set_style(self.style.clone(), window, cx);
 
                 let layout_id = match editor.mode {
-                    EditorMode::SingleLine { auto_width } => {
+                    EditorMode::SingleLine => {
                         let rem_size = window.rem_size();
-
                         let height = self.style.text.line_height_in_pixels(rem_size);
-                        if auto_width {
-                            let editor_handle = cx.entity().clone();
-                            let style = self.style.clone();
-                            window.request_measured_layout(
-                                Style::default(),
-                                move |_, _, window, cx| {
-                                    let editor_snapshot = editor_handle
-                                        .update(cx, |editor, cx| editor.snapshot(window, cx));
-                                    let line = Self::layout_lines(
-                                        DisplayRow(0)..DisplayRow(1),
-                                        &editor_snapshot,
-                                        &style,
-                                        px(f32::MAX),
-                                        |_| false, // Single lines never soft wrap
-                                        window,
-                                        cx,
-                                    )
-                                    .pop()
-                                    .unwrap();
-
-                                    let font_id =
-                                        window.text_system().resolve_font(&style.text.font());
-                                    let font_size =
-                                        style.text.font_size.to_pixels(window.rem_size());
-                                    let em_width =
-                                        window.text_system().em_width(font_id, font_size).unwrap();
-
-                                    size(line.width + em_width, height)
-                                },
-                            )
-                        } else {
-                            let mut style = Style::default();
-                            style.size.height = height.into();
-                            style.size.width = relative(1.).into();
-                            window.request_layout(style, None, cx)
-                        }
+                        let mut style = Style::default();
+                        style.size.height = height.into();
+                        style.size.width = relative(1.).into();
+                        window.request_layout(style, None, cx)
                     }
                     EditorMode::AutoHeight {
                         min_lines,
@@ -7889,9 +7866,14 @@ impl Element for EditorElement {
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
-        let focus_handle = self.editor.focus_handle(cx);
-        window.set_view_id(self.editor.entity_id());
-        window.set_focus_handle(&focus_handle, cx);
+
+        let is_minimap = self.editor.read(cx).mode.is_minimap();
+
+        if !is_minimap {
+            let focus_handle = self.editor.focus_handle(cx);
+            window.set_view_id(self.editor.entity_id());
+            window.set_focus_handle(&focus_handle, cx);
+        }
 
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
@@ -8329,18 +8311,22 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    let new_renrerer_widths = line_layouts
-                        .iter()
-                        .flat_map(|layout| &layout.fragments)
-                        .filter_map(|fragment| {
-                            if let LineFragment::Element { id, size, .. } = fragment {
-                                Some((*id, size.width))
-                            } else {
-                                None
-                            }
-                        });
-                    if self.editor.update(cx, |editor, cx| {
-                        editor.update_renderer_widths(new_renrerer_widths, cx)
+                    let new_renderer_widths = (!is_minimap).then(|| {
+                        line_layouts
+                            .iter()
+                            .flat_map(|layout| &layout.fragments)
+                            .filter_map(|fragment| {
+                                if let LineFragment::Element { id, size, .. } = fragment {
+                                    Some((*id, size.width))
+                                } else {
+                                    None
+                                }
+                            })
+                    });
+                    if new_renderer_widths.is_some_and(|new_renderer_widths| {
+                        self.editor.update(cx, |editor, cx| {
+                            editor.update_renderer_widths(new_renderer_widths, cx)
+                        })
                     }) {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
@@ -8403,27 +8389,31 @@ impl Element for EditorElement {
                     let sticky_header_excerpt_id =
                         sticky_header_excerpt.as_ref().map(|top| top.excerpt.id);
 
-                    let blocks = window.with_element_namespace("blocks", |window| {
-                        self.render_blocks(
-                            start_row..end_row,
-                            &snapshot,
-                            &hitbox,
-                            &text_hitbox,
-                            editor_width,
-                            &mut scroll_width,
-                            &editor_margins,
-                            em_width,
-                            gutter_dimensions.full_width(),
-                            line_height,
-                            &mut line_layouts,
-                            &local_selections,
-                            &selected_buffer_ids,
-                            is_row_soft_wrapped,
-                            sticky_header_excerpt_id,
-                            window,
-                            cx,
-                        )
-                    });
+                    let blocks = (!is_minimap)
+                        .then(|| {
+                            window.with_element_namespace("blocks", |window| {
+                                self.render_blocks(
+                                    start_row..end_row,
+                                    &snapshot,
+                                    &hitbox,
+                                    &text_hitbox,
+                                    editor_width,
+                                    &mut scroll_width,
+                                    &editor_margins,
+                                    em_width,
+                                    gutter_dimensions.full_width(),
+                                    line_height,
+                                    &mut line_layouts,
+                                    &local_selections,
+                                    &selected_buffer_ids,
+                                    is_row_soft_wrapped,
+                                    sticky_header_excerpt_id,
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                        .unwrap_or_else(|| Ok((Vec::default(), HashMap::default())));
                     let (mut blocks, row_block_types) = match blocks {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
@@ -8955,19 +8945,21 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let focus_handle = self.editor.focus_handle(cx);
-        let key_context = self
-            .editor
-            .update(cx, |editor, cx| editor.key_context(window, cx));
+        if !layout.mode.is_minimap() {
+            let focus_handle = self.editor.focus_handle(cx);
+            let key_context = self
+                .editor
+                .update(cx, |editor, cx| editor.key_context(window, cx));
 
-        window.set_key_context(key_context);
-        window.handle_input(
-            &focus_handle,
-            ElementInputHandler::new(bounds, self.editor.clone()),
-            cx,
-        );
-        self.register_actions(window, cx);
-        self.register_key_listeners(window, cx, layout);
+            window.set_key_context(key_context);
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, self.editor.clone()),
+                cx,
+            );
+            self.register_actions(window, cx);
+            self.register_key_listeners(window, cx, layout);
+        }
 
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
@@ -10276,7 +10268,6 @@ mod tests {
                         height: Some(3),
                         render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     }],
                     None,
                     cx,
@@ -10366,7 +10357,7 @@ mod tests {
         });
 
         for editor_mode_without_invisibles in [
-            EditorMode::SingleLine { auto_width: false },
+            EditorMode::SingleLine,
             EditorMode::AutoHeight {
                 min_lines: 1,
                 max_lines: Some(100),
