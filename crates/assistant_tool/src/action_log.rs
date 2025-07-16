@@ -107,6 +107,7 @@ impl ActionLog {
         let patch = self.unnotified_user_edits(cx);
         self.tracked_buffers.values_mut().for_each(|tracked| {
             tracked.has_unnotified_user_edits = false;
+            tracked.last_seen_base = tracked.diff_base.clone();
         });
         patch
     }
