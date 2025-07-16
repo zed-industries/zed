@@ -128,7 +128,7 @@ impl RenderOnce for Tab {
                 .children(self.start_slot);
 
             let end_slot = h_flex()
-                .size(px(14.)) // use px over rem
+                .size(px(14.)) // use px over rem from size_3p5
                 .justify_center()
                 .children(self.end_slot);
 
