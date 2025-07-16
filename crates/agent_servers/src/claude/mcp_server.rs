@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::debug_panic;
 
-use crate::claude::McpServerConfig;
+use crate::claude::{McpServerConfig, tools::ClaudeTool};
 
 pub struct ClaudeMcpServer {
     server: McpServer,
@@ -297,6 +297,7 @@ impl ClaudeMcpServer {
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
         cx.spawn(async move |_cx| {
+            let claude_tool = ClaudeTool::infer(&params.tool_name);
             let tool_call_id = match params.tool_use_id {
                 Some(tool_use_id) => tool_id_map
                     .borrow()
@@ -308,7 +309,7 @@ impl ClaudeMcpServer {
                     delegate
                         .push_tool_call(PushToolCallParams {
                             label: params.tool_name,
-                            icon: acp::Icon::Hammer,
+                            icon: claude_tool.icon(),
                             content: None,
                             locations: vec![],
                         })
@@ -320,8 +321,7 @@ impl ClaudeMcpServer {
             let outcome = delegate
                 .request_existing_tool_call_confirmation(
                     tool_call_id,
-                    // todo!
-                    acp::ToolCallConfirmation::Edit { description: None },
+                    claude_tool.confirmation(None),
                 )
                 .await?;
 

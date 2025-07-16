@@ -185,6 +185,10 @@ mod test {
             fn empty_state_message(&self) -> &'static str {
                 "test"
             }
+
+            fn supports_always_allow(&self) -> bool {
+                true
+            }
         }
 
         let thread = cx

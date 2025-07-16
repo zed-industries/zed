@@ -1,4 +1,5 @@
 mod mcp_server;
+mod tools;
 
 use collections::HashMap;
 use project::Project;
@@ -27,6 +28,7 @@ use util::ResultExt;
 
 use crate::AgentServer;
 use crate::claude::mcp_server::ClaudeMcpServer;
+use crate::claude::tools::ClaudeTool;
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 impl AgentConnection for ClaudeAgentConnection {
@@ -254,10 +256,12 @@ impl ClaudeAgentConnection {
                         MessageContent::ToolUse { id, name, input } => {
                             let formatted = serde_json::to_string_pretty(&input).unwrap();
                             let markdown = format!("```json\n{}\n```", formatted);
+                            let icon = ClaudeTool::infer(&name).icon();
+
                             if let Some(resp) = delegate
                                 .push_tool_call(PushToolCallParams {
                                     label: name,
-                                    icon: acp::Icon::Hammer,
+                                    icon,
                                     content: Some(ToolCallContent::Markdown { markdown }),
                                     locations: Vec::default(),
                                 })
