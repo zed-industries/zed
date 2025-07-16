@@ -11847,7 +11847,12 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.edit(edits, None, cx));
     }
 
-    pub fn cut_common(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ClipboardItem {
+    pub fn cut_common(
+        &mut self,
+        cut_no_selection_line: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ClipboardItem {
         let mut text = String::new();
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut selections = self.selections.all::<Point>(cx);
@@ -11856,7 +11861,8 @@ impl Editor {
             let max_point = buffer.max_point();
             let mut is_first = true;
             for selection in &mut selections {
-                let is_entire_line = selection.is_empty() || self.selections.line_mode;
+                let is_entire_line =
+                    (selection.is_empty() && cut_no_selection_line) || self.selections.line_mode;
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     if !selection.is_empty() && selection.end.column == 0 {
@@ -11897,7 +11903,7 @@ impl Editor {
 
     pub fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
-        let item = self.cut_common(window, cx);
+        let item = self.cut_common(true, window, cx);
         cx.write_to_clipboard(item);
     }
 
@@ -11906,11 +11912,14 @@ impl Editor {
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(|snapshot, sel| {
                 if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row(), snapshot.line_len(sel.end.row()))
+                    sel.end = DisplayPoint::new(sel.end.row(), snapshot.line_len(sel.end.row()));
+                }
+                if sel.is_empty() {
+                    sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
                 }
             });
         });
-        let item = self.cut_common(window, cx);
+        let item = self.cut_common(true, window, cx);
         cx.set_global(KillRing(item))
     }
 
@@ -13014,7 +13023,7 @@ impl Editor {
 
     pub fn cut_to_end_of_line(
         &mut self,
-        _: &CutToEndOfLine,
+        action: &CutToEndOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13027,7 +13036,18 @@ impl Editor {
                 window,
                 cx,
             );
-            this.cut(&Cut, window, cx);
+            if !action.keep_newlines {
+                this.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_, sel| {
+                        if sel.is_empty() {
+                            sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
+                        }
+                    });
+                });
+            }
+            this.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+            let item = this.cut_common(false, window, cx);
+            cx.write_to_clipboard(item);
         });
     }
 
