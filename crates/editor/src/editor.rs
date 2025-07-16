@@ -12182,9 +12182,9 @@ impl Editor {
         };
 
         window.dispatch_action(
-            Box::new(DiffText {
-                old_text_source: TextSource::Clipboard(clipboard_text),
-                new_text_source: TextSource::Editor(cx.entity()),
+            Box::new(DiffClipboardWithSelectionData {
+                clipboard_text,
+                editor: cx.entity(),
             }),
             cx,
         );

@@ -3,7 +3,7 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::{Editor, actions::DiffText};
+use editor::{Editor, actions::DiffClipboardWithSelectionData};
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -156,11 +156,13 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
-        workspace.register_action(|workspace, action: &DiffText, window, cx| {
-            if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
-                task.detach();
-            };
-        });
+        workspace.register_action(
+            |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
+                if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
+                    task.detach();
+                };
+            },
+        );
     })
     .detach();
 }
