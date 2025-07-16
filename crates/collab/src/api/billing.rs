@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use axum::routing::put;
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},
@@ -27,8 +28,8 @@ use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::llm::db::subscription_usage_meter::{self, CompletionMode};
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
     StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
@@ -47,10 +48,7 @@ use crate::{
 
 pub fn router() -> Router {
     Router::new()
-        .route(
-            "/billing/preferences",
-            get(get_billing_preferences).put(update_billing_preferences),
-        )
+        .route("/billing/preferences", put(update_billing_preferences))
         .route(
             "/billing/subscriptions",
             get(list_billing_subscriptions).post(create_billing_subscription),
@@ -66,54 +64,12 @@ pub fn router() -> Router {
         .route("/billing/usage", get(get_current_usage))
 }
 
-#[derive(Debug, Deserialize)]
-struct GetBillingPreferencesParams {
-    github_user_id: i32,
-}
-
 #[derive(Debug, Serialize)]
 struct BillingPreferencesResponse {
     trial_started_at: Option<String>,
     max_monthly_llm_usage_spending_in_cents: i32,
     model_request_overages_enabled: bool,
     model_request_overages_spend_limit_in_cents: i32,
-}
-
-async fn get_billing_preferences(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetBillingPreferencesParams>,
-) -> Result<Json<BillingPreferencesResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(params.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
-    let preferences = app.db.get_billing_preferences(user.id).await?;
-
-    Ok(Json(BillingPreferencesResponse {
-        trial_started_at: billing_customer
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| {
-                trial_started_at
-                    .and_utc()
-                    .to_rfc3339_opts(SecondsFormat::Millis, true)
-            }),
-        max_monthly_llm_usage_spending_in_cents: preferences
-            .as_ref()
-            .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
-                preferences.max_monthly_llm_usage_spending_in_cents
-            }),
-        model_request_overages_enabled: preferences.as_ref().map_or(false, |preferences| {
-            preferences.model_request_overages_enabled
-        }),
-        model_request_overages_spend_limit_in_cents: preferences
-            .as_ref()
-            .map_or(0, |preferences| {
-                preferences.model_request_overages_spend_limit_in_cents
-            }),
-    }))
 }
 
 #[derive(Debug, Deserialize)]
