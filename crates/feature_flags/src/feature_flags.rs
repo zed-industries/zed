@@ -92,15 +92,10 @@ impl FeatureFlag for JjUiFeatureFlag {
     const NAME: &'static str = "jj-ui";
 }
 
-pub struct ZedCloudFeatureFlag {}
+pub struct AcpFeatureFlag;
 
-impl FeatureFlag for ZedCloudFeatureFlag {
-    const NAME: &'static str = "zed-cloud";
-
-    fn enabled_for_staff() -> bool {
-        // Require individual opt-in, for now.
-        false
-    }
+impl FeatureFlag for AcpFeatureFlag {
+    const NAME: &'static str = "acp";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

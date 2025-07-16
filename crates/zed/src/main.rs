@@ -441,10 +441,30 @@ pub fn main() {
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+
+        language_extension::init(
+            language_extension::LspAccess::ViaWorkspaces({
+                let workspace_store = workspace_store.clone();
+                Arc::new(move |cx: &mut App| {
+                    workspace_store.update(cx, |workspace_store, cx| {
+                        workspace_store
+                            .workspaces()
+                            .iter()
+                            .map(|workspace| {
+                                workspace.update(cx, |workspace, _, cx| {
+                                    workspace.project().read(cx).lsp_store()
+                                })
+                            })
+                            .collect()
+                    })
+                })
+            }),
+            extension_host_proxy.clone(),
+            languages.clone(),
+        );
 
         Client::set_global(client.clone(), cx);
 
@@ -520,6 +540,7 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        agent_servers::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -722,6 +743,23 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
     if let Some(action_index) = request.dock_menu_action {
         cx.perform_dock_menu_action(action_index);
+        return;
+    }
+
+    if let Some(extension) = request.extension_id {
+        cx.spawn(async move |cx| {
+            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+            workspace.update(cx, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(zed_actions::Extensions {
+                        category_filter: None,
+                        id: Some(extension),
+                    }),
+                    cx,
+                );
+            })
+        })
+        .detach_and_log_err(cx);
         return;
     }
 
@@ -1370,7 +1408,6 @@ fn dump_all_gpui_actions() {
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),

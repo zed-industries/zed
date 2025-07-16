@@ -1389,10 +1389,17 @@ impl Room {
         let sources = cx.screen_capture_sources();
 
         cx.spawn(async move |this, cx| {
-            let sources = sources.await??;
-            let source = sources.first().context("no display found")?;
+            let sources = sources
+                .await
+                .map_err(|error| error.into())
+                .and_then(|sources| sources);
+            let source =
+                sources.and_then(|sources| sources.into_iter().next().context("no display found"));
 
-            let publication = participant.publish_screenshare_track(&**source, cx).await;
+            let publication = match source {
+                Ok(source) => participant.publish_screenshare_track(&*source, cx).await,
+                Err(error) => Err(error),
+            };
 
             this.update(cx, |this, cx| {
                 let live_kit = this

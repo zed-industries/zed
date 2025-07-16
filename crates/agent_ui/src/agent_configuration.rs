@@ -24,9 +24,10 @@ use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
+use proto::Plan;
 use settings::{Settings, update_settings_file};
 use ui::{
-    ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
+    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
     Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
@@ -171,6 +172,15 @@ impl AgentConfiguration {
             .copied()
             .unwrap_or(false);
 
+        let is_zed_provider = provider.id() == ZED_CLOUD_PROVIDER_ID;
+        let current_plan = if is_zed_provider {
+            self.workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).current_plan())
+        } else {
+            None
+        };
+
         v_flex()
             .when(is_expanded, |this| this.mb_2())
             .child(
@@ -208,14 +218,31 @@ impl AgentConfiguration {
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(Label::new(provider_name.clone()).size(LabelSize::Large))
-                                    .when(
-                                        provider.is_authenticated(cx) && !is_expanded,
-                                        |parent| {
-                                            parent.child(
-                                                Icon::new(IconName::Check).color(Color::Success),
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new(provider_name.clone())
+                                                    .size(LabelSize::Large),
                                             )
-                                        },
+                                            .map(|this| {
+                                                if is_zed_provider {
+                                                    this.gap_2().child(
+                                                        self.render_zed_plan_info(current_plan, cx),
+                                                    )
+                                                } else {
+                                                    this.when(
+                                                        provider.is_authenticated(cx)
+                                                            && !is_expanded,
+                                                        |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                            }),
                                     ),
                             )
                             .child(
@@ -431,6 +458,37 @@ impl AgentConfiguration {
             .child(self.render_sound_notification(cx))
     }
 
+    fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(plan) = plan {
+            let free_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.05));
+
+            let pro_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.2));
+
+            let (plan_name, label_color, bg_color) = match plan {
+                Plan::Free => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+            };
+
+            Chip::new(plan_name.to_string())
+                .bg_color(bg_color)
+                .label_color(label_color)
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        }
+    }
+
     fn render_context_servers_section(
         &mut self,
         window: &mut Window,
@@ -491,6 +549,7 @@ impl AgentConfiguration {
                                         category_filter: Some(
                                             ExtensionCategoryFilter::ContextServers,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,

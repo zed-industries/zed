@@ -57,7 +57,7 @@ impl Tool for CopyPathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Clipboard
+        IconName::ToolCopy
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

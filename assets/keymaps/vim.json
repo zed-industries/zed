@@ -466,7 +466,7 @@
     }
   },
   {
-    "context": "vim_mode == insert && showing_signature_help && !showing_completions",
+    "context": "(vim_mode == insert || vim_mode == normal) && showing_signature_help && !showing_completions",
     "bindings": {
       "ctrl-p": "editor::SignatureHelpPrevious",
       "ctrl-n": "editor::SignatureHelpNext"
@@ -841,6 +841,7 @@
       "i": "git_panel::FocusEditor",
       "x": "git::ToggleStaged",
       "shift-x": "git::StageAll",
+      "g x": "git::StageRange",
       "shift-u": "git::UnstageAll"
     }
   },

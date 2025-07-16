@@ -54,20 +54,6 @@ impl JsDebugAdapter {
         user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Couldn't find JavaScript dap directory")?
-        };
-
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
@@ -136,21 +122,27 @@ impl JsDebugAdapter {
                 .or_insert(true.into());
         }
 
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+
+            let file_name_prefix = format!("{}_", self.name());
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .context("Couldn't find JavaScript dap directory")?
+            .join(Self::ADAPTER_PATH)
+        };
+
         let arguments = if let Some(mut args) = user_args {
-            args.insert(
-                0,
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-            );
+            args.insert(0, adapter_path.to_string_lossy().to_string());
             args
         } else {
             vec![
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
+                adapter_path.to_string_lossy().to_string(),
                 port.to_string(),
                 host.to_string(),
             ]
@@ -533,6 +525,14 @@ impl DebugAdapter for JsDebugAdapter {
             .as_str()
             .filter(|name| !name.is_empty())?;
         Some(label.to_owned())
+    }
+
+    fn compact_child_session(&self) -> bool {
+        true
+    }
+
+    fn prefer_thread_name(&self) -> bool {
+        true
     }
 }
 

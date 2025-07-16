@@ -27,6 +27,8 @@ use workspace::{ItemId, WorkspaceId};
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
+pub struct WasScrolled(pub(crate) bool);
+
 #[derive(Default)]
 pub struct ScrollbarAutoHide(pub bool);
 
@@ -215,87 +217,56 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) {
-        let (new_anchor, top_row) = if scroll_position.y <= 0. && scroll_position.x <= 0. {
-            (
-                ScrollAnchor {
-                    anchor: Anchor::min(),
-                    offset: scroll_position.max(&gpui::Point::default()),
-                },
-                0,
-            )
-        } else if scroll_position.y <= 0. {
-            let buffer_point = map
-                .clip_point(
-                    DisplayPoint::new(DisplayRow(0), scroll_position.x as u32),
-                    Bias::Left,
-                )
-                .to_point(map);
-            let anchor = map.buffer_snapshot.anchor_at(buffer_point, Bias::Right);
-
-            (
-                ScrollAnchor {
-                    anchor: anchor,
-                    offset: scroll_position.max(&gpui::Point::default()),
-                },
-                0,
-            )
-        } else {
-            let scroll_top = scroll_position.y;
-            let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
-                ScrollBeyondLastLine::OnePage => scroll_top,
-                ScrollBeyondLastLine::Off => {
-                    if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_point().row().0 as f32;
-                        scroll_top.min(max_row - height_in_lines + 1.).max(0.)
-                    } else {
-                        scroll_top
-                    }
+    ) -> WasScrolled {
+        let scroll_top = scroll_position.y.max(0.);
+        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scroll_top,
+            ScrollBeyondLastLine::Off => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().0 as f32;
+                    scroll_top.min(max_row - height_in_lines + 1.).max(0.)
+                } else {
+                    scroll_top
                 }
-                ScrollBeyondLastLine::VerticalScrollMargin => {
-                    if let Some(height_in_lines) = self.visible_line_count {
-                        let max_row = map.max_point().row().0 as f32;
-                        scroll_top
-                            .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
-                            .max(0.)
-                    } else {
-                        scroll_top
-                    }
+            }
+            ScrollBeyondLastLine::VerticalScrollMargin => {
+                if let Some(height_in_lines) = self.visible_line_count {
+                    let max_row = map.max_point().row().0 as f32;
+                    scroll_top
+                        .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
+                        .max(0.)
+                } else {
+                    scroll_top
                 }
-            };
-
-            let scroll_top_row = DisplayRow(scroll_top as u32);
-            let scroll_top_buffer_point = map
-                .clip_point(
-                    DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
-                    Bias::Left,
-                )
-                .to_point(map);
-            let top_anchor = map
-                .buffer_snapshot
-                .anchor_at(scroll_top_buffer_point, Bias::Right);
-
-            (
-                ScrollAnchor {
-                    anchor: top_anchor,
-                    offset: point(
-                        scroll_position.x.max(0.),
-                        scroll_top - top_anchor.to_display_point(map).row().as_f32(),
-                    ),
-                },
-                scroll_top_buffer_point.row,
-            )
+            }
         };
 
+        let scroll_top_row = DisplayRow(scroll_top as u32);
+        let scroll_top_buffer_point = map
+            .clip_point(
+                DisplayPoint::new(scroll_top_row, scroll_position.x as u32),
+                Bias::Left,
+            )
+            .to_point(map);
+        let top_anchor = map
+            .buffer_snapshot
+            .anchor_at(scroll_top_buffer_point, Bias::Right);
+
         self.set_anchor(
-            new_anchor,
-            top_row,
+            ScrollAnchor {
+                anchor: top_anchor,
+                offset: point(
+                    scroll_position.x.max(0.),
+                    scroll_top - top_anchor.to_display_point(map).row().as_f32(),
+                ),
+            },
+            scroll_top_buffer_point.row,
             local,
             autoscroll,
             workspace_id,
             window,
             cx,
-        );
+        )
     }
 
     fn set_anchor(
@@ -307,7 +278,7 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> WasScrolled {
         let adjusted_anchor = if self.forbid_vertical_scroll {
             ScrollAnchor {
                 offset: gpui::Point::new(anchor.offset.x, self.anchor.offset.y),
@@ -317,10 +288,14 @@ impl ScrollManager {
             anchor
         };
 
+        self.autoscroll_request.take();
+        if self.anchor == adjusted_anchor {
+            return WasScrolled(false);
+        }
+
         self.anchor = adjusted_anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
-        self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
 
@@ -342,6 +317,8 @@ impl ScrollManager {
                 .detach()
         }
         cx.notify();
+
+        WasScrolled(true)
     }
 
     pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
@@ -552,13 +529,13 @@ impl Editor {
         scroll_position: gpui::Point<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> WasScrolled {
         let mut position = scroll_position;
         if self.scroll_manager.forbid_vertical_scroll {
             let current_position = self.scroll_position(cx);
             position.y = current_position.y;
         }
-        self.set_scroll_position_internal(position, true, false, window, cx);
+        self.set_scroll_position_internal(position, true, false, window, cx)
     }
 
     /// Scrolls so that `row` is at the top of the editor view.
@@ -590,7 +567,7 @@ impl Editor {
         autoscroll: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> WasScrolled {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.set_scroll_position_taking_display_map(
             scroll_position,
@@ -599,7 +576,7 @@ impl Editor {
             map,
             window,
             cx,
-        );
+        )
     }
 
     fn set_scroll_position_taking_display_map(
@@ -610,7 +587,7 @@ impl Editor {
         display_map: DisplaySnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> WasScrolled {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
@@ -624,7 +601,7 @@ impl Editor {
             scroll_position
         };
 
-        self.scroll_manager.set_scroll_position(
+        let editor_was_scrolled = self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
             local,
@@ -636,6 +613,7 @@ impl Editor {
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         self.refresh_colors(false, None, window, cx);
+        editor_was_scrolled
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {

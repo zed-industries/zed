@@ -226,21 +226,10 @@ impl HttpClientWithUrl {
     }
 
     /// Builds a Zed LLM URL using the given path.
-    pub fn build_zed_llm_url(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-        use_cloud: bool,
-    ) -> Result<Url> {
+    pub fn build_zed_llm_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
-            "https://zed.dev" => {
-                if use_cloud {
-                    "https://cloud.zed.dev"
-                } else {
-                    "https://llm.zed.dev"
-                }
-            }
+            "https://zed.dev" => "https://cloud.zed.dev",
             "https://staging.zed.dev" => "https://llm-staging.zed.dev",
             "http://localhost:3000" => "http://localhost:8787",
             other => other,
