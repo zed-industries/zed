@@ -227,7 +227,7 @@ impl AgentConfiguration {
                                             )
                                             .map(|this| {
                                                 if is_zed_provider {
-                                                    this.child(
+                                                    this.gap_2().child(
                                                         self.render_zed_plan_info(current_plan, cx),
                                                     )
                                                 } else {
