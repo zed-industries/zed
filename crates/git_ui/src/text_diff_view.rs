@@ -153,17 +153,15 @@ impl TextDiffView {
 
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
 
-        for buffer in [&clipboard_buffer, &source_buffer] {
-            cx.subscribe(buffer, move |this, _, event, _| match event {
-                language::BufferEvent::Edited
-                | language::BufferEvent::LanguageChanged
-                | language::BufferEvent::Reparsed => {
-                    this.buffer_changes_tx.send(()).ok();
-                }
-                _ => {}
-            })
-            .detach();
-        }
+        cx.subscribe(&source_buffer, move |this, _, event, _| match event {
+            language::BufferEvent::Edited
+            | language::BufferEvent::LanguageChanged
+            | language::BufferEvent::Reparsed => {
+                this.buffer_changes_tx.send(()).ok();
+            }
+            _ => {}
+        })
+        .detach();
 
         Self {
             source_editor,
