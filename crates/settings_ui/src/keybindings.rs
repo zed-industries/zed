@@ -1,6 +1,7 @@
 use std::{
     ops::{Not as _, Range},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context as _, anyhow};
@@ -12,7 +13,7 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, WeakEntity, actions, anchored, deferred, div,
+    ScrollWheelEvent, StyledText, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -151,6 +152,13 @@ impl SearchMode {
             SearchMode::KeyStroke { .. } => SearchMode::Normal,
         }
     }
+
+    fn exact_match(&self) -> bool {
+        match self {
+            SearchMode::Normal => false,
+            SearchMode::KeyStroke { exact_match } => *exact_match,
+        }
+    }
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
@@ -249,6 +257,7 @@ struct KeymapEditor {
     keybinding_conflict_state: ConflictState,
     filter_state: FilterState,
     search_mode: SearchMode,
+    search_query_debounce: Option<Task<()>>,
     // corresponds 1 to 1 with keybindings
     string_match_candidates: Arc<Vec<StringMatchCandidate>>,
     matches: Vec<StringMatch>,
@@ -347,6 +356,7 @@ impl KeymapEditor {
             context_menu: None,
             previous_edit: None,
             humanized_action_names,
+            search_query_debounce: None,
         };
 
         this.on_keymap_changed(cx);
@@ -371,10 +381,32 @@ impl KeymapEditor {
         }
     }
 
-    fn on_query_changed(&self, cx: &mut Context<Self>) {
+    fn on_query_changed(&mut self, cx: &mut Context<Self>) {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
+        let exact_match = self.search_mode.exact_match();
 
+        let timer = cx.background_executor().timer(Duration::from_secs(1));
+        self.search_query_debounce = Some(cx.background_spawn({
+            let action_query = action_query.clone();
+            let keystroke_query = keystroke_query.clone();
+            async move {
+                timer.await;
+
+                let keystroke_query = keystroke_query
+                    .into_iter()
+                    .map(|keystroke| keystroke.unparse())
+                    .collect::<Vec<String>>()
+                    .join(" ");
+
+                telemetry::event!(
+                    "Keystroke Search Completed",
+                    action_query = action_query,
+                    keystroke_query = keystroke_query,
+                    keystroke_exact_match = exact_match
+                )
+            }
+        }));
         cx.spawn(async move |this, cx| {
             Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
             this.update(cx, |this, cx| {
@@ -474,6 +506,7 @@ impl KeymapEditor {
             }
             this.selected_index.take();
             this.matches = matches;
+
             cx.notify();
         })
     }
@@ -864,6 +897,26 @@ impl KeymapEditor {
             return;
         };
         let keymap_editor = cx.entity();
+
+        let arguments = keybind
+            .action_arguments
+            .as_ref()
+            .map(|arguments| arguments.text.clone());
+        let context = keybind
+            .context
+            .as_ref()
+            .map(|context| context.local_str().unwrap_or("global"));
+        let source = keybind.source.as_ref().map(|source| source.1.clone());
+
+        telemetry::event!(
+            "Edit Keybinding Modal Opened",
+            keystroke = keybind.keystroke_text,
+            action = keybind.action_name,
+            source = source,
+            context = context,
+            arguments = arguments,
+        );
+
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
@@ -899,7 +952,7 @@ impl KeymapEditor {
             return;
         };
 
-        let Ok(fs) = self
+        let std::result::Result::Ok(fs) = self
             .workspace
             .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
         else {
@@ -929,6 +982,8 @@ impl KeymapEditor {
         let Some(context) = context else {
             return;
         };
+
+        telemetry::event!("Keybinding Context Copied", context = context.clone());
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(context.clone()));
     }
 
@@ -944,6 +999,8 @@ impl KeymapEditor {
         let Some(action) = action else {
             return;
         };
+
+        telemetry::event!("Keybinding Action Copied", action = action.clone());
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(action.clone()));
     }
 
@@ -2222,6 +2279,9 @@ async fn save_keybinding_update(
             from: Some(target),
         }
     };
+
+    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
+
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
             .context("Failed to update keybinding")?;
@@ -2231,6 +2291,13 @@ async fn save_keybinding_update(
     )
     .await
     .context("Failed to write keymap file")?;
+
+    telemetry::event!(
+        "Keybinding Updated",
+        new_keybinding = new_keybinding,
+        removed_keybinding = removed_keybinding,
+        source = source
+    );
     Ok(())
 }
 
@@ -2266,6 +2333,7 @@ async fn remove_keybinding(
             .unwrap_or(KeybindSource::User),
     };
 
+    let (new_keybinding, removed_keybinding, source) = operation.generate_telemetry();
     let updated_keymap_contents =
         settings::KeymapFile::update_keybinding(operation, keymap_contents, tab_size)
             .context("Failed to update keybinding")?;
@@ -2275,6 +2343,13 @@ async fn remove_keybinding(
     )
     .await
     .context("Failed to write keymap file")?;
+
+    telemetry::event!(
+        "Keybinding Removed",
+        new_keybinding = new_keybinding,
+        removed_keybinding = removed_keybinding,
+        source = source
+    );
     Ok(())
 }
 
