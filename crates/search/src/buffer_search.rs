@@ -2883,6 +2883,105 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_pattern_items(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no search options enabled by default"
+            );
+
+            // Update the search query's text to `test\C` to check if the
+            // search option is correctly applied.
+            let query = "test\\C";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\C pattern item is present"
+            );
+
+            // Remove `\\C` from the query to check if the search option is
+            // correctly reverted to its default state.
+            let query = "test";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have case sensitivity disable when \\C pattern item is removed"
+            );
+
+            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled by default"
+            );
+
+            // Update the search query's text to `test\c` to check if the
+            // case sensitivity search option is correctly disabled.
+            let query = "test\\c";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no case sensitivity enabled when \\c pattern item is present"
+            );
+
+            // Remove `\\c` from the query to check if the search option is
+            // correctly reverted to its default state.
+            let query = "test";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\c pattern item is removed"
+            );
+        });
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
