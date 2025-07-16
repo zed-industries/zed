@@ -216,6 +216,6 @@ impl Render for ZedPredictModal {
                     },
                 )),
             ))
-            .child(div().pt_2().child(self.onboarding.clone()))
+            .child(self.onboarding.clone())
     }
 }

@@ -1,16 +1,18 @@
 mod agent_panel_onboarding;
 mod edit_prediction_onboarding;
 mod onboarding_container;
+mod young_account_banner;
 
 pub use agent_panel_onboarding::AgentPanelOnboarding;
 pub use edit_prediction_onboarding::EditPredictionOnboarding;
 pub use onboarding_container::OnboardingContainer;
+pub use young_account_banner::YoungAccountBanner;
 
 use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
-use ui::{Banner, Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
+use ui::{Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
 
 pub struct BulletItem {
     label: SharedString,
@@ -212,19 +214,6 @@ impl ZedAiOnboarding {
                     }),
             )
     }
-    fn render_young_account_disclaimer(cx: &mut App) -> impl IntoElement {
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "Given your GitHub account was created less than 30 days ago, we cannot put you in the Free plan or offer you a free trial of the Pro plan. To continue, upgrade to Pro or use your own API keys.";
-
-        let label = div()
-            .w_full()
-            .text_sm()
-            .text_color(cx.theme().colors().text_muted)
-            .child(YOUNG_ACCOUNT_DISCLAIMER);
-
-        div()
-            .my_1()
-            .child(Banner::new().severity(ui::Severity::Warning).child(label))
-    }
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
         const SIGN_IN_DISCLAIMER: &str =
@@ -253,6 +242,7 @@ impl ZedAiOnboarding {
 
     fn render_free_plan_onboarding(&self, cx: &mut App) -> Div {
         const PLANS_DESCRIPTION: &str = "Choose how you want to start.";
+        let young_account_banner = YoungAccountBanner;
 
         v_flex()
             .child(Headline::new("Welcome to Zed AI"))
@@ -264,7 +254,7 @@ impl ZedAiOnboarding {
                     .mb_3(),
             )
             .when(self.account_too_young, |this| {
-                this.child(Self::render_young_account_disclaimer(cx))
+                this.child(young_account_banner)
             })
             .child(self.render_free_plan_section(cx))
             .child(self.render_pro_plan_section(cx))
