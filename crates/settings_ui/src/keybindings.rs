@@ -2149,7 +2149,6 @@ async fn remove_keybinding(
                 .and_then(KeybindContextString::local_str),
             keystrokes,
             action_name: &existing.action_name,
-            use_key_equivalents: false,
             action_arguments: existing
                 .action_arguments
                 .as_ref()
