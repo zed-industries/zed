@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
+use futures::{AsyncRead, AsyncSeek, AsyncWrite};
 use futures::{StreamExt, io::BufReader};
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
@@ -14,8 +15,11 @@ use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
 use settings::Settings as _;
+use sha2::{Digest, Sha256};
 use smol::fs::{self};
 use std::fmt::Display;
+use std::pin::Pin;
+use std::task::Poll;
 use std::{
     any::Any,
     borrow::Cow,
@@ -23,7 +27,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::archive::extract_zip;
+use util::archive::{extract_seekable_zip, extract_zip};
 use util::merge_json_value_into;
 use util::{
     ResultExt,
@@ -61,6 +65,41 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
+struct HashingWriter<W: AsyncWrite + Unpin> {
+    writer: W,
+    hasher: Sha256,
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
+        match Pin::new(&mut self.writer).poll_write(cx, buf) {
+            Poll::Ready(Ok(n)) => {
+                self.hasher.update(&buf[..n]);
+                Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
+        Pin::new(&mut self.writer).poll_close(cx)
+    }
+}
+
 impl RustLspAdapter {
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
@@ -77,6 +116,65 @@ impl RustLspAdapter {
             extension
         )
     }
+
+    async fn stream_response_archive(
+        response: impl AsyncRead + Unpin,
+        url: &str,
+        destination_path: &Path,
+    ) -> Result<()> {
+        match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
+            AssetKind::Gz => extract_gz(destination_path, url, response).await?,
+            AssetKind::Zip => {
+                extract_zip(&destination_path, response).await?;
+            }
+        };
+        Ok(())
+    }
+
+    async fn stream_file_archive(
+        file_archive: impl AsyncRead + AsyncSeek + Unpin,
+        url: &str,
+        destination_path: &Path,
+    ) -> Result<()> {
+        match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
+            AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
+            AssetKind::Zip => {
+                extract_seekable_zip(&destination_path, file_archive).await?;
+            }
+        };
+        Ok(())
+    }
+}
+
+async fn extract_tar_gz(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    let archive = async_tar::Archive::new(decompressed_bytes);
+    archive
+        .unpack(&destination_path)
+        .await
+        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
+}
+
+async fn extract_gz(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    let mut file = fs::File::create(&destination_path).await.with_context(|| {
+        format!("creating a file {destination_path:?} for a download from {url}")
+    })?;
+    futures::io::copy(&mut decompressed_bytes, &mut file)
+        .await
+        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
 }
 
 pub(crate) struct CargoManifestProvider;
@@ -172,6 +270,7 @@ impl LspAdapter for RustLspAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 
@@ -196,38 +295,62 @@ impl LspAdapter for RustLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .with_context(|| format!("downloading release from {}", version.url))?;
-            match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let archive = async_tar::Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await.with_context(|| {
-                        format!("extracting {} to {:?}", version.url, destination_path)
-                    })?;
+
+            match version.digest.as_deref().and_then(|digest| {
+                if digest.starts_with("sha256:") {
+                    Some(&digest[7..])
+                } else {
+                    None
                 }
-                AssetKind::Gz => {
-                    let mut decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let mut file =
-                        fs::File::create(&destination_path).await.with_context(|| {
+            }) {
+                Some(expected_sha_256) => {
+                    let temp_asset_file = tempfile::NamedTempFile::new().with_context(|| {
+                        format!("creating a temporary file for {}", version.url)
+                    })?;
+                    dbg!(temp_asset_file.path());
+                    let mut writer = HashingWriter {
+                        writer: async_fs::File::from(temp_asset_file.into_file()),
+                        hasher: Sha256::new(),
+                    };
+                    futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
+                        .await
+                        .with_context(|| {
                             format!(
-                                "creating a file {:?} for a download from {}",
-                                destination_path, version.url,
+                                "saving archive contents into the temporary file for {}",
+                                version.url
                             )
                         })?;
-                    futures::io::copy(&mut decompressed_bytes, &mut file)
+                    let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+                    dbg!(&version.url);
+                    anyhow::ensure!(
+                        dbg!(&asset_sha_256) == dbg!(expected_sha_256),
+                        "{} asset got SHA-256 mismatch. Expected: {}, Got: {}",
+                        version.url,
+                        expected_sha_256,
+                        asset_sha_256
+                    );
+                    Self::stream_file_archive(&mut writer.writer, &version.url, &destination_path)
                         .await
                         .with_context(|| {
-                            format!("extracting {} to {:?}", version.url, destination_path)
+                            format!(
+                                "extracting downloaded asset for {} into {:?}",
+                                version.url, destination_path
+                            )
                         })?;
                 }
-                AssetKind::Zip => {
-                    extract_zip(&destination_path, response.body_mut())
-                        .await
-                        .with_context(|| {
-                            format!("unzipping {} to {:?}", version.url, destination_path)
-                        })?;
-                }
-            };
+                None => Self::stream_response_archive(
+                    response.body_mut(),
+                    &version.url,
+                    &destination_path,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "extracting response for asset {} into {:?}",
+                        version.url, destination_path
+                    )
+                })?,
+            }
 
             // todo("windows")
             make_file_executable(&server_path).await?;

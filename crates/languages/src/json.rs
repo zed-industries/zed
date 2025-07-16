@@ -509,6 +509,7 @@ impl LspAdapter for NodeVersionAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 

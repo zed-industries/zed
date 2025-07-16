@@ -58,6 +58,7 @@ impl super::LspAdapter for CLspAdapter {
         let version = GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         };
         Ok(Box::new(version) as Box<_>)
     }
