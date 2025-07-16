@@ -46,6 +46,7 @@ actions!(
 );
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
 
@@ -510,7 +511,7 @@ impl InlineCompletionButton {
                 );
         }
 
-        menu = menu.separator().header("Privacy Settings");
+        menu = menu.separator().header("Privacy");
         if let Some(provider) = &self.edit_prediction_provider {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
@@ -561,7 +562,8 @@ impl InlineCompletionButton {
                                 .child(
                                     Label::new(indoc!{
                                         "Help us improve our open dataset model by sharing data from open source repositories. \
-                                        Zed must detect a license file in your repo for this setting to take effect."
+                                        Zed must detect a license file in your repo for this setting to take effect. \
+                                        Files with sensitive data and secrets are excluded by default."
                                     })
                                 )
                                 .child(
@@ -628,6 +630,13 @@ impl InlineCompletionButton {
                             .detach_and_log_err(cx);
                     }
                 }),
+        ).item(
+            ContextMenuEntry::new("View Documentation")
+                .icon(IconName::FileGeneric)
+                .icon_color(Color::Muted)
+                .handler(move |_, cx| {
+                    cx.open_url(PRIVACY_DOCS);
+                })
         );
 
         if !self.editor_enabled.unwrap_or(true) {

@@ -72,68 +72,6 @@ impl ZedPredictModal {
         });
     }
 
-    // fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-    //     cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
-    //     cx.notify();
-
-    //     onboarding_event!("Docs Link Clicked");
-    // }
-
-    // fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-    //     let task = self
-    //         .user_store
-    //         .update(cx, |this, cx| this.accept_terms_of_service(cx));
-    //     let fs = self.fs.clone();
-
-    //     cx.spawn(async move |this, cx| {
-    //         task.await?;
-
-    //         let mut data_collection_opted_in = false;
-    //         this.update(cx, |this, _cx| {
-    //             data_collection_opted_in = this.data_collection_opted_in;
-    //         })
-    //         .ok();
-
-    //         KEY_VALUE_STORE
-    //             .write_kvp(
-    //                 ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-    //                 data_collection_opted_in.to_string(),
-    //             )
-    //             .await
-    //             .log_err();
-
-    //         // Make sure edit prediction provider setting is using the new key
-    //         let settings_path = paths::settings_file().as_path();
-    //         let settings_path = fs.canonicalize(settings_path).await.with_context(|| {
-    //             format!("Failed to canonicalize settings path {:?}", settings_path)
-    //         })?;
-
-    //         if let Some(settings) = fs.load(&settings_path).await.log_err() {
-    //             if let Some(new_settings) =
-    //                 migrator::migrate_edit_prediction_provider_settings(&settings)?
-    //             {
-    //                 fs.atomic_write(settings_path, new_settings).await?;
-    //             }
-    //         }
-
-    //         this.update(cx, |this, cx| {
-    //             update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
-    //                 file.features
-    //                     .get_or_insert(Default::default())
-    //                     .edit_prediction_provider = Some(EditPredictionProvider::Zed);
-    //             });
-
-    //             cx.emit(DismissEvent);
-    //         })
-    //     })
-    //     .detach_and_notify_err(window, cx);
-
-    //     onboarding_event!(
-    //         "Enable Clicked",
-    //         data_collection_opted_in = self.data_collection_opted_in,
-    //     );
-    // }
-
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         ZedPredictUpsell::set_dismissed(true, cx);
         cx.emit(DismissEvent);
@@ -166,6 +104,7 @@ impl Render for ZedPredictModal {
             .gap_2()
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
+            .overflow_hidden()
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 onboarding_event!("Cancelled", trigger = "Action");
