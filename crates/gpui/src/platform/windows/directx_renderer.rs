@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
@@ -37,7 +37,7 @@ pub(crate) struct DirectXDevices {
 }
 
 struct DirectXContext {
-    swap_chain: IDXGISwapChain1,
+    swap_chain: ManuallyDrop<IDXGISwapChain1>,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
     viewport: [D3D11_VIEWPORT; 1],
     // #[cfg(not(feature = "enable-renderdoc"))]
@@ -212,13 +212,35 @@ impl DirectXRenderer {
         &mut self,
         background_appearance: WindowBackgroundAppearance,
     ) -> Result<()> {
-        if background_appearance != WindowBackgroundAppearance::Opaque {
-            Err(anyhow::anyhow!(
-                "Set transparent background not supported when feature \"enable-renderdoc\" is enabled."
-            ))
-        } else {
-            Ok(())
+        let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
+        if self.transparent == transparent {
+            return Ok(());
         }
+        self.transparent = transparent;
+        // unsafe {
+        //     // recreate the swapchain
+        //     self.devices.device_context.OMSetRenderTargets(None, None);
+        //     drop(self.context.back_buffer[0].take().unwrap());
+        //     ManuallyDrop::drop(&mut self.context.swap_chain);
+        //     self.context.swap_chain = create_swap_chain_default(
+        //         &self.devices.dxgi_factory,
+        //         &self.devices.device,
+        //         self.hwnd,
+        //         transparent,
+        //     )?;
+        //     self.context.back_buffer = [Some(set_render_target_view(
+        //         &self.context.swap_chain,
+        //         &self.devices.device,
+        //         &self.devices.device_context,
+        //     )?)];
+        //     self.context.viewport = set_viewport(
+        //         &self.devices.device_context,
+        //         self.context.viewport[0].Width,
+        //         self.context.viewport[0].Height,
+        //     );
+        //     set_rasterizer_state(&self.devices.device, &self.devices.device_context)?;
+        // }
+        Ok(())
     }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
@@ -851,6 +873,14 @@ struct PathSprite {
     color: Background,
 }
 
+impl Drop for DirectXContext {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.swap_chain);
+        }
+    }
+}
+
 #[inline]
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
     #[cfg(debug_assertions)]
@@ -948,7 +978,7 @@ fn create_swap_chain_default(
     device: &ID3D11Device,
     hwnd: HWND,
     _transparent: bool,
-) -> Result<IDXGISwapChain1> {
+) -> Result<ManuallyDrop<IDXGISwapChain1>> {
     use windows::Win32::Graphics::Dxgi::DXGI_MWA_NO_ALT_ENTER;
 
     let desc = DXGI_SWAP_CHAIN_DESC1 {
@@ -970,7 +1000,7 @@ fn create_swap_chain_default(
     let swap_chain =
         unsafe { dxgi_factory.CreateSwapChainForHwnd(device, hwnd, &desc, None, None) }?;
     unsafe { dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER) }?;
-    Ok(swap_chain)
+    Ok(ManuallyDrop::new(swap_chain))
 }
 
 #[inline]

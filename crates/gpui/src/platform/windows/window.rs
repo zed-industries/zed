@@ -384,8 +384,7 @@ impl WindowsWindow {
             (WS_EX_TOOLWINDOW | WS_EX_LAYERED, WINDOW_STYLE(0x0))
         } else {
             (
-                // WS_EX_APPWINDOW | WS_EX_LAYERED,
-                WS_EX_APPWINDOW,
+                WS_EX_APPWINDOW | WS_EX_LAYERED,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
@@ -403,7 +402,7 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
-            transparent: true,
+            transparent: false,
             is_movable: params.is_movable,
             min_size: params.window_min_size,
             executor,
@@ -462,7 +461,7 @@ impl WindowsWindow {
         // window is going to be composited with per-pixel alpha, but the render
         // pipeline is responsible for effectively calling UpdateLayeredWindow
         // at the appropriate time.
-        // unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
+        unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
 
         Ok(Self(state_ptr))
     }
@@ -707,27 +706,28 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        // let mut window_state = self.0.state.borrow_mut();
-        // todo(zjk)
-        // window_state
-        //     .renderer
-        //     .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
+            .renderer
+            .update_transparency(background_appearance)
+            .context("Updating window transparency")
+            .log_err();
 
-        // match background_appearance {
-        //     WindowBackgroundAppearance::Opaque => {
-        //         // ACCENT_DISABLED
-        //         set_window_composition_attribute(window_state.hwnd, None, 0);
-        //     }
-        //     WindowBackgroundAppearance::Transparent => {
-        //         // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
-        //         set_window_composition_attribute(window_state.hwnd, None, 2);
-        //     }
-        //     WindowBackgroundAppearance::Blurred => {
-        //         // Enable acrylic blur
-        //         // ACCENT_ENABLE_ACRYLICBLURBEHIND
-        //         set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 0)), 4);
-        //     }
-        // }
+        match background_appearance {
+            WindowBackgroundAppearance::Opaque => {
+                // ACCENT_DISABLED
+                set_window_composition_attribute(window_state.hwnd, None, 0);
+            }
+            WindowBackgroundAppearance::Transparent => {
+                // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
+                set_window_composition_attribute(window_state.hwnd, None, 2);
+            }
+            WindowBackgroundAppearance::Blurred => {
+                // Enable acrylic blur
+                // ACCENT_ENABLE_ACRYLICBLURBEHIND
+                set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 0)), 4);
+            }
+        }
     }
 
     fn minimize(&self) {
