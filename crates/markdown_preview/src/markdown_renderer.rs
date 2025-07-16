@@ -7,9 +7,9 @@ use crate::markdown_elements::{
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    StyledText, TextStyle, WeakEntity, Window, div, img,
 };
 use settings::Settings;
 use std::{
@@ -19,7 +19,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    ButtonCommon, Clickable, Color, Element, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
     StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover,
     h_flex, relative, tooltip_container, v_flex,
@@ -38,7 +38,6 @@ pub struct RenderContext {
     border_color: Hsla,
     text_color: Hsla,
     window_rem_size: Pixels,
-    text_muted_color: Hsla,
     code_block_background_color: Hsla,
     code_span_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
@@ -58,7 +57,11 @@ impl RenderContext {
         let buffer_font_family = settings.buffer_font.family.clone();
         let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
-        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx));
+        buffer_text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx) * 1.1);
+
+        // Increase base text size for all markdown content
+        let mut text_style = window.text_style();
+        text_style.font_size = AbsoluteLength::from(settings.buffer_font_size(cx) * 1.1);
 
         RenderContext {
             workspace,
@@ -66,12 +69,11 @@ impl RenderContext {
             indent: 0,
             buffer_font_family,
             buffer_text_style,
-            text_style: window.text_style(),
+            text_style,
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,
             window_rem_size: window.rem_size(),
-            text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
             checkbox_clicked_callback: None,
@@ -117,10 +119,14 @@ impl RenderContext {
     /// We give padding between "This is a block quote."
     /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
+        let element = element
+            .text_size(self.scaled_rems(1.0))
+            .line_height(relative(1.6));
+
         if self.indent > 0 {
-            element.pb(self.scaled_rems(0.75))
+            element.pb(self.scaled_rems(0.5)) // More breathing room
         } else {
-            element
+            element.pb(self.scaled_rems(0.8)) // Even more for top-level
         }
     }
 }
@@ -133,7 +139,7 @@ pub fn render_parsed_markdown(
 ) -> Div {
     let mut cx = RenderContext::new(workspace, window, cx);
 
-    v_flex().gap_3().children(
+    v_flex().gap_0().children(
         parsed
             .children
             .iter()
@@ -154,42 +160,68 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
 }
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
-    let size = match parsed.level {
-        HeadingLevel::H1 => 2.,
-        HeadingLevel::H2 => 1.5,
-        HeadingLevel::H3 => 1.25,
-        HeadingLevel::H4 => 1.,
-        HeadingLevel::H5 => 0.875,
-        HeadingLevel::H6 => 0.85,
+    let (size, weight, spacing) = match parsed.level {
+        HeadingLevel::H1 => (2.5, FontWeight::EXTRA_BOLD, (0.5, 1.0)),
+        HeadingLevel::H2 => (2.0, FontWeight::BOLD, (0.4, 0.8)),
+        HeadingLevel::H3 => (1.5, FontWeight::SEMIBOLD, (0.3, 0.6)),
+        HeadingLevel::H4 => (1.25, FontWeight::MEDIUM, (0.2, 0.4)),
+        HeadingLevel::H5 => (1.0, FontWeight::MEDIUM, (0.15, 0.3)),
+        HeadingLevel::H6 => (0.875, FontWeight::NORMAL, (0.1, 0.2)),
     };
 
     let text_size = cx.scaled_rems(size);
+    let line_height = relative(1.2); // Tighter line height for headings
+    let padding_top = cx.scaled_rems(spacing.0);
+    let padding_bottom = cx.scaled_rems(spacing.1);
 
-    // was `DefiniteLength::from(text_size.mul(1.25))`
-    // let line_height = DefiniteLength::from(text_size.mul(1.25));
-    let line_height = text_size * 1.25;
-
-    // was `rems(0.15)`
-    // let padding_top = cx.scaled_rems(0.15);
-    let padding_top = rems(0.15);
-
-    // was `.pb_1()` = `rems(0.25)`
-    // let padding_bottom = cx.scaled_rems(0.25);
-    let padding_bottom = rems(0.25);
-
-    let color = match parsed.level {
-        HeadingLevel::H6 => cx.text_muted_color,
-        _ => cx.text_color,
-    };
-    div()
+    let element = div()
         .line_height(line_height)
         .text_size(text_size)
-        .text_color(color)
+        .font_weight(weight)
         .pt(padding_top)
-        .pb(padding_bottom)
+        .pb(padding_bottom);
+
+    // Add subtle styling for H1 and H2
+    let element = match parsed.level {
+        HeadingLevel::H1 => element
+            .border_b_2()
+            .border_color(cx.border_color.opacity(0.5))
+            .pb(padding_bottom * 1.5),
+        HeadingLevel::H2 => element
+            .border_b_1()
+            .border_color(cx.border_color.opacity(0.3))
+            .pb(padding_bottom * 1.2),
+        _ => element,
+    };
+
+    element
+        .text_color(cx.text_color)
         .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
+}
+
+fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
+    cx.with_common_p(div())
+        .children(render_markdown_text(parsed, cx))
+        .flex()
+        .flex_col()
+        .into_any_element()
+}
+
+// A tighter paragraph renderer for use inside list items.
+fn render_markdown_paragraph_tight(
+    parsed: &MarkdownParagraph,
+    cx: &mut RenderContext,
+) -> AnyElement {
+    div()
+        .text_size(cx.scaled_rems(1.0))
+        .line_height(relative(1.6))
+        .pb(cx.scaled_rems(0.1))
+        .children(render_markdown_text(parsed, cx))
+        .flex()
+        .flex_col()
+        .into_any_element()
 }
 
 fn render_markdown_list_item(
@@ -244,11 +276,16 @@ fn render_markdown_list_item(
     };
     let bullet = div().mr(cx.scaled_rems(0.5)).child(bullet);
 
+    // replaced indent hack; paragraphs in lists will be rendered tightly
     let contents: Vec<AnyElement> = parsed
         .content
         .iter()
-        .map(|c| render_markdown_block(c, cx))
+        .map(|c| match c {
+            ParsedMarkdownElement::Paragraph(p) => render_markdown_paragraph_tight(p, cx),
+            _ => render_markdown_block(c, cx),
+        })
         .collect();
+    // indent hack removed
 
     let item = h_flex()
         .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
@@ -258,7 +295,7 @@ fn render_markdown_list_item(
             div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
         ]);
 
-    cx.with_common_p(item).into_any()
+    item.into_any()
 }
 
 /// # MarkdownCheckbox ///
@@ -559,6 +596,23 @@ fn render_markdown_code_block(
     parsed: &ParsedMarkdownCodeBlock,
     cx: &mut RenderContext,
 ) -> AnyElement {
+    // Render optional language label at top-left
+    let language_label = parsed.language.as_ref().map(|lang| {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .px_2()
+            .py_1()
+            .bg(cx.code_span_background_color)
+            .rounded_t_sm()
+            .child(
+                Label::new(lang.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .into_any_element()
+    });
     let body = if let Some(highlights) = parsed.highlights.as_ref() {
         StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
@@ -573,7 +627,7 @@ fn render_markdown_code_block(
     };
 
     let copy_block_button = IconButton::new("copy-code", IconName::Copy)
-        .icon_size(IconSize::Small)
+        .icon_size(IconSize::Medium)
         .on_click({
             let contents = parsed.contents.clone();
             move |_, _window, cx| {
@@ -583,10 +637,13 @@ fn render_markdown_code_block(
         .tooltip(Tooltip::text("Copy code block"))
         .visible_on_hover("markdown-block");
 
-    cx.with_common_p(div())
+    let container = cx
+        .with_common_p(div().relative())
         .font_family(cx.buffer_font_family.clone())
-        .px_3()
-        .py_3()
+        .pr_3()
+        .pl_12()
+        .pt_8()
+        .pb_3()
         .bg(cx.code_block_background_color)
         .rounded_sm()
         .child(body)
@@ -597,16 +654,13 @@ fn render_markdown_code_block(
                 .right_1()
                 .top_1()
                 .child(copy_block_button),
-        )
-        .into_any()
-}
-
-fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
-    cx.with_common_p(div())
-        .children(render_markdown_text(parsed, cx))
-        .flex()
-        .flex_col()
-        .into_any_element()
+        );
+    // Attach language label if present
+    if let Some(label_elem) = language_label {
+        container.child(label_elem).into_any()
+    } else {
+        container.into_any()
+    }
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
