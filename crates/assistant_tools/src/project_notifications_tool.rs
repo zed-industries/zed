@@ -6,7 +6,6 @@ use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchem
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
 use std::sync::Arc;
 use ui::IconName;
 
@@ -52,32 +51,20 @@ impl Tool for ProjectNotificationsTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let mut stale_files = String::new();
-        let mut notified_buffers = Vec::new();
-
-        for stale_file in action_log.read(cx).unnotified_stale_buffers(cx) {
-            if let Some(file) = stale_file.read(cx).file() {
-                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
-                notified_buffers.push(stale_file.clone());
-            }
-        }
-
-        if !notified_buffers.is_empty() {
-            action_log.update(cx, |log, cx| {
-                log.mark_buffers_as_notified(notified_buffers, cx);
-            });
-        }
-
-        let response = if stale_files.is_empty() {
-            "No new notifications".to_string()
-        } else {
-            // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
-            const HEADER: &str = include_str!("./project_notifications_tool/prompt_header.txt");
-            format!("{HEADER}{stale_files}").replace("\r\n", "\n")
+        let Some(user_edits_diff) =
+            action_log.update(cx, |log, cx| log.flush_unnotified_user_edits(cx))
+        else {
+            return result("No new notifications");
         };
 
-        Task::ready(Ok(response.into())).into()
+        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
+        const HEADER: &str = include_str!("./project_notifications_tool/prompt_header.txt");
+        result(&format!("{HEADER}\n\n```diff\n{user_edits_diff}\n```\n").replace("\r\n", "\n"))
     }
+}
+
+fn result(response: &str) -> ToolResult {
+    Task::ready(Ok(response.to_string().into())).into()
 }
 
 #[cfg(test)]
@@ -123,6 +110,7 @@ mod tests {
         action_log.update(cx, |log, cx| {
             log.buffer_read(buffer.clone(), cx);
         });
+        cx.run_until_parked();
 
         // Run the tool before any changes
         let tool = Arc::new(ProjectNotificationsTool);
@@ -142,6 +130,7 @@ mod tests {
                 cx,
             )
         });
+        cx.run_until_parked();
 
         let response = result.output.await.unwrap();
         let response_text = match &response.content {
@@ -158,6 +147,7 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(1..1, "\nChange!\n")], None, cx);
         });
+        cx.run_until_parked();
 
         // Run the tool again
         let result = cx.update(|cx| {
@@ -171,6 +161,7 @@ mod tests {
                 cx,
             )
         });
+        cx.run_until_parked();
 
         // This time the buffer is stale, so the tool should return a notification
         let response = result.output.await.unwrap();
@@ -179,10 +170,12 @@ mod tests {
             _ => panic!("Expected text response"),
         };
 
-        let expected_content = "[The following is an auto-generated notification; do not reply]\n\nThese files have changed since the last read:\n- code.rs\n";
-        assert_eq!(
-            response_text.as_str(),
-            expected_content,
+        assert!(
+            response_text.contains("These files have changed"),
+            "Tool should return the stale buffer notification"
+        );
+        assert!(
+            response_text.contains("test/code.rs"),
             "Tool should return the stale buffer notification"
         );
 
@@ -198,6 +191,7 @@ mod tests {
                 cx,
             )
         });
+        cx.run_until_parked();
 
         let response = result.output.await.unwrap();
         let response_text = match &response.content {

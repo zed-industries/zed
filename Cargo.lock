@@ -745,6 +745,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "icons",
+ "indoc",
  "language",
  "language_model",
  "log",
