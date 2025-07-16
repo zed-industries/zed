@@ -57,6 +57,12 @@ enable = false
 "/adding-new-languages.html" = "/docs/extensions/languages.html"
 "/elixir.html" = "/docs/languages/elixir.html"
 "/javascript.html" = "/docs/languages/javascript.html"
+"/languages/languages/html.html" = "/docs/languages/html.html"
+"/languages/languages/javascript.html" = "/docs/languages/javascript.html"
+"/languages/languages/makefile.html" = "/docs/languages/makefile.html"
+"/languages/languages/nim.html" = "/docs/languages/nim.html"
+"/languages/languages/ruby.html" = "/docs/languages/ruby.html"
+"/languages/languages/scala.html" = "/docs/languages/scala.html"
 "/python.html" = "/docs/languages/python.html"
 "/ruby.html" = "/docs/languages/ruby.html"
 
