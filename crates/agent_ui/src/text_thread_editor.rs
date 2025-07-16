@@ -1,8 +1,6 @@
 use crate::{
     burn_mode_tooltip::BurnModeTooltip,
-    language_model_selector::{
-        LanguageModelSelector, ToggleModelSelector, language_model_selector,
-    },
+    language_model_selector::{LanguageModelSelector, language_model_selector},
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
@@ -74,6 +72,7 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
+use zed_actions::agent::ToggleModelSelector;
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_context::{

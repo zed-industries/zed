@@ -2,14 +2,16 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use gpui::{Action, ClickEvent, Entity, IntoElement, ParentElement};
+use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::{Divider, List, prelude::*};
-use zed_actions::agent::OpenConfiguration;
+use zed_actions::agent::{OpenConfiguration, ToggleModelSelector};
 
 use crate::{AgentPanelOnboardingCard, BulletItem, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
+    configured_providers: Vec<String>,
     continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
@@ -18,23 +20,54 @@ impl AgentPanelOnboarding {
         user_store: Entity<UserStore>,
         client: Arc<Client>,
         continue_with_zed_ai: impl Fn(&mut Window, &mut App) + 'static,
+        cx: &mut Context<Self>,
     ) -> Self {
+        cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
+                language_model::Event::ProviderStateChanged
+                | language_model::Event::AddedProvider(_)
+                | language_model::Event::RemovedProvider(_) => {
+                    this.configured_providers = Self::compute_available_providers(cx)
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         Self {
             user_store,
             client,
+            configured_providers: Self::compute_available_providers(cx),
             continue_with_zed_ai: Arc::new(continue_with_zed_ai),
         }
+    }
+
+    fn compute_available_providers(cx: &App) -> Vec<String> {
+        LanguageModelRegistry::read_global(cx)
+            .providers()
+            .iter()
+            .filter(|provider| {
+                provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
+            })
+            .map(|provider| provider.name().0.to_string())
+            .collect()
     }
 
     fn configure_providers(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
         cx.notify();
     }
-}
 
-impl Render for AgentPanelOnboarding {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let bring_api_keys = v_flex()
+    fn render_api_keys_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_existing_providers = self.configured_providers.len() > 0;
+        let configure_provider_label = if has_existing_providers {
+            "Configure Other Provider"
+        } else {
+            "Configure Providers"
+        };
+
+        v_flex()
             .mt_2()
             .gap_1()
             .child(
@@ -55,15 +88,35 @@ impl Render for AgentPanelOnboarding {
                     ))
                     .child(BulletItem::new(
                         "No need for any of the plans or even to sign in",
-                    )),
+                    ))
+                    .when(has_existing_providers, |this| {
+                        this.child(BulletItem::new(format!(
+                            "And we already noticed you have some providers ({}) set up, which you can use right away",
+                            self.configured_providers.join(", ")
+                        )))
+                    }),
             )
+            .when(has_existing_providers, |this| {
+                this.child(
+                    Button::new("pick-model", "Choose Model")
+                        .full_width()
+                        .style(ButtonStyle::Outlined)
+                        .on_click(|_event, window, cx| {
+                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
+                        }),
+                )
+            })
             .child(
-                Button::new("configure-providers", "Configure Models")
+                Button::new("configure-providers", configure_provider_label)
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click(cx.listener(Self::configure_providers)),
-            );
+            )
+    }
+}
 
+impl Render for AgentPanelOnboarding {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         AgentPanelOnboardingCard::new()
             .child(ZedAiOnboarding::new(
                 self.client.clone(),
@@ -71,6 +124,6 @@ impl Render for AgentPanelOnboarding {
                 self.continue_with_zed_ai.clone(),
                 cx,
             ))
-            .child(bring_api_keys)
+            .child(self.render_api_keys_section(cx))
     }
 }

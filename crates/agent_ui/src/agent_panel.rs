@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::NewAcpThread;
 use crate::agent_diff::AgentDiffThread;
-use crate::language_model_selector::ToggleModelSelector;
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -73,7 +72,7 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding},
+    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding, ToggleModelSelector},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 use zed_llm_client::{CompletionIntent, UsageLimit};
@@ -683,10 +682,15 @@ impl AgentPanel {
             },
         );
 
-        let onboarding = cx.new(|_cx| {
-            AgentPanelOnboarding::new(user_store.clone(), client, |_window, cx| {
-                OnboardingUpsell::set_dismissed(true, cx);
-            })
+        let onboarding = cx.new(|cx| {
+            AgentPanelOnboarding::new(
+                user_store.clone(),
+                client,
+                |_window, cx| {
+                    OnboardingUpsell::set_dismissed(true, cx);
+                },
+                cx,
+            )
         });
 
         Self {

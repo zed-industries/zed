@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
-use crate::language_model_selector::ToggleModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     MaxModeTooltip,
@@ -49,6 +48,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::Chat;
+use zed_actions::agent::ToggleModelSelector;
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};

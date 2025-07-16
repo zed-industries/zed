@@ -1,8 +1,6 @@
 use crate::{
     ModelUsageContext,
-    language_model_selector::{
-        LanguageModelSelector, ToggleModelSelector, language_model_selector,
-    },
+    language_model_selector::{LanguageModelSelector, language_model_selector},
 };
 use agent_settings::AgentSettings;
 use fs::Fs;
@@ -12,6 +10,7 @@ use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use zed_actions::agent::ToggleModelSelector;
 
 pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
