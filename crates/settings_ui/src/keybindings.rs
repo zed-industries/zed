@@ -6,7 +6,6 @@ use std::{
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, Editor, EditorEvent};
-use feature_flags::FeatureFlagViewExt;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -33,7 +32,6 @@ use workspace::{
 };
 
 use crate::{
-    SettingsUiFeatureFlag,
     keybindings::persistence::KEYBINDING_EDITORS,
     ui_components::table::{Table, TableInteractionState},
 };
@@ -48,7 +46,6 @@ actions!(
     ]
 );
 
-const KEYMAP_EDITOR_NAMESPACE: &'static str = "keymap_editor";
 actions!(
     keymap_editor,
     [
