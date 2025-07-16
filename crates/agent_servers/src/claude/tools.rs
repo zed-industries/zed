@@ -8,14 +8,18 @@ use util::ResultExt;
 pub enum ClaudeTool {
     Edit(Option<EditToolParams>),
     ReadFile(Option<ReadToolParams>),
-    ListDirectory,
+    Ls,
     Glob,
     Grep,
     Terminal(Option<BashToolParams>),
-    Web,
-    Todo,
-    Subagent,
-    Other { input: serde_json::Value },
+    WebFetch,
+    WebSearch,
+    TodoWrite,
+    ExitPlanMode,
+    Other {
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
 impl ClaudeTool {
@@ -26,64 +30,59 @@ impl ClaudeTool {
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
             "MultiEdit" => Self::Edit(None),
             "Write" => Self::Edit(None),
-            "LS" => Self::ListDirectory,
+            "LS" => Self::Ls,
             "Glob" => Self::Glob,
             "Grep" => Self::Grep,
             "Bash" => Self::Terminal(serde_json::from_value(dbg!(input)).log_err()),
-            "WebFetch" => Self::Web,
-            "WebSearch" => Self::Web,
-            "TodoWrite" => Self::Todo,
-            "exit_plan_mode" => Self::Todo,
-            "Task" => Self::Subagent,
+            "WebFetch" => Self::WebFetch,
+            "WebSearch" => Self::WebSearch,
+            "TodoWrite" => Self::TodoWrite,
+            "exit_plan_mode" => Self::ExitPlanMode,
+            "Task" => Self::ExitPlanMode,
             // Inferred from name
             _ => {
                 let tool_name = tool_name.to_lowercase();
 
                 if tool_name.contains("edit") || tool_name.contains("write") {
                     Self::Edit(None)
-                } else if tool_name.contains("web") {
-                    Self::Web
-                } else if tool_name.contains("todo") {
-                    Self::Todo
                 } else if tool_name.contains("terminal") {
                     Self::Terminal(None)
                 } else {
-                    Self::Other { input }
+                    Self::Other {
+                        name: tool_name.to_string(),
+                        input,
+                    }
                 }
             }
         }
     }
 
-    pub fn tool_call_params(tool_name: String, input: serde_json::Value) -> PushToolCallParams {
-        let inferred_tool = Self::infer(&tool_name, input);
+    pub fn label(&self) -> String {
+        match &self {
+            ClaudeTool::Terminal(Some(params)) => format!("`{}`", params.command),
+            ClaudeTool::Terminal(None) => "Terminal".into(),
+            ClaudeTool::ReadFile(_) => "Read File".into(),
+            ClaudeTool::Ls => "List Directory".into(),
+            ClaudeTool::Edit(_) => "Edit".into(),
+            ClaudeTool::Glob => "Glob".into(),
+            ClaudeTool::Grep => "Grep".into(),
+            ClaudeTool::WebFetch => "Fetch".into(),
+            ClaudeTool::WebSearch => "Web Search".into(),
+            ClaudeTool::TodoWrite => "Update TODOs".into(),
+            ClaudeTool::ExitPlanMode => "Exit Plan Mode".into(),
+            ClaudeTool::Other { name, .. } => name.clone(),
+        }
+    }
 
-        let (content, label) = match &inferred_tool {
-            ClaudeTool::Terminal(Some(params)) => (None, format!("`{}`", params.command)),
-            ClaudeTool::Terminal(None)
-            | ClaudeTool::ReadFile(_)
-            | ClaudeTool::ListDirectory
-            | ClaudeTool::Edit(_)
-            | ClaudeTool::Glob
-            | ClaudeTool::Grep
-            | ClaudeTool::Web
-            | ClaudeTool::Todo
-            | ClaudeTool::Subagent => (None, tool_name),
-            ClaudeTool::Other { input } => (
-                Some(acp::ToolCallContent::Markdown {
-                    markdown: format!(
-                        "```json\n{}```",
-                        serde_json::to_string_pretty(&input).unwrap_or("{}".to_string())
-                    ),
-                }),
-                tool_name,
-            ),
-        };
-
-        PushToolCallParams {
-            label,
-            content,
-            icon: inferred_tool.icon(),
-            locations: inferred_tool.locations(),
+    pub fn content(&self) -> Option<acp::ToolCallContent> {
+        match &self {
+            ClaudeTool::Other { input, .. } => Some(acp::ToolCallContent::Markdown {
+                markdown: format!(
+                    "```json\n{}```",
+                    serde_json::to_string_pretty(&input).unwrap_or("{}".to_string())
+                ),
+            }),
+            _ => None,
         }
     }
 
@@ -91,13 +90,14 @@ impl ClaudeTool {
         match self {
             Self::Edit(_) => acp::Icon::Pencil,
             Self::ReadFile(_) => acp::Icon::FileSearch,
-            Self::ListDirectory => acp::Icon::Folder,
+            Self::Ls => acp::Icon::Folder,
             Self::Glob => acp::Icon::FileSearch,
             Self::Grep => acp::Icon::Regex,
             Self::Terminal(_) => acp::Icon::Terminal,
-            Self::Web => acp::Icon::Globe,
-            Self::Todo => acp::Icon::LightBulb,
-            Self::Subagent => acp::Icon::Hammer,
+            Self::WebSearch => acp::Icon::Globe,
+            Self::WebFetch => acp::Icon::Globe,
+            Self::TodoWrite => acp::Icon::LightBulb,
+            Self::ExitPlanMode => acp::Icon::Hammer,
             Self::Other { .. } => acp::Icon::Hammer,
         }
     }
@@ -105,7 +105,7 @@ impl ClaudeTool {
     pub fn confirmation(&self, description: Option<String>) -> acp::ToolCallConfirmation {
         match &self {
             Self::Edit(_) => acp::ToolCallConfirmation::Edit { description },
-            Self::Web => acp::ToolCallConfirmation::Fetch {
+            Self::WebFetch => acp::ToolCallConfirmation::Fetch {
                 urls: vec![],
                 description,
             },
@@ -118,11 +118,12 @@ impl ClaudeTool {
                 description: Some(description.clone()),
             },
             Self::Terminal(None)
-            | Self::ListDirectory
+            | Self::Ls
             | Self::Glob
             | Self::Grep
-            | Self::Todo
-            | Self::Subagent
+            | Self::TodoWrite
+            | Self::WebSearch
+            | Self::ExitPlanMode
             | Self::ReadFile(_)
             | Self::Other { .. } => acp::ToolCallConfirmation::Other {
                 description: description.unwrap_or("".to_string()),
@@ -144,14 +145,24 @@ impl ClaudeTool {
             }],
             Self::Edit(None)
             | Self::ReadFile(None)
-            | Self::ListDirectory
+            | Self::Ls
             | Self::Glob
             | Self::Grep
             | Self::Terminal(_)
-            | Self::Web
-            | Self::Todo
-            | Self::Subagent
+            | Self::WebFetch
+            | Self::WebSearch
+            | Self::TodoWrite
+            | Self::ExitPlanMode
             | Self::Other { .. } => vec![],
+        }
+    }
+
+    pub fn as_acp(&self) -> PushToolCallParams {
+        PushToolCallParams {
+            label: self.label(),
+            content: self.content(),
+            icon: self.icon(),
+            locations: self.locations(),
         }
     }
 }

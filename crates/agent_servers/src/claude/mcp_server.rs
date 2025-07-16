@@ -269,15 +269,7 @@ impl ClaudeMcpServer {
                     .cloned()
                     .context("Tool call ID not found")?,
 
-                None => {
-                    delegate
-                        .push_tool_call(ClaudeTool::tool_call_params(
-                            params.tool_name,
-                            params.input.clone(),
-                        ))
-                        .await?
-                        .id
-                }
+                None => delegate.push_tool_call(claude_tool.as_acp()).await?.id,
             };
 
             let outcome = delegate

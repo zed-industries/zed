@@ -255,7 +255,7 @@ impl ClaudeAgentConnection {
                         }
                         ContentChunk::ToolUse { id, name, input } => {
                             if let Some(resp) = delegate
-                                .push_tool_call(ClaudeTool::tool_call_params(name, input))
+                                .push_tool_call(ClaudeTool::infer(&name, input).as_acp())
                                 .await
                                 .log_err()
                             {
