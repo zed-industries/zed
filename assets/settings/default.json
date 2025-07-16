@@ -1671,6 +1671,10 @@
         "allowed": true
       }
     },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "use_on_type_format": false
+    },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],
       "prettier": {
