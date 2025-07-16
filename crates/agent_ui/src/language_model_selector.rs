@@ -729,7 +729,7 @@ mod tests {
             ("openai", "gpt-4.1"),
             ("openai", "gpt-4.1-nano"),
             ("ollama", "mistral"),
-            ("ollama", "deepseek"),
+           
         ]);
         let matcher = ModelMatcher::new(models, cx.background_executor.clone());
 
@@ -757,7 +757,7 @@ mod tests {
             ("openai", "gpt-4.1"),
             ("openai", "gpt-4.1-nano"),
             ("ollama", "mistral"),
-            ("ollama", "deepseek"),
+            
         ]);
         let matcher = ModelMatcher::new(models, cx.background_executor.clone());
 
@@ -778,7 +778,7 @@ mod tests {
 
         // Model provider should be searchable as well
         let results = matcher.fuzzy_search("ol"); // meaning "ollama"
-        assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
+        assert_models_eq(results, vec!["ollama/mistral",]);
 
         // Fuzzy search
         let results = matcher.fuzzy_search("z4n");

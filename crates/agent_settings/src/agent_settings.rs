@@ -346,7 +346,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "openai",
                 "zed.dev",
                 "copilot_chat",
-                "deepseek",
+                
                 "openrouter",
                 "mistral",
                 "vercel"

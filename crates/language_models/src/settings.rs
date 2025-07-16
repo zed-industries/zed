@@ -9,7 +9,6 @@ use crate::provider::{
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
-    deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
     mistral::MistralSettings,
@@ -29,7 +28,7 @@ pub fn init(cx: &mut App) {
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
-    pub deepseek: DeepSeekSettings,
+    
     pub google: GoogleSettings,
     pub lmstudio: LmStudioSettings,
     pub mistral: MistralSettings,
@@ -45,7 +44,7 @@ pub struct AllLanguageModelSettings {
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
-    pub deepseek: Option<DeepseekSettingsContent>,
+    
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
@@ -85,11 +84,6 @@ pub struct LmStudioSettingsContent {
     pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
 }
 
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct DeepseekSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
-}
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct MistralSettingsContent {
@@ -203,17 +197,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 lmstudio.as_ref().and_then(|s| s.available_models.clone()),
             );
 
-            // DeepSeek
-            let deepseek = value.deepseek.clone();
-
-            merge(
-                &mut settings.deepseek.api_url,
-                value.deepseek.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.deepseek.available_models,
-                deepseek.as_ref().and_then(|s| s.available_models.clone()),
-            );
+            
 
             // OpenAI
             let openai = value.openai.clone();

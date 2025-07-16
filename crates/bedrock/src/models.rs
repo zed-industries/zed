@@ -75,8 +75,6 @@ pub enum Model {
     CohereCommandRV1,
     CohereCommandRPlusV1,
     CohereCommandLightTextV14_4k,
-    // DeepSeek
-    DeepSeekR1,
     // Meta models
     MetaLlama38BInstructV1,
     MetaLlama370BInstructV1,
@@ -160,7 +158,6 @@ impl Model {
             Model::AmazonNovaMicro => "amazon-nova-micro",
             Model::AmazonNovaPro => "amazon-nova-pro",
             Model::AmazonNovaPremier => "amazon-nova-premier",
-            Model::DeepSeekR1 => "deepseek-r1",
             Model::AI21J2GrandeInstruct => "ai21-j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21-j2-jumbo-instruct",
             Model::AI21J2Mid => "ai21-j2-mid",
@@ -221,7 +218,6 @@ impl Model {
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
             Model::AmazonNovaPremier => "amazon.nova-premier-v1:0",
-            Model::DeepSeekR1 => "deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
             Model::AI21J2Mid => "ai21.j2-mid",
@@ -279,7 +275,6 @@ impl Model {
             Self::AmazonNovaMicro => "Amazon Nova Micro",
             Self::AmazonNovaPro => "Amazon Nova Pro",
             Self::AmazonNovaPremier => "Amazon Nova Premier",
-            Self::DeepSeekR1 => "DeepSeek R1",
             Self::AI21J2GrandeInstruct => "AI21 Jurassic2 Grande Instruct",
             Self::AI21J2JumboInstruct => "AI21 Jurassic2 Jumbo Instruct",
             Self::AI21J2Mid => "AI21 Jurassic2 Mid",
@@ -521,7 +516,6 @@ impl Model {
                 | Model::Claude3Haiku
                 | Model::Claude3Opus
                 | Model::Claude3Sonnet
-                | Model::DeepSeekR1
                 | Model::MetaLlama31405BInstructV1
                 | Model::MetaLlama3170BInstructV1_128k
                 | Model::MetaLlama3170BInstructV1
@@ -735,7 +729,6 @@ mod tests {
         // Test that id() returns friendly identifiers
         assert_eq!(Model::Claude3_5SonnetV2.id(), "claude-3-5-sonnet-v2");
         assert_eq!(Model::AmazonNovaLite.id(), "amazon-nova-lite");
-        assert_eq!(Model::DeepSeekR1.id(), "deepseek-r1");
         assert_eq!(
             Model::MetaLlama38BInstructV1.id(),
             "meta-llama3-8b-instruct-v1"
@@ -747,7 +740,6 @@ mod tests {
             "anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(Model::AmazonNovaLite.request_id(), "amazon.nova-lite-v1:0");
-        assert_eq!(Model::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
         assert_eq!(
             Model::MetaLlama38BInstructV1.request_id(),
             "meta.llama3-8b-instruct-v1:0"

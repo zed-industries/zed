@@ -26,7 +26,6 @@ collections.workspace = true
 component.workspace = true
 credentials_provider.workspace = true
 copilot.workspace = true
-deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 fs.workspace = true
 futures.workspace = true
