@@ -185,7 +185,7 @@ pub struct EditToolResponse;
 pub struct ReadToolParams {
     /// The absolute path to the file to read.
     pub abs_path: PathBuf,
-    /// Which line to start reading from. Omit to start from the begining.
+    /// Which line to start reading from. Omit to start from the beginning.
     pub offset: Option<u32>,
     /// How many lines to read. Omit for the whole file.
     pub limit: Option<u32>,
