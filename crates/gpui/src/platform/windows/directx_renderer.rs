@@ -431,31 +431,31 @@ impl DirectXRenderPipelines {
             "shadow_pipeline",
             "shadow_vertex",
             "shadow_fragment",
-            32,
+            4,
         )?;
         let quad_pipeline =
-            PipelineState::new(device, "quad_pipeline", "quad_vertex", "quad_fragment", 32)?;
+            PipelineState::new(device, "quad_pipeline", "quad_vertex", "quad_fragment", 64)?;
         let paths_pipeline = PathsPipelineState::new(device)?;
         let underline_pipeline = PipelineState::new(
             device,
             "underline_pipeline",
             "underline_vertex",
             "underline_fragment",
-            32,
+            4,
         )?;
         let mono_sprites = PipelineState::new(
             device,
             "monochrome_sprite_pipeline",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            32,
+            512,
         )?;
         let poly_sprites = PipelineState::new(
             device,
             "polychrome_sprite_pipeline",
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
-            32,
+            16,
         )?;
 
         Ok(Self {
