@@ -2,11 +2,11 @@ mod connection;
 pub use connection::*;
 
 pub use acp::ToolCallId;
-use agent_servers::AgentServer;
 use agentic_coding_protocol::{
-    self as acp, AgentRequest, ToolCallConfirmationOutcome, UserMessageChunk,
+    self as acp, AgentRequest, ProtocolVersion, ToolCallConfirmationOutcome, ToolCallLocation,
+    UserMessageChunk,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
@@ -862,11 +862,10 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(
-        &self,
-    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
-        let connection = self.connection.clone();
-        async move { connection.initialize().await }
+    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+        self.request(acp::InitializeParams {
+            protocol_version: ProtocolVersion::latest(),
+        })
     }
 
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
@@ -1246,7 +1245,6 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentic_coding_protocol::ProtocolVersion;
     use anyhow::anyhow;
     use async_pipe::{PipeReader, PipeWriter};
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
@@ -1527,53 +1525,6 @@ mod tests {
                 ix.unwrap()
             }
         }
-    }
-
-    pub async fn gemini_acp_thread(
-        project: Entity<Project>,
-        current_dir: impl AsRef<Path>,
-        cx: &mut TestAppContext,
-    ) -> Entity<AcpThread> {
-        struct DevGemini;
-
-        impl agent_servers::AgentServer for DevGemini {
-            async fn command(
-                &self,
-                _project: &Entity<Project>,
-                _cx: &mut AsyncApp,
-            ) -> Result<agent_servers::AgentServerCommand> {
-                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../gemini-cli/packages/cli")
-                    .to_string_lossy()
-                    .to_string();
-
-                Ok(AgentServerCommand {
-                    path: "node".into(),
-                    args: vec![cli_path, "--experimental-acp".into()],
-                    env: None,
-                })
-            }
-
-            async fn version(
-                &self,
-                _command: &agent_servers::AgentServerCommand,
-            ) -> Result<AgentServerVersion> {
-                Ok(AgentServerVersion {
-                    current_version: "0.1.0".into(),
-                    supported: true,
-                })
-            }
-        }
-
-        let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
-            .await
-            .unwrap();
-
-        thread
-            .update(cx, |thread, _| thread.initialize())
-            .await
-            .unwrap();
-        thread
     }
 
     pub fn fake_acp_thread(

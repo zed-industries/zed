@@ -17,7 +17,6 @@ test-support = ["gpui/test-support", "project/test-support"]
 
 [dependencies]
 agentic-coding-protocol.workspace = true
-agent_servers.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true

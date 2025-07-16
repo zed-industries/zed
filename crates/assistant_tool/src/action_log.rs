@@ -955,7 +955,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
-    use std::{env, path::Path};
+    use std::env;
     use util::{RandomCharIter, path};
 
     #[ctor::ctor]
