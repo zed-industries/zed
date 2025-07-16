@@ -342,8 +342,8 @@ float4 gradient_color(Background background,
             }
 
             // Get the t value for the linear gradient with the color stop percentages.
-            float2 half_size = float2(bounds.size.x, bounds.size.y) / 2.;
-            float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+            float2 half_size = bounds.size * 0.5;
+            float2 center = bounds.origin + half_size;
             float2 center_to_point = position - center;
             float t = dot(center_to_point, direction) / length(direction);
             // Check the direct to determine the use x or y
