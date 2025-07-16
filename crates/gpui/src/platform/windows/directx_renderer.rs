@@ -19,8 +19,6 @@ use windows::{
 use crate::*;
 
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
-// const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
@@ -158,15 +156,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
-        // pre_draw(
-        //     &self.devices.device_context,
-        //     &self.globals.global_params_buffer,
-        //     &self.context.viewport,
-        //     &self.context.back_buffer,
-        //     [0.0, 0.0, 0.0, 0.0],
-        //     &self.globals.blend_state,
-        // )?;
-        println!("Pre-draw: {:?}", self.context.render_target_view);
         self.pre_draw()?;
         for batch in scene.batches() {
             match batch {
@@ -198,7 +187,7 @@ impl DirectXRenderer {
                 0,
                 &self.context.msaa_target,
                 0,
-                BACK_BUFFER_FORMAT,
+                RENDER_TARGET_FORMAT,
             );
             self.devices
                 .device_context
@@ -209,7 +198,6 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
-        println!("Resize: {:?}", self.context.render_target_view);
         unsafe {
             self.devices.device_context.OMSetRenderTargets(None, None);
             ManuallyDrop::drop(&mut self.context.render_target);
@@ -1116,15 +1104,8 @@ fn create_render_target_and_its_view(
     [Option<ID3D11RenderTargetView>; 1],
 )> {
     let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
-    let desc = D3D11_RENDER_TARGET_VIEW_DESC {
-        Format: BACK_BUFFER_FORMAT,
-        ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
-        ..Default::default()
-    };
     let mut render_target_view = None;
-    unsafe {
-        device.CreateRenderTargetView(&render_target, Some(&desc), Some(&mut render_target_view))?
-    };
+    unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
     Ok((
         ManuallyDrop::new(render_target),
         [Some(render_target_view.unwrap())],
@@ -1141,13 +1122,8 @@ fn set_render_target_view(
     // https://stackoverflow.com/questions/65246961/does-the-backbuffer-that-a-rendertargetview-points-to-automagically-change-after
     let back_buffer = unsafe {
         let resource: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
-        let desc = D3D11_RENDER_TARGET_VIEW_DESC {
-            Format: BACK_BUFFER_FORMAT,
-            ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
-            ..Default::default()
-        };
         let mut buffer: Option<ID3D11RenderTargetView> = None;
-        device.CreateRenderTargetView(&resource, Some(&desc), Some(&mut buffer))?;
+        device.CreateRenderTargetView(&resource, None, Some(&mut buffer))?;
         buffer.unwrap()
     };
     unsafe { device_context.OMSetRenderTargets(Some(&[Some(back_buffer.clone())]), None) };
@@ -1167,7 +1143,7 @@ fn create_msaa_target_and_its_view(
             Height: height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: BACK_BUFFER_FORMAT,
+            Format: RENDER_TARGET_FORMAT,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 4,
                 Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
@@ -1181,13 +1157,8 @@ fn create_msaa_target_and_its_view(
         output.unwrap()
     };
     let msaa_view = unsafe {
-        let desc = D3D11_RENDER_TARGET_VIEW_DESC {
-            Format: BACK_BUFFER_FORMAT,
-            ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DMS,
-            ..Default::default()
-        };
         let mut output = None;
-        device.CreateRenderTargetView(&msaa_target, Some(&desc), Some(&mut output))?;
+        device.CreateRenderTargetView(&msaa_target, None, Some(&mut output))?;
         output.unwrap()
     };
     Ok((msaa_target, msaa_view))
