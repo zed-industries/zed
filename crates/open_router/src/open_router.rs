@@ -153,7 +153,7 @@ pub struct RequestUsage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
     Auto,
     Required,
