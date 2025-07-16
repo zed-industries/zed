@@ -5,6 +5,7 @@ use crate::markdown_elements::{
     ParsedMarkdownMathBlock, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
     ParsedMarkdownTableRow,
 };
+use comemo::Prehashed;
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
@@ -19,6 +20,14 @@ use std::{
     vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
+use typst::{
+    Library, World, compile,
+    eval::Tracer,
+    foundations::{Bytes, Datetime},
+    syntax::{FileId, Source, VirtualPath},
+    text::{Font, FontBook},
+};
+use typst_svg;
 use ui::{
     ButtonCommon, Clickable, Color, Element, FluentBuilder, IconButton, IconName, IconSize,
     InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, Pixels, Rems,
@@ -828,13 +837,104 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     div().py(cx.scaled_rems(0.5)).child(rule).into_any()
 }
 
+// Minimal World implementation for math rendering
+struct MathWorld {
+    library: Prehashed<Library>,
+    book: Prehashed<FontBook>,
+    main_source: Source,
+}
+
+impl MathWorld {
+    fn new(content: &str) -> Self {
+        let main_source = Source::new(
+            FileId::new(None, VirtualPath::new("main.typ")),
+            content.to_string(),
+        );
+        Self {
+            library: Prehashed::new(Library::builder().build()),
+            book: Prehashed::new(FontBook::new()),
+            main_source,
+        }
+    }
+}
+
+impl World for MathWorld {
+    fn library(&self) -> &Prehashed<Library> {
+        &self.library
+    }
+
+    fn book(&self) -> &Prehashed<FontBook> {
+        &self.book
+    }
+
+    fn main(&self) -> Source {
+        self.main_source.clone()
+    }
+
+    fn source(&self, _id: FileId) -> typst::diag::FileResult<Source> {
+        Ok(self.main_source.clone())
+    }
+
+    fn file(&self, _id: FileId) -> typst::diag::FileResult<Bytes> {
+        Err(typst::diag::FileError::NotFound(std::path::PathBuf::new()))
+    }
+
+    fn font(&self, _index: usize) -> Option<Font> {
+        None
+    }
+
+    fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
+        None
+    }
+}
+
+fn typst_math_to_svg(math_content: &str) -> Result<String, String> {
+    // Create a minimal Typst document with just the math content
+    let typst_source = format!("$ {} $", math_content);
+
+    // Create world and tracer
+    let world = MathWorld::new(&typst_source);
+    let mut tracer = Tracer::new();
+
+    // Compile the Typst source to a document
+    match compile(&world, &mut tracer) {
+        Ok(document) => {
+            // Convert the first page to SVG
+            if let Some(page) = document.pages.first() {
+                let svg_string = typst_svg::svg(&page.frame);
+                Ok(svg_string)
+            } else {
+                Err("No pages generated from Typst compilation".to_string())
+            }
+        }
+        Err(errors) => {
+            let error_msg = errors
+                .iter()
+                .map(|e| format!("{}", e.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(format!("Typst compilation failed: {}", error_msg))
+        }
+    }
+}
+
 fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) -> AnyElement {
-    div()
-        .p_2()
-        .border_1()
-        .border_color(cx.border_color)
-        .child(format!("Hello Sam - Math content: {}", math.contents))
-        .into_any()
+    match typst_math_to_svg(&math.contents) {
+        Ok(svg_content) => div()
+            .p_2()
+            .child(format!(
+                "Math: {} (SVG: {} bytes)",
+                math.contents,
+                svg_content.len()
+            ))
+            .into_any(),
+        Err(err) => div()
+            .p_2()
+            .border_1()
+            .border_color(cx.border_color)
+            .child(format!("Math rendering error: {}", err))
+            .into_any(),
+    }
 }
 
 struct InteractiveMarkdownElementTooltip {
