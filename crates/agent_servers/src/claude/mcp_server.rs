@@ -96,7 +96,7 @@ impl ClaudeMcpServer {
     }
 
     fn handle_initialize(_: InitializeParams, cx: &App) -> Task<Result<InitializeResponse>> {
-        cx.spawn(async move |_cx| {
+        cx.foreground_executor().spawn(async move {
             Ok(InitializeResponse {
                 protocol_version: ProtocolVersion("2025-06-18".into()),
                 capabilities: ServerCapabilities {
@@ -119,7 +119,7 @@ impl ClaudeMcpServer {
     }
 
     fn handle_list_tools(_: (), cx: &App) -> Task<Result<ListToolsResponse>> {
-        cx.spawn(async move |_cx| {
+        cx.foreground_executor().spawn(async move {
             Ok(ListToolsResponse {
                 tools: vec![
                     Tool {
@@ -231,7 +231,7 @@ impl ClaudeMcpServer {
         delegate: AcpClientDelegate,
         cx: &AsyncApp,
     ) -> Task<Result<ReadToolResponse>> {
-        cx.spawn(async move |_cx| {
+        cx.foreground_executor().spawn(async move {
             let response = delegate
                 .read_text_file(ReadTextFileParams {
                     path: params.abs_path,
@@ -251,7 +251,7 @@ impl ClaudeMcpServer {
         delegate: AcpClientDelegate,
         cx: &AsyncApp,
     ) -> Task<Result<EditToolResponse>> {
-        cx.spawn(async move |_cx| {
+        cx.foreground_executor().spawn(async move {
             // todo!() use previous read...
             let response = delegate
                 .read_text_file(ReadTextFileParams {
@@ -283,8 +283,7 @@ impl ClaudeMcpServer {
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
-        // todo! background
-        cx.spawn(async move |_cx| {
+        cx.foreground_executor().spawn(async move {
             let claude_tool = ClaudeTool::infer(&params.tool_name, params.input.clone());
 
             let tool_call_id = match params.tool_use_id {
