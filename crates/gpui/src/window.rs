@@ -227,7 +227,7 @@ pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, window: &Window) -> bool {
-        window.focus == Some(*self)
+        dbg!(window.focus) == Some(*self)
     }
 
     /// Obtains whether the element associated with this handle contains the focused
@@ -1295,6 +1295,7 @@ impl Window {
 
     /// Blur the window and don't allow anything in it to be focused again.
     pub fn disable_focus(&mut self) {
+        println!("disable_focus");
         self.blur();
         self.focus_enabled = false;
     }

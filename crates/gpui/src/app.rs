@@ -949,10 +949,12 @@ impl App {
             .write()
             .retain(|handle_id, count| {
                 if count.load(SeqCst) == 0 {
+                    println!("Dropping {handle_id}");
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
                                 if window.focus == Some(handle_id) {
+                                    println!("released focus handle blur");
                                     window.blur();
                                 }
                             })

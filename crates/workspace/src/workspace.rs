@@ -1219,6 +1219,7 @@ impl Workspace {
         .detach();
 
         cx.on_focus_lost(window, |this, window, cx| {
+            println!("workspace on_focus_lost");
             let focus_handle = this.focus_handle(cx);
             window.focus(&focus_handle);
         })
@@ -1244,6 +1245,8 @@ impl Workspace {
             .detach();
 
         window.focus(&center_pane.focus_handle(cx));
+
+        // center_pane.focus_handle(cx).is_focused(window);
 
         cx.emit(Event::PaneAdded(center_pane.clone()));
 
