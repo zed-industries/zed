@@ -33,7 +33,7 @@ impl ClaudeTool {
             "LS" => Self::Ls,
             "Glob" => Self::Glob,
             "Grep" => Self::Grep,
-            "Bash" => Self::Terminal(serde_json::from_value(dbg!(input)).log_err()),
+            "Bash" => Self::Terminal(serde_json::from_value(input).log_err()),
             "WebFetch" => Self::WebFetch,
             "WebSearch" => Self::WebSearch,
             "TodoWrite" => Self::TodoWrite,

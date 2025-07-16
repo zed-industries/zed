@@ -432,7 +432,7 @@ impl Display for ContentChunk {
         match self {
             ContentChunk::Text { text } => write!(f, "{}", text),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
-            ContentChunk::ToolResult { content, .. } => write!(f, "{}", content.to_string()),
+            ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
             ContentChunk::Image
             | ContentChunk::Document
             | ContentChunk::Thinking

@@ -228,9 +228,8 @@ impl ClaudeMcpServer {
         cx: &AsyncApp,
     ) -> Task<Result<EditToolResponse>> {
         cx.foreground_executor().spawn(async move {
-            // todo!() use previous read...
             let response = delegate
-                .read_text_file(ReadTextFileParams {
+                .read_text_file_reusing_snapshot(ReadTextFileParams {
                     path: params.abs_path.clone(),
                     line: None,
                     limit: None,

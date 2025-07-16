@@ -969,6 +969,7 @@ impl AcpThread {
     pub fn read_text_file(
         &self,
         request: acp::ReadTextFileParams,
+        reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
         let project = self.project.clone();
@@ -982,23 +983,39 @@ impl AcpThread {
             });
             let buffer = load??.await?;
 
-            action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
-            })?;
-            project.update(cx, |project, cx| {
-                let position = buffer
-                    .read(cx)
-                    .snapshot()
-                    .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position,
-                    }),
-                    cx,
-                );
-            })?;
-            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = if reuse_shared_snapshot {
+                this.read_with(cx, |this, _| {
+                    this.shared_buffers.get(&buffer.clone()).cloned()
+                })
+                .log_err()
+                .flatten()
+            } else {
+                None
+            };
+
+            let snapshot = if let Some(snapshot) = snapshot {
+                snapshot
+            } else {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_read(buffer.clone(), cx);
+                })?;
+                project.update(cx, |project, cx| {
+                    let position = buffer
+                        .read(cx)
+                        .snapshot()
+                        .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })?;
+
+                buffer.update(cx, |buffer, _| buffer.snapshot())?
+            };
+
             this.update(cx, |this, _| {
                 let text = snapshot.text();
                 this.shared_buffers.insert(buffer.clone(), snapshot);
@@ -1128,6 +1145,21 @@ impl AcpClientDelegate {
 
         Ok(outcome.await?)
     }
+
+    pub async fn read_text_file_reusing_snapshot(
+        &self,
+        request: acp::ReadTextFileParams,
+    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
+        let content = self
+            .cx
+            .update(|cx| {
+                self.thread
+                    .update(cx, |thread, cx| thread.read_text_file(request, true, cx))
+            })?
+            .context("Failed to update thread")?
+            .await?;
+        Ok(acp::ReadTextFileResponse { content })
+    }
 }
 
 impl acp::Client for AcpClientDelegate {
@@ -1202,7 +1234,7 @@ impl acp::Client for AcpClientDelegate {
             .cx
             .update(|cx| {
                 self.thread
-                    .update(cx, |thread, cx| thread.read_text_file(request, cx))
+                    .update(cx, |thread, cx| thread.read_text_file(request, false, cx))
             })?
             .context("Failed to update thread")?
             .await?;
