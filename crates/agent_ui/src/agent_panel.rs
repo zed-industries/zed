@@ -1975,48 +1975,45 @@ impl AgentPanel {
     }
 
     fn render_token_count(&self, cx: &App) -> Option<AnyElement> {
-        let (active_thread, message_editor) = match &self.active_view {
+        match &self.active_view {
             ActiveView::Thread {
                 thread,
                 message_editor,
                 ..
-            } => (thread.read(cx), message_editor.read(cx)),
-            ActiveView::AcpThread { .. } => {
-                return None;
-            }
-            ActiveView::TextThread { .. } | ActiveView::History | ActiveView::Configuration => {
-                return None;
-            }
-        };
+            } => {
+                let active_thread = thread.read(cx);
+                let message_editor = message_editor.read(cx);
 
-        let editor_empty = message_editor.is_editor_fully_empty(cx);
+                let editor_empty = message_editor.is_editor_fully_empty(cx);
 
-        if active_thread.is_empty() && editor_empty {
-            return None;
-        }
+                if active_thread.is_empty() && editor_empty {
+                    return None;
+                }
 
-        let thread = active_thread.thread().read(cx);
-        let is_generating = thread.is_generating();
-        let conversation_token_usage = thread.total_token_usage()?;
+                let thread = active_thread.thread().read(cx);
+                let is_generating = thread.is_generating();
+                let conversation_token_usage = thread.total_token_usage()?;
 
-        let (total_token_usage, is_estimating) =
-            if let Some((editing_message_id, unsent_tokens)) = active_thread.editing_message_id() {
-                let combined = thread
-                    .token_usage_up_to_message(editing_message_id)
-                    .add(unsent_tokens);
+                let (total_token_usage, is_estimating) =
+                    if let Some((editing_message_id, unsent_tokens)) =
+                        active_thread.editing_message_id()
+                    {
+                        let combined = thread
+                            .token_usage_up_to_message(editing_message_id)
+                            .add(unsent_tokens);
 
-                (combined, unsent_tokens > 0)
-            } else {
-                let unsent_tokens = message_editor.last_estimated_token_count().unwrap_or(0);
-                let combined = conversation_token_usage.add(unsent_tokens);
+                        (combined, unsent_tokens > 0)
+                    } else {
+                        let unsent_tokens =
+                            message_editor.last_estimated_token_count().unwrap_or(0);
+                        let combined = conversation_token_usage.add(unsent_tokens);
 
-                (combined, unsent_tokens > 0)
-            };
+                        (combined, unsent_tokens > 0)
+                    };
 
-        let is_waiting_to_update_token_count = message_editor.is_waiting_to_update_token_count();
+                let is_waiting_to_update_token_count =
+                    message_editor.is_waiting_to_update_token_count();
 
-        match &self.active_view {
-            ActiveView::Thread { .. } => {
                 if total_token_usage.total == 0 {
                     return None;
                 }
