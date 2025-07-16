@@ -1276,7 +1276,7 @@ impl Render for KeymapEditor {
                                 .filter_map(|index| {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
-                                    let action_name = binding.action_name.clone();
+                                    let action_name = binding.action_name;
 
                                     let icon = (this.filter_state != FilterState::Conflicts
                                         && this.has_conflict(index))
@@ -1339,7 +1339,7 @@ impl Render for KeymapEditor {
                                         })
                                         .when(!context_menu_deployed, |this| {
                                             this.tooltip({
-                                                let action_name = binding.action_name.clone();
+                                                let action_name = binding.action_name;
                                                 let action_docs = binding.action_docs;
                                                 move |_, cx| {
                                                     let action_tooltip = Tooltip::new(action_name);
@@ -1785,7 +1785,7 @@ impl KeybindingEditorModal {
                 .read(cx)
                 .keybindings
                 .get(first_conflicting_index)
-                .map(|keybind| keybind.action_name.clone());
+                .map(|keybind| keybind.action_name);
 
             let warning_message = match conflicting_action_name {
                 Some(name) => {
@@ -1835,7 +1835,7 @@ impl KeybindingEditorModal {
             .log_err();
 
         cx.spawn(async move |this, cx| {
-            let action_name = existing_keybind.action_name.clone();
+            let action_name = existing_keybind.action_name;
 
             if let Err(err) = save_keybinding_update(
                 create,
