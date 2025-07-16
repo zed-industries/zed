@@ -2275,13 +2275,13 @@ enum CloseKeystrokeResult {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-enum KeyPress {
+enum KeyPress<'a> {
     Alt,
     Control,
     Function,
     Shift,
     Platform,
-    Key(String),
+    Key(&'a String),
 }
 
 struct KeystrokeInput {
@@ -2293,6 +2293,7 @@ struct KeystrokeInput {
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
     search: bool,
+    /// Handles tripe escape to stop recording
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
 }
@@ -2414,11 +2415,14 @@ impl KeystrokeInput {
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
-            if !event.modifiers.modified() {
+            if self.search {
+                last.modifiers = last.modifiers.xor(&event.modifiers);
+            } else if !event.modifiers.modified() {
                 self.keystrokes.pop();
             } else {
                 last.modifiers = event.modifiers;
             }
+
             self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
@@ -2435,11 +2439,19 @@ impl KeystrokeInput {
     ) {
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
         if close_keystroke_result != CloseKeystrokeResult::Close {
-            if let Some(last) = self.keystrokes.last()
+            let key_len = self.keystrokes.len();
+            if let Some(last) = self.keystrokes.last_mut()
                 && last.key.is_empty()
-                && self.keystrokes.len() <= Self::KEYSTROKE_COUNT_MAX
+                && key_len <= Self::KEYSTROKE_COUNT_MAX
             {
-                self.keystrokes.pop();
+                if self.search {
+                    last.key = keystroke.key.clone();
+                    self.keystrokes_changed(cx);
+                    cx.stop_propagation();
+                    return;
+                } else {
+                    self.keystrokes.pop();
+                }
             }
             if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                 if close_keystroke_result == CloseKeystrokeResult::Partial
@@ -2482,10 +2494,11 @@ impl KeystrokeInput {
         {
             return placeholders;
         }
-        if self
-            .keystrokes
-            .last()
-            .map_or(false, |last| last.key.is_empty())
+        if !self.search
+            && self
+                .keystrokes
+                .last()
+                .map_or(false, |last| last.key.is_empty())
         {
             return &self.keystrokes[..self.keystrokes.len() - 1];
         }
@@ -2947,7 +2960,7 @@ impl<'a> KeyPressIterator<'a> {
 }
 
 impl<'a> Iterator for KeyPressIterator<'a> {
-    type Item = KeyPress;
+    type Item = KeyPress<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -2991,7 +3004,7 @@ impl<'a> Iterator for KeyPressIterator<'a> {
                     if keystroke.key.is_empty() {
                         continue;
                     }
-                    return Some(KeyPress::Key(keystroke.key.clone()));
+                    return Some(KeyPress::Key(&keystroke.key));
                 }
             }
         }
