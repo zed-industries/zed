@@ -11,9 +11,8 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
     ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
     Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, px,
+    StyledText, TextStyle, WeakEntity, Window, div, img,
 };
-
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
@@ -22,11 +21,12 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use typst::{
-    Library, World,
+    Library, World, compile,
     foundations::{Bytes, Datetime},
     syntax::{FileId, Source, VirtualPath},
     text::{Font, FontBook},
 };
+use typst_svg::svg;
 // Logging for math rendering
 use log::info;
 use ui::{
@@ -849,14 +849,47 @@ struct MathWorld {
 
 impl MathWorld {
     fn new(content: &str) -> Self {
-        let main_source = Source::new(
-            FileId::new(None, VirtualPath::new("main.typ")),
-            content.to_string(),
-        );
-
         // Create a font book with system fonts
         let mut fontdb = fontdb::Database::new();
         fontdb.load_system_fonts();
+
+        // Find available math fonts
+        let mut available_fonts = Vec::new();
+        let mut math_font = None;
+
+        for face_info in fontdb.faces() {
+            if let Some(family) = face_info.families.get(0) {
+                let family_name = &family.0;
+                available_fonts.push(family_name.clone());
+
+                // Prioritize math fonts
+                if family_name.contains("STIX Two Math") {
+                    math_font = Some("STIX Two Math");
+                } else if math_font.is_none()
+                    && (family_name.contains("Libertinus Math")
+                        || family_name.contains("Latin Modern Math")
+                        || family_name.contains("Computer Modern")
+                        || family_name.contains("Cambria Math")
+                        || family_name.contains("Asana Math"))
+                {
+                    math_font = Some(family_name.as_str());
+                }
+            }
+        }
+
+        info!("Available font families: {}", available_fonts.len());
+        let selected_font = math_font.unwrap_or("serif");
+        info!("Selected math font: {}", selected_font);
+
+        let main_source = Source::new(
+            FileId::new(None, VirtualPath::new("main.typ")),
+            format!(
+                r#"#show math.equation: set text(font: "{}")
+#set text(font: "{}")
+$ {} $"#,
+                selected_font, selected_font, content
+            ),
+        );
 
         // Load all system fonts
         let mut fonts = Vec::new();
@@ -926,15 +959,34 @@ impl World for MathWorld {
 fn typst_math_to_svg(math_content: &str) -> Result<String, String> {
     info!("typst_math_to_svg input: {}", math_content);
 
-    // Skip Typst for now and return a simple SVG for testing
-    let svg_content = format!(
-        r#"<svg viewBox="0 0 200 50" width="200" height="50" xmlns="http://www.w3.org/2000/svg">
-    <text x="10" y="30" font-family="serif" font-size="16" fill="black">Math: {}</text>
-</svg>"#,
-        math_content
-    );
+    // Create Typst world with math content
+    let world = MathWorld::new(math_content);
 
-    Ok(svg_content)
+    // Compile the document
+    let result = compile(&world, &mut Default::default());
+    let document = match result {
+        Ok(doc) => doc,
+        Err(errors) => {
+            let error_msg = errors
+                .iter()
+                .map(|e| e.message.to_string())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(format!("Typst compilation failed: {}", error_msg));
+        }
+    };
+
+    // Convert to SVG
+    if let Some(page) = document.pages.first() {
+        let svg_content = svg(&page.frame);
+        info!(
+            "Successfully generated SVG with {} characters",
+            svg_content.len()
+        );
+        Ok(svg_content)
+    } else {
+        Err("No pages in compiled document".to_string())
+    }
 }
 
 fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) -> AnyElement {
@@ -943,40 +995,63 @@ fn render_markdown_math(math: &ParsedMarkdownMathBlock, cx: &mut RenderContext) 
         Ok(svg) => svg,
         Err(err) => {
             // Render an error box if Typst failed
+            info!("Math rendering failed: {}", err);
             return div()
                 .p_2()
                 .border_1()
                 .border_color(cx.border_color)
-                .child(format!("Math rendering error: {}", err))
+                .bg(cx.code_block_background_color)
+                .rounded_md()
+                .child(
+                    div()
+                        .text_color(cx.text_color)
+                        .child(format!("Math rendering error: {}", err)),
+                )
+                .child(
+                    div()
+                        .mt_2()
+                        .text_sm()
+                        .font_family(cx.buffer_font_family.clone())
+                        .text_color(cx.text_color)
+                        .child(format!("Raw: {}", math.contents)),
+                )
                 .into_any();
         }
     };
 
-    // Create visual math representation using GPUI primitives
+    // For now, we'll create a placeholder that shows we have SVG content
+    // In a full implementation, you'd need to integrate SVG rendering into GPUI
     div()
         .p_2()
-        .flex()
-        .items_center()
-        .gap_2()
         .border_1()
         .border_color(cx.border_color)
         .bg(cx.code_block_background_color)
         .rounded_md()
-        .w(px(400.0))
-        .h(px(60.0))
         .child(
             div()
-                .text_xl()
-                .font_weight(FontWeight::BOLD)
-                .text_color(cx.text_color)
-                .child("📐"),
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_color(cx.text_color)
+                        .child("📐 Math rendered with STIX Two Math"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .font_family(cx.buffer_font_family.clone())
+                        .text_color(cx.text_color)
+                        .child(format!("({} chars SVG)", svg_content.len())),
+                ),
         )
         .child(
             div()
-                .text_lg()
+                .mt_2()
+                .text_xs()
                 .font_family(cx.buffer_font_family.clone())
                 .text_color(cx.text_color)
-                .child(math.contents.clone()),
+                .child(format!("Input: {}", math.contents)),
         )
         .into_any()
 }
