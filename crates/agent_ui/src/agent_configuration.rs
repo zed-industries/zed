@@ -27,7 +27,7 @@ use project::{
 use proto::Plan;
 use settings::{Settings, update_settings_file};
 use ui::{
-    ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
+    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
     Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
@@ -227,7 +227,7 @@ impl AgentConfiguration {
                                             )
                                             .map(|this| {
                                                 if is_zed_provider {
-                                                    this.child(
+                                                    this.gap_2().child(
                                                         self.render_zed_plan_info(current_plan, cx),
                                                     )
                                                 } else {
@@ -474,26 +474,15 @@ impl AgentConfiguration {
                 .opacity(0.5)
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
-            let (plan_name, plan_color, bg_color) = match plan {
+            let (plan_name, label_color, bg_color) = match plan {
                 Plan::Free => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
             };
 
-            h_flex()
-                .ml_1()
-                .px_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(bg_color)
-                .overflow_hidden()
-                .child(
-                    Label::new(plan_name.to_string())
-                        .color(plan_color)
-                        .size(LabelSize::XSmall)
-                        .buffer_font(cx),
-                )
+            Chip::new(plan_name.to_string())
+                .bg_color(bg_color)
+                .label_color(label_color)
                 .into_any_element()
         } else {
             div().into_any_element()

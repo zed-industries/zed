@@ -24,7 +24,7 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
     ToggleButton, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -759,20 +759,7 @@ impl ExtensionsPage {
                                                     _ => {}
                                                 }
 
-                                                Some(
-                                                    div()
-                                                        .px_1()
-                                                        .border_1()
-                                                        .rounded_sm()
-                                                        .border_color(cx.theme().colors().border)
-                                                        .bg(cx.theme().colors().element_background)
-                                                        .child(
-                                                            Label::new(extension_provides_label(
-                                                                *provides,
-                                                            ))
-                                                            .size(LabelSize::XSmall),
-                                                        ),
-                                                )
+                                                Some(Chip::new(extension_provides_label(*provides)))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
