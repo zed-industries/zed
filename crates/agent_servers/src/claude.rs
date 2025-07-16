@@ -9,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use agentic_coding_protocol::{
-    self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion, PushToolCallParams,
+    self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion,
     StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
 };
 use anyhow::{Result, anyhow};
@@ -166,7 +166,7 @@ impl AgentServer for ClaudeCode {
                         mcp_server::PERMISSION_TOOL
                     ),
                     "--allowedTools",
-                    "mcp__zed__Read,mcp__zed__Edit",
+                    "mcp__zed__Read",
                     "--disallowedTools",
                     "Read,Edit",
                 ])
@@ -254,17 +254,8 @@ impl ClaudeAgentConnection {
                                 .log_err();
                         }
                         ContentChunk::ToolUse { id, name, input } => {
-                            let formatted = serde_json::to_string_pretty(&input).unwrap();
-                            let markdown = format!("```json\n{}\n```", formatted);
-                            let icon = ClaudeTool::infer(&name).icon();
-
                             if let Some(resp) = delegate
-                                .push_tool_call(PushToolCallParams {
-                                    label: name,
-                                    icon,
-                                    content: Some(ToolCallContent::Markdown { markdown }),
-                                    locations: Vec::default(),
-                                })
+                                .push_tool_call(ClaudeTool::tool_call_params(name, input))
                                 .await
                                 .log_err()
                             {

@@ -1,9 +1,7 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use acp_thread::AcpClientDelegate;
-use agentic_coding_protocol::{
-    self as acp, Client, PushToolCallParams, ReadTextFileParams, WriteTextFileParams,
-};
+use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
 use anyhow::{Context, Result};
 use collections::HashMap;
 use context_server::{
@@ -19,7 +17,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::debug_panic;
 
-use crate::claude::{McpServerConfig, tools::ClaudeTool};
+use crate::claude::{
+    McpServerConfig,
+    tools::{ClaudeTool, EditToolParams, EditToolResponse},
+};
 
 pub struct ClaudeMcpServer {
     server: McpServer,
@@ -57,20 +58,6 @@ struct ReadToolParams {
 struct ReadToolResponse {
     content: String,
 }
-
-#[derive(Deserialize, JsonSchema, Debug)]
-struct EditToolParams {
-    /// The absolute path to the file to read.
-    abs_path: PathBuf,
-    /// The old text to replace (must be unique in the file)
-    old_text: String,
-    /// The new text.
-    new_text: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EditToolResponse {}
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -286,7 +273,7 @@ impl ClaudeMcpServer {
                 })
                 .await?;
 
-            Ok(EditToolResponse {})
+            Ok(EditToolResponse)
         })
     }
 
@@ -296,8 +283,10 @@ impl ClaudeMcpServer {
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
+        // todo! background
         cx.spawn(async move |_cx| {
-            let claude_tool = ClaudeTool::infer(&params.tool_name);
+            let claude_tool = ClaudeTool::infer(&params.tool_name, params.input.clone());
+
             let tool_call_id = match params.tool_use_id {
                 Some(tool_use_id) => tool_id_map
                     .borrow()
@@ -307,12 +296,10 @@ impl ClaudeMcpServer {
 
                 None => {
                     delegate
-                        .push_tool_call(PushToolCallParams {
-                            label: params.tool_name,
-                            icon: claude_tool.icon(),
-                            content: None,
-                            locations: vec![],
-                        })
+                        .push_tool_call(ClaudeTool::tool_call_params(
+                            params.tool_name,
+                            params.input.clone(),
+                        ))
                         .await?
                         .id
                 }
