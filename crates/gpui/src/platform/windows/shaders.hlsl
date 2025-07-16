@@ -256,7 +256,7 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
                                       TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
@@ -876,10 +876,9 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 **
 */
 
-struct PathVertexInput {
-    float2 xy_position: POSITION;
-    float4 content_mask: TEXCOORD0;
-    uint sprite_index: TEXCOORD1;
+struct PathVertex {
+    float2 xy_position;
+    Bounds content_mask;
 };
 
 struct PathSprite {
@@ -904,19 +903,17 @@ struct PathFragmentInput {
     nointerpolation float4 color1: COLOR2;
 };
 
+StructuredBuffer<PathVertex> path_vertices: register(t1);
 StructuredBuffer<PathSprite> path_sprites: register(t2);
 
-PathVertexOutput paths_vertex(PathVertexInput input) {
-    PathSprite sprite = path_sprites[input.sprite_index];
-
-    Bounds content_mask;
-    content_mask.origin = input.content_mask.xy;
-    content_mask.size = input.content_mask.zw;
+PathVertexOutput paths_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    PathVertex v = path_vertices[vertex_id];
+    PathSprite sprite = path_sprites[instance_id];
 
     PathVertexOutput output;
-    output.position = to_device_position_impl(input.xy_position);
-    output.clip_distance = distance_from_clip_rect_impl(input.xy_position, content_mask);
-    output.sprite_id = input.sprite_index;
+    output.position = to_device_position_impl(v.xy_position);
+    output.clip_distance = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    output.sprite_id = instance_id;
 
     GradientColor gradient = prepare_gradient_color(
         sprite.color.tag,
@@ -974,7 +971,7 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Underline underline = underlines[underline_id];
     float4 device_position = to_device_position(unit_vertex, underline.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds, 
                                                     underline.content_mask);
     float4 color = hsla_to_rgba(underline.color);
 
