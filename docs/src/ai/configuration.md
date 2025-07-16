@@ -237,7 +237,7 @@ You can use Gemini models with the Zed agent by choosing it via the model dropdo
 
 The Google AI API key will be saved in your keychain.
 
-Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
+Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See [Using Gemini API keys](Using Gemini API keys) in the Gemini docs for more.
 
 #### Custom Models {#google-ai-custom-models}
 
