@@ -1268,6 +1268,18 @@ impl Render for KeymapEditor {
                                                 "keystrokes-exact-match",
                                                 IconName::Equal,
                                             )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::for_action(
+                                                    if exact_match {
+                                                        "Partial match mode"
+                                                    } else {
+                                                        "Exact match mode"
+                                                    },
+                                                    &ToggleExactKeystrokeMatching,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .shape(IconButtonShape::Square)
                                             .toggle_state(exact_match)
                                             .on_click(
