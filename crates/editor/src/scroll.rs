@@ -164,6 +164,7 @@ pub struct ScrollManager {
     active_scrollbar: Option<ActiveScrollbarState>,
     visible_line_count: Option<f32>,
     visible_column_count: Option<f32>,
+    forbid_horizontal_scroll: bool,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
 }
@@ -181,6 +182,7 @@ impl ScrollManager {
             last_autoscroll: None,
             visible_line_count: None,
             visible_column_count: None,
+            forbid_horizontal_scroll: false,
             forbid_vertical_scroll: false,
             minimap_thumb_state: None,
         }
@@ -279,13 +281,24 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
-        let adjusted_anchor = if self.forbid_vertical_scroll {
-            ScrollAnchor {
-                offset: gpui::Point::new(anchor.offset.x, self.anchor.offset.y),
-                anchor: self.anchor.anchor,
-            }
-        } else {
-            anchor
+        let adjusted_anchor = ScrollAnchor {
+            offset: gpui::Point::new(
+                {
+                    if self.forbid_horizontal_scroll {
+                        self.anchor.offset.x
+                    } else {
+                        anchor.offset.x
+                    }
+                },
+                {
+                    if self.forbid_vertical_scroll {
+                        self.anchor.offset.y
+                    } else {
+                        anchor.offset.y
+                    }
+                },
+            ),
+            anchor: self.anchor.anchor,
         };
 
         self.autoscroll_request.take();
@@ -452,6 +465,14 @@ impl ScrollManager {
         }
     }
 
+    pub fn set_forbid_horizontal_scroll(&mut self, forbid: bool) {
+        self.forbid_horizontal_scroll = forbid;
+    }
+
+    pub fn forbid_horizontal_scroll(&self) -> bool {
+        self.forbid_horizontal_scroll
+    }
+
     pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
         self.forbid_vertical_scroll = forbid;
     }
@@ -519,6 +540,9 @@ impl Editor {
         if self.scroll_manager.forbid_vertical_scroll {
             delta.y = 0.0;
         }
+        if self.scroll_manager.forbid_horizontal_scroll {
+            delta.x = 0.0;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let position = self.scroll_manager.anchor.scroll_position(&display_map) + delta;
         self.set_scroll_position_taking_display_map(position, true, false, display_map, window, cx);
@@ -534,6 +558,10 @@ impl Editor {
         if self.scroll_manager.forbid_vertical_scroll {
             let current_position = self.scroll_position(cx);
             position.y = current_position.y;
+        }
+        if self.scroll_manager.forbid_horizontal_scroll {
+            let current_position = self.scroll_position(cx);
+            position.x = current_position.x;
         }
         self.set_scroll_position_internal(position, true, false, window, cx)
     }
@@ -594,12 +622,23 @@ impl Editor {
         self.edit_prediction_preview
             .set_previous_scroll_position(None);
 
-        let adjusted_position = if self.scroll_manager.forbid_vertical_scroll {
-            let current_position = self.scroll_manager.anchor.scroll_position(&display_map);
-            gpui::Point::new(scroll_position.x, current_position.y)
-        } else {
-            scroll_position
-        };
+        let current_position = self.scroll_manager.anchor.scroll_position(&display_map);
+        let adjusted_position = gpui::Point::new(
+            {
+                if self.scroll_manager.forbid_horizontal_scroll {
+                    current_position.x
+                } else {
+                    scroll_position.x
+                }
+            },
+            {
+                if self.scroll_manager.forbid_vertical_scroll {
+                    current_position.y
+                } else {
+                    scroll_position.y
+                }
+            },
+        );
 
         let editor_was_scrolled = self.scroll_manager.set_scroll_position(
             adjusted_position,
