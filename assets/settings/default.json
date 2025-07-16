@@ -197,6 +197,8 @@
   //    "inline"
   // 3. Place snippets at the bottom of the completion list:
   //    "bottom"
+  // 4. Do not show snippets in the completion list:
+  //    "none"
   "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //

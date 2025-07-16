@@ -1074,6 +1074,20 @@ impl CompletionsMenu {
             .and_then(|q| q.chars().next())
             .and_then(|c| c.to_lowercase().next());
 
+        if snippet_sort_order == SnippetSortOrder::None {
+            matches.retain(|string_match| {
+                let completion = &completions[string_match.candidate_id];
+
+                let is_snippet = matches!(
+                    &completion.source,
+                    CompletionSource::Lsp { lsp_completion, .. }
+                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                );
+
+                !is_snippet
+            });
+        }
+
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
@@ -1112,6 +1126,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
+                    SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
