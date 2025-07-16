@@ -1273,6 +1273,18 @@ impl Render for KeymapEditor {
                                             )
                                             .shape(IconButtonShape::Square)
                                             .toggle_state(exact_match)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::for_action(
+                                                    if exact_match {
+                                                        "Partial match mode"
+                                                    } else {
+                                                        "Exact match mode"
+                                                    },
+                                                    &ToggleExactKeystrokeMatching,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .on_click(
                                                 cx.listener(|_, _, window, cx| {
                                                     window.dispatch_action(
@@ -1345,7 +1357,14 @@ impl Render for KeymapEditor {
                                     .unwrap_or_else(|| {
                                         base_button_style(index, IconName::Pencil)
                                             .visible_on_hover(row_group_id(index))
-                                            .tooltip(Tooltip::text("Edit Keybinding"))
+                                            .tooltip(|window, cx| {
+                                                Tooltip::for_action(
+                                                    "Edit Keybinding",
+                                                    &EditBinding,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
