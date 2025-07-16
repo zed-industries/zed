@@ -683,7 +683,7 @@ impl KeymapEditor {
         .detach_and_log_err(cx);
     }
 
-    fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
+    fn key_context(&self) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("KeymapEditor");
         dispatch_context.add("menu");
@@ -718,7 +718,7 @@ impl KeymapEditor {
         self.selected_index.take();
     }
 
-    fn selected_keybind_idx(&self) -> Option<usize> {
+    fn selected_keybind_index(&self) -> Option<usize> {
         self.selected_index
             .and_then(|match_index| self.matches.get(match_index))
             .map(|r#match| r#match.candidate_id)
@@ -762,40 +762,41 @@ impl KeymapEditor {
             let selected_binding_is_unbound = selected_binding.keystrokes().is_none();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-                menu.action_disabled_when(
-                    selected_binding_is_unbound,
-                    "Edit",
-                    Box::new(EditBinding),
-                )
-                .action("Create", Box::new(CreateBinding))
-                .action_disabled_when(
-                    selected_binding_is_unbound,
-                    "Delete",
-                    Box::new(DeleteBinding),
-                )
-                .separator()
-                .action("Copy Action", Box::new(CopyAction))
-                .action_disabled_when(
-                    selected_binding_has_no_context,
-                    "Copy Context",
-                    Box::new(CopyContext),
-                )
-                .entry("Show matching keybindings", None, {
-                    let weak = weak.clone();
-                    let key_strokes = key_strokes.clone();
+                menu.action_key_context(self.key_context())
+                    .action_disabled_when(
+                        selected_binding_is_unbound,
+                        "Edit",
+                        Box::new(EditBinding),
+                    )
+                    .action("Create", Box::new(CreateBinding))
+                    .action_disabled_when(
+                        selected_binding_is_unbound,
+                        "Delete",
+                        Box::new(DeleteBinding),
+                    )
+                    .separator()
+                    .action("Copy Action", Box::new(CopyAction))
+                    .action_disabled_when(
+                        selected_binding_has_no_context,
+                        "Copy Context",
+                        Box::new(CopyContext),
+                    )
+                    .entry("Show matching keybindings", None, {
+                        let weak = weak.clone();
+                        let key_strokes = key_strokes.clone();
 
-                    move |_, cx| {
-                        weak.update(cx, |this, cx| {
-                            this.filter_state = FilterState::All;
-                            this.search_mode = SearchMode::KeyStroke { exact_match: true };
+                        move |_, cx| {
+                            weak.update(cx, |this, cx| {
+                                this.filter_state = FilterState::All;
+                                this.search_mode = SearchMode::KeyStroke { exact_match: true };
 
-                            this.keystroke_editor.update(cx, |editor, cx| {
-                                editor.set_keystrokes(key_strokes.clone(), cx);
-                            });
-                        })
-                        .ok();
-                    }
-                })
+                                this.keystroke_editor.update(cx, |editor, cx| {
+                                    editor.set_keystrokes(key_strokes.clone(), cx);
+                                });
+                            })
+                            .ok();
+                        }
+                    })
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
@@ -1141,14 +1142,14 @@ impl Item for KeymapEditor {
 }
 
 impl Render for KeymapEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
         v_flex()
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
-            .key_context(self.dispatch_context(window, cx))
+            .key_context(self.key_context())
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))

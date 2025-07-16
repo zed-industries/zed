@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Subscription, px,
+    Focusable, IntoElement, KeyContext, Render, Subscription, px,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;
@@ -150,6 +150,7 @@ pub struct ContextMenu {
     items: Vec<ContextMenuItem>,
     focus_handle: FocusHandle,
     action_context: Option<FocusHandle>,
+    action_key_context: Option<KeyContext>,
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
@@ -220,6 +221,7 @@ impl ContextMenu {
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
+                    action_key_context: None,
                 },
                 window,
                 cx,
@@ -263,6 +265,7 @@ impl ContextMenu {
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
+                    action_key_context: None,
                 },
                 window,
                 cx,
@@ -304,6 +307,7 @@ impl ContextMenu {
                 documentation_aside: None,
                 fixed_width: None,
                 end_slot_action: None,
+                action_key_context: None,
             },
             window,
             cx,
@@ -598,6 +602,11 @@ impl ContextMenu {
 
     pub fn key_context(mut self, context: impl Into<SharedString>) -> Self {
         self.key_context = context.into();
+        self
+    }
+
+    pub fn action_key_context(mut self, context: KeyContext) -> Self {
+        self.action_key_context = context.into();
         self
     }
 
@@ -970,14 +979,22 @@ impl ContextMenu {
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
                             .children(action.as_ref().and_then(|action| {
-                                self.action_context
+                                self.action_key_context
                                     .as_ref()
-                                    .map(|focus| {
-                                        KeyBinding::for_action_in(&**action, focus, window, cx)
+                                    .and_then(|context| {
+                                        KeyBinding::for_action_in_context(
+                                            &**action,
+                                            context.clone(),
+                                            window,
+                                            cx,
+                                        )
                                     })
-                                    .unwrap_or_else(|| {
-                                        KeyBinding::for_action(&**action, window, cx)
+                                    .or_else(|| {
+                                        self.action_context.as_ref().and_then(|focus| {
+                                            KeyBinding::for_action_in(&**action, focus, window, cx)
+                                        })
                                     })
+                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside.is_some(),

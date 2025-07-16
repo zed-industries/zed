@@ -51,6 +51,18 @@ impl KeyBinding {
         Some(Self::new_from_gpui(key_binding, cx))
     }
 
+    /// Like `for_action`, but lets you specify the key context from which keybindings are matched.
+    pub fn for_action_in_context(
+        action: &dyn Action,
+        context: gpui::KeyContext,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<Self> {
+        let key_binding =
+            window.highest_precedence_binding_for_action_in_context(action, context)?;
+        Some(Self::new_from_gpui(key_binding, cx))
+    }
+
     pub fn set_vim_mode(cx: &mut App, enabled: bool) {
         cx.set_global(VimStyle(enabled));
     }
