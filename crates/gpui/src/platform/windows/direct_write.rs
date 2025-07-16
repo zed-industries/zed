@@ -805,75 +805,224 @@ impl DirectWriteState {
 
         let mut bitmap_data;
         if params.is_emoji {
-            bitmap_data =
-                vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize * 4];
+            // todo: support more glyph image formats for more exotic fonts, for now it should fallback to monochrome rendering
+            let color_enumerator = unsafe {
+                self.components.factory.TranslateColorGlyphRun(
+                    Vector2::new(baseline_origin_x, baseline_origin_y),
+                    &glyph_run,
+                    None,
+                    DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+                    measuring_mode,
+                    Some(&transform),
+                    0,
+                )
+            };
 
-            let mut rgba_data = vec![0u8; (texture_width * texture_height * 4) as usize];
-            unsafe {
-                glyph_analysis.CreateAlphaTexture(texture_type, &texture_bounds, &mut rgba_data)?;
-            }
+            // if let Ok(color_enumerator) = color_enumerator {
+            //     loop {
+            //         let color_run = unsafe { color_enumerator.GetCurrentRun() };
+            //         if let Ok(color_run) = color_run {
+            //             let color_glyph_run = unsafe { &*color_run };
+            //             let color_value = color_glyph_run.Base.runColor;
 
-            // Copy texture data into bitmap at correct position
-            let offset_x = texture_bounds.left.max(0) as usize;
-            let offset_y = texture_bounds.top.max(0) as usize;
-            for y in 0..texture_height as usize {
-                for x in 0..texture_width as usize {
-                    let bitmap_x = offset_x + x;
-                    let bitmap_y = offset_y + y;
+            //             // Create analysis for this color layer
+            //             let color_analysis = unsafe {
+            //                 self.components.factory.CreateGlyphRunAnalysis(
+            //                     &color_glyph_run.Base.glyphRun as *const _,
+            //                     Some(&transform),
+            //                     rendering_mode,
+            //                     measuring_mode,
+            //                     DWRITE_GRID_FIT_MODE_DEFAULT,
+            //                     DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+            //                     baseline_origin_x,
+            //                     baseline_origin_y,
+            //                 )
+            //             };
 
-                    if bitmap_x < bitmap_size.width.0 as usize
-                        && bitmap_y < bitmap_size.height.0 as usize
-                    {
-                        let texture_idx = (y * texture_width as usize + x) * 4;
-                        let bitmap_idx = (bitmap_y * bitmap_size.width.0 as usize + bitmap_x) * 4;
+            //             // todo: move this block completely to the gpu
+            //             // this is important because fonts can bundle quite large icons
+            //             // and compositing them on the cpu is quite expensive
+            //             // also the code is ugly
+            //             if let Ok(color_analysis) = color_analysis {
+            //                 let color_bounds =
+            //                     unsafe { color_analysis.GetAlphaTextureBounds(texture_type) };
+            //                 if let Ok(color_bounds) = color_bounds {
+            //                     let color_width = (color_bounds.right - color_bounds.left) as u32;
+            //                     let color_height = (color_bounds.bottom - color_bounds.top) as u32;
 
-                        if texture_idx + 3 < rgba_data.len() && bitmap_idx + 3 < bitmap_data.len() {
-                            bitmap_data[bitmap_idx..bitmap_idx + 4]
-                                .copy_from_slice(&rgba_data[texture_idx..texture_idx + 4]);
-                        }
-                    }
-                }
-            }
+            //                     if color_width > 0 && color_height > 0 {
+            //                         let mut alpha_data =
+            //                             vec![0u8; (color_width * color_height * 3) as usize];
+            //                         if unsafe {
+            //                             color_analysis.CreateAlphaTexture(
+            //                                 texture_type,
+            //                                 &color_bounds,
+            //                                 &mut alpha_data,
+            //                             )
+            //                         }
+            //                         .is_ok()
+            //                         {
+            //                             let r = (color_value.r * 255.0) as u8;
+            //                             let g = (color_value.g * 255.0) as u8;
+            //                             let b = (color_value.b * 255.0) as u8;
+            //                             let a = (color_value.a * 255.0) as u8;
+
+            //                             let offset_x = color_bounds.left.max(0) as usize;
+            //                             let offset_y = color_bounds.top.max(0) as usize;
+
+            //                             for y in 0..color_height as usize {
+            //                                 for x in 0..color_width as usize {
+            //                                     let bitmap_x = offset_x + x;
+            //                                     let bitmap_y = offset_y + y;
+
+            //                                     if bitmap_x < bitmap_size.width.0 as usize
+            //                                         && bitmap_y < bitmap_size.height.0 as usize
+            //                                     {
+            //                                         let alpha_idx =
+            //                                             (y * color_width as usize + x) * 3;
+            //                                         let bitmap_idx = (bitmap_y
+            //                                             * bitmap_size.width.0 as usize
+            //                                             + bitmap_x)
+            //                                             * 4;
+
+            //                                         if alpha_idx + 2 < alpha_data.len()
+            //                                             && bitmap_idx + 3 < bitmap_data.len()
+            //                                         {
+            //                                             let alpha_value = (alpha_data[alpha_idx]
+            //                                                 as u32
+            //                                                 + alpha_data[alpha_idx + 1] as u32
+            //                                                 + alpha_data[alpha_idx + 2] as u32)
+            //                                                 / 3;
+            //                                             let final_alpha =
+            //                                                 ((alpha_value * a as u32) / 255) as u8;
+
+            //                                             if final_alpha > 0 {
+            //                                                 let existing_r =
+            //                                                     bitmap_data[bitmap_idx];
+            //                                                 let existing_g =
+            //                                                     bitmap_data[bitmap_idx + 1];
+            //                                                 let existing_b =
+            //                                                     bitmap_data[bitmap_idx + 2];
+            //                                                 let existing_a =
+            //                                                     bitmap_data[bitmap_idx + 3];
+
+            //                                                 let src_alpha =
+            //                                                     final_alpha as f32 / 255.0;
+            //                                                 let dst_alpha =
+            //                                                     existing_a as f32 / 255.0;
+            //                                                 let out_alpha = src_alpha
+            //                                                     + dst_alpha * (1.0 - src_alpha);
+
+            //                                                 if out_alpha > 0.0 {
+            //                                                     bitmap_data[bitmap_idx] =
+            //                                                         ((r as f32 * src_alpha
+            //                                                             + existing_r as f32
+            //                                                                 * dst_alpha
+            //                                                                 * (1.0 - src_alpha))
+            //                                                             / out_alpha)
+            //                                                             as u8;
+            //                                                     bitmap_data[bitmap_idx + 1] =
+            //                                                         ((g as f32 * src_alpha
+            //                                                             + existing_g as f32
+            //                                                                 * dst_alpha
+            //                                                                 * (1.0 - src_alpha))
+            //                                                             / out_alpha)
+            //                                                             as u8;
+            //                                                     bitmap_data[bitmap_idx + 2] =
+            //                                                         ((b as f32 * src_alpha
+            //                                                             + existing_b as f32
+            //                                                                 * dst_alpha
+            //                                                                 * (1.0 - src_alpha))
+            //                                                             / out_alpha)
+            //                                                             as u8;
+            //                                                     bitmap_data[bitmap_idx + 3] =
+            //                                                         (out_alpha * 255.0) as u8;
+            //                                                 }
+            //                                             }
+            //                                         }
+            //                                     }
+            //                                 }
+            //                             }
+            //                         }
+            //                     }
+            //                 }
+            //             }
+            //         }
+
+            //         if !unsafe { color_enumerator.MoveNext() }?.as_bool() {
+            //             break;
+            //         }
+            //     }
+            // } else {
+            // }
+            let monochrome_data = Self::rasterize_monochrome(
+                &glyph_analysis,
+                bitmap_size,
+                size(texture_width, texture_height),
+                &texture_bounds,
+            )?;
+            bitmap_data = monochrome_data
+                .into_iter()
+                .flat_map(|e| [e, e, e, 255])
+                .collect::<Vec<u8>>();
         } else {
-            bitmap_data = vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
+            bitmap_data = Self::rasterize_monochrome(
+                &glyph_analysis,
+                bitmap_size,
+                size(texture_width, texture_height),
+                &texture_bounds,
+            )?;
+        }
 
-            let mut alpha_data = vec![0u8; (texture_width * texture_height * 3) as usize];
-            unsafe {
-                glyph_analysis.CreateAlphaTexture(
-                    texture_type,
-                    &texture_bounds,
-                    &mut alpha_data,
-                )?;
-            }
+        Ok((bitmap_size, bitmap_data))
+    }
 
-            // Convert ClearType RGB data to grayscale and place in bitmap
-            let offset_x = texture_bounds.left.max(0) as usize;
-            let offset_y = texture_bounds.top.max(0) as usize;
+    fn rasterize_monochrome(
+        glyph_analysis: &IDWriteGlyphRunAnalysis,
+        bitmap_size: Size<DevicePixels>,
+        texture_size: Size<u32>,
+        texture_bounds: &RECT,
+    ) -> Result<Vec<u8>> {
+        let mut bitmap_data =
+            vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
 
-            for y in 0..texture_height as usize {
-                for x in 0..texture_width as usize {
-                    let bitmap_x = offset_x + x;
-                    let bitmap_y = offset_y + y;
+        let mut alpha_data = vec![0u8; (texture_size.width * texture_size.height * 3) as usize];
+        unsafe {
+            glyph_analysis.CreateAlphaTexture(
+                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                texture_bounds,
+                &mut alpha_data,
+            )?;
+        }
 
-                    if bitmap_x < bitmap_size.width.0 as usize
-                        && bitmap_y < bitmap_size.height.0 as usize
-                    {
-                        let texture_idx = (y * texture_width as usize + x) * 3;
-                        let bitmap_idx = bitmap_y * bitmap_size.width.0 as usize + bitmap_x;
+        // Convert ClearType RGB data to grayscale and place in bitmap
+        let offset_x = texture_bounds.left.max(0) as usize;
+        let offset_y = texture_bounds.top.max(0) as usize;
 
-                        if texture_idx + 2 < alpha_data.len() && bitmap_idx < bitmap_data.len() {
-                            let avg = (alpha_data[texture_idx] as u32
-                                + alpha_data[texture_idx + 1] as u32
-                                + alpha_data[texture_idx + 2] as u32)
-                                / 3;
-                            bitmap_data[bitmap_idx] = avg as u8;
-                        }
+        for y in 0..texture_size.height as usize {
+            for x in 0..texture_size.width as usize {
+                let bitmap_x = offset_x + x;
+                let bitmap_y = offset_y + y;
+
+                if bitmap_x < bitmap_size.width.0 as usize
+                    && bitmap_y < bitmap_size.height.0 as usize
+                {
+                    let texture_idx = (y * texture_size.width as usize + x) * 3;
+                    let bitmap_idx = bitmap_y * bitmap_size.width.0 as usize + bitmap_x;
+
+                    if texture_idx + 2 < alpha_data.len() && bitmap_idx < bitmap_data.len() {
+                        let avg = (alpha_data[texture_idx] as u32
+                            + alpha_data[texture_idx + 1] as u32
+                            + alpha_data[texture_idx + 2] as u32)
+                            / 3;
+                        bitmap_data[bitmap_idx] = avg as u8;
                     }
                 }
             }
         }
 
-        Ok((bitmap_size, bitmap_data))
+        Ok(bitmap_data)
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
