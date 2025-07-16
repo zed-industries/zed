@@ -18,6 +18,9 @@ use windows::{
 
 use crate::*;
 
+const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_R8G8B8A8_UNORM;
+const BACK_BUFFER_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: DirectXDevices,
@@ -39,6 +42,8 @@ pub(crate) struct DirectXDevices {
 struct DirectXContext {
     swap_chain: ManuallyDrop<IDXGISwapChain1>,
     back_buffer: [Option<ID3D11RenderTargetView>; 1],
+    msaa_target: ID3D11Texture2D,
+    msaa_view: ID3D11RenderTargetView,
     viewport: [D3D11_VIEWPORT; 1],
     // #[cfg(not(feature = "enable-renderdoc"))]
     // direct_composition: DirectComposition,
@@ -164,7 +169,7 @@ impl DirectXRenderer {
                 BUFFER_COUNT as u32,
                 new_size.width.0 as u32,
                 new_size.height.0 as u32,
-                DXGI_FORMAT_B8G8R8A8_UNORM,
+                RENDER_TARGET_FORMAT,
                 DXGI_SWAP_CHAIN_FLAG(0),
             )?;
         }
@@ -174,6 +179,15 @@ impl DirectXRenderer {
             &self.devices.device_context,
         )?;
         self.context.back_buffer[0] = Some(backbuffer);
+
+        let (msaa_target, msaa_view) = create_msaa_target_and_its_view(
+            &self.devices.device,
+            new_size.width.0 as u32,
+            new_size.height.0 as u32,
+        )?;
+        self.context.msaa_target = msaa_target;
+        self.context.msaa_view = msaa_view;
+
         self.context.viewport = set_viewport(
             &self.devices.device_context,
             new_size.width.0 as f32,
@@ -411,12 +425,15 @@ impl DirectXContext {
             &devices.device,
             &devices.device_context,
         )?)];
+        let (msaa_target, msaa_view) = create_msaa_target_and_its_view(&devices.device, 1, 1)?;
         let viewport = set_viewport(&devices.device_context, 1.0, 1.0);
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(Self {
             swap_chain,
             back_buffer,
+            msaa_target,
+            msaa_view,
             viewport,
             // #[cfg(not(feature = "enable-renderdoc"))]
             // direct_composition,
@@ -984,7 +1001,7 @@ fn create_swap_chain_default(
     let desc = DXGI_SWAP_CHAIN_DESC1 {
         Width: 1,
         Height: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        Format: RENDER_TARGET_FORMAT,
         Stereo: false.into(),
         SampleDesc: DXGI_SAMPLE_DESC {
             Count: 1,
@@ -1013,12 +1030,55 @@ fn set_render_target_view(
     // https://stackoverflow.com/questions/65246961/does-the-backbuffer-that-a-rendertargetview-points-to-automagically-change-after
     let back_buffer = unsafe {
         let resource: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
+        let desc = D3D11_RENDER_TARGET_VIEW_DESC {
+            Format: BACK_BUFFER_FORMAT,
+            ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2D,
+            ..Default::default()
+        };
         let mut buffer: Option<ID3D11RenderTargetView> = None;
-        device.CreateRenderTargetView(&resource, None, Some(&mut buffer))?;
+        device.CreateRenderTargetView(&resource, Some(&desc), Some(&mut buffer))?;
         buffer.unwrap()
     };
     unsafe { device_context.OMSetRenderTargets(Some(&[Some(back_buffer.clone())]), None) };
     Ok(back_buffer)
+}
+
+fn create_msaa_target_and_its_view(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<(ID3D11Texture2D, ID3D11RenderTargetView)> {
+    let msaa_target = unsafe {
+        let mut output = None;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: BACK_BUFFER_FORMAT,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 4,
+                Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        device.CreateTexture2D(&desc, None, Some(&mut output))?;
+        output.unwrap()
+    };
+    let msaa_view = unsafe {
+        let desc = D3D11_RENDER_TARGET_VIEW_DESC {
+            Format: BACK_BUFFER_FORMAT,
+            ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DMS,
+            ..Default::default()
+        };
+        let mut output = None;
+        device.CreateRenderTargetView(&msaa_target, Some(&desc), Some(&mut output))?;
+        output.unwrap()
+    };
+    Ok((msaa_target, msaa_view))
 }
 
 #[inline]
