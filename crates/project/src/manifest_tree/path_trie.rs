@@ -244,12 +244,15 @@ mod tests {
             LabelPresence::Present,
         );
         trie.insert(&TriePath::from(Path::new("a")), (), LabelPresence::Present);
+        let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
             assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
             if path.as_ref() != Path::new("a") && path.as_ref() != Path::new("a/b") {
                 panic!("Unexpected path: {}", path.as_ref().display());
             }
+            assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())
         });
+        assert_eq!(visited_paths.len(), 2);
     }
 }
