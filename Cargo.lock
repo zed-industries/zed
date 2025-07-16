@@ -14568,6 +14568,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "fancy-regex 0.14.0",
  "futures 0.3.31",
  "gpui",
  "language",
