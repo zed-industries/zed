@@ -5,11 +5,6 @@
   ")"
 ] @punctuation.bracket
 
-(_
-  .
-  "<" @punctuation.bracket
-  ">" @punctuation.bracket)
-
 [
   (integer_literal)
   (float_literal)
