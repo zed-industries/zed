@@ -44,6 +44,7 @@ pub trait AgentServer: Send {
     fn name(&self) -> &'static str;
     fn empty_state_headline(&self) -> &'static str;
     fn empty_state_message(&self) -> &'static str;
+    fn supports_always_allow(&self) -> bool;
 
     fn new_thread(
         &self,

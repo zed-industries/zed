@@ -310,23 +310,20 @@ impl ClaudeMcpServer {
                         .await?;
 
                     match outcome {
-                        acp::ToolCallConfirmationOutcome::Allow |
-                        // todo! remove these from UI
-                        acp::ToolCallConfirmationOutcome::AlwaysAllow |
-                        acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer |
-                        acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
+                        acp::ToolCallConfirmationOutcome::Allow
+                        | acp::ToolCallConfirmationOutcome::AlwaysAllow
+                        | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
+                        | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
                             Ok(PermissionToolResponse {
                                 behavior: PermissionToolBehavior::Allow,
                                 updated_input: params.input,
                             })
-                        },
-                        acp::ToolCallConfirmationOutcome::Reject|
-                        acp::ToolCallConfirmationOutcome::Cancel =>{
-                            Ok(PermissionToolResponse {
-                                behavior: PermissionToolBehavior::Deny,
-                                updated_input: params.input,
-                            })
                         }
+                        acp::ToolCallConfirmationOutcome::Reject
+                        | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
+                            behavior: PermissionToolBehavior::Deny,
+                            updated_input: params.input,
+                        }),
                     }
                 })
             }

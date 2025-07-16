@@ -109,6 +109,10 @@ impl AgentServer for ClaudeCode {
         ui::IconName::AiAnthropic
     }
 
+    fn supports_always_allow(&self) -> bool {
+        false
+    }
+
     fn new_thread(
         &self,
         root_dir: &Path,
@@ -414,6 +418,7 @@ enum MessageContent {
     #[serde(untagged)]
     UntaggedText(String),
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Usage {
