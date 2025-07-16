@@ -686,238 +686,83 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     let code_span_bg_color = cx.code_span_background_color;
     let text_style = cx.text_style.clone();
 
-    for parsed_region in parsed_new {
-        match parsed_region {
-            MarkdownParagraphChunk::Text(parsed) => {
-                let element_id = cx.next_id(&parsed.source_range);
+    // Check if this paragraph contains inline math - if so, use horizontal flex layout
+    let has_inline_math = parsed_new
+        .iter()
+        .any(|chunk| matches!(chunk, MarkdownParagraphChunk::InlineMath(_)));
 
-                let highlights = gpui::combine_highlights(
-                    parsed.highlights.iter().filter_map(|(range, highlight)| {
-                        highlight
-                            .to_highlight_style(&syntax_theme)
-                            .map(|style| (range.clone(), style))
-                    }),
-                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
-                        |(region, range)| {
-                            if region.code {
-                                Some((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        background_color: Some(code_span_bg_color),
-                                        ..Default::default()
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        },
-                    ),
-                );
-                let mut links = Vec::new();
-                let mut link_ranges = Vec::new();
-                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-                    if let Some(link) = region.link.clone() {
-                        links.push(link);
-                        link_ranges.push(range.clone());
-                    }
-                }
-                let workspace = workspace_clone.clone();
-                let element = div()
-                    .child(
-                        InteractiveText::new(
-                            element_id,
-                            StyledText::new(parsed.contents.clone())
-                                .with_default_highlights(&text_style, highlights),
-                        )
-                        .tooltip({
-                            let links = links.clone();
-                            let link_ranges = link_ranges.clone();
-                            move |idx, _, cx| {
-                                for (ix, range) in link_ranges.iter().enumerate() {
-                                    if range.contains(&idx) {
-                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                                    }
-                                }
-                                None
-                            }
-                        })
-                        .on_click(
-                            link_ranges,
-                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
-                                    if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    normalize_path(path.clone().as_path()),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
-                                        });
-                                    }
+    if has_inline_math {
+        // Create a horizontal flex container for mixed text and math content
+        let mut inline_elements = vec![];
+
+        for parsed_region in parsed_new {
+            match parsed_region {
+                MarkdownParagraphChunk::Text(parsed) => {
+                    let element_id = cx.next_id(&parsed.source_range);
+
+                    let highlights = gpui::combine_highlights(
+                        parsed.highlights.iter().filter_map(|(range, highlight)| {
+                            highlight
+                                .to_highlight_style(&syntax_theme)
+                                .map(|style| (range.clone(), style))
+                        }),
+                        parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                            |(region, range)| {
+                                if region.code {
+                                    Some((
+                                        range.clone(),
+                                        HighlightStyle {
+                                            background_color: Some(code_span_bg_color),
+                                            ..Default::default()
+                                        },
+                                    ))
+                                } else {
+                                    None
                                 }
                             },
                         ),
-                    )
-                    .into_any();
-                any_element.push(element);
-            }
-
-            MarkdownParagraphChunk::InlineMath(inline_math) => {
-                info!(
-                    "Rendering inline math: '{}' (SHOULD BE BETWEEN PAIRED $ SYMBOLS)",
-                    inline_math.contents
-                );
-                // Render inline math using the same SVG generation as block math
-                let svg_content = match typst_math_to_svg(&inline_math.contents) {
-                    Ok(svg) => {
-                        info!(
-                            "Inline math SVG generated successfully: {} chars",
-                            svg.len()
-                        );
-                        svg
-                    }
-                    Err(err) => {
-                        info!(
-                            "Inline math rendering failed: {} - Using fallback styling",
-                            err
-                        );
-                        // Fallback to raw text with styling
-                        let element_id = cx.next_id(&inline_math.source_range);
-                        let fallback_element = div()
-                            .id(element_id)
-                            .px_1()
-                            .border_1()
-                            .border_color(cx.border_color)
-                            .bg(cx.code_span_background_color)
-                            .rounded_sm()
-                            .font_family(cx.buffer_font_family.clone())
-                            .text_color(cx.text_color)
-                            .child(format!("${} $", inline_math.contents))
-                            .into_any();
-                        any_element.push(fallback_element);
-                        continue;
-                    }
-                };
-
-                // Create inline image for math
-                let svg_content_clone = svg_content.clone();
-                let image_source = ImageSource::Custom(Arc::new(move |_window, _cx| {
-                    let tree = match usvg::Tree::from_data(
-                        svg_content_clone.as_bytes(),
-                        &usvg::Options::default(),
-                    ) {
-                        Ok(tree) => tree,
-                        Err(e) => {
-                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                                "SVG parse error: {}",
-                                e
-                            )))));
-                        }
-                    };
-
-                    let size = tree.size();
-                    let width = size.width() as u32;
-                    let height = size.height() as u32;
-
-                    if width == 0 || height == 0 {
-                        return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                            "Invalid SVG dimensions"
-                        )))));
-                    }
-
-                    let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
-                        Some(pixmap) => pixmap,
-                        None => {
-                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                                "Failed to create pixmap"
-                            )))));
-                        }
-                    };
-
-                    resvg::render(
-                        &tree,
-                        resvg::tiny_skia::Transform::identity(),
-                        &mut pixmap.as_mut(),
                     );
-
-                    let rgba_data = pixmap.take();
-                    let rgba_image = match image::RgbaImage::from_raw(width, height, rgba_data) {
-                        Some(img) => img,
-                        None => {
-                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
-                                "Failed to create RGBA image"
-                            )))));
+                    let mut links = Vec::new();
+                    let mut link_ranges = Vec::new();
+                    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                        if let Some(link) = region.link.clone() {
+                            links.push(link);
+                            link_ranges.push(range.clone());
                         }
-                    };
-
-                    let frame = image::Frame::new(rgba_image.into());
-                    let render_image = RenderImage::new(vec![frame]);
-
-                    Some(Ok(Arc::new(render_image)))
-                }));
-
-                let element_id = cx.next_id(&inline_math.source_range);
-                info!("Creating inline math image element");
-                let math_element = div()
-                    .id(element_id)
-                    .flex()
-                    .items_center()
-                    .child(img(image_source).max_h(px(30.0)))
-                    .into_any();
-                any_element.push(math_element);
-                info!("Added inline math element to result");
-            }
-
-            MarkdownParagraphChunk::Image(image) => {
-                let image_resource = match image.link.clone() {
-                    Link::Web { url } => Resource::Uri(url.into()),
-                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
-                };
-
-                let element_id = cx.next_id(&image.source_range);
-
-                let image_element = div()
-                    .id(element_id)
-                    .cursor_pointer()
-                    .child(
-                        img(ImageSource::Resource(image_resource))
-                            .max_w_full()
-                            .with_fallback({
-                                let alt_text = image.alt_text.clone();
-                                move || div().children(alt_text.clone()).into_any_element()
-                            }),
-                    )
-                    .tooltip({
-                        let link = image.link.clone();
-                        move |_, cx| {
-                            InteractiveMarkdownElementTooltip::new(
-                                Some(link.to_string()),
-                                "open image",
-                                cx,
+                    }
+                    let workspace = workspace_clone.clone();
+                    let element = div()
+                        .child(
+                            InteractiveText::new(
+                                element_id,
+                                StyledText::new(parsed.contents.clone())
+                                    .with_default_highlights(&text_style, highlights),
                             )
-                            .into()
-                        }
-                    })
-                    .on_click({
-                        let workspace = workspace_clone.clone();
-                        let link = image.link.clone();
-                        move |_, window, cx| {
-                            if window.modifiers().secondary() {
-                                match &link {
+                            .tooltip({
+                                let links = links.clone();
+                                let link_ranges = link_ranges.clone();
+                                move |idx, _, cx| {
+                                    for (ix, range) in link_ranges.iter().enumerate() {
+                                        if range.contains(&idx) {
+                                            return Some(LinkPreview::new(
+                                                &links[ix].to_string(),
+                                                cx,
+                                            ));
+                                        }
+                                    }
+                                    None
+                                }
+                            })
+                            .on_click(
+                                link_ranges,
+                                move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
                                     Link::Web { url } => cx.open_url(url),
                                     Link::Path { path, .. } => {
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
                                                     .open_abs_path(
-                                                        path.clone(),
+                                                        normalize_path(path.clone().as_path()),
                                                         OpenOptions {
                                                             visible: Some(OpenVisible::None),
                                                             ..Default::default()
@@ -929,12 +774,337 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                             });
                                         }
                                     }
+                                },
+                            ),
+                        )
+                        .into_any();
+                    inline_elements.push(element);
+                }
+
+                MarkdownParagraphChunk::InlineMath(inline_math) => {
+                    info!(
+                        "Rendering inline math: '{}' (SHOULD BE BETWEEN PAIRED $ SYMBOLS)",
+                        inline_math.contents
+                    );
+                    // Render inline math using the same SVG generation as block math
+                    let svg_content = match typst_math_to_svg(&inline_math.contents) {
+                        Ok(svg) => {
+                            info!(
+                                "Inline math SVG generated successfully: {} chars",
+                                svg.len()
+                            );
+                            svg
+                        }
+                        Err(err) => {
+                            info!(
+                                "Inline math rendering failed: {} - Using fallback styling",
+                                err
+                            );
+                            // Fallback to raw text with styling
+                            let element_id = cx.next_id(&inline_math.source_range);
+                            let fallback_element = div()
+                                .id(element_id)
+                                .px_1()
+                                .border_1()
+                                .border_color(cx.border_color)
+                                .bg(cx.code_span_background_color)
+                                .rounded_sm()
+                                .font_family(cx.buffer_font_family.clone())
+                                .text_color(cx.text_color)
+                                .child(format!("${} $", inline_math.contents))
+                                .into_any();
+                            inline_elements.push(fallback_element);
+                            continue;
+                        }
+                    };
+
+                    // Create inline image for math
+                    let svg_content_clone = svg_content.clone();
+                    let image_source = ImageSource::Custom(Arc::new(move |_window, _cx| {
+                        let tree = match usvg::Tree::from_data(
+                            svg_content_clone.as_bytes(),
+                            &usvg::Options::default(),
+                        ) {
+                            Ok(tree) => tree,
+                            Err(e) => {
+                                return Some(Err(ImageCacheError::Other(Arc::new(
+                                    anyhow::anyhow!("SVG parse error: {}", e),
+                                ))));
+                            }
+                        };
+
+                        let size = tree.size();
+                        let width = size.width() as u32;
+                        let height = size.height() as u32;
+
+                        if width == 0 || height == 0 {
+                            return Some(Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "Invalid SVG dimensions"
+                            )))));
+                        }
+
+                        let mut pixmap = match resvg::tiny_skia::Pixmap::new(width, height) {
+                            Some(pixmap) => pixmap,
+                            None => {
+                                return Some(Err(ImageCacheError::Other(Arc::new(
+                                    anyhow::anyhow!("Failed to create pixmap"),
+                                ))));
+                            }
+                        };
+
+                        resvg::render(
+                            &tree,
+                            resvg::tiny_skia::Transform::identity(),
+                            &mut pixmap.as_mut(),
+                        );
+
+                        let rgba_data = pixmap.take();
+                        let rgba_image = match image::RgbaImage::from_raw(width, height, rgba_data)
+                        {
+                            Some(img) => img,
+                            None => {
+                                return Some(Err(ImageCacheError::Other(Arc::new(
+                                    anyhow::anyhow!("Failed to create RGBA image"),
+                                ))));
+                            }
+                        };
+
+                        let frame = image::Frame::new(rgba_image.into());
+                        let render_image = RenderImage::new(vec![frame]);
+
+                        Some(Ok(Arc::new(render_image)))
+                    }));
+
+                    let element_id = cx.next_id(&inline_math.source_range);
+                    info!("Creating inline math image element");
+                    let math_element = img(image_source).id(element_id).max_h(px(30.0)).into_any();
+                    inline_elements.push(math_element);
+                    info!("Added inline math element to result");
+                }
+
+                MarkdownParagraphChunk::Image(image) => {
+                    let image_resource = match image.link.clone() {
+                        Link::Web { url } => Resource::Uri(url.into()),
+                        Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+                    };
+
+                    let element_id = cx.next_id(&image.source_range);
+
+                    let image_element = div()
+                        .id(element_id)
+                        .cursor_pointer()
+                        .child(
+                            img(ImageSource::Resource(image_resource))
+                                .max_w_full()
+                                .with_fallback({
+                                    let alt_text = image.alt_text.clone();
+                                    move || div().children(alt_text.clone()).into_any_element()
+                                }),
+                        )
+                        .tooltip({
+                            let link = image.link.clone();
+                            move |_, cx| {
+                                InteractiveMarkdownElementTooltip::new(
+                                    Some(link.to_string()),
+                                    "open image",
+                                    cx,
+                                )
+                                .into()
+                            }
+                        })
+                        .on_click({
+                            let workspace = workspace_clone.clone();
+                            let link = image.link.clone();
+                            move |_, window, cx| {
+                                if window.modifiers().secondary() {
+                                    match &link {
+                                        Link::Web { url } => cx.open_url(url),
+                                        Link::Path { path, .. } => {
+                                            if let Some(workspace) = &workspace {
+                                                _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            path.clone(),
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach();
+                                                });
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                        })
+                        .into_any();
+                    inline_elements.push(image_element);
+                }
+            }
+        }
+
+        // Wrap all inline elements in a horizontal flex container
+        let paragraph_element = h_flex()
+            .items_baseline()
+            .flex_wrap()
+            .children(inline_elements)
+            .into_any();
+        any_element.push(paragraph_element);
+    } else {
+        // No inline math - use original approach for text-only paragraphs
+        for parsed_region in parsed_new {
+            match parsed_region {
+                MarkdownParagraphChunk::Text(parsed) => {
+                    let element_id = cx.next_id(&parsed.source_range);
+
+                    let highlights = gpui::combine_highlights(
+                        parsed.highlights.iter().filter_map(|(range, highlight)| {
+                            highlight
+                                .to_highlight_style(&syntax_theme)
+                                .map(|style| (range.clone(), style))
+                        }),
+                        parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                            |(region, range)| {
+                                if region.code {
+                                    Some((
+                                        range.clone(),
+                                        HighlightStyle {
+                                            background_color: Some(code_span_bg_color),
+                                            ..Default::default()
+                                        },
+                                    ))
+                                } else {
+                                    None
+                                }
+                            },
+                        ),
+                    );
+                    let mut links = Vec::new();
+                    let mut link_ranges = Vec::new();
+                    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                        if let Some(link) = region.link.clone() {
+                            links.push(link);
+                            link_ranges.push(range.clone());
                         }
-                    })
-                    .into_any();
-                any_element.push(image_element);
+                    }
+                    let workspace = workspace_clone.clone();
+                    let element = div()
+                        .child(
+                            InteractiveText::new(
+                                element_id,
+                                StyledText::new(parsed.contents.clone())
+                                    .with_default_highlights(&text_style, highlights),
+                            )
+                            .tooltip({
+                                let links = links.clone();
+                                let link_ranges = link_ranges.clone();
+                                move |idx, _, cx| {
+                                    for (ix, range) in link_ranges.iter().enumerate() {
+                                        if range.contains(&idx) {
+                                            return Some(LinkPreview::new(
+                                                &links[ix].to_string(),
+                                                cx,
+                                            ));
+                                        }
+                                    }
+                                    None
+                                }
+                            })
+                            .on_click(
+                                link_ranges,
+                                move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                    Link::Web { url } => cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(
+                                                        normalize_path(path.clone().as_path()),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .detach();
+                                            });
+                                        }
+                                    }
+                                },
+                            ),
+                        )
+                        .into_any();
+                    any_element.push(element);
+                }
+                MarkdownParagraphChunk::Image(image) => {
+                    let image_resource = match image.link.clone() {
+                        Link::Web { url } => Resource::Uri(url.into()),
+                        Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+                    };
+
+                    let element_id = cx.next_id(&image.source_range);
+
+                    let image_element = div()
+                        .id(element_id)
+                        .cursor_pointer()
+                        .child(
+                            img(ImageSource::Resource(image_resource))
+                                .max_w_full()
+                                .with_fallback({
+                                    let alt_text = image.alt_text.clone();
+                                    move || div().children(alt_text.clone()).into_any_element()
+                                }),
+                        )
+                        .tooltip({
+                            let link = image.link.clone();
+                            move |_, cx| {
+                                InteractiveMarkdownElementTooltip::new(
+                                    Some(link.to_string()),
+                                    "open image",
+                                    cx,
+                                )
+                                .into()
+                            }
+                        })
+                        .on_click({
+                            let workspace = workspace_clone.clone();
+                            let link = image.link.clone();
+                            move |_, window, cx| {
+                                if window.modifiers().secondary() {
+                                    match &link {
+                                        Link::Web { url } => cx.open_url(url),
+                                        Link::Path { path, .. } => {
+                                            if let Some(workspace) = &workspace {
+                                                _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            path.clone(),
+                                                            OpenOptions {
+                                                                visible: Some(OpenVisible::None),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach();
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .into_any();
+                    any_element.push(image_element);
+                }
+                MarkdownParagraphChunk::InlineMath(_) => {
+                    // This shouldn't happen in text-only paragraphs, but handle gracefully
+                    // by doing nothing - inline math should be handled in the mixed content branch
+                }
             }
         }
     }
