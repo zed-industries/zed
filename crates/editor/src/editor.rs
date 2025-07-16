@@ -11941,11 +11941,11 @@ impl Editor {
         let row = selection.start.row;
         let column = selection.start.column;
         let anchor = self.selections.first_anchor();
-        let buffer_id = anchor.start.buffer_id.unwrap();
+        let Some(buffer_id) = anchor.start.buffer_id else {
+            return;
+        };
 
-        let cut_text = cut_item.text().unwrap_or_default().to_string();
-
-        let mut text = cut_text;
+        let mut text = cut_item.text().unwrap_or_default().to_string();
 
         if let Some(ring) = cx.try_global::<KillRingItem>() {
             if ring.row == row && ring.column == column && ring.buffer_id == buffer_id {
