@@ -25,7 +25,7 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-use devcontainer::DevcontainerManager;
+use devcontainer::{DevcontainerManager, devcontainer::ProgressCallback};
 pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
@@ -218,6 +218,8 @@ actions!(
         OpenInTerminal,
         /// Opens the component preview.
         OpenComponentPreview,
+        /// Opens the current project in a dev container.
+        OpenDevContainer,
         /// Reloads the active item.
         ReloadActiveItem,
         /// Resets the active dock to its default size.
@@ -230,6 +232,8 @@ actions!(
         SaveWithoutFormat,
         /// Shuts down all debug adapters.
         ShutdownDebugAdapters,
+        /// Stops the current devcontainer and returns to normal workspace.
+        StopDevContainer,
         /// Suppresses the current notification.
         SuppressNotification,
         /// Toggles the bottom dock.
@@ -1406,6 +1410,15 @@ impl Workspace {
                     store.workspaces.remove(&window_handle.clone());
                 })
             }),
+            // Add shutdown handler for devcontainers
+            cx.on_app_quit(move |this, cx| {
+                let devcontainer_manager = this.devcontainer_manager.clone();
+                cx.background_executor().spawn(async move {
+                    if let Err(e) = devcontainer_manager.stop_all_devcontainers().await {
+                        log::error!("Failed to stop devcontainers on shutdown: {}", e);
+                    }
+                })
+            }),
         ];
 
         cx.defer_in(window, |this, window, cx| {
@@ -2280,7 +2293,7 @@ impl Workspace {
             && close_intent != CloseIntent::ReplaceWindow
             && cx.windows().len() == 1;
 
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |workspace, cx| {
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
@@ -2314,9 +2327,9 @@ impl Workspace {
                 }
             }
 
-            let save_result = this
-                .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+            let save_result = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.save_all_internal(SaveIntent::Close, window, cx)
                 })?
                 .await;
 
@@ -2326,7 +2339,7 @@ impl Workspace {
                 && !save_last_workspace
                 && save_result.as_ref().map_or(false, |&res| res)
             {
-                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
+                workspace.update_in(cx, |workspace, window, cx| workspace.remove_from_session(window, cx))?
                     .await;
             }
 
@@ -3234,7 +3247,7 @@ impl Workspace {
     ) {
         let project = self.project.clone();
         let devcontainer_manager = self.devcontainer_manager.clone();
-        let _app_state = self.app_state.clone();
+        let _workspace_handle = self.weak_self.clone();
         
         cx.spawn_in(window, async move |workspace, cx| {
             // Get the project root path
@@ -3250,18 +3263,23 @@ impl Workspace {
             // Check if devcontainer configuration exists
             let config = match devcontainer_manager.detect_devcontainer(&project_root).await {
                 Ok(Some(config)) => config,
-                                 Ok(None) => {
-                     log::warn!("No devcontainer configuration found");
-                     return Ok::<(), anyhow::Error>(());
-                 }
-                 Err(e) => {
-                     log::error!("Failed to detect devcontainer: {}", e);
-                     return Ok::<(), anyhow::Error>(());
-                 }
+                Ok(None) => {
+                    log::warn!("No devcontainer configuration found");
+                    return Ok::<(), anyhow::Error>(());
+                }
+                Err(e) => {
+                    log::error!("Failed to detect devcontainer: {}", e);
+                    return Ok::<(), anyhow::Error>(());
+                }
             };
             
+            // Create progress callback that logs to console
+            let progress_callback: ProgressCallback = Box::new(move |message: String| {
+                log::info!("Devcontainer: {}", message);
+            });
+            
             // Start the devcontainer
-            match devcontainer_manager.start_devcontainer(&project_root, config.clone()).await {
+            match devcontainer_manager.start_devcontainer(&project_root, config.clone(), Some(progress_callback)).await {
                 Ok(instance) => {
                     log::info!("Successfully started devcontainer: {}", instance.container_id);
                     
@@ -3280,15 +3298,69 @@ impl Workspace {
                         });
                     })?;
                     
-                    // TODO: Create a new workspace connected to the devcontainer
-                    // This would involve creating a new project that uses docker exec
-                    // for file operations and terminal access
-                    
                     log::info!("Devcontainer connection info: {:?}", connection_info);
                 }
                 Err(e) => {
                     log::error!("Failed to start devcontainer: {}", e);
+                    
                     workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(&e, cx);
+                    })?;
+                }
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn stop_devcontainer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let devcontainer_manager = self.devcontainer_manager.clone();
+        
+        // Check if we're currently connected to a devcontainer
+        let status_view = self.devcontainer_status_view.read(cx);
+        let container_info = match (&status_view.container_id, &status_view.container_name) {
+            (Some(id), Some(name)) if status_view.is_connected => {
+                (id.clone(), name.clone())
+            }
+            _ => {
+                log::warn!("No active devcontainer to stop");
+                return;
+            }
+        };
+        
+        // Update status to show we're stopping
+        self.devcontainer_status_view.update(cx, |view, cx| {
+            view.set_devcontainer_status(None, cx);
+        });
+        
+        cx.spawn_in(window, async move |workspace, cx| {
+            log::info!("Stopping devcontainer: {}", container_info.1);
+            
+            // Stop all active devcontainers
+            match devcontainer_manager.stop_all_devcontainers().await {
+                Ok(_) => {
+                    log::info!("Devcontainer stopped successfully");
+                    
+                    // Update the devcontainer status to show it's available but not connected
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.devcontainer_status_view.update(cx, |view, cx| {
+                            view.set_devcontainer_status(None, cx);
+                        });
+                    })?;
+                }
+                Err(e) => {
+                    log::error!("Failed to stop devcontainer: {}", e);
+                    
+                    // Reset status on error
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.devcontainer_status_view.update(cx, |view, cx| {
+                            view.set_devcontainer_status(None, cx);
+                        });
                         workspace.show_error(&e, cx);
                     })?;
                 }
@@ -5652,8 +5724,8 @@ impl Workspace {
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
             }))
-            .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
-                this.toggle_dock(DockPosition::Left, window, cx);
+            .on_action(cx.listener(|workspace, _: &ToggleLeftDock, window, cx| {
+                workspace.toggle_dock(DockPosition::Left, window, cx);
             }))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleRightDock, window, cx| {
@@ -5762,6 +5834,12 @@ impl Workspace {
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
+            .on_action(cx.listener(|workspace, _: &OpenDevContainer, window, cx| {
+                workspace.open_devcontainer(window, cx);
+            }))
+            .on_action(cx.listener(|workspace, _: &StopDevContainer, window, cx| {
+                workspace.stop_devcontainer(window, cx);
+            }))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -7113,7 +7191,8 @@ pub fn join_channel(
                             "Failed to join channel",
                             Some(&detail),
                             &["Ok"],
-                        cx)
+                            cx,
+                        )
                     })?
                     .await
                     .ok();
@@ -7150,7 +7229,7 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Works
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
-                    .update(cx, |_, window, _| window.activate_window())
+                    .update(cx, |_, window: &mut Window, _| window.activate_window())
                     .ok();
                 return Some(workspace_window);
             }
@@ -9345,7 +9424,7 @@ mod tests {
                 px(1337.)
             );
 
-            // Now we move panel_2 to the left
+            // Now we move panel_2 to the left
             panel_2.set_position(DockPosition::Left, window, cx);
         });
 
@@ -9754,7 +9833,7 @@ mod tests {
     async fn test_close_on_disk_deletion_enabled(cx: &mut TestAppContext) {
         init_test(cx);
 
-        // Enable the close_on_disk_deletion setting
+        // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
                 settings.close_on_file_delete = Some(true);

@@ -61,6 +61,82 @@ impl DockerManager {
         Ok(())
     }
 
+    /// Check if a container with the given name exists
+    pub async fn container_exists(&self, container_name: &str) -> Result<bool> {
+        let output = util::command::new_smol_command("docker")
+            .arg("ps")
+            .arg("-a")
+            .arg("--filter")
+            .arg(format!("name={}", container_name))
+            .arg("--format")
+            .arg("{{.Names}}")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("Failed to execute docker ps command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to check if container exists: {}", stderr);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim() == container_name)
+    }
+
+    /// Check if a container is running
+    pub async fn container_is_running(&self, container_name: &str) -> Result<bool> {
+        let output = util::command::new_smol_command("docker")
+            .arg("ps")
+            .arg("--filter")
+            .arg(format!("name={}", container_name))
+            .arg("--format")
+            .arg("{{.Names}}")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("Failed to execute docker ps command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to check if container is running: {}", stderr);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.trim() == container_name)
+    }
+
+    /// Get container ID by name
+    pub async fn get_container_id_by_name(&self, container_name: &str) -> Result<Option<String>> {
+        let output = util::command::new_smol_command("docker")
+            .arg("ps")
+            .arg("-a")
+            .arg("--filter")
+            .arg(format!("name={}", container_name))
+            .arg("--format")
+            .arg("{{.ID}}")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("Failed to execute docker ps command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to get container ID: {}", stderr);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let container_id = stdout.trim();
+        if container_id.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(container_id.to_string()))
+        }
+    }
+
     /// Pull a Docker image
     pub async fn pull_image(&self, image: &str) -> Result<()> {
         info!("Pulling Docker image: {}", image);

@@ -676,6 +676,8 @@
       "cmd-k shift-right": "workspace::SwapPaneRight",
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
+      "cmd-k cmd-d": "workspace::StopDevContainer",
+    "cmd-k cmd-o": "workspace::OpenDevContainer",
       "cmd-shift-x": "zed::Extensions",
       "f5": "debugger::Rerun",
       "cmd-w": "workspace::CloseActiveDock"
