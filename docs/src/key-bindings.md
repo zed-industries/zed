@@ -24,7 +24,7 @@ The file contains a JSON array of objects with `"bindings"`. If no `"context"` i
 
 Within each binding section a [key sequence](#keybinding-syntax) is mapped to an [action](#actions). If conflicts are detected they are resolved as [described below](#precedence).
 
-If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_layout_keys` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
+If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
 For example:
 
