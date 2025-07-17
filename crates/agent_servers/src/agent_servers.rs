@@ -1,4 +1,5 @@
 mod claude;
+mod codex;
 mod gemini;
 mod settings;
 mod stdio_agent_server;

@@ -13,6 +13,7 @@ pub fn init(cx: &mut App) {
 pub struct AllAgentServersSettings {
     pub gemini: Option<AgentServerSettings>,
     pub claude: Option<AgentServerSettings>,
+    pub codex: Option<AgentServerSettings>,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Debug)]
