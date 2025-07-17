@@ -24,6 +24,7 @@ gpui.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+once_cell = "1.19"
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true

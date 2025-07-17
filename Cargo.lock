@@ -10098,6 +10098,7 @@ dependencies = [
  "language",
  "linkify",
  "log",
+ "once_cell",
  "pretty_assertions",
  "pulldown-cmark 0.12.2",
  "resvg 0.42.0",
