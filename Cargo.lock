@@ -10810,17 +10810,20 @@ name = "ollama"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "editor",
  "futures 0.3.31",
  "gpui",
  "http_client",
- "indoc",
  "inline_completion",
  "language",
  "project",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "text",
+ "theme",
+ "workspace",
  "workspace-hack",
 ]
 
