@@ -2314,7 +2314,7 @@ impl Thread {
             // Show error with retry options
             cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
                 message: format!(
-                    "{}. To automatically retry when similar errors happen, enable Burn Mode.",
+                    "{}\n\nTo automatically retry when similar errors happen, enable Burn Mode.",
                     error
                 )
                 .into(),
