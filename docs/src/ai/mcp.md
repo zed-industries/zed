@@ -62,19 +62,19 @@ Regardless of whether you're using MCP servers as an extension or adding them di
 In the case of extensions, Zed will pop a modal surfacing what is required for you to properly set up a given server.
 For example, the GitHub MCP extension requires you do add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
-In the case o custom servers, make sure you figure out in the provider documentation what type of command, arguments, and environment variables are needed to be added to the JSON.
+In the case of custom servers, make sure you figure out in the provider documentation what type of command, arguments, and environment variables are needed to be added to the JSON.
 
 ### Using in the Agent Panel
 
 Once your MCP server is properly installed, you can go to the Agent Panel's settings view to see their state.
-If they're running correctly, you'll see the a green indicator dot close to the server name.
+If they're running correctly, you'll see a green indicator dot close to the server name.
 
 From this point, you can just come back to the Agent Panel and prompt away.
 Mentioning your MCP server by name already helps the agent to pick it up.
 
-But, if you want to guarantee or ensure a given server will be used, you can create [a custom profile](./ai/agent-panel.md#custom-profiles.) by turning off the built-in tools and turning on only the tools coming from the MCP server.
+But, if you want to guarantee or ensure a given server will be used, you can create [a custom profile](./ai/agent-panel.md#custom-profiles) by turning off the built-in tools and turning on only the tools coming from the MCP server.
 
-As example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that use their [Container Use MCP server](https://zed.dev/extensions/container-use-mcp-server):
+As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that with their [Container Use MCP server](https://zed.dev/extensions/container-use-mcp-server):
 
 ```json
 "agent": {
