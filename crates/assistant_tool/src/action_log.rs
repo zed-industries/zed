@@ -331,16 +331,17 @@ impl ActionLog {
                 .get_mut(buffer)
                 .context("buffer not tracked")?;
 
-            if let ChangeAuthor::User = author {
-                tracked_buffer.has_unnotified_user_edits = true;
-            }
-
             let rebase = cx.background_spawn({
                 let mut base_text = tracked_buffer.diff_base.clone();
                 let old_snapshot = tracked_buffer.snapshot.clone();
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                if let ChangeAuthor::User = author
+                    && !edits.is_empty()
+                {
+                    tracked_buffer.has_unnotified_user_edits = true;
+                }
                 async move {
                     if let ChangeAuthor::User = author {
                         apply_non_conflicting_edits(
