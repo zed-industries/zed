@@ -382,6 +382,7 @@ struct ItemColors {
     drag_over: Hsla,
     marked: Hsla,
     focused: Hsla,
+    overlay: Hsla,
 }
 
 fn get_item_color(cx: &App) -> ItemColors {
@@ -393,6 +394,7 @@ fn get_item_color(cx: &App) -> ItemColors {
         marked: colors.element_selected,
         focused: colors.panel_focused_border,
         drag_over: colors.drop_target_background,
+        overlay: colors.panel_overlay_background,
     }
 }
 
@@ -3923,7 +3925,7 @@ impl ProjectPanel {
         };
 
         let bg_color = if is_sticky {
-            cx.theme().colors().panel_sticky_entry_background
+            item_colors.overlay
         } else if is_marked {
             item_colors.marked
         } else {
@@ -3931,7 +3933,7 @@ impl ProjectPanel {
         };
 
         let bg_hover_color = if is_sticky {
-            cx.theme().colors().panel_sticky_entry_background
+            item_colors.overlay
         } else if is_marked {
             item_colors.marked
         } else {

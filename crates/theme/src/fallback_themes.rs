@@ -202,7 +202,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 panel_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 panel_indent_guide_hover: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 panel_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
-                panel_sticky_entry_background: elevated_surface,
+                panel_overlay_background: elevated_surface,
                 pane_focused_border: blue,
                 pane_group_border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 scrollbar_thumb_background: gpui::transparent_black(),

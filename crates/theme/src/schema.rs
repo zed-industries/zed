@@ -352,8 +352,8 @@ pub struct ThemeColorsContent {
     #[serde(rename = "panel.indent_guide_active")]
     pub panel_indent_guide_active: Option<String>,
 
-    #[serde(rename = "panel.sticky_entry.background")]
-    pub panel_sticky_entry_background: Option<String>,
+    #[serde(rename = "panel.overlay_background")]
+    pub panel_overlay_background: Option<String>,
 
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
@@ -856,8 +856,8 @@ impl ThemeColorsContent {
                 .panel_indent_guide_active
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            panel_sticky_entry_background: self
-                .panel_sticky_entry_background
+            panel_overlay_background: self
+                .panel_overlay_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             pane_focused_border: self
