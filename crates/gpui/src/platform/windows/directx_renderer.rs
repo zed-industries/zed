@@ -3,7 +3,8 @@ use std::{mem::ManuallyDrop, sync::Arc};
 use ::util::ResultExt;
 use anyhow::{Context, Result};
 // #[cfg(not(feature = "enable-renderdoc"))]
-// use windows::Win32::Graphics::DirectComposition::*;
+use windows::Win32::Graphics::DirectComposition::*;
+use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use windows::{
     Win32::{
         Foundation::{HMODULE, HWND},
@@ -26,7 +27,6 @@ pub(crate) struct DirectXRenderer {
     context: DirectXContext,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
-    hwnd: HWND,
     transparent: bool,
 }
 
@@ -46,7 +46,7 @@ struct DirectXContext {
     msaa_view: ID3D11RenderTargetView,
     viewport: [D3D11_VIEWPORT; 1],
     // #[cfg(not(feature = "enable-renderdoc"))]
-    // direct_composition: DirectComposition,
+    direct_composition: DirectComposition,
 }
 
 struct DirectXRenderPipelines {
@@ -73,11 +73,11 @@ struct DrawInstancedIndirectArgs {
 }
 
 // #[cfg(not(feature = "enable-renderdoc"))]
-// struct DirectComposition {
-//     comp_device: IDCompositionDevice,
-//     comp_target: IDCompositionTarget,
-//     comp_visual: IDCompositionVisual,
-// }
+struct DirectComposition {
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
+}
 
 impl DirectXDevices {
     pub(crate) fn new() -> Result<Self> {
@@ -115,7 +115,6 @@ impl DirectXRenderer {
             context,
             globals,
             pipelines,
-            hwnd,
             transparent,
         })
     }
@@ -215,11 +214,6 @@ impl DirectXRenderer {
                 )
                 .unwrap();
         }
-        // let backbuffer = set_render_target_view(
-        //     &self.context.swap_chain,
-        //     &self.devices.device,
-        //     &self.devices.device_context,
-        // )?;
         let (render_target, render_target_view) =
             create_render_target_and_its_view(&self.context.swap_chain, &self.devices.device)
                 .unwrap();
@@ -248,31 +242,6 @@ impl DirectXRenderer {
     }
 
     // #[cfg(not(feature = "enable-renderdoc"))]
-    // pub(crate) fn update_transparency(
-    //     &mut self,
-    //     background_appearance: WindowBackgroundAppearance,
-    // ) -> Result<()> {
-    //     // We only support setting `Transparent` and `Opaque` for now.
-    //     match background_appearance {
-    //         WindowBackgroundAppearance::Opaque => {
-    //             if self.transparent {
-    //                 return Err(anyhow::anyhow!(
-    //                     "Set opaque backgroud from transparent background, a restart is required. Or, you can open a new window."
-    //                 ));
-    //             }
-    //         }
-    //         WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
-    //             if !self.transparent {
-    //                 return Err(anyhow::anyhow!(
-    //                     "Set transparent backgroud from opaque background, a restart is required. Or, you can open a new window."
-    //                 ));
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
-    // #[cfg(feature = "enable-renderdoc")]
     pub(crate) fn update_transparency(
         &mut self,
         background_appearance: WindowBackgroundAppearance,
@@ -281,32 +250,83 @@ impl DirectXRenderer {
         if self.transparent == transparent {
             return Ok(());
         }
-        self.transparent = transparent;
-        // unsafe {
-        //     // recreate the swapchain
+        // self.transparent = transparent;
+        // let (width, height) = unsafe {
         //     self.devices.device_context.OMSetRenderTargets(None, None);
-        //     drop(self.context.back_buffer[0].take().unwrap());
+        //     ManuallyDrop::drop(&mut self.context.render_target);
+        //     drop(self.context.render_target_view[0].take().unwrap());
+        //     let desc = self.context.swap_chain.GetDesc1().unwrap();
         //     ManuallyDrop::drop(&mut self.context.swap_chain);
-        //     self.context.swap_chain = create_swap_chain_default(
-        //         &self.devices.dxgi_factory,
-        //         &self.devices.device,
-        //         self.hwnd,
-        //         transparent,
-        //     )?;
-        //     self.context.back_buffer = [Some(set_render_target_view(
-        //         &self.context.swap_chain,
-        //         &self.devices.device,
-        //         &self.devices.device_context,
-        //     )?)];
-        //     self.context.viewport = set_viewport(
-        //         &self.devices.device_context,
-        //         self.context.viewport[0].Width,
-        //         self.context.viewport[0].Height,
-        //     );
-        //     set_rasterizer_state(&self.devices.device, &self.devices.device_context)?;
+        //     (desc.Width, desc.Height)
+        // };
+        // self.context.swap_chain = create_swap_chain(
+        //     &self.devices.dxgi_factory,
+        //     &self.devices.device,
+        //     transparent,
+        //     width,
+        //     height,
+        // )
+        // .unwrap();
+        // self.context
+        //     .direct_composition
+        //     .set_swap_chain(&self.context.swap_chain)
+        //     .context("Failed to set swap chain for DirectComposition")?;
+        // let (render_target, render_target_view) =
+        //     create_render_target_and_its_view(&self.context.swap_chain, &self.devices.device)
+        //         .unwrap();
+        // self.context.render_target = render_target;
+        // self.context.render_target_view = render_target_view;
+        // unsafe {
+        //     self.devices
+        //         .device_context
+        //         .OMSetRenderTargets(Some(&self.context.render_target_view), None);
         // }
+
+        // let (msaa_target, msaa_view) =
+        //     create_msaa_target_and_its_view(&self.devices.device, width, height)?;
+        // self.context.msaa_target = msaa_target;
+        // self.context.msaa_view = msaa_view;
+
+        // self.context.viewport = set_viewport(&self.devices.device_context, width as _, height as _);
+        // set_rasterizer_state(&self.devices.device, &self.devices.device_context)?;
         Ok(())
     }
+
+    // #[cfg(feature = "enable-renderdoc")]
+    // pub(crate) fn update_transparency(
+    //     &mut self,
+    //     background_appearance: WindowBackgroundAppearance,
+    // ) -> Result<()> {
+    //     let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
+    //     if self.transparent == transparent {
+    //         return Ok(());
+    //     }
+    //     self.transparent = transparent;
+    //     unsafe {
+    //         // recreate the swapchain
+    //         self.devices.device_context.OMSetRenderTargets(None, None);
+    //         drop(self.context.back_buffer[0].take().unwrap());
+    //         ManuallyDrop::drop(&mut self.context.swap_chain);
+    //         self.context.swap_chain = create_swap_chain_default(
+    //             &self.devices.dxgi_factory,
+    //             &self.devices.device,
+    //             self.hwnd,
+    //             transparent,
+    //         )?;
+    //         self.context.back_buffer = [Some(set_render_target_view(
+    //             &self.context.swap_chain,
+    //             &self.devices.device,
+    //             &self.devices.device_context,
+    //         )?)];
+    //         self.context.viewport = set_viewport(
+    //             &self.devices.device_context,
+    //             self.context.viewport[0].Width,
+    //             self.context.viewport[0].Height,
+    //         );
+    //         set_rasterizer_state(&self.devices.device, &self.devices.device_context)?;
+    //     }
+    //     Ok(())
+    // }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
         if shadows.is_empty() {
@@ -461,24 +481,35 @@ impl DirectXRenderer {
 
 impl DirectXContext {
     pub fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
+        let (width, height) = unsafe {
+            let mut rect = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut rect)?;
+            (rect.right - rect.left, rect.bottom - rect.top)
+        };
+        assert!(
+            width > 0 && height > 0,
+            "Window size must be greater than zero"
+        );
         // #[cfg(not(feature = "enable-renderdoc"))]
-        // let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
+        let swap_chain = create_swap_chain(
+            &devices.dxgi_factory,
+            &devices.device,
+            transparent,
+            width as u32,
+            height as u32,
+        )?;
         // #[cfg(feature = "enable-renderdoc")]
-        let swap_chain =
-            create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
+        // let swap_chain =
+        //     create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
         // #[cfg(not(feature = "enable-renderdoc"))]
-        // let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
         // #[cfg(not(feature = "enable-renderdoc"))]
-        // direct_composition.set_swap_chain(&swap_chain)?;
+        direct_composition.set_swap_chain(&swap_chain)?;
         let (render_target, render_target_view) =
             create_render_target_and_its_view(&swap_chain, &devices.device)?;
-        // let back_buffer = [Some(set_render_target_view(
-        //     &swap_chain,
-        //     &devices.device,
-        //     &devices.device_context,
-        // )?)];
-        let (msaa_target, msaa_view) = create_msaa_target_and_its_view(&devices.device, 1, 1)?;
-        let viewport = set_viewport(&devices.device_context, 1.0, 1.0);
+        let (msaa_target, msaa_view) =
+            create_msaa_target_and_its_view(&devices.device, width as u32, height as u32)?;
+        let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
         unsafe {
             devices
                 .device_context
@@ -494,7 +525,7 @@ impl DirectXContext {
             msaa_view,
             viewport,
             // #[cfg(not(feature = "enable-renderdoc"))]
-            // direct_composition,
+            direct_composition,
         })
     }
 }
@@ -545,28 +576,28 @@ impl DirectXRenderPipelines {
 }
 
 // #[cfg(not(feature = "enable-renderdoc"))]
-// impl DirectComposition {
-//     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-//         let comp_device = get_comp_device(&dxgi_device)?;
-//         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-//         let comp_visual = unsafe { comp_device.CreateVisual() }?;
+impl DirectComposition {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
-//         Ok(Self {
-//             comp_device,
-//             comp_target,
-//             comp_visual,
-//         })
-//     }
+        Ok(Self {
+            comp_device,
+            comp_target,
+            comp_visual,
+        })
+    }
 
-//     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
-//         unsafe {
-//             self.comp_visual.SetContent(swap_chain)?;
-//             self.comp_target.SetRoot(&self.comp_visual)?;
-//             self.comp_device.Commit()?;
-//         }
-//         Ok(())
-//     }
-// }
+    pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
+        unsafe {
+            self.comp_visual.SetContent(swap_chain)?;
+            self.comp_target.SetRoot(&self.comp_visual)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+}
 
 impl DirectXGlobalElements {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
@@ -1030,39 +1061,45 @@ fn get_device(
 }
 
 // #[cfg(not(feature = "enable-renderdoc"))]
-// fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
-//     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
-// }
+fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
+    Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
+}
 
-// fn create_swap_chain(
-//     dxgi_factory: &IDXGIFactory6,
-//     device: &ID3D11Device,
-//     transparent: bool,
-// ) -> Result<IDXGISwapChain1> {
-//     let alpha_mode = if transparent {
-//         DXGI_ALPHA_MODE_PREMULTIPLIED
-//     } else {
-//         DXGI_ALPHA_MODE_IGNORE
-//     };
-//     let desc = DXGI_SWAP_CHAIN_DESC1 {
-//         Width: 1,
-//         Height: 1,
-//         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-//         Stereo: false.into(),
-//         SampleDesc: DXGI_SAMPLE_DESC {
-//             Count: 1,
-//             Quality: 0,
-//         },
-//         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-//         BufferCount: BUFFER_COUNT as u32,
-//         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
-//         Scaling: DXGI_SCALING_STRETCH,
-//         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-//         AlphaMode: alpha_mode,
-//         Flags: 0,
-//     };
-//     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
-// }
+fn create_swap_chain(
+    dxgi_factory: &IDXGIFactory6,
+    device: &ID3D11Device,
+    transparent: bool,
+    width: u32,
+    height: u32,
+) -> Result<ManuallyDrop<IDXGISwapChain1>> {
+    println!("Creating swap chain for DirectComposition: {}", transparent);
+    let transparent = true;
+    let alpha_mode = if transparent {
+        DXGI_ALPHA_MODE_PREMULTIPLIED
+    } else {
+        DXGI_ALPHA_MODE_IGNORE
+    };
+    let desc = DXGI_SWAP_CHAIN_DESC1 {
+        Width: width,
+        Height: height,
+        Format: RENDER_TARGET_FORMAT,
+        Stereo: false.into(),
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        BufferCount: BUFFER_COUNT as u32,
+        // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
+        Scaling: DXGI_SCALING_STRETCH,
+        SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+        AlphaMode: alpha_mode,
+        Flags: 0,
+    };
+    Ok(ManuallyDrop::new(unsafe {
+        dxgi_factory.CreateSwapChainForComposition(device, &desc, None)?
+    }))
+}
 
 // #[cfg(feature = "enable-renderdoc")]
 fn create_swap_chain_default(
@@ -1287,33 +1324,6 @@ fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: usize) -> Res
     let mut buffer = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
     Ok(buffer.unwrap())
-}
-
-#[inline]
-fn pre_draw(
-    device_context: &ID3D11DeviceContext,
-    global_params_buffer: &[Option<ID3D11Buffer>; 1],
-    view_port: &[D3D11_VIEWPORT; 1],
-    render_target_view: &[Option<ID3D11RenderTargetView>; 1],
-    clear_color: [f32; 4],
-    blend_state: &ID3D11BlendState,
-) -> Result<()> {
-    let global_params = global_params_buffer[0].as_ref().unwrap();
-    update_buffer(
-        device_context,
-        global_params,
-        &[GlobalParams {
-            viewport_size: [view_port[0].Width, view_port[0].Height],
-            ..Default::default()
-        }],
-    )?;
-    unsafe {
-        device_context.RSSetViewports(Some(view_port));
-        device_context.OMSetRenderTargets(Some(render_target_view), None);
-        device_context.ClearRenderTargetView(render_target_view[0].as_ref().unwrap(), &clear_color);
-        device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
-    }
-    Ok(())
 }
 
 #[inline]
