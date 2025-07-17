@@ -3,10 +3,9 @@
 version = 4
 
 [[package]]
-name = "acp"
+name = "acp_thread"
 version = "0.1.0"
 dependencies = [
- "agent_servers",
  "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
@@ -21,6 +20,7 @@ dependencies = [
  "language",
  "markdown",
  "project",
+ "serde",
  "serde_json",
  "settings",
  "smol",
@@ -139,16 +139,29 @@ dependencies = [
 name = "agent_servers"
 version = "0.1.0"
 dependencies = [
+ "acp_thread",
+ "agentic-coding-protocol",
  "anyhow",
  "collections",
+ "context_server",
+ "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "log",
  "paths",
  "project",
  "schemars",
  "serde",
+ "serde_json",
  "settings",
+ "smol",
+ "tempfile",
+ "ui",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
 ]
@@ -176,7 +189,7 @@ dependencies = [
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
- "acp",
+ "acp_thread",
  "agent",
  "agent_servers",
  "agent_settings",
@@ -3411,12 +3424,14 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "log",
+ "net",
  "parking_lot",
  "postage",
  "schemars",
  "serde",
  "serde_json",
  "smol",
+ "tempfile",
  "url",
  "util",
  "workspace-hack",
@@ -10286,6 +10301,17 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "nc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "net",
+ "smol",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -20171,6 +20197,7 @@ dependencies = [
  "menu",
  "migrator",
  "mimalloc",
+ "nc",
  "nix 0.29.0",
  "node_runtime",
  "notifications",
