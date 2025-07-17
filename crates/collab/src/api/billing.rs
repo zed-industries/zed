@@ -1,10 +1,6 @@
 use anyhow::{Context as _, bail};
 use axum::routing::put;
-use axum::{
-    Extension, Json, Router,
-    extract::{self, Query},
-    routing::{get, post},
-};
+use axum::{Extension, Json, Router, extract, routing::post};
 use chrono::{DateTime, SecondsFormat, Utc};
 use collections::{HashMap, HashSet};
 use reqwest::StatusCode;
@@ -28,7 +24,6 @@ use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
-use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::llm::db::subscription_usage_meter::{self, CompletionMode};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
@@ -58,7 +53,6 @@ pub fn router() -> Router {
             "/billing/subscriptions/sync",
             post(sync_billing_subscription),
         )
-        .route("/billing/usage", get(get_current_usage))
 }
 
 #[derive(Debug, Serialize)]
@@ -1025,157 +1019,6 @@ async fn handle_customer_subscription_event(
         .await;
 
     Ok(())
-}
-
-#[derive(Debug, Deserialize)]
-struct GetCurrentUsageParams {
-    github_user_id: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct UsageCounts {
-    pub used: i32,
-    pub limit: Option<i32>,
-    pub remaining: Option<i32>,
-}
-
-#[derive(Debug, Serialize)]
-struct ModelRequestUsage {
-    pub model: String,
-    pub mode: CompletionMode,
-    pub requests: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct CurrentUsage {
-    pub model_requests: UsageCounts,
-    pub model_request_usage: Vec<ModelRequestUsage>,
-    pub edit_predictions: UsageCounts,
-}
-
-#[derive(Debug, Default, Serialize)]
-struct GetCurrentUsageResponse {
-    pub plan: String,
-    pub current_usage: Option<CurrentUsage>,
-}
-
-async fn get_current_usage(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetCurrentUsageParams>,
-) -> Result<Json<GetCurrentUsageResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(params.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    let has_extended_trial = feature_flags
-        .iter()
-        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
-
-    let Some(llm_db) = app.llm_db.clone() else {
-        return Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "LLM database not available".into(),
-        ));
-    };
-
-    let Some(subscription) = app.db.get_active_billing_subscription(user.id).await? else {
-        return Ok(Json(GetCurrentUsageResponse::default()));
-    };
-
-    let subscription_period = maybe!({
-        let period_start_at = subscription.current_period_start_at()?;
-        let period_end_at = subscription.current_period_end_at()?;
-
-        Some((period_start_at, period_end_at))
-    });
-
-    let Some((period_start_at, period_end_at)) = subscription_period else {
-        return Ok(Json(GetCurrentUsageResponse::default()));
-    };
-
-    let usage = llm_db
-        .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
-        .await?;
-
-    let plan = subscription
-        .kind
-        .map(Into::into)
-        .unwrap_or(zed_llm_client::Plan::ZedFree);
-
-    let model_requests_limit = match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == zed_llm_client::Plan::ZedProTrial && has_extended_trial {
-                1_000
-            } else {
-                limit
-            };
-
-            Some(limit)
-        }
-        zed_llm_client::UsageLimit::Unlimited => None,
-    };
-
-    let edit_predictions_limit = match plan.edit_predictions_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
-        zed_llm_client::UsageLimit::Unlimited => None,
-    };
-
-    let Some(usage) = usage else {
-        return Ok(Json(GetCurrentUsageResponse {
-            plan: plan.as_str().to_string(),
-            current_usage: Some(CurrentUsage {
-                model_requests: UsageCounts {
-                    used: 0,
-                    limit: model_requests_limit,
-                    remaining: model_requests_limit,
-                },
-                model_request_usage: Vec::new(),
-                edit_predictions: UsageCounts {
-                    used: 0,
-                    limit: edit_predictions_limit,
-                    remaining: edit_predictions_limit,
-                },
-            }),
-        }));
-    };
-
-    let subscription_usage_meters = llm_db
-        .get_current_subscription_usage_meters_for_user(user.id, Utc::now())
-        .await?;
-
-    let model_request_usage = subscription_usage_meters
-        .into_iter()
-        .filter_map(|(usage_meter, _usage)| {
-            let model = llm_db.model_by_id(usage_meter.model_id).ok()?;
-
-            Some(ModelRequestUsage {
-                model: model.name.clone(),
-                mode: usage_meter.mode,
-                requests: usage_meter.requests,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    Ok(Json(GetCurrentUsageResponse {
-        plan: plan.as_str().to_string(),
-        current_usage: Some(CurrentUsage {
-            model_requests: UsageCounts {
-                used: usage.model_requests,
-                limit: model_requests_limit,
-                remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
-            },
-            model_request_usage,
-            edit_predictions: UsageCounts {
-                used: usage.edit_predictions,
-                limit: edit_predictions_limit,
-                remaining: edit_predictions_limit
-                    .map(|limit| (limit - usage.edit_predictions).max(0)),
-            },
-        }),
-    }))
 }
 
 impl From<SubscriptionStatus> for StripeSubscriptionStatus {
