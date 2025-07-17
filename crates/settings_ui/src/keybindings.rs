@@ -179,7 +179,7 @@ impl FilterState {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    keystroke_text: SharedString,
+    keystrokes: Vec<Keystroke>,
     context: Option<SharedString>,
 }
 
@@ -193,7 +193,7 @@ impl KeybindConflict {
     fn from_iter<'a>(mut indices: impl Iterator<Item = &'a usize>) -> Option<Self> {
         indices.next().map(|index| Self {
             first_conflict_index: *index,
-            remaining_conflict_amount: indices.count() - 1,
+            remaining_conflict_amount: indices.count(),
         })
     }
 }
@@ -201,7 +201,7 @@ impl KeybindConflict {
 #[derive(Default)]
 struct ConflictState {
     conflicts: Vec<usize>,
-    keybind_mapping: HashMap<Vec<Keystroke>, Vec<usize>>,
+    keybind_mapping: HashMap<ActionMapping, Vec<usize>>,
 }
 
 impl ConflictState {
@@ -220,7 +220,7 @@ impl ConflictState {
             })
             .for_each(|(index, binding)| {
                 action_keybind_mapping
-                    .entry(binding.keystrokes().map(Vec::from).unwrap_or_default())
+                    .entry(binding.get_action_mapping())
                     .or_default()
                     .push(index);
             });
@@ -236,19 +236,21 @@ impl ConflictState {
         }
     }
 
-    fn conflicting_indices_for_keystrokes(
+    fn conflicting_indices_for_mapping(
         &self,
-        keystrokes: &[Keystroke],
+        action_mapping: &ActionMapping,
         keybind_idx: usize,
     ) -> Option<KeybindConflict> {
-        self.keybind_mapping.get(keystrokes).and_then(|indices| {
-            KeybindConflict::from_iter(indices.iter().filter(|&idx| *idx != keybind_idx))
-        })
+        self.keybind_mapping
+            .get(action_mapping)
+            .and_then(|indices| {
+                KeybindConflict::from_iter(indices.iter().filter(|&idx| *idx != keybind_idx))
+            })
     }
 
-    fn will_conflict(&self, keystrokes: &[Keystroke]) -> Option<KeybindConflict> {
+    fn will_conflict(&self, action_mapping: &ActionMapping) -> Option<KeybindConflict> {
         self.keybind_mapping
-            .get(keystrokes)
+            .get(action_mapping)
             .and_then(|indices| KeybindConflict::from_iter(indices.iter()))
     }
 
@@ -1101,7 +1103,7 @@ struct ProcessedKeybinding {
 impl ProcessedKeybinding {
     fn get_action_mapping(&self) -> ActionMapping {
         ActionMapping {
-            keystroke_text: self.keystroke_text.clone(),
+            keystrokes: self.keystrokes().map(Vec::from).unwrap_or_default(),
             context: self
                 .context
                 .as_ref()
@@ -1841,16 +1843,21 @@ impl KeybindingEditorModal {
             .validate_action_arguments(cx)
             .map_err(InputError::error)?;
 
+        let action_mapping = ActionMapping {
+            keystrokes: new_keystrokes,
+            context: new_context.map(SharedString::from),
+        };
+
         let conflicting_indices = if self.creating {
             self.keymap_editor
                 .read(cx)
                 .keybinding_conflict_state
-                .will_conflict(&new_keystrokes)
+                .will_conflict(&action_mapping)
         } else {
             self.keymap_editor
                 .read(cx)
                 .keybinding_conflict_state
-                .conflicting_indices_for_keystrokes(&new_keystrokes, self.editing_keybind_idx)
+                .conflicting_indices_for_mapping(&action_mapping, self.editing_keybind_idx)
         };
 
         conflicting_indices.map(|KeybindConflict {
@@ -1920,8 +1927,7 @@ impl KeybindingEditorModal {
             if let Err(err) = save_keybinding_update(
                 create,
                 existing_keybind,
-                &new_keystrokes,
-                new_context.as_deref(),
+                &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
                 tab_size,
@@ -1934,12 +1940,6 @@ impl KeybindingEditorModal {
                 .log_err();
             } else {
                 this.update(cx, |this, cx| {
-                    let action_mapping = ActionMapping {
-                        keystroke_text: ui::text_for_keystrokes(new_keystrokes.as_slice(), cx)
-                            .into(),
-                        context: new_context.map(SharedString::from),
-                    };
-
                     this.keymap_editor.update(cx, |keymap, cx| {
                         keymap.previous_edit = Some(PreviousEdit::Keybinding {
                             action_mapping,
@@ -2281,8 +2281,7 @@ async fn load_keybind_context_language(
 async fn save_keybinding_update(
     create: bool,
     existing: ProcessedKeybinding,
-    new_keystrokes: &[Keystroke],
-    new_context: Option<&str>,
+    action_mapping: &ActionMapping,
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
@@ -2309,8 +2308,8 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: new_context,
-        keystrokes: new_keystrokes,
+        context: action_mapping.context.as_ref().map(|a| &***a),
+        keystrokes: &action_mapping.keystrokes,
         action_name: &existing.action_name,
         action_arguments: new_args,
     };
