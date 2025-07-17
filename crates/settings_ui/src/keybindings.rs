@@ -808,7 +808,8 @@ impl KeymapEditor {
                         "Copy Context",
                         Box::new(CopyContext),
                     )
-                    .entry("Show matching keybindings", None, {
+                    .separator()
+                    .entry("Show Matching Keybindings", None, {
                         move |_, cx| {
                             weak.update(cx, |this, cx| {
                                 this.filter_on_selected_binding_keystrokes(cx);
@@ -1211,10 +1212,11 @@ impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         let row_count = self.matches.len();
         let theme = cx.theme();
+        let focus_handle = &self.focus_handle;
 
         v_flex()
             .id("keymap-editor")
-            .track_focus(&self.focus_handle)
+            .track_focus(focus_handle)
             .key_context(self.key_context())
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -1229,16 +1231,15 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::toggle_conflict_filter))
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
+            .on_mouse_move(cx.listener(|this, _, _window, _cx| {
+                this.show_hover_menus = true;
+            }))
             .size_full()
             .p_2()
             .gap_1()
             .bg(theme.colors().editor_background)
-            .on_mouse_move(cx.listener(|this, _, _window, _cx| {
-                this.show_hover_menus = true;
-            }))
             .child(
                 v_flex()
-                    .p_2()
                     .gap_2()
                     .child(
                         h_flex()
@@ -1266,13 +1267,18 @@ impl Render for KeymapEditor {
                                     IconName::Keyboard,
                                 )
                                 .shape(ui::IconButtonShape::Square)
-                                .tooltip(|window, cx| {
-                                    Tooltip::for_action(
-                                        "Search by Keystroke",
-                                        &ToggleKeystrokeSearch,
-                                        window,
-                                        cx,
-                                    )
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Search by Keystroke",
+                                            &ToggleKeystrokeSearch,
+                                            &focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }
                                 })
                                 .toggle_state(matches!(
                                     self.search_mode,
@@ -1290,14 +1296,16 @@ impl Render for KeymapEditor {
                                     })
                                     .tooltip({
                                         let filter_state = self.filter_state;
+                                        let focus_handle = focus_handle.clone();
 
                                         move |window, cx| {
-                                            Tooltip::for_action(
+                                            Tooltip::for_action_in(
                                                 match filter_state {
                                                     FilterState::All => "Show Conflicts",
                                                     FilterState::Conflicts => "Hide Conflicts",
                                                 },
                                                 &ToggleConflictFilter,
+                                                &focus_handle.clone(),
                                                 window,
                                                 cx,
                                             )
@@ -1331,35 +1339,36 @@ impl Render for KeymapEditor {
                                             this.pr_7()
                                         }
                                     })
+                                    .gap_2()
                                     .child(self.keystroke_editor.clone())
                                     .child(
-                                        div().p_1().child(
-                                            IconButton::new(
-                                                "keystrokes-exact-match",
-                                                IconName::Equal,
-                                            )
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::for_action(
-                                                    if exact_match {
-                                                        "Partial match mode"
-                                                    } else {
-                                                        "Exact match mode"
-                                                    },
+                                        IconButton::new(
+                                            "keystrokes-exact-match",
+                                            IconName::CaseSensitive,
+                                        )
+                                        .tooltip({
+                                            let keystroke_focus_handle =
+                                                self.keystroke_editor.read(cx).focus_handle(cx);
+
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Exact Match Mode",
                                                     &ToggleExactKeystrokeMatching,
+                                                    &keystroke_focus_handle,
                                                     window,
                                                     cx,
                                                 )
-                                            })
-                                            .shape(IconButtonShape::Square)
-                                            .toggle_state(exact_match)
-                                            .on_click(
-                                                cx.listener(|_, _, window, cx| {
-                                                    window.dispatch_action(
-                                                        ToggleExactKeystrokeMatching.boxed_clone(),
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
+                                            }
+                                        })
+                                        .shape(IconButtonShape::Square)
+                                        .toggle_state(exact_match)
+                                        .on_click(
+                                            cx.listener(|_, _, window, cx| {
+                                                window.dispatch_action(
+                                                    ToggleExactKeystrokeMatching.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
                                         ),
                                     ),
                             )
@@ -2771,7 +2780,7 @@ impl Render for KeystrokeInput {
             .editor_background
             .blend(colors.text_accent.opacity(0.1));
 
-        let recording_pulse = || {
+        let recording_pulse = |color: Color| {
             Icon::new(IconName::Circle)
                 .size(IconSize::Small)
                 .color(Color::Error)
@@ -2781,7 +2790,7 @@ impl Render for KeystrokeInput {
                         .repeat()
                         .with_easing(gpui::pulsating_between(0.4, 0.8)),
                     {
-                        let color = Color::Error.color(cx);
+                        let color = color.color(cx);
                         move |this, delta| this.color(Color::Custom(color.opacity(delta)))
                     },
                 )
@@ -2797,7 +2806,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(recording_pulse())
+            .child(recording_pulse(Color::Error))
             .child(
                 Label::new("REC")
                     .size(LabelSize::XSmall)
@@ -2815,7 +2824,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(recording_pulse())
+            .child(recording_pulse(Color::Accent))
             .child(
                 Label::new("SEARCH")
                     .size(LabelSize::XSmall)
