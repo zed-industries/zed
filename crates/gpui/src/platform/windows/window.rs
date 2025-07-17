@@ -26,7 +26,6 @@ use windows::{
     core::*,
 };
 
-use crate::platform::blade::{BladeContext, BladeRenderer};
 use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
@@ -102,9 +101,7 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        // let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let renderer = DirectXRenderer::new(gpu_context, hwnd)?;
-        println!("GPU specs: {:#?}", renderer.gpu_specs());
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -796,9 +793,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        // todo(zjk)
-        // Some(self.0.state.borrow().renderer.gpu_specs())
-        None
+        self.0.state.borrow().renderer.gpu_specs().log_err()
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
@@ -1294,52 +1289,6 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 cb_data: std::mem::size_of::<AccentPolicy>(),
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
-        }
-    }
-}
-
-mod windows_renderer {
-    use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
-    use raw_window_handle as rwh;
-    use std::num::NonZeroIsize;
-    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
-
-    use crate::{get_window_long, show_error};
-
-    pub(super) fn init(
-        context: &BladeContext,
-        hwnd: HWND,
-        transparent: bool,
-    ) -> anyhow::Result<BladeRenderer> {
-        let raw = RawWindow { hwnd };
-        let config = BladeSurfaceConfig {
-            size: Default::default(),
-            transparent,
-        };
-        BladeRenderer::new(context, &raw, config)
-            .inspect_err(|err| show_error("Failed to initialize BladeRenderer", err.to_string()))
-    }
-
-    struct RawWindow {
-        hwnd: HWND,
-    }
-
-    impl rwh::HasWindowHandle for RawWindow {
-        fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-            Ok(unsafe {
-                let hwnd = NonZeroIsize::new_unchecked(self.hwnd.0 as isize);
-                let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                let hinstance = get_window_long(self.hwnd, GWLP_HINSTANCE);
-                handle.hinstance = NonZeroIsize::new(hinstance);
-                rwh::WindowHandle::borrow_raw(handle.into())
-            })
-        }
-    }
-
-    impl rwh::HasDisplayHandle for RawWindow {
-        fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-            let handle = rwh::WindowsDisplayHandle::new();
-            Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
         }
     }
 }

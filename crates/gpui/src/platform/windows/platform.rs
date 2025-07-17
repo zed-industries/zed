@@ -28,7 +28,7 @@ use windows::{
     core::*,
 };
 
-use crate::{platform::blade::BladeContext, *};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
