@@ -143,7 +143,7 @@
   { "context": "ProjectPanel", "bindings": { "alt-1": "workspace::CloseActiveDock" } },
   { "context": "DebugPanel", "bindings": { "alt-5": "workspace::CloseActiveDock" } },
   { "context": "Diagnostics > Editor", "bindings": { "alt-6": "pane::CloseActiveItem" } },
-  { "context": "OutlinePanel", "bindings": { "alt-7": "workspace::CloseActiveDockk" } },
+  { "context": "OutlinePanel", "bindings": { "alt-7": "workspace::CloseActiveDock" } },
   {
     "context": "Dock || Workspace || Terminal || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
     "bindings": { "escape": "editor::ToggleFocus" }
