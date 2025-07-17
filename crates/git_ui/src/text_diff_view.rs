@@ -43,13 +43,7 @@ impl TextDiffView {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
-        let workspace = workspace.weak_handle();
-        let clipboard_text = diff_data.clipboard_text.clone();
         let source_editor = diff_data.editor.clone();
-
-        let clipboard_buffer = cx.new(|cx| language::Buffer::local(clipboard_text.clone(), cx));
-        let clipboard_max_point = clipboard_buffer.read(cx).max_point();
-        let clipboard_range = Point::new(0, 0)..clipboard_max_point;
 
         let source_editor_buffer_and_range = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
@@ -73,11 +67,18 @@ impl TextDiffView {
             return None;
         };
 
-        let source_language = source_buffer.read(cx).language().cloned();
+        let clipboard_text = diff_data.clipboard_text.clone();
 
-        clipboard_buffer.update(cx, |buffer, cx| {
-            buffer.set_language(source_language.clone(), cx);
+        let clipboard_buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(clipboard_text.clone(), cx);
+            let source_language = source_buffer.read(cx).language().cloned();
+            buffer.set_language(source_language, cx);
+            buffer
         });
+        let clipboard_max_point = clipboard_buffer.read(cx).max_point();
+        let clipboard_range = Point::new(0, 0)..clipboard_max_point;
+
+        let workspace = workspace.weak_handle();
 
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
@@ -169,7 +170,7 @@ impl TextDiffView {
         let selection_location_text = selection_location_text(editor, cx);
         let selection_location_title = selection_location_text
             .as_ref()
-            .map(|text| format!("{} ({})", title, text))
+            .map(|text| format!("{} @ {}", title, text))
             .unwrap_or(title);
 
         let path = editor
@@ -185,7 +186,7 @@ impl TextDiffView {
             .unwrap_or("untitled".into());
 
         let selection_location_path = selection_location_text
-            .map(|text| format!("{} ({})", path, text))
+            .map(|text| format!("{} @ {}", path, text))
             .unwrap_or(path);
 
         Self {
@@ -251,9 +252,8 @@ async fn build_range_based_diff(
     let base_buffer = cx.update(|cx| {
         cx.new(|cx| {
             let mut buffer = language::Buffer::local(new_buffer_snapshot.text().to_string(), cx);
-            if let Some(language) = new_buffer.read(cx).language().cloned() {
-                buffer.set_language(Some(language), cx);
-            }
+            let language = new_buffer.read(cx).language().cloned();
+            buffer.set_language(language, cx);
 
             let range_start = new_buffer_snapshot.point_to_offset(new_range.start);
             let range_end = new_buffer_snapshot.point_to_offset(new_range.end);
@@ -482,11 +482,18 @@ impl Render for TextDiffView {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
-    use gpui::TestAppContext;
-    use project::Project;
+    use editor::{actions, test::editor_test_context::assert_state_with_diff};
+    use gpui::{TestAppContext, VisualContext};
+    use language::{Language, LanguageConfig, LanguageMatcher, LanguageRegistry};
+    use project::{FakeFs, Project};
+    use serde_json::json;
     use settings::{Settings, SettingsStore};
+    use std::sync::Arc;
+    use unindent::unindent;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -500,150 +507,125 @@ mod tests {
         });
     }
 
-    // TODO - diff - fix tests
-    // TODO - diff - test languages are correct set in all 4 cases
-    // #[gpui::test]
-    // async fn test_selection_against_selection_text_diff_view(cx: &mut TestAppContext) {
-    //     init_test(cx);
+    #[gpui::test]
+    async fn test_clipboard_against_selection_text_diff_view(cx: &mut TestAppContext) {
+        init_test(cx);
 
-    //     let fs = FakeFs::new(cx.executor());
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/test",
+            json!({
+                "a": {
+                    "b": {
+                        "text.txt": "new line 1\nline 2\nnew line 3\nline 4"
+                    }
+                }
+            }),
+        )
+        .await;
 
-    //     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
 
-    //     let (workspace, mut cx) =
-    //         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (workspace, mut cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-    //     let diff_view = workspace
-    //         .update_in(cx, |workspace, window, cx| {
-    //             TextDiffView::open(
-    //                 &DiffText {
-    //                     old_text_source: TextData {
-    //                         text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
-    //                         source_location: Path(Some(PathBuf::from("a/b/text_1.txt"))),
-    //                         language: None,
-    //                         selection_data: Some(SelectionData {
-    //                             start_row: 0,
-    //                             start_column: 0,
-    //                             end_row: 4,
-    //                             end_column: 0,
-    //                         }),
-    //                     },
-    //                     new_text_source: TextData {
-    //                         text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
-    //                         source_location: Path(Some(PathBuf::from("a/b/text_2.txt"))),
-    //                         language: None,
-    //                         selection_data: Some(SelectionData {
-    //                             start_row: 0,
-    //                             start_column: 0,
-    //                             end_row: 4,
-    //                             end_column: 0,
-    //                         }),
-    //                     },
-    //                 },
-    //                 workspace,
-    //                 window,
-    //                 cx,
-    //             )
-    //         })
-    //         .await
-    //         .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(Path::new("/test/a/b/text.txt"), cx)
+            })
+            .await
+            .unwrap();
 
-    //     assert_state_with_diff(
-    //         &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-    //         &mut cx,
-    //         &unindent(
-    //             "
-    //             - old line 1
-    //             + ˇnew line 1
-    //               line 2
-    //             - old line 3
-    //             + new line 3
-    //               line 4
-    //             ",
-    //         ),
-    //     );
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
+        // language_registry.add(Arc::new(Language::new(
+        //     LanguageConfig {
+        //         name: "Markdown".into(),
+        //         matcher: LanguageMatcher {
+        //             path_suffixes: vec!["md".into()],
+        //             ..Default::default()
+        //         },
+        //         ..Default::default()
+        //     },
+        //     Some(tree_sitter_md::LANGUAGE.into()),
+        // )));
 
-    //     diff_view.read_with(cx, |diff_view, _| {
-    //         assert_eq!(
-    //             diff_view.tab_content_text,
-    //             "text_1.txt @ L1:1-L5:1 ↔ text_2.txt @ L1:1-L5:1"
-    //         );
-    //         assert_eq!(
-    //             diff_view.tab_tooltip_text,
-    //             "a/b/text_1.txt @ L1:1-L5:1 ↔ a/b/text_2.txt @ L1:1-L5:1"
-    //         );
-    //     })
-    // }
+        // let markdown = language_registry
+        //     .language_for_name("Markdown")
+        //     .await
+        //     .unwrap();
 
-    // #[gpui::test]
-    // async fn test_clipboard_against_selection_text_diff_view(cx: &mut TestAppContext) {
-    //     init_test(cx);
+        // buffer.update(cx, |buffer, cx| {
+        //     buffer.set_language(Some(markdown.clone()), cx);
+        // });
 
-    //     let fs = FakeFs::new(cx.executor());
+        let editor = cx.new_window_entity(|window, cx| {
+            let mut editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+            editor.set_text("new line 1\nline 2\nnew line 3\nline 4\n", window, cx);
+            editor.select_all(&actions::SelectAll, window, cx);
+            editor
+        });
 
-    //     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
+                        editor: editor.clone(),
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
 
-    //     let (workspace, mut cx) =
-    //         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        cx.executor().run_until_parked();
 
-    //     let diff_view = workspace
-    //         .update_in(cx, |workspace, window, cx| {
-    //             TextDiffView::open(
-    //                 &DiffText {
-    //                     old_text_source: TextData {
-    //                         text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
-    //                         source_location: Custom("clipboard".to_string()),
-    //                         language: None,
-    //                         selection_data: None,
-    //                     },
-    //                     new_text_source: TextData {
-    //                         text: "new line 1\nline 2\nnew line 3\nline 4\n".to_string(),
-    //                         source_location: Path(Some(PathBuf::from("a/b/text.txt"))),
-    //                         language: None,
-    //                         selection_data: Some(SelectionData {
-    //                             start_row: 0,
-    //                             start_column: 0,
-    //                             end_row: 4,
-    //                             end_column: 0,
-    //                         }),
-    //                     },
-    //                 },
-    //                 workspace,
-    //                 window,
-    //                 cx,
-    //             )
-    //         })
-    //         .await
-    //         .unwrap();
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
+            &mut cx,
+            &unindent(
+                "
+                - old line 1
+                + ˇnew line 1
+                  line 2
+                - old line 3
+                + new line 3
+                  line 4
+                ",
+            ),
+        );
 
-    //     assert_state_with_diff(
-    //         &diff_view.read_with(cx, |diff_view, _| diff_view.editor.clone()),
-    //         &mut cx,
-    //         &unindent(
-    //             "
-    //             - old line 1
-    //             + ˇnew line 1
-    //               line 2
-    //             - old line 3
-    //             + new line 3
-    //               line 4
-    //             ",
-    //         ),
-    //     );
+        diff_view.read_with(cx, |diff_view, cx| {
+            assert_eq!(
+                diff_view.tab_content_text(0, cx),
+                "Clipboard ↔ text.txt @ L1:1-L5:1"
+            );
+            assert_eq!(
+                diff_view.tab_tooltip_text(cx).unwrap(),
+                "Clipboard ↔ test/a/b/text.txt @ L1:1-L5:1"
+            );
+        });
 
-    //     diff_view.read_with(cx, |diff_view, _| {
-    //         assert_eq!(
-    //             diff_view.tab_content_text,
-    //             "clipboard ↔ text.txt @ L1:1-L5:1"
-    //         );
-    //         assert_eq!(
-    //             diff_view.tab_tooltip_text,
-    //             "clipboard ↔ a/b/text.txt @ L1:1-L5:1"
-    //         );
-    //     })
-    // }
+        // let diff_buffer = diff_view.read_with(cx, |view, _| view.diff_editor.clone());
+        // let snapshot =
+        //     diff_buffer.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
+
+        // let deletion_line = 0; // "- old line 1"
+        // let deletion_point = language::Point::new(deletion_line, 2); // Skip "- " prefix
+        // let language_at_deletion = snapshot.language_at(deletion_point);
+        // assert_eq!(language_at_deletion, Some(&markdown.clone()),);
+
+        // let addition_line = 1; // "+ new line 1"
+        // let addition_point = language::Point::new(addition_line, 2); // Skip "+ " prefix
+        // let language_at_addition = snapshot.language_at(addition_point);
+        // assert_eq!(language_at_addition, Some(&markdown),);
+    }
 }
 
 // TODO - diff - single line diffs should work, do we need to adjust indenting when not selecting the entire line?
 // TODO - diff - adjusting highlight in original file should adjust what is shown in the diff view?
 // TODO - diff - editing the source should keep the diff in tact, but it currently loses the diff when editing
+// TODO - diff - language isn't being set in diff deletion hunks
