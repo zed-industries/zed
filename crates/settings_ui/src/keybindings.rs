@@ -281,6 +281,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
+    humanized_action_names: HumanizedActionNameCache,
 }
 
 enum PreviousEdit {
@@ -361,6 +362,7 @@ impl KeymapEditor {
             context_menu: None,
             previous_edit: None,
             search_query_debounce: None,
+            humanized_action_names: HumanizedActionNameCache::new(cx),
         };
 
         this.on_keymap_changed(cx);
@@ -543,6 +545,7 @@ impl KeymapEditor {
     fn process_bindings(
         json_language: Arc<Language>,
         zed_keybind_context_language: Arc<Language>,
+        humanized_action_names: &HumanizedActionNameCache,
         cx: &mut App,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
@@ -590,15 +593,14 @@ impl KeymapEditor {
             let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
-            let humanized_action_name: SharedString =
-                command_palette::humanize_action_name(action_name).into();
+            let humanized_action_name = humanized_action_names.get(action_name);
             let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action_name,
-                humanized_action_name,
                 action_arguments,
+                humanized_action_name,
                 action_docs,
                 action_schema: action_schema.get(action_name).cloned(),
                 context: Some(context),
@@ -610,15 +612,14 @@ impl KeymapEditor {
         let empty = SharedString::new_static("");
         for action_name in unmapped_action_names.into_iter() {
             let index = processed_bindings.len();
-            let humanized_action_name: SharedString =
-                command_palette::humanize_action_name(action_name).into();
+            let humanized_action_name = humanized_action_names.get(action_name);
             let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
                 action_name,
-                humanized_action_name,
                 action_arguments: None,
+                humanized_action_name,
                 action_docs: action_documentation.get(action_name).copied(),
                 action_schema: action_schema.get(action_name).cloned(),
                 context: None,
@@ -638,8 +639,12 @@ impl KeymapEditor {
                 load_keybind_context_language(workspace.clone(), cx).await;
 
             let (action_query, keystroke_query) = this.update(cx, |this, cx| {
-                let (key_bindings, string_match_candidates) =
-                    Self::process_bindings(json_language, zed_keybind_context_language, cx);
+                let (key_bindings, string_match_candidates) = Self::process_bindings(
+                    json_language,
+                    zed_keybind_context_language,
+                    &this.humanized_action_names,
+                    cx,
+                );
 
                 this.keybinding_conflict_state = ConflictState::new(&key_bindings);
 
@@ -1084,6 +1089,29 @@ impl KeymapEditor {
 
         *exact_match = !(*exact_match);
         self.on_query_changed(cx);
+    }
+}
+
+struct HumanizedActionNameCache {
+    cache: HashMap<&'static str, SharedString>,
+}
+
+impl HumanizedActionNameCache {
+    fn new(cx: &App) -> Self {
+        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+            (
+                action_name,
+                command_palette::humanize_action_name(action_name).into(),
+            )
+        }));
+        Self { cache }
+    }
+
+    fn get(&self, action_name: &'static str) -> SharedString {
+        match self.cache.get(action_name) {
+            Some(name) => name.clone(),
+            None => action_name.into(),
+        }
     }
 }
 
@@ -1633,10 +1661,6 @@ impl InputError {
             InputError::Warning(content) | InputError::Error(content) => content,
         }
     }
-
-    fn is_error(&self) -> bool {
-        matches!(self, InputError::Error(_))
-    }
 }
 
 struct KeybindingEditorModal {
@@ -1818,10 +1842,6 @@ impl KeybindingEditorModal {
         Ok(Some(context))
     }
 
-    fn has_error(&self) -> bool {
-        self.error.as_ref().is_some_and(|error| error.is_error())
-    }
-
     fn save_or_display_error(&mut self, cx: &mut Context<Self>) {
         self.save(cx).map_err(|err| self.set_error(err, cx)).ok();
     }
@@ -1999,8 +2019,6 @@ fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
-        let action_name =
-            command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string();
 
         v_flex()
             .w(rems(34.))
@@ -2020,7 +2038,9 @@ impl Render for KeybindingEditorModal {
                                 .gap_0p5()
                                 .border_b_1()
                                 .border_color(theme.border_variant)
-                                .child(Label::new(action_name))
+                                .child(Label::new(
+                                    self.editing_keybind.humanized_action_name.clone(),
+                                ))
                                 .when_some(self.editing_keybind.action_docs, |this, docs| {
                                     this.child(
                                         Label::new(docs).size(LabelSize::Small).color(Color::Muted),
