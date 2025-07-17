@@ -4,7 +4,6 @@ use ::util::ResultExt;
 use anyhow::{Context, Result};
 // #[cfg(not(feature = "enable-renderdoc"))]
 use windows::Win32::Graphics::DirectComposition::*;
-use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 use windows::{
     Win32::{
         Foundation::{HMODULE, HWND},
@@ -50,7 +49,9 @@ struct DirectXResources {
     msaa_target: ID3D11Texture2D,
     msaa_view: [Option<ID3D11RenderTargetView>; 1],
 
-    // Cached viewport
+    // Cached window size and viewport
+    width: u32,
+    height: u32,
     viewport: [D3D11_VIEWPORT; 1],
 }
 
@@ -111,7 +112,7 @@ impl DirectXRenderer {
             devices.device.clone(),
             devices.device_context.clone(),
         ));
-        let resources = DirectXResources::new(devices, hwnd)?;
+        let resources = DirectXResources::new(devices)?;
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
         // #[cfg(not(feature = "enable-renderdoc"))]
@@ -211,12 +212,17 @@ impl DirectXRenderer {
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+        let width = new_size.width.0.max(1) as u32;
+        let height = new_size.height.0.max(1) as u32;
+        if self.resources.width == width && self.resources.height == height {
+            return Ok(());
+        }
         unsafe {
-            let width = new_size.width.0 as u32;
-            let height = new_size.height.0 as u32;
+            // Clear the render target before resizing
             self.devices.device_context.OMSetRenderTargets(None, None);
             ManuallyDrop::drop(&mut self.resources.render_target);
             drop(self.resources.render_target_view[0].take().unwrap());
+
             self.resources.swap_chain.ResizeBuffers(
                 BUFFER_COUNT as u32,
                 width,
@@ -224,6 +230,7 @@ impl DirectXRenderer {
                 RENDER_TARGET_FORMAT,
                 DXGI_SWAP_CHAIN_FLAG(0),
             )?;
+
             self.resources
                 .recreate_resources(&self.devices, width, height)?;
             self.devices
@@ -385,14 +392,9 @@ impl DirectXRenderer {
 }
 
 impl DirectXResources {
-    pub fn new(devices: &DirectXDevices, hwnd: HWND) -> Result<Self> {
-        let (width, height) = unsafe {
-            let mut rect = std::mem::zeroed();
-            GetWindowRect(hwnd, &mut rect)?;
-            let width = (rect.right - rect.left).max(1) as u32;
-            let height = (rect.bottom - rect.top).max(1) as u32;
-            (width, height)
-        };
+    pub fn new(devices: &DirectXDevices) -> Result<Self> {
+        let width = 1;
+        let height = 1;
         // #[cfg(not(feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
         // #[cfg(feature = "enable-renderdoc")]
@@ -413,6 +415,8 @@ impl DirectXResources {
             render_target_view,
             msaa_target,
             msaa_view,
+            width,
+            height,
             viewport,
         })
     }
@@ -431,6 +435,8 @@ impl DirectXResources {
         self.msaa_target = msaa_target;
         self.msaa_view = msaa_view;
         self.viewport = viewport;
+        self.width = width;
+        self.height = height;
         Ok(())
     }
 }
