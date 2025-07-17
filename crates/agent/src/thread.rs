@@ -1314,11 +1314,8 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        // Enable burn mode
         self.completion_mode = CompletionMode::Burn;
         cx.emit(ThreadEvent::ProfileChanged);
-
-        // Then retry
         self.retry_last_completion(window, cx);
     }
 
@@ -2181,8 +2178,6 @@ impl Thread {
     fn get_retry_strategy(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
 
-        // Note: This now returns retry strategies for all retryable errors,
-        // but actual retries only happen when Burn Mode is enabled.
         // General strategy here:
         // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
         // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), try multiple times with exponential backoff.
@@ -2248,7 +2243,7 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        // Store context for manual retry
+        // Store context for the Retry button
         self.last_error_context = Some((model.clone(), intent));
 
         // Only auto-retry if Burn Mode is enabled
@@ -2341,7 +2336,8 @@ impl Thread {
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
 
-            // Show error with retry option but not burn mode option (since it's already enabled)
+            // Show error alongside a Retry button, but no
+            // Enable Burn Mode button (since it's already enabled)
             cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
                 message: format!("Failed after retrying: {}", error).into(),
                 can_enable_burn_mode: false,
