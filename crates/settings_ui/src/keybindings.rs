@@ -762,7 +762,7 @@ impl KeymapEditor {
             let selected_binding_is_unbound = selected_binding.keystrokes().is_none();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-                menu.action_key_context(self.key_context())
+                menu.context(self.focus_handle.clone())
                     .action_disabled_when(
                         selected_binding_is_unbound,
                         "Edit",
