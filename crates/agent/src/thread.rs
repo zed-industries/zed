@@ -3583,6 +3583,7 @@ fn main() {{
     }
 
     #[gpui::test]
+    #[ignore] // turn this test on when project_notifications tool is re-enabled
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
