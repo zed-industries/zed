@@ -11,7 +11,7 @@ use crate::{AgentPanelOnboardingCard, BulletItem, ZedAiOnboarding};
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
-    configured_providers: Vec<String>,
+    configured_providers: Vec<(IconName, SharedString)>,
     continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
@@ -43,14 +43,14 @@ impl AgentPanelOnboarding {
         }
     }
 
-    fn compute_available_providers(cx: &App) -> Vec<String> {
+    fn compute_available_providers(cx: &App) -> Vec<(IconName, SharedString)> {
         LanguageModelRegistry::read_global(cx)
             .providers()
             .iter()
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| provider.name().0.to_string())
+            .map(|provider| (provider.icon(), provider.name().0.clone()))
             .collect()
     }
 
@@ -90,10 +90,21 @@ impl AgentPanelOnboarding {
                         "No need for any of the plans or even to sign in",
                     ))
                     .when(has_existing_providers, |this| {
-                        this.child(BulletItem::new(format!(
-                            "And we already noticed you have some providers ({}) set up, which you can use right away",
-                            self.configured_providers.join(", ")
-                        )))
+                        this.child(BulletItem::new(
+                            "Or start now using API keys from your environment for the following providers:"
+                        ))
+                        .child(
+                            h_flex()
+                                .px_5()
+                                .gap_2()
+                                .flex_wrap()
+                                .children(self.configured_providers.iter().cloned().map(|(icon, name)|
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                                        .child(Label::new(name))
+                                ))
+                        )
                     }),
             )
             .when(has_existing_providers, |this| {

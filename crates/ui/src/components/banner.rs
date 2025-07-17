@@ -113,7 +113,7 @@ impl RenderOnce for Banner {
                     .flex_shrink_0()
                     .child(Icon::new(icon).size(IconSize::XSmall).color(icon_color)),
             )
-            .child(div().debug_bg_blue().min_w_0().children(self.children));
+            .child(div().min_w_0().children(self.children));
 
         if let Some(action_slot) = self.action_slot {
             banner = banner

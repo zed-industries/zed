@@ -10,8 +10,8 @@ pub use young_account_banner::YoungAccountBanner;
 
 use std::sync::Arc;
 
-use client::{Client, UserStore};
-use gpui::{AnyElement, ClickEvent, Entity, IntoElement, ParentElement, SharedString};
+use client::{Client, UserStore, zed_urls};
+use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
 
 pub struct BulletItem {
@@ -105,10 +105,6 @@ impl ZedAiOnboarding {
         }
     }
 
-    fn upgrade_plan(_: &ClickEvent, _: &mut Window, cx: &mut App) {
-        cx.open_url("https://zed.dev/account/upgrade");
-    }
-
     fn render_free_plan_section(&self, cx: &mut App) -> impl IntoElement {
         v_flex()
             .mt_2()
@@ -147,10 +143,10 @@ impl ZedAiOnboarding {
     }
 
     fn render_pro_plan_section(&self, cx: &mut App) -> impl IntoElement {
-        let button_label = if self.account_too_young {
-            "Start with Pro"
+        let (button_label, button_url) = if self.account_too_young {
+            ("Start with Pro", zed_urls::account_url(cx))
         } else {
-            "Start Pro Trial"
+            ("Start Pro Trial", zed_urls::upgrade_to_zed_pro_url(cx))
         };
 
         v_flex()
@@ -181,7 +177,7 @@ impl ZedAiOnboarding {
                 Button::new("pro", button_label)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(Self::upgrade_plan),
+                    .on_click(move |_, _window, cx| cx.open_url(&button_url)),
             )
     }
 
