@@ -683,7 +683,7 @@ impl KeymapEditor {
         .detach_and_log_err(cx);
     }
 
-    fn dispatch_context(&self, _window: &Window, _cx: &Context<Self>) -> KeyContext {
+    fn key_context(&self) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("KeymapEditor");
         dispatch_context.add("menu");
@@ -718,14 +718,19 @@ impl KeymapEditor {
         self.selected_index.take();
     }
 
-    fn selected_keybind_idx(&self) -> Option<usize> {
+    fn selected_keybind_index(&self) -> Option<usize> {
         self.selected_index
             .and_then(|match_index| self.matches.get(match_index))
             .map(|r#match| r#match.candidate_id)
     }
 
+    fn selected_keybind_and_index(&self) -> Option<(&ProcessedKeybinding, usize)> {
+        self.selected_keybind_index()
+            .map(|keybind_index| (&self.keybindings[keybind_index], keybind_index))
+    }
+
     fn selected_binding(&self) -> Option<&ProcessedKeybinding> {
-        self.selected_keybind_idx()
+        self.selected_keybind_index()
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
     }
 
@@ -757,40 +762,41 @@ impl KeymapEditor {
             let selected_binding_is_unbound = selected_binding.keystrokes().is_none();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
-                menu.action_disabled_when(
-                    selected_binding_is_unbound,
-                    "Edit",
-                    Box::new(EditBinding),
-                )
-                .action("Create", Box::new(CreateBinding))
-                .action_disabled_when(
-                    selected_binding_is_unbound,
-                    "Delete",
-                    Box::new(DeleteBinding),
-                )
-                .separator()
-                .action("Copy Action", Box::new(CopyAction))
-                .action_disabled_when(
-                    selected_binding_has_no_context,
-                    "Copy Context",
-                    Box::new(CopyContext),
-                )
-                .entry("Show matching keybindings", None, {
-                    let weak = weak.clone();
-                    let key_strokes = key_strokes.clone();
+                menu.context(self.focus_handle.clone())
+                    .action_disabled_when(
+                        selected_binding_is_unbound,
+                        "Edit",
+                        Box::new(EditBinding),
+                    )
+                    .action("Create", Box::new(CreateBinding))
+                    .action_disabled_when(
+                        selected_binding_is_unbound,
+                        "Delete",
+                        Box::new(DeleteBinding),
+                    )
+                    .separator()
+                    .action("Copy Action", Box::new(CopyAction))
+                    .action_disabled_when(
+                        selected_binding_has_no_context,
+                        "Copy Context",
+                        Box::new(CopyContext),
+                    )
+                    .entry("Show matching keybindings", None, {
+                        let weak = weak.clone();
+                        let key_strokes = key_strokes.clone();
 
-                    move |_, cx| {
-                        weak.update(cx, |this, cx| {
-                            this.filter_state = FilterState::All;
-                            this.search_mode = SearchMode::KeyStroke { exact_match: true };
+                        move |_, cx| {
+                            weak.update(cx, |this, cx| {
+                                this.filter_state = FilterState::All;
+                                this.search_mode = SearchMode::KeyStroke { exact_match: true };
 
-                            this.keystroke_editor.update(cx, |editor, cx| {
-                                editor.set_keystrokes(key_strokes.clone(), cx);
-                            });
-                        })
-                        .ok();
-                    }
-                })
+                                this.keystroke_editor.update(cx, |editor, cx| {
+                                    editor.set_keystrokes(key_strokes.clone(), cx);
+                                });
+                            })
+                            .ok();
+                        }
+                    })
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
@@ -880,22 +886,16 @@ impl KeymapEditor {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_edit_keybinding_modal(false, window, cx);
-    }
-
     fn open_edit_keybinding_modal(
         &mut self,
         create: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((keybind_idx, keybind)) = self
-            .selected_keybind_idx()
-            .zip(self.selected_binding().cloned())
-        else {
+        let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
         };
+        let keybind = keybind.clone();
         let keymap_editor = cx.entity();
 
         let arguments = keybind
@@ -925,7 +925,7 @@ impl KeymapEditor {
                     let modal = KeybindingEditorModal::new(
                         create,
                         keybind,
-                        keybind_idx,
+                        keybind_index,
                         keymap_editor,
                         workspace_weak,
                         fs,
@@ -1142,20 +1142,19 @@ impl Item for KeymapEditor {
 }
 
 impl Render for KeymapEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         let row_count = self.matches.len();
         let theme = cx.theme();
 
         v_flex()
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
-            .key_context(self.dispatch_context(window, cx))
+            .key_context(self.key_context())
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::focus_search))
-            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::edit_binding))
             .on_action(cx.listener(Self::create_binding))
             .on_action(cx.listener(Self::delete_binding))
@@ -1269,6 +1268,18 @@ impl Render for KeymapEditor {
                                                 "keystrokes-exact-match",
                                                 IconName::Equal,
                                             )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::for_action(
+                                                    if exact_match {
+                                                        "Partial match mode"
+                                                    } else {
+                                                        "Exact match mode"
+                                                    },
+                                                    &ToggleExactKeystrokeMatching,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .shape(IconButtonShape::Square)
                                             .toggle_state(exact_match)
                                             .on_click(
@@ -1316,9 +1327,9 @@ impl Render for KeymapEditor {
                                             .icon_color(Color::Warning)
                                             .tooltip(|window, cx| {
                                                 Tooltip::with_meta(
-                                                    "Edit Keybinding",
-                                                    None,
-                                                    "Use alt+click to show conflicts",
+                                                    "View conflicts",
+                                                    Some(&ToggleConflictFilter),
+                                                    "Use alt+click to show all conflicts",
                                                     window,
                                                     cx,
                                                 )
@@ -1343,7 +1354,10 @@ impl Render for KeymapEditor {
                                     .unwrap_or_else(|| {
                                         base_button_style(index, IconName::Pencil)
                                             .visible_on_hover(row_group_id(index))
-                                            .tooltip(Tooltip::text("Edit Keybinding"))
+                                            .tooltip(Tooltip::for_action_title(
+                                                "Edit Keybinding",
+                                                &EditBinding,
+                                            ))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
@@ -2545,6 +2559,8 @@ impl KeystrokeInput {
                 if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
+            } else if close_keystroke_result != CloseKeystrokeResult::Partial {
+                self.clear_keystrokes(&ClearKeystrokes, window, cx);
             }
         }
         self.keystrokes_changed(cx);
