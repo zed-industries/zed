@@ -412,30 +412,35 @@ pub async fn post_panic(
 
     let backtrace_with_summary = panic.payload + "\n" + &backtrace;
 
+    let version = if panic.release_channel == "nightly"
+        && let Some(sha) = panic.app_commit_sha
+    {
+        format!("Zed Nightly {}", sha.chars().take(7).collect::<String>())
+    } else {
+        panic.app_version
+    };
+
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
         let payload = slack::WebhookBody::new(|w| {
             w.add_section(|s| s.text(slack::Text::markdown("Panic request".to_string())))
                 .add_section(|s| {
-                    s.add_field(slack::Text::markdown(format!(
-                        "*Version:*\n {} ",
-                        panic.app_version
-                    )))
-                    .add_field({
-                        let hostname = app.config.blob_store_url.clone().unwrap_or_default();
-                        let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
-                            hostname.strip_prefix("http://").unwrap_or_default()
-                        });
+                    s.add_field(slack::Text::markdown(format!("*Version:*\n {version} ",)))
+                        .add_field({
+                            let hostname = app.config.blob_store_url.clone().unwrap_or_default();
+                            let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
+                                hostname.strip_prefix("http://").unwrap_or_default()
+                            });
 
-                        slack::Text::markdown(format!(
-                            "*{} {}:*\n<https://{}.{}/{}.json|{}…>",
-                            panic.os_name,
-                            panic.os_version.unwrap_or_default(),
-                            CRASH_REPORTS_BUCKET,
-                            hostname,
-                            incident_id,
-                            incident_id.chars().take(8).collect::<String>(),
-                        ))
-                    })
+                            slack::Text::markdown(format!(
+                                "*{} {}:*\n<https://{}.{}/{}.json|{}…>",
+                                panic.os_name,
+                                panic.os_version.unwrap_or_default(),
+                                CRASH_REPORTS_BUCKET,
+                                hostname,
+                                incident_id,
+                                incident_id.chars().take(8).collect::<String>(),
+                            ))
+                        })
                 })
                 .add_rich_text(|r| r.add_preformatted(|p| p.add_text(backtrace_with_summary)))
         });
