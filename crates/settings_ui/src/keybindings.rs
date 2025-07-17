@@ -268,6 +268,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HashMap<&'static str, SharedString>,
+    show_hover_menus: bool,
 }
 
 enum PreviousEdit {
@@ -357,6 +358,7 @@ impl KeymapEditor {
             previous_edit: None,
             humanized_action_names,
             search_query_debounce: None,
+            show_hover_menus: true,
         };
 
         this.on_keymap_changed(cx);
@@ -825,6 +827,7 @@ impl KeymapEditor {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_hover_menus = false;
         if let Some(selected) = self.selected_index {
             let selected = selected + 1;
             if selected >= self.matches.len() {
@@ -845,6 +848,7 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_hover_menus = false;
         if let Some(selected) = self.selected_index {
             if selected == 0 {
                 return;
@@ -870,6 +874,7 @@ impl KeymapEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_hover_menus = false;
         if self.matches.get(0).is_some() {
             self.selected_index = Some(0);
             self.scroll_to_item(0, ScrollStrategy::Center, cx);
@@ -878,6 +883,7 @@ impl KeymapEditor {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        self.show_hover_menus = false;
         if self.matches.last().is_some() {
             let index = self.matches.len() - 1;
             self.selected_index = Some(index);
@@ -892,6 +898,7 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_hover_menus = false;
         let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
         };
@@ -1167,6 +1174,9 @@ impl Render for KeymapEditor {
             .p_2()
             .gap_1()
             .bg(theme.colors().editor_background)
+            .on_mouse_move(cx.listener(|this, _, _window, _cx| {
+                this.show_hover_menus = true;
+            }))
             .child(
                 v_flex()
                     .p_2()
@@ -1320,9 +1330,9 @@ impl Render for KeymapEditor {
                                     let binding = &this.keybindings[candidate_id];
                                     let action_name = binding.action_name;
 
-                                    let icon = (this.filter_state != FilterState::Conflicts
-                                        && this.has_conflict(index))
-                                    .then(|| {
+                                    let icon = if this.filter_state != FilterState::Conflicts
+                                        && this.has_conflict(index)
+                                    {
                                         base_button_style(index, IconName::Warning)
                                             .icon_color(Color::Warning)
                                             .tooltip(|window, cx| {
@@ -1350,21 +1360,34 @@ impl Render for KeymapEditor {
                                                     }
                                                 },
                                             ))
-                                    })
-                                    .unwrap_or_else(|| {
+                                            .into_any_element()
+                                    } else {
                                         base_button_style(index, IconName::Pencil)
-                                            .visible_on_hover(row_group_id(index))
-                                            .tooltip(Tooltip::for_action_title(
-                                                "Edit Keybinding",
-                                                &EditBinding,
-                                            ))
+                                            .visible_on_hover(
+                                                if this.selected_index == Some(index) {
+                                                    "".into()
+                                                } else if this.show_hover_menus {
+                                                    row_group_id(index)
+                                                } else {
+                                                    "never-show".into()
+                                                },
+                                            )
+                                            .when(
+                                                this.show_hover_menus && !context_menu_deployed,
+                                                |this| {
+                                                    this.tooltip(Tooltip::for_action_title(
+                                                        "Edit Keybinding",
+                                                        &EditBinding,
+                                                    ))
+                                                },
+                                            )
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.select_index(index, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
                                                 cx.stop_propagation();
                                             }))
-                                    })
-                                    .into_any_element();
+                                            .into_any_element()
+                                    };
 
                                     let action = div()
                                         .id(("keymap action", index))
@@ -1382,20 +1405,24 @@ impl Render for KeymapEditor {
                                                     .into_any_element()
                                             }
                                         })
-                                        .when(!context_menu_deployed, |this| {
-                                            this.tooltip({
-                                                let action_name = binding.action_name;
-                                                let action_docs = binding.action_docs;
-                                                move |_, cx| {
-                                                    let action_tooltip = Tooltip::new(action_name);
-                                                    let action_tooltip = match action_docs {
-                                                        Some(docs) => action_tooltip.meta(docs),
-                                                        None => action_tooltip,
-                                                    };
-                                                    cx.new(|_| action_tooltip).into()
-                                                }
-                                            })
-                                        })
+                                        .when(
+                                            !context_menu_deployed && this.show_hover_menus,
+                                            |this| {
+                                                this.tooltip({
+                                                    let action_name = binding.action_name;
+                                                    let action_docs = binding.action_docs;
+                                                    move |_, cx| {
+                                                        let action_tooltip =
+                                                            Tooltip::new(action_name);
+                                                        let action_tooltip = match action_docs {
+                                                            Some(docs) => action_tooltip.meta(docs),
+                                                            None => action_tooltip,
+                                                        };
+                                                        cx.new(|_| action_tooltip).into()
+                                                    }
+                                                })
+                                            },
+                                        )
                                         .into_any_element();
                                     let keystrokes = binding.ui_key_binding.clone().map_or(
                                         binding.keystroke_text.clone().into_any_element(),
@@ -1420,13 +1447,18 @@ impl Render for KeymapEditor {
                                             div()
                                                 .id(("keymap context", index))
                                                 .child(context.clone())
-                                                .when(is_local && !context_menu_deployed, |this| {
-                                                    this.tooltip(Tooltip::element({
-                                                        move |_, _| {
-                                                            context.clone().into_any_element()
-                                                        }
-                                                    }))
-                                                })
+                                                .when(
+                                                    is_local
+                                                        && !context_menu_deployed
+                                                        && this.show_hover_menus,
+                                                    |this| {
+                                                        this.tooltip(Tooltip::element({
+                                                            move |_, _| {
+                                                                context.clone().into_any_element()
+                                                            }
+                                                        }))
+                                                    },
+                                                )
                                                 .into_any_element()
                                         },
                                     );

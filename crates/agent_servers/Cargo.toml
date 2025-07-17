@@ -7,7 +7,7 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support"]
-gemini = []
+e2e = []
 
 [lints]
 workspace = true
