@@ -808,7 +808,8 @@ impl KeymapEditor {
                         "Copy Context",
                         Box::new(CopyContext),
                     )
-                    .entry("Show matching keybindings", None, {
+                    .separator()
+                    .entry("Show Matching Keybindings", None, {
                         move |_, cx| {
                             weak.update(cx, |this, cx| {
                                 this.filter_on_selected_binding_keystrokes(cx);
