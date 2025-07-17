@@ -20,15 +20,18 @@ use windows::{
 use crate::*;
 
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
+// This configuration is used for MSAA rendering, and it's guaranteed to be supported by DirectX 11.
+const MULTISAMPLE_COUNT: u32 = 4;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: DirectXDevices,
-    context: DirectXContext,
+    resources: DirectXResources,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
 }
 
+/// Direct3D objects
 #[derive(Clone)]
 pub(crate) struct DirectXDevices {
     dxgi_factory: IDXGIFactory6,
@@ -37,13 +40,17 @@ pub(crate) struct DirectXDevices {
     device_context: ID3D11DeviceContext,
 }
 
-struct DirectXContext {
+struct DirectXResources {
+    // Direct3D rendering objects
     swap_chain: ManuallyDrop<IDXGISwapChain1>,
     render_target: ManuallyDrop<ID3D11Texture2D>,
     render_target_view: [Option<ID3D11RenderTargetView>; 1],
     msaa_target: ID3D11Texture2D,
     msaa_view: ID3D11RenderTargetView,
+
+    // Cached viewport
     viewport: [D3D11_VIEWPORT; 1],
+
     // #[cfg(not(feature = "enable-renderdoc"))]
     _direct_composition: DirectComposition,
 }
@@ -105,13 +112,13 @@ impl DirectXRenderer {
             devices.device.clone(),
             devices.device_context.clone(),
         ));
-        let context = DirectXContext::new(devices, hwnd)?;
+        let resources = DirectXResources::new(devices, hwnd)?;
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
         Ok(DirectXRenderer {
             atlas,
             devices: devices.clone(),
-            context,
+            resources,
             globals,
             pipelines,
         })
@@ -127,8 +134,8 @@ impl DirectXRenderer {
             self.globals.global_params_buffer[0].as_ref().unwrap(),
             &[GlobalParams {
                 viewport_size: [
-                    self.context.viewport[0].Width,
-                    self.context.viewport[0].Height,
+                    self.resources.viewport[0].Width,
+                    self.resources.viewport[0].Height,
                 ],
                 ..Default::default()
             }],
@@ -136,13 +143,13 @@ impl DirectXRenderer {
         unsafe {
             self.devices
                 .device_context
-                .ClearRenderTargetView(&self.context.msaa_view, &[0.0; 4]);
+                .ClearRenderTargetView(&self.resources.msaa_view, &[0.0; 4]);
             self.devices
                 .device_context
-                .OMSetRenderTargets(Some(&[Some(self.context.msaa_view.clone())]), None);
+                .OMSetRenderTargets(Some(&[Some(self.resources.msaa_view.clone())]), None);
             self.devices
                 .device_context
-                .RSSetViewports(Some(&self.context.viewport));
+                .RSSetViewports(Some(&self.resources.viewport));
             self.devices.device_context.OMSetBlendState(
                 &self.globals.blend_state,
                 None,
@@ -180,16 +187,16 @@ impl DirectXRenderer {
         }
         unsafe {
             self.devices.device_context.ResolveSubresource(
-                &*self.context.render_target,
+                &*self.resources.render_target,
                 0,
-                &self.context.msaa_target,
+                &self.resources.msaa_target,
                 0,
                 RENDER_TARGET_FORMAT,
             );
             self.devices
                 .device_context
-                .OMSetRenderTargets(Some(&self.context.render_target_view), None);
-            self.context.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+            self.resources.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
         }
         Ok(())
     }
@@ -197,11 +204,11 @@ impl DirectXRenderer {
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
         unsafe {
             self.devices.device_context.OMSetRenderTargets(None, None);
-            ManuallyDrop::drop(&mut self.context.render_target);
+            ManuallyDrop::drop(&mut self.resources.render_target);
         }
-        drop(self.context.render_target_view[0].take().unwrap());
+        drop(self.resources.render_target_view[0].take().unwrap());
         unsafe {
-            self.context
+            self.resources
                 .swap_chain
                 .ResizeBuffers(
                     BUFFER_COUNT as u32,
@@ -213,14 +220,14 @@ impl DirectXRenderer {
                 .unwrap();
         }
         let (render_target, render_target_view) =
-            create_render_target_and_its_view(&self.context.swap_chain, &self.devices.device)
+            create_render_target_and_its_view(&self.resources.swap_chain, &self.devices.device)
                 .unwrap();
-        self.context.render_target = render_target;
-        self.context.render_target_view = render_target_view;
+        self.resources.render_target = render_target;
+        self.resources.render_target_view = render_target_view;
         unsafe {
             self.devices
                 .device_context
-                .OMSetRenderTargets(Some(&self.context.render_target_view), None);
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
         }
 
         let (msaa_target, msaa_view) = create_msaa_target_and_its_view(
@@ -228,10 +235,10 @@ impl DirectXRenderer {
             new_size.width.0 as u32,
             new_size.height.0 as u32,
         )?;
-        self.context.msaa_target = msaa_target;
-        self.context.msaa_view = msaa_view;
+        self.resources.msaa_target = msaa_target;
+        self.resources.msaa_view = msaa_view;
 
-        self.context.viewport = set_viewport(
+        self.resources.viewport = set_viewport(
             &self.devices.device_context,
             new_size.width.0 as f32,
             new_size.height.0 as f32,
@@ -250,7 +257,7 @@ impl DirectXRenderer {
         )?;
         self.pipelines.shadow_pipeline.draw(
             &self.devices.device_context,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             shadows.len() as u32,
         )
@@ -267,7 +274,7 @@ impl DirectXRenderer {
         )?;
         self.pipelines.quad_pipeline.draw(
             &self.devices.device_context,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             quads.len() as u32,
         )
@@ -312,7 +319,7 @@ impl DirectXRenderer {
         self.pipelines.paths_pipeline.draw(
             &self.devices.device_context,
             paths.len(),
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
         )
     }
@@ -328,7 +335,7 @@ impl DirectXRenderer {
         )?;
         self.pipelines.underline_pipeline.draw(
             &self.devices.device_context,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             underlines.len() as u32,
         )
@@ -351,7 +358,7 @@ impl DirectXRenderer {
         self.pipelines.mono_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             &self.globals.sampler,
             sprites.len() as u32,
@@ -375,7 +382,7 @@ impl DirectXRenderer {
         self.pipelines.poly_sprites.draw_with_texture(
             &self.devices.device_context,
             &texture_view,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             &self.globals.sampler,
             sprites.len() as u32,
@@ -390,24 +397,17 @@ impl DirectXRenderer {
     }
 }
 
-impl DirectXContext {
+impl DirectXResources {
     pub fn new(devices: &DirectXDevices, hwnd: HWND) -> Result<Self> {
         let (width, height) = unsafe {
             let mut rect = std::mem::zeroed();
             GetWindowRect(hwnd, &mut rect)?;
-            (rect.right - rect.left, rect.bottom - rect.top)
+            let width = (rect.right - rect.left).max(1) as u32;
+            let height = (rect.bottom - rect.top).max(1) as u32;
+            (width, height)
         };
-        assert!(
-            width > 0 && height > 0,
-            "Window size must be greater than zero"
-        );
         // #[cfg(not(feature = "enable-renderdoc"))]
-        let swap_chain = create_swap_chain(
-            &devices.dxgi_factory,
-            &devices.device,
-            width as u32,
-            height as u32,
-        )?;
+        let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
         // #[cfg(feature = "enable-renderdoc")]
         // let swap_chain =
         //     create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
@@ -418,7 +418,7 @@ impl DirectXContext {
         let (render_target, render_target_view) =
             create_render_target_and_its_view(&swap_chain, &devices.device)?;
         let (msaa_target, msaa_view) =
-            create_msaa_target_and_its_view(&devices.device, width as u32, height as u32)?;
+            create_msaa_target_and_its_view(&devices.device, width, height)?;
         let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
         unsafe {
             devices
@@ -905,7 +905,7 @@ struct PathSprite {
     color: Background,
 }
 
-impl Drop for DirectXContext {
+impl Drop for DirectXResources {
     fn drop(&mut self) {
         unsafe {
             ManuallyDrop::drop(&mut self.render_target);
@@ -1008,13 +1008,14 @@ fn create_swap_chain_default(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
-    _transparent: bool,
+    width: u32,
+    height: u32,
 ) -> Result<ManuallyDrop<IDXGISwapChain1>> {
     use windows::Win32::Graphics::Dxgi::DXGI_MWA_NO_ALT_ENTER;
 
     let desc = DXGI_SWAP_CHAIN_DESC1 {
-        Width: 1,
-        Height: 1,
+        Width: width,
+        Height: height,
         Format: RENDER_TARGET_FORMAT,
         Stereo: false.into(),
         SampleDesc: DXGI_SAMPLE_DESC {
@@ -1066,7 +1067,7 @@ fn create_msaa_target_and_its_view(
             ArraySize: 1,
             Format: RENDER_TARGET_FORMAT,
             SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 4,
+                Count: MULTISAMPLE_COUNT,
                 Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
             },
             Usage: D3D11_USAGE_DEFAULT,
