@@ -831,4 +831,33 @@ mod tests {
         // Note: The API key parameter is passed to the generate function itself,
         // not included in the GenerateRequest struct that gets serialized to JSON
     }
+
+    #[test]
+    fn test_generate_request_with_stop_tokens() {
+        let request = GenerateRequest {
+            model: "codellama:7b-code".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: Some(vec!["<EOT>".to_string()]),
+            }),
+            keep_alive: None,
+            context: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "codellama:7b-code");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+        let options = parsed.options.unwrap();
+        assert_eq!(options.stop, Some(vec!["<EOT>".to_string()]));
+    }
 }
