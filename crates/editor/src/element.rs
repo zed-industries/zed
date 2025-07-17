@@ -949,6 +949,7 @@ impl EditorElement {
         if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
 
             cx.stop_propagation();
         }
