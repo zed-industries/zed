@@ -413,6 +413,7 @@ pub async fn post_panic(
         let backtrace_with_summary = panic.payload + "\n" + &backtrace;
 
         let version = if panic.release_channel == "nightly"
+            && !panic.app_version.contains("remote-server")
             && let Some(sha) = panic.app_commit_sha
         {
             format!("Zed Nightly {}", sha.chars().take(7).collect::<String>())
