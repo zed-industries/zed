@@ -1,4 +1,5 @@
 use crate::AllLanguageModelSettings;
+use crate::AnthropicSettingsContent;
 use crate::ui::InstructionListItem;
 use anthropic::{
     AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
@@ -8,11 +9,14 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
+use settings::{Settings, SettingsStore, update_settings_file};
+
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
@@ -24,13 +28,13 @@ use language_model::{
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{ElevationIndex, Icon, IconName, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use util::ResultExt;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
@@ -900,6 +904,7 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 
 struct ConfigurationView {
     api_key_editor: Entity<Editor>,
+    api_url_editor: Entity<SingleLineInput>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -930,16 +935,82 @@ impl ConfigurationView {
                 .log_err();
             }
         }));
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
+        let api_url_editor = cx.new(|cx| {
+            let input =
+                SingleLineInput::new(window, cx, anthropic::ANTHROPIC_API_URL).label("API URL");
 
+            if !api_url.is_empty() {
+                input.editor.update(cx, |editor, cx| {
+                    editor.set_text(&*api_url, window, cx);
+                });
+            }
+            input
+        });
         Self {
             api_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
+            api_url_editor,
             state,
             load_credentials_task,
         }
+    }
+
+    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+        let api_url = self
+            .api_url_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+
+        let current_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
+
+        let effective_current_url = if current_url.is_empty() {
+            anthropic::ANTHROPIC_API_URL
+        } else {
+            &current_url
+        };
+
+        if !api_url.is_empty() && api_url != effective_current_url {
+            let fs = <dyn Fs>::global(cx);
+            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+                if let Some(settings) = settings.openai.as_mut() {
+                    settings.api_url = Some(api_url.clone());
+                } else {
+                    settings.anthropic = Some(AnthropicSettingsContent {
+                        api_url: Some(api_url.clone()),
+                        available_models: None,
+                    });
+                }
+            });
+        }
+    }
+
+    fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_url_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings.anthropic.as_mut() {
+                settings.api_url = None;
+            }
+        });
+        cx.notify();
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -1005,10 +1076,60 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
+        let custom_api_url_set = AllLanguageModelSettings::get_global(cx).anthropic.api_url
+            != anthropic::ANTHROPIC_API_URL;
 
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
+        let api_url_section = if custom_api_url_set {
+            h_flex()
+                .mt_1()
+                .p_1()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new("Custom API URL configured.")),
+                )
+                .child(
+                    Button::new("reset-api-url", "Reset API URL")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
+                )
+                .into_any()
+        } else {
+            v_flex()
+                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.save_api_url(cx);
+                    cx.notify();
+                }))
+                .mt_2()
+                .pt_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .gap_1()
+                .child(
+                    List::new()
+                        .child(InstructionListItem::text_only(
+                            "Optionally, you can change the base URL for the OpenAI API request.",
+                        ))
+                        .child(InstructionListItem::text_only(
+                            "Paste the new API endpoint below and hit enter",
+                        )),
+                )
+                .child(self.api_url_editor.clone())
+                .into_any()
+        };
+        let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
@@ -1077,6 +1198,15 @@ impl Render for ConfigurationView {
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
+                .into_any()
+        };
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials...")).into_any()
+        } else {
+            v_flex()
+                .size_full()
+                .child(api_key_section)
+                .child(api_url_section)
                 .into_any()
         }
     }
