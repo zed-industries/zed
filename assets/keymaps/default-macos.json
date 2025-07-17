@@ -1217,7 +1217,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
-      "cmd-alt-c": "keymap_editor::ToggleConflictFilter"
+      "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
+      "enter": "keymap_editor::EditBinding",
+      "alt-enter": "keymap_editor::CreateBinding"
     }
   },
   {

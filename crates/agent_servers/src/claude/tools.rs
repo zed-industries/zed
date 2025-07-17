@@ -97,10 +97,10 @@ impl ClaudeTool {
             }
             Self::Write(None) => "Write".into(),
             Self::Glob(Some(params)) => {
-                format!("Glob {params}")
+                format!("Glob `{params}`")
             }
             Self::Glob(None) => "Glob".into(),
-            Self::Grep(Some(params)) => params.to_string(),
+            Self::Grep(Some(params)) => format!("`{params}`"),
             Self::Grep(None) => "Grep".into(),
             Self::WebFetch(Some(params)) => format!("Fetch {}", params.url),
             Self::WebFetch(None) => "Fetch".into(),

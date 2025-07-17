@@ -3,6 +3,7 @@ mod tools;
 
 use collections::HashMap;
 use project::Project;
+use settings::SettingsStore;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
@@ -12,7 +13,7 @@ use agentic_coding_protocol::{
     self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion,
     StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
 use futures::{AsyncBufReadExt, AsyncWriteExt};
@@ -28,7 +29,7 @@ use util::ResultExt;
 
 use crate::claude::mcp_server::ClaudeMcpServer;
 use crate::claude::tools::ClaudeTool;
-use crate::{AgentServer, find_bin_in_path};
+use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 #[derive(Clone)]
@@ -87,31 +88,41 @@ impl AgentServer for ClaudeCode {
                 .await?;
             mcp_config_file.flush().await?;
 
-            let command = find_bin_in_path("claude", &project, cx)
-                .await
-                .context("Failed to find claude binary")?;
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).claude.clone()
+            })?;
 
-            let mut child = util::command::new_smol_command(&command)
-                .args([
-                    "--input-format",
-                    "stream-json",
-                    "--output-format",
-                    "stream-json",
-                    "--print",
-                    "--verbose",
-                    "--mcp-config",
-                    mcp_config_path.to_string_lossy().as_ref(),
-                    "--permission-prompt-tool",
-                    &format!(
-                        "mcp__{}__{}",
-                        mcp_server::SERVER_NAME,
-                        mcp_server::PERMISSION_TOOL
-                    ),
-                    "--allowedTools",
-                    "mcp__zed__Read,mcp__zed__Edit",
-                    "--disallowedTools",
-                    "Read,Edit",
-                ])
+            let Some(command) =
+                AgentServerCommand::resolve("claude", &[], settings, &project, cx).await
+            else {
+                anyhow::bail!("Failed to find claude binary");
+            };
+
+            let mut child = util::command::new_smol_command(&command.path)
+                .args(
+                    [
+                        "--input-format",
+                        "stream-json",
+                        "--output-format",
+                        "stream-json",
+                        "--print",
+                        "--verbose",
+                        "--mcp-config",
+                        mcp_config_path.to_string_lossy().as_ref(),
+                        "--permission-prompt-tool",
+                        &format!(
+                            "mcp__{}__{}",
+                            mcp_server::SERVER_NAME,
+                            mcp_server::PERMISSION_TOOL
+                        ),
+                        "--allowedTools",
+                        "mcp__zed__Read,mcp__zed__Edit",
+                        "--disallowedTools",
+                        "Read,Edit",
+                    ]
+                    .into_iter()
+                    .chain(command.args.iter().map(|arg| arg.as_str())),
+                )
                 .current_dir(root_dir)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -562,9 +573,19 @@ struct McpServerConfig {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    // crate::common_e2e_tests!(ClaudeCode);
+
+    pub fn local_command() -> AgentServerCommand {
+        AgentServerCommand {
+            path: "claude".into(),
+            args: vec![],
+            env: None,
+        }
+    }
 
     #[test]
     fn test_deserialize_content_untagged_text() {
