@@ -402,11 +402,6 @@ impl DirectXResources {
         //     create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
         let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
             create_resources(devices, &swap_chain, width, height)?;
-        // unsafe {
-        //     devices
-        //         .device_context
-        //         .OMSetRenderTargets(Some(&render_target_view), None);
-        // }
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(Self {
