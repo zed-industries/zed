@@ -371,6 +371,24 @@ impl KeymapEditor {
         }
     }
 
+    fn filter_on_selected_binding_keystrokes(&mut self, cx: &mut Context<Self>) {
+        let Some(selected_binding) = self.selected_binding() else {
+            return;
+        };
+
+        let keystrokes = selected_binding
+            .keystrokes()
+            .map(Vec::from)
+            .unwrap_or_default();
+
+        self.filter_state = FilterState::All;
+        self.search_mode = SearchMode::KeyStroke { exact_match: true };
+
+        self.keystroke_editor.update(cx, |editor, cx| {
+            editor.set_keystrokes(keystrokes, cx);
+        });
+    }
+
     fn on_query_changed(&mut self, cx: &mut Context<Self>) {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
@@ -740,10 +758,6 @@ impl KeymapEditor {
     ) {
         let weak = cx.weak_entity();
         self.context_menu = self.selected_binding().map(|selected_binding| {
-            let key_strokes = selected_binding
-                .keystrokes()
-                .map(Vec::from)
-                .unwrap_or_default();
             let selected_binding_has_no_context = selected_binding
                 .context
                 .as_ref()
@@ -772,17 +786,9 @@ impl KeymapEditor {
                     Box::new(CopyContext),
                 )
                 .entry("Show matching keybindings", None, {
-                    let weak = weak.clone();
-                    let key_strokes = key_strokes.clone();
-
                     move |_, cx| {
                         weak.update(cx, |this, cx| {
-                            this.filter_state = FilterState::All;
-                            this.search_mode = SearchMode::KeyStroke { exact_match: true };
-
-                            this.keystroke_editor.update(cx, |editor, cx| {
-                                editor.set_keystrokes(key_strokes.clone(), cx);
-                            });
+                            this.filter_on_selected_binding_keystrokes(cx);
                         })
                         .ok();
                     }
@@ -1556,7 +1562,7 @@ impl RenderOnce for SyntaxHighlightedText {
             runs.push(text_style.to_run(text.len() - offset));
         }
 
-        return StyledText::new(text).with_runs(runs);
+        StyledText::new(text).with_runs(runs)
     }
 }
 
@@ -2720,7 +2726,7 @@ impl Render for KeystrokeInput {
             IconName::PlayFilled
         };
 
-        return h_flex()
+        h_flex()
             .id("keystroke-input")
             .track_focus(&self.outer_focus_handle)
             .py_2()
@@ -2843,7 +2849,7 @@ impl Render for KeystrokeInput {
                                 this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),
                     ),
-            );
+            )
     }
 }
 
