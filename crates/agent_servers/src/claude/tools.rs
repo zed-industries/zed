@@ -7,8 +7,11 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 pub enum ClaudeTool {
-    // Task,
+    Task(Option<TaskToolParams>),
+    NotebookRead(Option<NotebookReadToolParams>),
+    NotebookEdit(Option<NotebookEditToolParams>),
     Edit(Option<EditToolParams>),
+    MultiEdit(Option<MultiEditToolParams>),
     ReadFile(Option<ReadToolParams>),
     Write(Option<WriteToolParams>),
     Ls(Option<LsToolParams>),
@@ -18,7 +21,7 @@ pub enum ClaudeTool {
     WebFetch(Option<WebFetchToolParams>),
     WebSearch(Option<WebSearchToolParams>),
     TodoWrite(Option<TodoWriteToolParams>),
-    ExitPlanMode,
+    ExitPlanMode(Option<ExitPlanModeToolParams>),
     Other {
         name: String,
         input: serde_json::Value,
@@ -31,7 +34,7 @@ impl ClaudeTool {
             // Known tools
             "mcp__zed__Read" => Self::ReadFile(serde_json::from_value(input).log_err()),
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
-            "MultiEdit" => Self::Edit(None),
+            "MultiEdit" => Self::MultiEdit(serde_json::from_value(input).log_err()),
             "Write" => Self::Write(serde_json::from_value(input).log_err()),
             "LS" => Self::Ls(serde_json::from_value(input).log_err()),
             "Glob" => Self::Glob(serde_json::from_value(input).log_err()),
@@ -40,8 +43,10 @@ impl ClaudeTool {
             "WebFetch" => Self::WebFetch(serde_json::from_value(input).log_err()),
             "WebSearch" => Self::WebSearch(serde_json::from_value(input).log_err()),
             "TodoWrite" => Self::TodoWrite(serde_json::from_value(input).log_err()),
-            "exit_plan_mode" => Self::ExitPlanMode,
-            "Task" => Self::ExitPlanMode,
+            "exit_plan_mode" => Self::ExitPlanMode(serde_json::from_value(input).log_err()),
+            "Task" => Self::Task(serde_json::from_value(input).log_err()),
+            "NotebookRead" => Self::NotebookRead(serde_json::from_value(input).log_err()),
+            "NotebookEdit" => Self::NotebookEdit(serde_json::from_value(input).log_err()),
             // Inferred from name
             _ => {
                 let tool_name = tool_name.to_lowercase();
@@ -62,42 +67,52 @@ impl ClaudeTool {
 
     pub fn label(&self) -> String {
         match &self {
-            ClaudeTool::Terminal(Some(params)) => format!("`{}`", params.command),
-            ClaudeTool::Terminal(None) => "Terminal".into(),
-            ClaudeTool::ReadFile(_) => "Read File".into(),
-            ClaudeTool::Ls(Some(params)) => {
-                format!("List Directory {}", params.path.to_string_lossy())
+            Self::Task(Some(params)) => params.description.clone(),
+            Self::Task(None) => "Task".into(),
+            Self::NotebookRead(Some(params)) => {
+                format!("Read Notebook {}", params.notebook_path.display())
             }
-            ClaudeTool::Ls(None) => "List Directory".into(),
-            ClaudeTool::Edit(Some(params)) => {
-                format!("Edit {}", params.abs_path.to_string_lossy())
+            Self::NotebookRead(None) => "Read Notebook".into(),
+            Self::NotebookEdit(Some(params)) => {
+                format!("Edit Notebook {}", params.notebook_path.display())
             }
-            ClaudeTool::Edit(None) => "Edit".into(),
-            ClaudeTool::Write(Some(params)) => {
-                format!("Write {}", params.file_path.to_string_lossy())
+            Self::NotebookEdit(None) => "Edit Notebook".into(),
+            Self::Terminal(Some(params)) => format!("`{}`", params.command),
+            Self::Terminal(None) => "Terminal".into(),
+            Self::ReadFile(_) => "Read File".into(),
+            Self::Ls(Some(params)) => {
+                format!("List Directory {}", params.path.display())
             }
-            ClaudeTool::Write(None) => "Write".into(),
-            ClaudeTool::Glob(Some(GlobToolParams { path, pattern })) => {
-                if let Some(path) = path {
-                    format!("Glob {}{pattern}", path.to_string_lossy())
-                } else {
-                    format!("Glob {pattern}")
-                }
+            Self::Ls(None) => "List Directory".into(),
+            Self::Edit(Some(params)) => {
+                format!("Edit {}", params.abs_path.display())
             }
-            ClaudeTool::Glob(None) => "Glob".into(),
-            ClaudeTool::Grep(Some(params)) => params.to_string(),
-            ClaudeTool::Grep(None) => "Grep".into(),
-            ClaudeTool::WebFetch(Some(params)) => format!("Fetch {}", params.url),
-            ClaudeTool::WebFetch(None) => "Fetch".into(),
-            ClaudeTool::WebSearch(Some(params)) => format!("Web Search: {}", params),
-            ClaudeTool::WebSearch(None) => "Web Search".into(),
-            ClaudeTool::TodoWrite(Some(params)) => format!(
+            Self::Edit(None) => "Edit".into(),
+            Self::MultiEdit(Some(params)) => {
+                format!("Multi Edit {}", params.file_path.display())
+            }
+            Self::MultiEdit(None) => "Multi Edit".into(),
+            Self::Write(Some(params)) => {
+                format!("Write {}", params.file_path.display())
+            }
+            Self::Write(None) => "Write".into(),
+            Self::Glob(Some(params)) => {
+                format!("Glob {params}")
+            }
+            Self::Glob(None) => "Glob".into(),
+            Self::Grep(Some(params)) => params.to_string(),
+            Self::Grep(None) => "Grep".into(),
+            Self::WebFetch(Some(params)) => format!("Fetch {}", params.url),
+            Self::WebFetch(None) => "Fetch".into(),
+            Self::WebSearch(Some(params)) => format!("Web Search: {}", params),
+            Self::WebSearch(None) => "Web Search".into(),
+            Self::TodoWrite(Some(params)) => format!(
                 "Update TODOs: {}",
                 params.todos.iter().map(|todo| &todo.content).join(", ")
             ),
-            ClaudeTool::TodoWrite(None) => "Update TODOs".into(),
-            ClaudeTool::ExitPlanMode => "Exit Plan Mode".into(),
-            ClaudeTool::Other { name, .. } => name.clone(),
+            Self::TodoWrite(None) => "Update TODOs".into(),
+            Self::ExitPlanMode(_) => "Exit Plan Mode".into(),
+            Self::Other { name, .. } => name.clone(),
         }
     }
 
@@ -115,7 +130,11 @@ impl ClaudeTool {
 
     pub fn icon(&self) -> acp::Icon {
         match self {
+            Self::Task(_) => acp::Icon::Hammer,
+            Self::NotebookRead(_) => acp::Icon::FileSearch,
+            Self::NotebookEdit(_) => acp::Icon::Pencil,
             Self::Edit(_) => acp::Icon::Pencil,
+            Self::MultiEdit(_) => acp::Icon::Pencil,
             Self::Write(_) => acp::Icon::Pencil,
             Self::ReadFile(_) => acp::Icon::FileSearch,
             Self::Ls(_) => acp::Icon::Folder,
@@ -125,14 +144,16 @@ impl ClaudeTool {
             Self::WebSearch(_) => acp::Icon::Globe,
             Self::WebFetch(_) => acp::Icon::Globe,
             Self::TodoWrite(_) => acp::Icon::LightBulb,
-            Self::ExitPlanMode => acp::Icon::Hammer,
+            Self::ExitPlanMode(_) => acp::Icon::Hammer,
             Self::Other { .. } => acp::Icon::Hammer,
         }
     }
 
     pub fn confirmation(&self, description: Option<String>) -> acp::ToolCallConfirmation {
         match &self {
-            Self::Edit(_) | Self::Write(_) => acp::ToolCallConfirmation::Edit { description },
+            Self::Edit(_) | Self::Write(_) | Self::NotebookEdit(_) | Self::MultiEdit(_) => {
+                acp::ToolCallConfirmation::Edit { description }
+            }
             Self::WebFetch(params) => acp::ToolCallConfirmation::Fetch {
                 urls: params
                     .as_ref()
@@ -149,14 +170,82 @@ impl ClaudeTool {
                 root_command: command.clone(),
                 description: description.clone(),
             },
+            Self::ExitPlanMode(Some(params)) => acp::ToolCallConfirmation::Other {
+                description: if let Some(description) = description {
+                    format!("{description} {}", params.plan)
+                } else {
+                    params.plan.clone()
+                },
+            },
+            Self::Task(Some(params)) => acp::ToolCallConfirmation::Other {
+                description: if let Some(description) = description {
+                    format!("{description} {}", params.description)
+                } else {
+                    params.description.clone()
+                },
+            },
+            Self::Ls(Some(LsToolParams { path, .. }))
+            | Self::ReadFile(Some(ReadToolParams { abs_path: path, .. })) => {
+                let path = path.display();
+                acp::ToolCallConfirmation::Other {
+                    description: if let Some(description) = description {
+                        format!("{description} {path}")
+                    } else {
+                        path.to_string()
+                    },
+                }
+            }
+            Self::NotebookRead(Some(NotebookReadToolParams { notebook_path, .. })) => {
+                let path = notebook_path.display();
+                acp::ToolCallConfirmation::Other {
+                    description: if let Some(description) = description {
+                        format!("{description} {path}")
+                    } else {
+                        path.to_string()
+                    },
+                }
+            }
+            Self::Glob(Some(params)) => acp::ToolCallConfirmation::Other {
+                description: if let Some(description) = description {
+                    format!("{description} {params}")
+                } else {
+                    params.to_string()
+                },
+            },
+            Self::Grep(Some(params)) => acp::ToolCallConfirmation::Other {
+                description: if let Some(description) = description {
+                    format!("{description} {params}")
+                } else {
+                    params.to_string()
+                },
+            },
+            Self::WebSearch(Some(params)) => acp::ToolCallConfirmation::Other {
+                description: if let Some(description) = description {
+                    format!("{description} {params}")
+                } else {
+                    params.to_string()
+                },
+            },
+            Self::TodoWrite(Some(params)) => {
+                let params = params.todos.iter().map(|todo| &todo.content).join(", ");
+                acp::ToolCallConfirmation::Other {
+                    description: if let Some(description) = description {
+                        format!("{description} {params}")
+                    } else {
+                        params
+                    },
+                }
+            }
             Self::Terminal(None)
-            | Self::Ls(_)
-            | Self::Glob(_)
-            | Self::Grep(_)
-            | Self::TodoWrite(_)
-            | Self::WebSearch(_)
-            | Self::ExitPlanMode
-            | Self::ReadFile(_)
+            | Self::Task(None)
+            | Self::NotebookRead(None)
+            | Self::ExitPlanMode(None)
+            | Self::Ls(None)
+            | Self::Glob(None)
+            | Self::Grep(None)
+            | Self::ReadFile(None)
+            | Self::WebSearch(None)
+            | Self::TodoWrite(None)
             | Self::Other { .. } => acp::ToolCallConfirmation::Other {
                 description: description.unwrap_or("".to_string()),
             },
@@ -169,6 +258,12 @@ impl ClaudeTool {
                 path: abs_path.clone(),
                 line: None,
             }],
+            Self::MultiEdit(Some(MultiEditToolParams { file_path, .. })) => {
+                vec![ToolCallLocation {
+                    path: file_path.clone(),
+                    line: None,
+                }]
+            }
             Self::Write(Some(WriteToolParams { file_path, .. })) => vec![ToolCallLocation {
                 path: file_path.clone(),
                 line: None,
@@ -179,6 +274,18 @@ impl ClaudeTool {
                 path: abs_path.clone(),
                 line: *offset,
             }],
+            Self::NotebookRead(Some(NotebookReadToolParams { notebook_path, .. })) => {
+                vec![ToolCallLocation {
+                    path: notebook_path.clone(),
+                    line: None,
+                }]
+            }
+            Self::NotebookEdit(Some(NotebookEditToolParams { notebook_path, .. })) => {
+                vec![ToolCallLocation {
+                    path: notebook_path.clone(),
+                    line: None,
+                }]
+            }
             Self::Glob(Some(GlobToolParams {
                 path: Some(path), ..
             })) => vec![ToolCallLocation {
@@ -195,7 +302,11 @@ impl ClaudeTool {
                 path: PathBuf::from(path),
                 line: None,
             }],
-            Self::Edit(None)
+            Self::Task(_)
+            | Self::NotebookRead(None)
+            | Self::NotebookEdit(None)
+            | Self::Edit(None)
+            | Self::MultiEdit(None)
             | Self::Write(None)
             | Self::ReadFile(None)
             | Self::Ls(None)
@@ -205,7 +316,7 @@ impl ClaudeTool {
             | Self::WebFetch(_)
             | Self::WebSearch(_)
             | Self::TodoWrite(_)
-            | Self::ExitPlanMode
+            | Self::ExitPlanMode(_)
             | Self::Other { .. } => vec![],
         }
     }
@@ -279,6 +390,15 @@ pub struct GlobToolParams {
     /// Directory to search in (omit for current directory)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+}
+
+impl std::fmt::Display for GlobToolParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(path) = &self.path {
+            write!(f, "{}", path.display())?;
+        }
+        write!(f, "{}", self.pattern)
+    }
 }
 
 #[derive(Deserialize, JsonSchema, Debug)]
@@ -424,6 +544,80 @@ pub struct Todo {
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct TodoWriteToolParams {
     pub todos: Vec<Todo>,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct ExitPlanModeToolParams {
+    /// Implementation plan in markdown format
+    pub plan: String,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct TaskToolParams {
+    /// Short 3-5 word description of task
+    pub description: String,
+    /// Detailed task for agent to perform
+    pub prompt: String,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct NotebookReadToolParams {
+    /// Absolute path to .ipynb file
+    pub notebook_path: PathBuf,
+    /// Specific cell ID to read
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_id: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum CellType {
+    Code,
+    Markdown,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum EditMode {
+    Replace,
+    Insert,
+    Delete,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct NotebookEditToolParams {
+    /// Absolute path to .ipynb file
+    pub notebook_path: PathBuf,
+    /// New cell content
+    pub new_source: String,
+    /// Cell ID to edit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_id: Option<String>,
+    /// Type of cell (code or markdown)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_type: Option<CellType>,
+    /// Edit operation mode
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit_mode: Option<EditMode>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+pub struct MultiEditItem {
+    /// The text to search for and replace
+    pub old_string: String,
+    /// The replacement text
+    pub new_string: String,
+    /// Whether to replace all occurrences or just the first
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub replace_all: bool,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct MultiEditToolParams {
+    /// Absolute path to file
+    pub file_path: PathBuf,
+    /// List of edits to apply
+    pub edits: Vec<MultiEditItem>,
 }
 
 fn is_false(v: &bool) -> bool {
