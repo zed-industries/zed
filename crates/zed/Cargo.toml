@@ -69,7 +69,6 @@ gpui = { workspace = true, features = [
     "x11",
     "font-kit",
     "windows-manifest",
-    "enable-renderdoc",
 ] }
 gpui_tokio.workspace = true
 
