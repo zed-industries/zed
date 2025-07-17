@@ -90,6 +90,34 @@ You can specify your preferred model to use by providing a `commit_message_model
 }
 ```
 
+### Customizing the Commit Message Prompt
+
+You can customize the prompt used to generate commit messages by setting the `git_panel.commit_message_prompt` in your `settings.json` file.
+
+This setting allows for both complete overrides and simple modifications of the default prompt.
+
+- **To completely replace the default prompt**, set the value to your new prompt:
+
+  ```json
+  {
+    "git_panel": {
+      "commit_message_prompt": "My new, completely custom prompt."
+    }
+  }
+  ```
+
+- **To add instructions to the default prompt**, use the `{default_prompt}` placeholder:
+
+  ```json
+  {
+    "git_panel": {
+      "commit_message_prompt": "{default_prompt}\n Additionally, please ensure all commit messages follow the Conventional Commits rules."
+    }
+  }
+  ```
+
+If `commit_message_prompt` is not set, Zed will use the default prompt.
+
 <!-- Add media -->
 
 More advanced AI integration with Git features may come in the future.

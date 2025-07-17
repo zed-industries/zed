@@ -733,6 +733,7 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
+    "commit_message_prompt": "{default_prompt}",
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //

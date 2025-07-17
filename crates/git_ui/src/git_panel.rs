@@ -1819,6 +1819,7 @@ impl GitPanel {
         });
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let custom_prompt = GitPanelSettings::get_global(cx).commit_message_prompt.clone();
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
@@ -1851,13 +1852,14 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
-                } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
-                };
+                const DEFAULT_PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let prompt = custom_prompt.replace("{default_prompt}", DEFAULT_PROMPT);
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let content = if text_empty {
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     thread_id: None,

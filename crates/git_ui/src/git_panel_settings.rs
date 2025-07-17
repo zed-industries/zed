@@ -75,6 +75,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+    
+    /// Customise the commit_message_prompt by overriding it.
+    /// 
+    /// default: "{default_prompt}"
+    pub commit_message_prompt: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -87,6 +92,7 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+    pub commit_message_prompt: String,
 }
 
 impl Settings for GitPanelSettings {
