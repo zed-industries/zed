@@ -8,6 +8,7 @@ mod stdio_agent_server;
 mod e2e_tests;
 
 pub use claude::*;
+pub use codex::*;
 pub use gemini::*;
 pub use settings::*;
 pub use stdio_agent_server::*;
