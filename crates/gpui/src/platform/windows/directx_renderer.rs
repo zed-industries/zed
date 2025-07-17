@@ -2,18 +2,15 @@ use std::{mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
-// #[cfg(not(feature = "enable-renderdoc"))]
+#[cfg(not(feature = "enable-renderdoc"))]
 use windows::Win32::Graphics::DirectComposition::*;
-use windows::{
-    Win32::{
-        Foundation::{HMODULE, HWND},
-        Graphics::{
-            Direct3D::*,
-            Direct3D11::*,
-            Dxgi::{Common::*, *},
-        },
+use windows::Win32::{
+    Foundation::{HMODULE, HWND},
+    Graphics::{
+        Direct3D::*,
+        Direct3D11::*,
+        Dxgi::{Common::*, *},
     },
-    core::*,
 };
 
 use crate::*;
@@ -28,7 +25,7 @@ pub(crate) struct DirectXRenderer {
     resources: DirectXResources,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
-    // #[cfg(not(feature = "enable-renderdoc"))]
+    #[cfg(not(feature = "enable-renderdoc"))]
     _direct_composition: DirectComposition,
 }
 
@@ -36,6 +33,7 @@ pub(crate) struct DirectXRenderer {
 #[derive(Clone)]
 pub(crate) struct DirectXDevices {
     dxgi_factory: IDXGIFactory6,
+    #[cfg(not(feature = "enable-renderdoc"))]
     dxgi_device: IDXGIDevice,
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
@@ -78,7 +76,7 @@ struct DrawInstancedIndirectArgs {
     start_instance_location: u32,
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
+#[cfg(not(feature = "enable-renderdoc"))]
 struct DirectComposition {
     comp_device: IDCompositionDevice,
     comp_target: IDCompositionTarget,
@@ -95,10 +93,12 @@ impl DirectXDevices {
             get_device(&adapter, Some(&mut device), Some(&mut context))?;
             (device.unwrap(), context.unwrap())
         };
+        #[cfg(not(feature = "enable-renderdoc"))]
         let dxgi_device: IDXGIDevice = device.cast()?;
 
         Ok(Self {
             dxgi_factory,
+            #[cfg(not(feature = "enable-renderdoc"))]
             dxgi_device,
             device,
             device_context,
@@ -112,20 +112,27 @@ impl DirectXRenderer {
             devices.device.clone(),
             devices.device_context.clone(),
         ));
+
+        #[cfg(not(feature = "enable-renderdoc"))]
         let resources = DirectXResources::new(devices)?;
+        #[cfg(feature = "enable-renderdoc")]
+        let resources = DirectXResources::new(devices, hwnd)?;
+
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
-        // #[cfg(not(feature = "enable-renderdoc"))]
+
+        #[cfg(not(feature = "enable-renderdoc"))]
         let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
-        // #[cfg(not(feature = "enable-renderdoc"))]
+        #[cfg(not(feature = "enable-renderdoc"))]
         direct_composition.set_swap_chain(&resources.swap_chain)?;
+
         Ok(DirectXRenderer {
             atlas,
             devices: devices.clone(),
             resources,
             globals,
             pipelines,
-            // #[cfg(not(feature = "enable-renderdoc"))]
+            #[cfg(not(feature = "enable-renderdoc"))]
             _direct_composition: direct_composition,
         })
     }
@@ -392,14 +399,19 @@ impl DirectXRenderer {
 }
 
 impl DirectXResources {
-    pub fn new(devices: &DirectXDevices) -> Result<Self> {
+    pub fn new(
+        devices: &DirectXDevices,
+        #[cfg(feature = "enable-renderdoc")] hwnd: HWND,
+    ) -> Result<Self> {
         let width = 1;
         let height = 1;
-        // #[cfg(not(feature = "enable-renderdoc"))]
+
+        #[cfg(not(feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
-        // #[cfg(feature = "enable-renderdoc")]
-        // let swap_chain =
-        //     create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
+        #[cfg(feature = "enable-renderdoc")]
+        let swap_chain =
+            create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?;
+
         let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
             create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
@@ -481,7 +493,7 @@ impl DirectXRenderPipelines {
     }
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
+#[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(&dxgi_device)?;
@@ -967,11 +979,12 @@ fn get_device(
     })
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
+#[cfg(not(feature = "enable-renderdoc"))]
 fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
 
+#[cfg(not(feature = "enable-renderdoc"))]
 fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
@@ -998,8 +1011,8 @@ fn create_swap_chain(
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
 }
 
-// #[cfg(feature = "enable-renderdoc")]
-fn create_swap_chain_default(
+#[cfg(feature = "enable-renderdoc")]
+fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
