@@ -9,9 +9,10 @@ pub enum ClaudeTool {
     // Task,
     Edit(Option<EditToolParams>),
     ReadFile(Option<ReadToolParams>),
+    Write(Option<WriteToolParams>),
     Ls(Option<LsToolParams>),
     Glob(Option<GlobToolParams>),
-    Grep,
+    Grep(Option<GrepToolParams>),
     Terminal(Option<BashToolParams>),
     WebFetch,
     WebSearch,
@@ -30,10 +31,10 @@ impl ClaudeTool {
             "mcp__zed__Read" => Self::ReadFile(serde_json::from_value(input).log_err()),
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
             "MultiEdit" => Self::Edit(None),
-            "Write" => Self::Edit(None),
+            "Write" => Self::Write(serde_json::from_value(input).log_err()),
             "LS" => Self::Ls(serde_json::from_value(input).log_err()),
             "Glob" => Self::Glob(serde_json::from_value(input).log_err()),
-            "Grep" => Self::Grep,
+            "Grep" => Self::Grep(serde_json::from_value(input).log_err()),
             "Bash" => Self::Terminal(serde_json::from_value(input).log_err()),
             "WebFetch" => Self::WebFetch,
             "WebSearch" => Self::WebSearch,
@@ -67,7 +68,14 @@ impl ClaudeTool {
                 format!("List Directory {}", params.path.to_string_lossy())
             }
             ClaudeTool::Ls(None) => "List Directory".into(),
-            ClaudeTool::Edit(_) => "Edit".into(),
+            ClaudeTool::Edit(Some(params)) => {
+                format!("Edit {}", params.abs_path.to_string_lossy())
+            }
+            ClaudeTool::Edit(None) => "Edit".into(),
+            ClaudeTool::Write(Some(params)) => {
+                format!("Write {}", params.file_path.to_string_lossy())
+            }
+            ClaudeTool::Write(None) => "Write".into(),
             ClaudeTool::Glob(Some(GlobToolParams { path, pattern })) => {
                 if let Some(path) = path {
                     format!("Glob {}{pattern}", path.to_string_lossy())
@@ -76,7 +84,8 @@ impl ClaudeTool {
                 }
             }
             ClaudeTool::Glob(None) => "Glob".into(),
-            ClaudeTool::Grep => "Grep".into(),
+            ClaudeTool::Grep(Some(params)) => params.to_string(),
+            ClaudeTool::Grep(None) => "Grep".into(),
             ClaudeTool::WebFetch => "Fetch".into(),
             ClaudeTool::WebSearch => "Web Search".into(),
             ClaudeTool::TodoWrite => "Update TODOs".into(),
@@ -100,10 +109,11 @@ impl ClaudeTool {
     pub fn icon(&self) -> acp::Icon {
         match self {
             Self::Edit(_) => acp::Icon::Pencil,
+            Self::Write(_) => acp::Icon::Pencil,
             Self::ReadFile(_) => acp::Icon::FileSearch,
             Self::Ls(_) => acp::Icon::Folder,
             Self::Glob(_) => acp::Icon::FileSearch,
-            Self::Grep => acp::Icon::Regex,
+            Self::Grep(_) => acp::Icon::Regex,
             Self::Terminal(_) => acp::Icon::Terminal,
             Self::WebSearch => acp::Icon::Globe,
             Self::WebFetch => acp::Icon::Globe,
@@ -115,7 +125,7 @@ impl ClaudeTool {
 
     pub fn confirmation(&self, description: Option<String>) -> acp::ToolCallConfirmation {
         match &self {
-            Self::Edit(_) => acp::ToolCallConfirmation::Edit { description },
+            Self::Edit(_) | Self::Write(_) => acp::ToolCallConfirmation::Edit { description },
             Self::WebFetch => acp::ToolCallConfirmation::Fetch {
                 urls: vec![],
                 description,
@@ -132,7 +142,7 @@ impl ClaudeTool {
             Self::Terminal(None)
             | Self::Ls(_)
             | Self::Glob(_)
-            | Self::Grep
+            | Self::Grep(_)
             | Self::TodoWrite
             | Self::WebSearch
             | Self::ExitPlanMode
@@ -147,6 +157,10 @@ impl ClaudeTool {
         match &self {
             Self::Edit(Some(EditToolParams { abs_path, .. })) => vec![ToolCallLocation {
                 path: abs_path.clone(),
+                line: None,
+            }],
+            Self::Write(Some(WriteToolParams { file_path, .. })) => vec![ToolCallLocation {
+                path: file_path.clone(),
                 line: None,
             }],
             Self::ReadFile(Some(ReadToolParams {
@@ -165,11 +179,18 @@ impl ClaudeTool {
                 path: path.clone(),
                 line: None,
             }],
+            Self::Grep(Some(GrepToolParams {
+                path: Some(path), ..
+            })) => vec![ToolCallLocation {
+                path: PathBuf::from(path),
+                line: None,
+            }],
             Self::Edit(None)
+            | Self::Write(None)
             | Self::ReadFile(None)
             | Self::Ls(None)
             | Self::Glob(_)
-            | Self::Grep
+            | Self::Grep(_)
             | Self::Terminal(_)
             | Self::WebFetch
             | Self::WebSearch
@@ -222,6 +243,14 @@ pub struct ReadToolResponse {
 }
 
 #[derive(Deserialize, JsonSchema, Debug)]
+pub struct WriteToolParams {
+    /// Absolute path for new file
+    pub file_path: PathBuf,
+    /// File content
+    pub content: String,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
 pub struct BashToolParams {
     /// Shell command to execute
     pub command: String,
@@ -249,4 +278,119 @@ pub struct LsToolParams {
     /// Array of glob patterns to ignore
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct GrepToolParams {
+    /// Search pattern
+    pub pattern: String,
+    /// Path to search in (omit for current directory)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Output mode
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_mode: Option<GrepOutputMode>,
+    /// Glob pattern to filter files
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// File type filter
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub file_type: Option<String>,
+    /// Case insensitive search
+    #[serde(rename = "-i", default, skip_serializing_if = "is_false")]
+    pub case_insensitive: bool,
+    /// Show line numbers
+    #[serde(rename = "-n", default, skip_serializing_if = "is_false")]
+    pub line_numbers: bool,
+    /// Lines after match
+    #[serde(rename = "-A", skip_serializing_if = "Option::is_none")]
+    pub after_context: Option<u32>,
+    /// Lines before match
+    #[serde(rename = "-B", skip_serializing_if = "Option::is_none")]
+    pub before_context: Option<u32>,
+    /// Lines around match
+    #[serde(rename = "-C", skip_serializing_if = "Option::is_none")]
+    pub context: Option<u32>,
+    /// Enable multiline matching
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub multiline: bool,
+    /// Limit number of results
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_limit: Option<u32>,
+}
+
+impl std::fmt::Display for GrepToolParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "grep")?;
+
+        // Boolean flags
+        if self.case_insensitive {
+            write!(f, " -i")?;
+        }
+        if self.line_numbers {
+            write!(f, " -n")?;
+        }
+
+        // Context options
+        if let Some(after) = self.after_context {
+            write!(f, " -A {}", after)?;
+        }
+        if let Some(before) = self.before_context {
+            write!(f, " -B {}", before)?;
+        }
+        if let Some(context) = self.context {
+            write!(f, " -C {}", context)?;
+        }
+
+        // Output mode
+        if let Some(mode) = &self.output_mode {
+            match mode {
+                GrepOutputMode::FilesWithMatches => write!(f, " -l")?,
+                GrepOutputMode::Count => write!(f, " -c")?,
+                GrepOutputMode::Content => {} // Default mode
+            }
+        }
+
+        // Head limit
+        if let Some(limit) = self.head_limit {
+            write!(f, " | head -{}", limit)?;
+        }
+
+        // Glob pattern
+        if let Some(glob) = &self.glob {
+            write!(f, " --include=\"{}\"", glob)?;
+        }
+
+        // File type
+        if let Some(file_type) = &self.file_type {
+            write!(f, " --type={}", file_type)?;
+        }
+
+        // Multiline
+        if self.multiline {
+            write!(f, " -P")?; // Perl-compatible regex for multiline
+        }
+
+        // Pattern (escaped if contains special characters)
+        write!(f, " \"{}\"", self.pattern)?;
+
+        // Path
+        if let Some(path) = &self.path {
+            write!(f, " {}", path)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum GrepOutputMode {
+    Content,
+    FilesWithMatches,
+    Count,
 }
