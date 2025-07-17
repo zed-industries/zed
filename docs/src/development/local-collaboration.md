@@ -28,9 +28,9 @@ You can install these dependencies natively or run them under Docker.
 
 2. Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
 
-    ```sh
-    brew install livekit foreman
-    ```
+   ```sh
+   brew install livekit foreman
+   ```
 
 - Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
 
@@ -40,19 +40,20 @@ Alternatively, if you have [Docker](https://www.docker.com/) installed you can b
 
 1. Install [Postgres](https://www.postgresql.org/download/linux/)
 
-    ```sh
-    sudo apt-get install postgresql postgresql        # Ubuntu/Debian
-    sudo pacman -S postgresql                         # Arch Linux
-    sudo dnf install postgresql postgresql-server     # RHEL/Fedora
-    sudo zypper install postgresql postgresql-server  # OpenSUSE
-    ```
+   ```sh
+   sudo apt-get install postgresql postgresql        # Ubuntu/Debian
+   sudo pacman -S postgresql                         # Arch Linux
+   sudo dnf install postgresql postgresql-server     # RHEL/Fedora
+   sudo zypper install postgresql postgresql-server  # OpenSUSE
+   ```
 
 2. Install [Livekit](https://github.com/livekit/livekit-cli)
-    ```sh
-    curl -sSL https://get.livekit.io/cli | bash
-    ```
 
-3.  Install [Foreman](https://theforeman.org/manuals/3.15/quickstart_guide.html)
+   ```sh
+   curl -sSL https://get.livekit.io/cli | bash
+   ```
+
+3. Install [Foreman](https://theforeman.org/manuals/3.15/quickstart_guide.html)
 
 ### Windows {#backend-windows}
 
