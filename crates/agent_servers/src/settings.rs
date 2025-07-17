@@ -12,6 +12,7 @@ pub fn init(cx: &mut App) {
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<AgentServerSettings>,
+    pub claude: Option<AgentServerSettings>,
 }
 
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Debug)]
