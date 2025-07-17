@@ -2313,7 +2313,11 @@ impl Thread {
         if self.completion_mode != CompletionMode::Burn {
             // Show error with retry options
             cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
-                message: error.to_string().into(),
+                message: format!(
+                    "{}. To automatically retry when similar errors happen, enable Burn Mode.",
+                    error
+                )
+                .into(),
                 can_enable_burn_mode: true,
             }));
             return false;
