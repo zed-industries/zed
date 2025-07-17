@@ -1665,7 +1665,8 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             Err(err) => match err.downcast::<LanguageModelCompletionError>() {
                 Ok(err) => match &err {
                     LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
-                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
+                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. }
+                    | LanguageModelCompletionError::UpstreamProviderError { retry_after, .. } => {
                         let retry_after = retry_after.unwrap_or(Duration::from_secs(5));
                         // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
                         let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));

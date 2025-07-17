@@ -2140,12 +2140,12 @@ impl Thread {
                 initial_delay: BASE_RETRY_DELAY,
                 max_attempts: MAX_RETRY_ATTEMPTS,
             }),
-            ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
-                Some(RetryStrategy::Fixed {
-                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                    max_attempts: MAX_RETRY_ATTEMPTS,
-                })
-            }
+            ServerOverloaded { retry_after, .. }
+            | RateLimitExceeded { retry_after, .. }
+            | UpstreamProviderError { retry_after, .. } => Some(RetryStrategy::Fixed {
+                delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                max_attempts: MAX_RETRY_ATTEMPTS,
+            }),
             ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
                 max_attempts: 1,

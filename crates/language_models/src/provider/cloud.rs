@@ -681,12 +681,19 @@ impl From<ApiError> for LanguageModelCompletionError {
             upstream_status,
         }) = serde_json::from_str::<CloudApiError>(&error.body)
         {
-            return LanguageModelCompletionError::from_http_status(
-                PROVIDER_NAME,
-                upstream_status,
+            // Determine retry_after based on the upstream status
+            let retry_after = match upstream_status {
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
+                    Some(Duration::from_secs(5))
+                }
+                _ if upstream_status.as_u16() == 529 => Some(Duration::from_secs(5)),
+                _ => None,
+            };
+
+            return LanguageModelCompletionError::UpstreamProviderError {
                 message,
-                None,
-            );
+                retry_after,
+            };
         }
 
         let retry_after = None;
@@ -1343,11 +1350,14 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
-                assert_eq!(provider, PROVIDER_NAME);
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout"
+                );
             }
             _ => panic!(
-                "Expected ServerOverloaded error for upstream 503, got: {:?}",
+                "Expected UpstreamProviderError for upstream 503, got: {:?}",
                 completion_error
             ),
         }
@@ -1364,15 +1374,14 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
-                assert_eq!(provider, PROVIDER_NAME);
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
                 assert_eq!(
                     message,
                     "Received an error from the OpenAI API: internal server error"
                 );
             }
             _ => panic!(
-                "Expected ApiInternalServerError for upstream 500, got: {:?}",
+                "Expected UpstreamProviderError for upstream 500, got: {:?}",
                 completion_error
             ),
         }
@@ -1389,11 +1398,14 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::RateLimitExceeded { provider, .. } => {
-                assert_eq!(provider, PROVIDER_NAME);
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Google API: rate limit exceeded"
+                );
             }
             _ => panic!(
-                "Expected RateLimitExceeded for upstream 429, got: {:?}",
+                "Expected UpstreamProviderError for upstream 429, got: {:?}",
                 completion_error
             ),
         }
