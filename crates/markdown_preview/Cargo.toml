@@ -16,6 +16,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+handlebars.workspace = true
 async-recursion.workspace = true
 collections.workspace = true
 editor.workspace = true
@@ -23,6 +24,7 @@ gpui.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+once_cell = "1.19"
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true
@@ -32,6 +34,14 @@ util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 fs.workspace = true
+typst = "0.11"
+typst-svg = "0.11"
+comemo = "0.4"
+fontdb = "0.16"
+smallvec = "1.11"
+resvg = "0.42"
+usvg = "0.42"
+image = "0.25"
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

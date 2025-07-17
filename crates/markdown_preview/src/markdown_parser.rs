@@ -11,10 +11,13 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
+    // Preprocess LaTeX math syntax before markdown parsing
+    let preprocessed_input = preprocess_math_syntax(markdown_input);
+
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
 
-    let parser = Parser::new_ext(markdown_input, options);
+    let parser = Parser::new_ext(&preprocessed_input, options);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -24,6 +27,66 @@ pub async fn parse_markdown(
     ParsedMarkdown {
         children: renderer.parsed,
     }
+}
+
+/// Preprocesses markdown to convert LaTeX-style block math delimiters to markdown code blocks
+fn preprocess_math_syntax(input: &str) -> String {
+    let mut result = String::new();
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((i, ch)) = chars.next() {
+        if ch == '$' {
+            // Check if this $ is escaped
+            let is_escaped = i > 0 && input.chars().nth(i - 1) == Some('\\');
+
+            if !is_escaped {
+                // Check for block math ($$)
+                if let Some((_, next_ch)) = chars.peek() {
+                    if *next_ch == '$' {
+                        // Skip the second $
+                        chars.next();
+
+                        // Find closing $$
+                        let remaining = &input[i + 2..];
+                        if let Some(end_pos) = find_closing_double_dollar(remaining) {
+                            let math_content = &remaining[..end_pos];
+                            result.push_str("\n```math\n");
+                            result.push_str(math_content);
+                            result.push_str("\n```\n");
+
+                            // Skip ahead past the closing $$
+                            for _ in 0..end_pos + 2 {
+                                if chars.next().is_none() {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                // Single $ - leave as-is for inline math processing in parse_text
+            }
+        }
+
+        result.push(ch);
+    }
+
+    result
+}
+
+fn find_closing_double_dollar(text: &str) -> Option<usize> {
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '$' {
+            if let Some((_, next_ch)) = chars.peek() {
+                if *next_ch == '$' {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
 }
 
 struct MarkdownParser<'a> {
@@ -172,8 +235,13 @@ impl<'a> MarkdownParser<'a> {
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await;
-                    Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    if language.as_deref() == Some("math") {
+                        let math_block = self.parse_math_block().await;
+                        Some(vec![ParsedMarkdownElement::MathBlock(math_block)])
+                    } else {
+                        let code_block = self.parse_code_block(language).await;
+                        Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    }
                 }
                 _ => None,
             },
@@ -334,6 +402,31 @@ impl<'a> MarkdownParser<'a> {
                         link: link.clone(),
                     });
                 }
+                Event::InlineMath(math_content) => {
+                    // Process any accumulated text first
+                    if !text.is_empty() {
+                        let processed_text = self.process_text_for_math(
+                            text.clone(),
+                            highlights.clone(),
+                            region_ranges.clone(),
+                            regions.clone(),
+                            source_range.clone(),
+                        );
+                        markdown_text_like.extend(processed_text);
+                        text = String::new();
+                        highlights = vec![];
+                        region_ranges = vec![];
+                        regions = vec![];
+                    }
+
+                    // Add the inline math chunk
+                    markdown_text_like.push(MarkdownParagraphChunk::InlineMath(
+                        ParsedMarkdownInlineMath {
+                            source_range: source_range.clone(),
+                            contents: math_content.to_string().into(),
+                        },
+                    ));
+                }
                 Event::Start(tag) => match tag {
                     Tag::Emphasis => italic_depth += 1,
                     Tag::Strong => bold_depth += 1,
@@ -346,18 +439,18 @@ impl<'a> MarkdownParser<'a> {
                     }
                     Tag::Image { dest_url, .. } => {
                         if !text.is_empty() {
-                            let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                                source_range: source_range.clone(),
-                                contents: text.clone(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
-                            });
+                            let processed_text = self.process_text_for_math(
+                                text.clone(),
+                                highlights.clone(),
+                                region_ranges.clone(),
+                                regions.clone(),
+                                source_range.clone(),
+                            );
+                            markdown_text_like.extend(processed_text);
                             text = String::new();
                             highlights = vec![];
                             region_ranges = vec![];
                             regions = vec![];
-                            markdown_text_like.push(parsed_regions);
                         }
                         image = Image::identify(
                             dest_url.to_string(),
@@ -400,16 +493,146 @@ impl<'a> MarkdownParser<'a> {
 
             self.cursor += 1;
         }
+
+        // Process any remaining text for inline math
         if !text.is_empty() {
-            markdown_text_like.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                source_range: source_range.clone(),
+            let processed_text =
+                self.process_text_for_math(text, highlights, region_ranges, regions, source_range);
+            markdown_text_like.extend(processed_text);
+        }
+
+        markdown_text_like
+    }
+
+    fn process_text_for_math(
+        &self,
+        text: String,
+        highlights: Vec<(Range<usize>, MarkdownHighlight)>,
+        region_ranges: Vec<Range<usize>>,
+        regions: Vec<ParsedRegion>,
+        source_range: Range<usize>,
+    ) -> Vec<MarkdownParagraphChunk> {
+        let mut result = Vec::new();
+
+        // Check if text contains valid inline math patterns
+        if self.has_valid_inline_math(&text) {
+            // Split by $ and process alternating segments
+            let parts: Vec<&str> = text.split('$').collect();
+
+            for (i, part) in parts.iter().enumerate() {
+                if part.is_empty() {
+                    continue;
+                }
+
+                if i % 2 == 0 {
+                    // Even indices are regular text
+                    result.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: source_range.clone(),
+                        contents: part.to_string(),
+                        highlights: vec![],
+                        region_ranges: vec![],
+                        regions: vec![],
+                    }));
+                } else {
+                    // Odd indices are math content - but only if properly delimited
+                    result.push(MarkdownParagraphChunk::InlineMath(
+                        ParsedMarkdownInlineMath {
+                            source_range: source_range.clone(),
+                            contents: part.to_string().into(),
+                        },
+                    ));
+                }
+            }
+        } else {
+            // No valid inline math - treat as regular text with original formatting
+            result.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                source_range,
                 contents: text,
                 highlights,
                 regions,
                 region_ranges,
             }));
         }
-        markdown_text_like
+
+        result
+    }
+
+    fn has_valid_inline_math(&self, text: &str) -> bool {
+        let mut chars = text.chars().peekable();
+        let mut dollar_positions = Vec::new();
+
+        // Find all unescaped dollar sign positions
+        let mut pos = 0;
+        while let Some(ch) = chars.next() {
+            if ch == '$' {
+                // Check if this dollar is escaped
+                let is_escaped = pos > 0 && text.chars().nth(pos - 1) == Some('\\');
+                if !is_escaped {
+                    dollar_positions.push(pos);
+                }
+            }
+            pos += 1;
+        }
+
+        // We need at least 2 dollar signs and an even number for valid pairs
+        if dollar_positions.len() < 2 || dollar_positions.len() % 2 != 0 {
+            return false;
+        }
+
+        // Check that dollar pairs have non-empty content and don't span across whitespace boundaries inappropriately
+        for chunk in dollar_positions.chunks(2) {
+            if let [start, end] = chunk {
+                let start_pos = *start;
+                let end_pos = *end;
+
+                // Check if there's content between the dollars
+                if end_pos <= start_pos + 1 {
+                    return false;
+                }
+
+                // Get the content between the dollars
+                let math_content = &text[start_pos + 1..end_pos];
+
+                // Basic validation: math content shouldn't be empty or just whitespace
+                if math_content.trim().is_empty() {
+                    return false;
+                }
+
+                // Math content shouldn't contain newlines (that would be block math)
+                if math_content.contains('\n') {
+                    return false;
+                }
+
+                // Heuristic: if the content looks like a price or number, probably not math
+                // e.g., "5" or "10.99" are likely prices, not math
+                if math_content
+                    .trim()
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || c == '.')
+                {
+                    return false;
+                }
+
+                // Heuristic: if the content contains common English words or patterns, probably not math
+                // Math expressions typically don't contain words like "and", "that", "costs", etc.
+                let common_english_words = [
+                    "and", "that", "costs", "the", "is", "are", "was", "were", "a", "an",
+                ];
+                let content_lower = math_content.to_lowercase();
+                for word in common_english_words {
+                    if content_lower.contains(word) {
+                        return false;
+                    }
+                }
+
+                // Math content with multiple spaces between words is likely regular text
+                if math_content.contains("  ") || math_content.split_whitespace().count() > 3 {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     fn parse_heading(&mut self, level: pulldown_cmark::HeadingLevel) -> ParsedMarkdownHeading {
@@ -741,6 +964,36 @@ impl<'a> MarkdownParser<'a> {
             contents: code.into(),
             language,
             highlights,
+        }
+    }
+
+    async fn parse_math_block(&mut self) -> ParsedMarkdownMathBlock {
+        let (_event, source_range) = self.previous().unwrap();
+        let source_range = source_range.clone();
+        let mut contents = String::new();
+
+        while !self.eof() {
+            let (current, _source_range) = self.current().unwrap();
+            match current {
+                Event::Text(text) => {
+                    contents.push_str(text);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        contents = contents.strip_suffix('\n').unwrap_or(&contents).to_string();
+
+        ParsedMarkdownMathBlock {
+            source_range,
+            contents: contents.into(),
         }
     }
 }
@@ -1527,7 +1780,220 @@ fn main() {
 
     impl PartialEq for ParsedMarkdownText {
         fn eq(&self, other: &Self) -> bool {
-            self.source_range == other.source_range && self.contents == other.contents
+            self.contents == other.contents
+        }
+    }
+
+    #[gpui::test]
+    async fn test_inline_math() {
+        let parsed = parse("This is a paragraph with inline math $\\pi r^2$ and more text").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            assert_eq!(chunks.len(), 3);
+
+            // First chunk should be regular text
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "This is a paragraph with inline math ");
+            } else {
+                panic!("Expected text chunk");
+            }
+
+            // Second chunk should be inline math
+            if let MarkdownParagraphChunk::InlineMath(math) = &chunks[1] {
+                assert_eq!(math.contents.as_ref(), "\\pi r^2");
+            } else {
+                panic!("Expected inline math chunk");
+            }
+
+            // Third chunk should be regular text
+            if let MarkdownParagraphChunk::Text(text) = &chunks[2] {
+                assert_eq!(text.contents, " and more text");
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_block_math() {
+        let parsed = parse("Here is some block math:\n\n$$ \\{ x \\in \\mathbb{R} | x \\text{ is natural and } x < 10 \\} $$\n\nMore text").await;
+        assert_eq!(parsed.children.len(), 3);
+
+        // First paragraph with text
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "Here is some block math:");
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+
+        // Math block
+        if let ParsedMarkdownElement::MathBlock(math_block) = &parsed.children[1] {
+            assert_eq!(
+                math_block.contents,
+                " \\{ x \\in \\mathbb{R} | x \\text{ is natural and } x < 10 \\} "
+            );
+        } else {
+            panic!("Expected math block");
+        }
+
+        // Final paragraph
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[2] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "More text");
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_mixed_inline_and_block_math() {
+        let parsed = parse("Inline $E=mc^2$ and block:\n\n$$F=ma$$\n\nDone").await;
+        assert_eq!(parsed.children.len(), 3);
+
+        // First paragraph with inline math
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            assert_eq!(chunks.len(), 3);
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "Inline ");
+            }
+            if let MarkdownParagraphChunk::InlineMath(math) = &chunks[1] {
+                assert_eq!(math.contents.as_ref(), "E=mc^2");
+            }
+            if let MarkdownParagraphChunk::Text(text) = &chunks[2] {
+                assert_eq!(text.contents, " and block:");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+
+        // Math block
+        if let ParsedMarkdownElement::MathBlock(math_block) = &parsed.children[1] {
+            assert_eq!(math_block.contents, "F=ma");
+        } else {
+            panic!("Expected math block");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_escaped_dollar_signs() {
+        let parsed = parse("This has \\$5 and \\$10 but no math").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            assert_eq!(chunks.len(), 1);
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "This has $5 and $10 but no math");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_no_inline_math_with_single_dollar() {
+        let parsed = parse("This costs $5 and that costs $10").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            assert_eq!(chunks.len(), 1);
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "This costs $5 and that costs $10");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_simple_inline_math_detection() {
+        // Simple test to verify inline math detection
+        let parsed = parse("This has $E=mc^2$ math").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            println!("Got {} chunks:", chunks.len());
+            for (i, chunk) in chunks.iter().enumerate() {
+                match chunk {
+                    MarkdownParagraphChunk::Text(text) => {
+                        println!("  Chunk {}: Text '{}'", i, text.contents);
+                    }
+                    MarkdownParagraphChunk::InlineMath(math) => {
+                        println!("  Chunk {}: InlineMath '{}'", i, math.contents);
+                    }
+                    _ => println!("  Chunk {}: Other", i),
+                }
+            }
+
+            // Should have 3 chunks: text, math, text
+            assert_eq!(chunks.len(), 3);
+
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "This has ");
+            }
+
+            if let MarkdownParagraphChunk::InlineMath(math) = &chunks[1] {
+                assert_eq!(math.contents.as_ref(), "E=mc^2");
+            }
+
+            if let MarkdownParagraphChunk::Text(text) = &chunks[2] {
+                assert_eq!(text.contents, " math");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_user_examples() {
+        // Test the specific examples mentioned by the user
+        let parsed = parse("The area of a circle is $\\pi r^2$ and here's a set definition:\n\n$$ \\{ x \\in \\mathbb{R} | x \\text{ is natural and } x < 10 \\} $$").await;
+        assert_eq!(parsed.children.len(), 2);
+
+        // First paragraph with inline math
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            assert_eq!(chunks.len(), 3);
+
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                assert_eq!(text.contents, "The area of a circle is ");
+            } else {
+                panic!("Expected text chunk");
+            }
+
+            if let MarkdownParagraphChunk::InlineMath(math) = &chunks[1] {
+                assert_eq!(math.contents.as_ref(), "\\pi r^2");
+            } else {
+                panic!("Expected inline math chunk");
+            }
+
+            if let MarkdownParagraphChunk::Text(text) = &chunks[2] {
+                assert!(
+                    text.contents.contains("and here") && text.contents.contains("set definition")
+                );
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+
+        // Block math
+        if let ParsedMarkdownElement::MathBlock(math_block) = &parsed.children[1] {
+            assert_eq!(
+                math_block.contents,
+                " \\{ x \\in \\mathbb{R} | x \\text{ is natural and } x < 10 \\} "
+            );
+        } else {
+            panic!("Expected math block");
         }
     }
 }
