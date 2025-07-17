@@ -218,6 +218,7 @@ pub enum LocalSettingsKind {
     Tasks,
     Editorconfig,
     Debug,
+    Devcontainer,
 }
 
 impl Global for SettingsStore {}
@@ -736,6 +737,10 @@ impl SettingsStore {
                         .to_string(),
                     path: directory_path.join(task_file_name()),
                 });
+            }
+            (LocalSettingsKind::Devcontainer, _) => {
+                // Devcontainer detection is handled separately for notifications
+                return Ok(());
             }
             (LocalSettingsKind::Settings, None) => {
                 zed_settings_changed = self

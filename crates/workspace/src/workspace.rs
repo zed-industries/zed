@@ -1,4 +1,5 @@
 pub mod dock;
+mod devcontainer_status;
 pub mod history_manager;
 pub mod item;
 mod modal_layer;
@@ -24,6 +25,7 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
+use devcontainer::DevcontainerManager;
 pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
@@ -36,7 +38,7 @@ use futures::{
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    CursorStyle, Decorations, DismissEvent, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
     Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas,
@@ -108,6 +110,7 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
+use crate::devcontainer_status::{DevcontainerStatus, DevcontainerStatusView};
 use crate::notifications::NotificationId;
 use crate::persistence::{
     SerializedAxis,
@@ -1071,6 +1074,8 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
+    devcontainer_manager: DevcontainerManager,
+    devcontainer_status_view: Entity<DevcontainerStatusView>,
     dispatching_keystrokes: Rc<RefCell<(HashSet<String>, Vec<Keystroke>)>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
@@ -1167,11 +1172,45 @@ impl Workspace {
                 project::Event::Toast {
                     notification_id,
                     message,
-                } => this.show_notification(
-                    NotificationId::named(notification_id.clone()),
-                    cx,
-                    |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
-                ),
+                } => {
+                    // Special handling for devcontainer detection notifications
+                    if notification_id.starts_with("devcontainer-detected-") {
+                        let workspace_handle = this.weak_self.clone();
+                        this.show_notification(
+                            NotificationId::named(notification_id.clone()),
+                            cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new(message.clone(), cx)
+                                        .with_title("Dev Container Detected")
+                                        .primary_message("Open in Container")
+                                        .primary_icon(IconName::Server)
+                                        .primary_on_click({
+                                            let workspace_handle = workspace_handle.clone();
+                                            move |window, cx| {
+                                                                                                 if let Some(workspace) = workspace_handle.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        workspace.open_devcontainer(window, cx);
+                                                    });
+                                                }
+                                                cx.emit(DismissEvent);
+                                            }
+                                        })
+                                        .secondary_message("Dismiss")
+                                        .secondary_on_click(|_window, cx| {
+                                            cx.emit(DismissEvent);
+                                        })
+                                })
+                            },
+                        )
+                    } else {
+                        this.show_notification(
+                            NotificationId::named(notification_id.clone()),
+                            cx,
+                            |cx| cx.new(|cx| MessageNotification::new(message.clone(), cx)),
+                        )
+                    }
+                },
 
                 project::Event::HideToast { notification_id } => {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
@@ -1298,9 +1337,11 @@ impl Workspace {
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let devcontainer_status_view = cx.new(|cx| DevcontainerStatusView::new(cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
+            status_bar.add_right_item(devcontainer_status_view.clone(), window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
             status_bar
@@ -1371,6 +1412,9 @@ impl Workspace {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
+
+        let devcontainer_manager = DevcontainerManager::new(app_state.fs.clone());
+
         Workspace {
             weak_self: weak_handle.clone(),
             zoomed: None,
@@ -1401,6 +1445,8 @@ impl Workspace {
             active_call,
             database_id: workspace_id,
             app_state,
+            devcontainer_manager,
+            devcontainer_status_view,
             _observe_current_user,
             _apply_leader_updates,
             _schedule_serialize: None,
@@ -3179,6 +3225,78 @@ impl Workspace {
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, window, cx);
         self.add_item(new_pane, item, None, true, true, window, cx);
+    }
+
+    pub fn open_devcontainer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.clone();
+        let devcontainer_manager = self.devcontainer_manager.clone();
+        let _app_state = self.app_state.clone();
+        
+        cx.spawn_in(window, async move |workspace, cx| {
+            // Get the project root path
+            let project_root = project.read_with(cx, |project, cx| {
+                project.worktrees(cx).next().map(|wt| wt.read(cx).abs_path().to_path_buf())
+            })?;
+            
+            let Some(project_root) = project_root else {
+                log::warn!("No worktree found in project");
+                return Ok::<(), anyhow::Error>(());
+            };
+            
+            // Check if devcontainer configuration exists
+            let config = match devcontainer_manager.detect_devcontainer(&project_root).await {
+                Ok(Some(config)) => config,
+                                 Ok(None) => {
+                     log::warn!("No devcontainer configuration found");
+                     return Ok::<(), anyhow::Error>(());
+                 }
+                 Err(e) => {
+                     log::error!("Failed to detect devcontainer: {}", e);
+                     return Ok::<(), anyhow::Error>(());
+                 }
+            };
+            
+            // Start the devcontainer
+            match devcontainer_manager.start_devcontainer(&project_root, config.clone()).await {
+                Ok(instance) => {
+                    log::info!("Successfully started devcontainer: {}", instance.container_id);
+                    
+                    // Get connection info
+                    let connection_info = devcontainer_manager.get_connection_info(&instance).await?;
+                    
+                    // Update the status view
+                    workspace.update(cx, |workspace, cx| {
+                        let status = DevcontainerStatus {
+                            container_id: instance.container_id.clone(),
+                            container_name: config.name.clone().unwrap_or_else(|| "devcontainer".to_string()),
+                            is_connected: true,
+                        };
+                        workspace.devcontainer_status_view.update(cx, |view, cx| {
+                            view.set_devcontainer_status(Some(status), cx);
+                        });
+                    })?;
+                    
+                    // TODO: Create a new workspace connected to the devcontainer
+                    // This would involve creating a new project that uses docker exec
+                    // for file operations and terminal access
+                    
+                    log::info!("Devcontainer connection info: {:?}", connection_info);
+                }
+                Err(e) => {
+                    log::error!("Failed to start devcontainer: {}", e);
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(&e, cx);
+                    })?;
+                }
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn open_abs_path(

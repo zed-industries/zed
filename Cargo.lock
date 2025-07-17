@@ -4578,6 +4578,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "devcontainer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "log",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "shlex",
+ "smol",
+ "tempfile",
+ "thiserror 2.0.12",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -19553,6 +19577,7 @@ dependencies = [
  "component",
  "dap",
  "db",
+ "devcontainer",
  "fs",
  "futures 0.3.31",
  "gpui",

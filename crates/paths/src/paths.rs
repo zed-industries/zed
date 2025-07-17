@@ -428,6 +428,16 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
+/// Returns the relative path to a `.devcontainer` folder within a project.
+pub fn local_devcontainer_folder_relative_path() -> &'static Path {
+    Path::new(".devcontainer")
+}
+
+/// Returns the relative path to a `devcontainer.json` file within a project.
+pub fn local_devcontainer_file_relative_path() -> &'static Path {
+    Path::new(".devcontainer/devcontainer.json")
+}
+
 pub fn user_ssh_config_file() -> PathBuf {
     home_dir().join(".ssh/config")
 }
