@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorElement, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -17,6 +17,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use project::{Project, lsp_store::OpenLspBufferHandle};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
@@ -1721,7 +1722,14 @@ impl KeybindingEditorModal {
                 .as_ref()
                 .map(|args| args.text.clone());
             cx.new(|cx| {
-                ActionArgumentsEditor::new(schema, arguments, workspace.clone(), window, cx)
+                ActionArgumentsEditor::new(
+                    schema,
+                    editing_keybind.action_name,
+                    arguments,
+                    workspace.clone(),
+                    window,
+                    cx,
+                )
             })
         });
 
@@ -2014,7 +2022,7 @@ impl Render for KeybindingEditorModal {
                                         .gap_1()
                                         .child(self.keybind_editor.clone()),
                                 )
-                                .when_some(self.action_arguments_editor.as_ref(), |this, editor| {
+                                .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
                                             .mt_1p5()
@@ -2029,7 +2037,7 @@ impl Render for KeybindingEditorModal {
                                                     .bg(theme.editor_background)
                                                     .border_1()
                                                     .border_color(theme.border_variant)
-                                                    .child(editor.read(cx).editor.clone()),
+                                                    .child(editor),
                                             ),
                                     )
                                 })
@@ -2132,9 +2140,11 @@ impl KeybindingEditorModalFocusState {
 }
 
 struct ActionArgumentsEditor {
-    schema: schemars::Schema,
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
+    is_loading: bool,
+    open_lsp_handle: Option<OpenLspBufferHandle>,
+    temp_dir: Option<tempfile::TempDir>,
 }
 
 impl Focusable for ActionArgumentsEditor {
@@ -2146,6 +2156,7 @@ impl Focusable for ActionArgumentsEditor {
 impl ActionArgumentsEditor {
     fn new(
         schema: schemars::Schema,
+        action_name: &'static str,
         arguments: Option<SharedString>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -2156,32 +2167,169 @@ impl ActionArgumentsEditor {
             let mut editor = Editor::auto_height_unbounded(1, window, cx);
             let workspace = workspace.clone();
 
-            if let Some(arguments) = arguments {
+            if let Some(arguments) = arguments.clone() {
                 editor.set_text(arguments, window, cx);
             } else {
                 // TODO: default value from schema?
                 editor.set_placeholder_text("Action Arguments", cx);
             }
-            cx.spawn(async |editor, cx| {
-                let json_language = load_json_language(workspace, cx).await;
-                editor
-                    .update(cx, |editor, cx| {
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            buffer.update(cx, |buffer, cx| {
-                                buffer.set_language(Some(json_language), cx)
-                            });
-                        }
-                    })
-                    .context("Failed to load JSON language for editing keybinding action arguments input")
-            })
-            .detach_and_log_err(cx);
+            editor.set_read_only(true);
             editor
         });
+        cx.spawn_in(window, async move |this, cx| {
+            let json_language = load_json_language(workspace.clone(), cx).await;
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(json_language.clone()), cx)
+                        });
+                    }
+                })
+                // .context("Failed to load JSON language for editing keybinding action arguments input")
+            })?;
+
+            let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
+                (
+                    workspace.project().downgrade(),
+                    workspace.app_state().fs.clone(),
+                )
+            })?;
+
+            let file_name = Self::file_name_from_action_name(action_name);
+
+            let (buffer, temp_dir) = Self::create_temp_buffer(file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action argumetns. Auto-complete will not work")
+                ?;
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(Some(json_language), cx);
+            })?;
+
+            let schema_association = project::lsp_store::json_language_server_ext::SchemaAssociation {
+                uri: "lol://some.uri".into(),
+                file_match: vec![file_name],
+                folder_uri: None,
+                schema: Some(Self::root_schema_from_action_schema(&schema, &mut KeymapFile::action_schema_generator()).to_value()),
+            };
+
+            if let Some(project) = project.upgrade() {
+            cx.update(|_, cx| {
+                project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer.clone(), &vec![schema_association.clone()], cx);
+            })?;
+            }
+
+            let open_lsp_handle = project.update(cx, |project, cx| {
+                project.register_buffer_with_language_servers(&buffer, cx)
+            })?;
+
+            let editor = cx.new_window_entity(|window, cx| {
+                let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
+                let mut editor = Editor::new(editor::EditorMode::AutoHeight { min_lines: 1, max_lines: Some(10) },multi_buffer, project.upgrade(), window, cx);
+                if let Some(arguments) = arguments {
+                    editor.set_text(arguments, window, cx);
+                } else {
+                    // TODO: default value from schema?
+                    editor.set_placeholder_text("Action Arguments", cx);
+                }
+                editor
+            })?;
+
+            this.update(cx, |this, _cx| {
+                this.editor = editor;
+                this.open_lsp_handle = Some(open_lsp_handle);
+                this.temp_dir = Some(temp_dir);
+                this.is_loading = false;
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
         Self {
-            schema,
             editor,
             focus_handle,
+            is_loading: true,
+            open_lsp_handle: None,
+            temp_dir: None,
         }
+    }
+
+    fn file_name_from_action_name(action_name: &'static str) -> String {
+        let mut file_name = action_name.replace("::", "_");
+        file_name.push_str(".json");
+        file_name
+    }
+
+    async fn create_temp_buffer(
+        file_name: String,
+        project: WeakEntity<Project>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<(Entity<language::Buffer>, tempfile::TempDir)> {
+        let (temp_file_path, temp_dir) = Self::create_temp_file(file_name.clone(), fs)
+            .await
+            .context("Failed to create backing file")?;
+
+        project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(temp_file_path, cx)
+            })?
+            .await
+            .context("Failed to create buffer")
+            .map(|buffer| (buffer, temp_dir))
+    }
+
+    async fn create_temp_file(
+        file_name: String,
+        fs: Arc<dyn Fs>,
+    ) -> anyhow::Result<(std::path::PathBuf, tempfile::TempDir)> {
+        let temp_dir = paths::temp_dir();
+        let sub_temp_dir = tempfile::Builder::new()
+            .tempdir_in(temp_dir)
+            .context("Failed to create temporary directory")?;
+
+        let path = sub_temp_dir.path().join(file_name);
+        fs.create_file(
+            &path,
+            fs::CreateOptions {
+                ignore_if_exists: true,
+                overwrite: false,
+            },
+        )
+        .await
+        .context("Failed to create temporary file")?;
+        Ok((path, sub_temp_dir))
+    }
+
+    fn root_schema_from_action_schema(
+        action_schema: &schemars::Schema,
+        generator: &mut schemars::SchemaGenerator,
+    ) -> schemars::Schema {
+        let meta_schema = generator
+            .settings()
+            .meta_schema
+            .as_ref()
+            .expect("meta_schema should be present in schemars settings")
+            .to_string();
+        let defs = generator.definitions();
+        let mut schema = schemars::json_schema!({
+            "$schema": meta_schema,
+            "allowTrailingCommas": true,
+            "$defs": defs,
+        });
+        schema
+            .ensure_object()
+            .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
+        schema
+    }
+}
+
+impl Render for ActionArgumentsEditor {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut style = self.editor.update(cx, |editor, cx| editor.editor_style(cx));
+        if self.is_loading {
+            let theme_color = cx.theme().colors();
+            style.text.color = theme_color.text_disabled;
+        }
+        return EditorElement::new(&self.editor, style);
     }
 }
 
