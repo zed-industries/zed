@@ -13,7 +13,7 @@ use project::git_store::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -468,16 +468,21 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
-        let icon = if let Some(default_branch) = self.default_branch.as_ref()
-            && entry.is_new
-        {
+        let icon = if self.default_branch.is_some() && entry.is_new {
             Some(
-                IconButton::new("branch-from-default", IconName::GitBranchSmall).on_click(
-                    cx.listener(move |this, _, window, cx| {
+                IconButton::new("branch-from-default", IconName::GitBranchSmall)
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
+                    }))
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action(
+                            "Create branch based off default",
+                            &menu::SecondaryConfirm,
+                            window,
+                            cx,
+                        )
                     }),
-                ),
             )
         } else {
             None
@@ -547,9 +552,9 @@ impl PickerDelegate for BranchListDelegate {
                                     .truncate()
                                     .color(Color::Muted)
                             }))
-                            .when_some(icon, |el, icon| el.child(icon))
                         }),
-                ),
+                )
+                .end_slot::<IconButton>(icon),
         )
     }
 
