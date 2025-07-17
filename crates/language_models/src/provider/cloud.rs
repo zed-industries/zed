@@ -644,8 +644,51 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
+fn deserialize_status_code<'de, D>(deserializer: D) -> Result<StatusCode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let status_u16 = u16::deserialize(deserializer)?;
+    StatusCode::from_u16(status_u16)
+        .map_err(|_| serde::de::Error::custom(format!("invalid HTTP status code: {}", status_u16)))
+}
+
+/// Represents error responses from Zed's cloud API.
+///
+/// Example JSON for an upstream HTTP error:
+/// ```json
+/// {
+///   "code": "upstream_http_error",
+///   "message": "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout",
+///   "upstream_status": 503
+/// }
+/// ```
+#[derive(serde::Deserialize)]
+#[serde(tag = "code")]
+enum CloudApiError {
+    #[serde(rename = "upstream_http_error")]
+    UpstreamHttpError {
+        message: String,
+        #[serde(deserialize_with = "deserialize_status_code")]
+        upstream_status: StatusCode,
+    },
+}
+
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
+        if let Ok(CloudApiError::UpstreamHttpError {
+            message,
+            upstream_status,
+        }) = serde_json::from_str::<CloudApiError>(&error.body)
+        {
+            return LanguageModelCompletionError::from_http_status(
+                PROVIDER_NAME,
+                upstream_status,
+                message,
+                None,
+            );
+        }
+
         let retry_after = None;
         LanguageModelCompletionError::from_http_status(
             PROVIDER_NAME,
@@ -1277,5 +1320,125 @@ impl Component for ZedAiConfiguration {
                 ])
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::http::{HeaderMap, StatusCode};
+    use language_model::LanguageModelCompletionError;
+
+    #[test]
+    fn test_api_error_conversion_with_upstream_http_error() {
+        // Test case 1: upstream_http_error with 503 status should become ServerOverloaded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ServerOverloaded { provider, .. } => {
+                assert_eq!(provider, PROVIDER_NAME);
+            }
+            _ => panic!(
+                "Expected ServerOverloaded error for upstream 503, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Test case 2: upstream_http_error with 500 status should become ApiInternalServerError
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(
+                    message,
+                    "Received an error from the OpenAI API: internal server error"
+                );
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for upstream 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Test case 3: upstream_http_error with 429 status should become RateLimitExceeded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::RateLimitExceeded { provider, .. } => {
+                assert_eq!(provider, PROVIDER_NAME);
+            }
+            _ => panic!(
+                "Expected RateLimitExceeded for upstream 429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Test case 4: Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        let error_body = "Regular internal server error";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(message, "Regular internal server error");
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for regular 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Test case 5: Invalid JSON in error body should fall back to regular error handling
+        let error_body = "Not JSON at all";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
+                assert_eq!(provider, PROVIDER_NAME);
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for invalid JSON, got: {:?}",
+                completion_error
+            ),
+        }
     }
 }
