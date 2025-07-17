@@ -1,4 +1,5 @@
 pub mod clangd_ext;
+pub mod json_language_server_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
