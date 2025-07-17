@@ -96,12 +96,13 @@ impl WindowsPlatform {
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let directx_devices = DirectXDevices::new().context("Unable to init directx devices.")?;
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&bitmap_factory)
+            DirectWriteTextSystem::new(&directx_devices, &bitmap_factory)
                 .context("Error creating DirectWriteTextSystem")?,
         );
         let drop_target_helper: IDropTargetHelper = unsafe {
@@ -111,7 +112,6 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let directx_devices = DirectXDevices::new().context("Unable to init directx devices.")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {

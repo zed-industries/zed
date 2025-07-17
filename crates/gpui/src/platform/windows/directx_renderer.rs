@@ -36,8 +36,8 @@ pub(crate) struct DirectXDevices {
     dxgi_factory: IDXGIFactory6,
     #[cfg(not(feature = "enable-renderdoc"))]
     dxgi_device: IDXGIDevice,
-    device: ID3D11Device,
-    device_context: ID3D11DeviceContext,
+    pub(crate) device: ID3D11Device,
+    pub(crate) device_context: ID3D11DeviceContext,
 }
 
 struct DirectXResources {
@@ -630,7 +630,8 @@ impl<T> PipelineState<T> {
         buffer_size: usize,
     ) -> Result<Self> {
         let vertex = {
-            let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
+            let shader_blob =
+                shader_resources::build_shader_blob("shaders", vertex_entry, "vs_5_0")?;
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     shader_blob.GetBufferPointer() as *mut u8,
@@ -640,7 +641,8 @@ impl<T> PipelineState<T> {
             create_vertex_shader(device, bytes)?
         };
         let fragment = {
-            let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
+            let shader_blob =
+                shader_resources::build_shader_blob("shaders", fragment_entry, "ps_5_0")?;
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     shader_blob.GetBufferPointer() as *mut u8,
@@ -740,7 +742,8 @@ impl<T> PipelineState<T> {
 impl PathsPipelineState {
     fn new(device: &ID3D11Device) -> Result<Self> {
         let (vertex, vertex_shader) = {
-            let shader_blob = shader_resources::build_shader_blob("paths_vertex", "vs_5_0")?;
+            let shader_blob =
+                shader_resources::build_shader_blob("shaders", "paths_vertex", "vs_5_0")?;
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     shader_blob.GetBufferPointer() as *mut u8,
@@ -750,7 +753,8 @@ impl PathsPipelineState {
             (create_vertex_shader(device, bytes)?, shader_blob)
         };
         let fragment = {
-            let shader_blob = shader_resources::build_shader_blob("paths_fragment", "ps_5_0")?;
+            let shader_blob =
+                shader_resources::build_shader_blob("shaders", "paths_fragment", "ps_5_0")?;
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     shader_blob.GetBufferPointer() as *mut u8,
@@ -1314,7 +1318,7 @@ fn set_pipeline_state(
 
 const BUFFER_COUNT: usize = 3;
 
-mod shader_resources {
+pub(crate) mod shader_resources {
     use anyhow::Result;
     use windows::Win32::Graphics::Direct3D::{
         Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
@@ -1322,14 +1326,14 @@ mod shader_resources {
     };
     use windows_core::{HSTRING, PCSTR};
 
-    pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
+    pub(crate) fn build_shader_blob(filename: &str, entry: &str, target: &str) -> Result<ID3DBlob> {
         unsafe {
             let mut entry = entry.to_owned();
             let mut target = target.to_owned();
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("src/platform/windows/shaders.hlsl")
+                .join(&format!("src/platform/windows/{}.hlsl", filename))
                 .canonicalize()
                 .unwrap();
             entry.push_str("\0");

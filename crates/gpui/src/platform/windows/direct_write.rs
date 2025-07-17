@@ -9,7 +9,18 @@ use windows::{
     Win32::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
-        Graphics::{DirectWrite::*, Dxgi::Common::*, Gdi::LOGFONTW, Imaging::*},
+        Graphics::{
+            Direct3D11::{
+                D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC, D3D11_CPU_ACCESS_WRITE,
+                D3D11_MAP_WRITE_DISCARD, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_USAGE_DYNAMIC, ID3D11Device,
+                ID3D11DeviceContext, ID3D11ShaderResourceView, ID3D11Texture2D,
+            },
+            DirectWrite::*,
+            Dxgi::Common::*,
+            Gdi::LOGFONTW,
+            Imaging::*,
+        },
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
@@ -44,7 +55,19 @@ struct GlyphRenderContext {
     params: IDWriteRenderingParams3,
 }
 
+struct GPUState {
+    device: ID3D11Device,
+    device_context: ID3D11DeviceContext,
+}
+
+struct Syncer<T>(T);
+unsafe impl<T> Send for Syncer<T> {}
+unsafe impl<T> Sync for Syncer<T> {}
+
 struct DirectWriteState {
+    gpu_state: GPUState,
+    #[cfg(feature = "enable-renderdoc")]
+    renderdoc: Syncer<Arc<RwLock<renderdoc::RenderDoc<renderdoc::V141>>>>,
     components: DirectWriteComponent,
     system_ui_font_name: SharedString,
     system_font_collection: IDWriteFontCollection1,
@@ -118,7 +141,10 @@ impl GlyphRenderContext {
 }
 
 impl DirectWriteTextSystem {
-    pub(crate) fn new(bitmap_factory: &IWICImagingFactory) -> Result<Self> {
+    pub(crate) fn new(
+        gpu_context: &DirectXDevices,
+        bitmap_factory: &IWICImagingFactory,
+    ) -> Result<Self> {
         let components = DirectWriteComponent::new(bitmap_factory)?;
         let system_font_collection = unsafe {
             let mut result = std::mem::zeroed();
@@ -135,7 +161,15 @@ impl DirectWriteTextSystem {
         };
         let system_ui_font_name = get_system_ui_font_name();
 
+        let gpu_state = GPUState {
+            device: gpu_context.device.clone(),
+            device_context: gpu_context.device_context.clone(),
+        };
+
         Ok(Self(RwLock::new(DirectWriteState {
+            gpu_state,
+            #[cfg(feature = "enable-renderdoc")]
+            renderdoc: Syncer(Arc::new(RwLock::new(renderdoc::RenderDoc::new().unwrap()))),
             components,
             system_ui_font_name,
             system_font_collection,
@@ -803,21 +837,32 @@ impl DirectWriteState {
             ));
         }
 
-        let mut bitmap_data;
+        let mut bitmap_data: Vec<u8>;
         if params.is_emoji {
-            // todo: support more glyph image formats for more exotic fonts, for now it should fallback to monochrome rendering
-            let color_enumerator = unsafe {
-                self.components.factory.TranslateColorGlyphRun(
-                    Vector2::new(baseline_origin_x, baseline_origin_y),
-                    &glyph_run,
-                    None,
-                    DWRITE_GLYPH_IMAGE_FORMATS_COLR
-                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
-                    measuring_mode,
-                    Some(&transform),
-                    0,
-                )
-            };
+            bitmap_data = vec![0u8; texture_width as usize * texture_height as usize * 4];
+
+            self.rasterize_color(
+                &glyph_run,
+                rendering_mode,
+                measuring_mode,
+                &transform,
+                point(baseline_origin_x, baseline_origin_y),
+                size(DevicePixels(0), DevicePixels(0)),
+                size(0, 0),
+            );
+            // // todo: support more glyph image formats for more exotic fonts, for now it should fallback to monochrome rendering
+            // let color_enumerator = unsafe {
+            //     self.components.factory.TranslateColorGlyphRun(
+            //         Vector2::new(baseline_origin_x, baseline_origin_y),
+            //         &glyph_run,
+            //         None,
+            //         DWRITE_GLYPH_IMAGE_FORMATS_COLR
+            //             | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+            //         measuring_mode,
+            //         Some(&transform),
+            //         0,
+            //     )
+            // };
 
             // if let Ok(color_enumerator) = color_enumerator {
             //     loop {
@@ -954,18 +999,36 @@ impl DirectWriteState {
             //             break;
             //         }
             //     }
+
+            //     // bitmap_data.chunks_mut(4).for_each(|chunk| {
+            //     //     let tmp = chunk[2];
+            //     //     chunk[2] = chunk[0];
+            //     //     chunk[0] = tmp;
+            //     // });
+
+            //     std::fs::write(
+            //         &format!(
+            //             "{}x{}_{}_color.raw",
+            //             texture_width, texture_height, params.glyph_id.0
+            //         ),
+            //         &bitmap_data,
+            //     )
+            //     .unwrap();
             // } else {
+            //     let monochrome_data = Self::rasterize_monochrome(
+            //         &glyph_analysis,
+            //         bitmap_size,
+            //         size(texture_width, texture_height),
+            //         &texture_bounds,
+            //     )?;
+            //     // todo: monochrome emojis should be handled gracefully by the renderer
+            //     // currently they just get drawn as their reported color because it assumes they are always colored
+            //     // but in reality monochrome emojis should be colored the same as text is
+            //     bitmap_data = monochrome_data
+            //         .into_iter()
+            //         .flat_map(|e| [0, 0, 0, e])
+            //         .collect::<Vec<u8>>();
             // }
-            let monochrome_data = Self::rasterize_monochrome(
-                &glyph_analysis,
-                bitmap_size,
-                size(texture_width, texture_height),
-                &texture_bounds,
-            )?;
-            bitmap_data = monochrome_data
-                .into_iter()
-                .flat_map(|e| [e, e, e, 255])
-                .collect::<Vec<u8>>();
         } else {
             bitmap_data = Self::rasterize_monochrome(
                 &glyph_analysis,
@@ -1023,6 +1086,214 @@ impl DirectWriteState {
         }
 
         Ok(bitmap_data)
+    }
+
+    fn rasterize_color(
+        &self,
+        glyph_run: &DWRITE_GLYPH_RUN,
+        rendering_mode: DWRITE_RENDERING_MODE1,
+        measuring_mode: DWRITE_MEASURING_MODE,
+        transform: &DWRITE_MATRIX,
+        baseline_origin: Point<f32>,
+        bitmap_size: Size<DevicePixels>,
+        texture_size: Size<u32>,
+    ) -> Result<Vec<u8>> {
+        let color_enumerator = unsafe {
+            self.components.factory.TranslateColorGlyphRun(
+                Vector2::new(baseline_origin.x, baseline_origin.y),
+                glyph_run,
+                None,
+                DWRITE_GLYPH_IMAGE_FORMATS_COLR | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+                measuring_mode,
+                Some(transform),
+                0,
+            )
+        }?;
+
+        let mut glyph_layers = Vec::new();
+        loop {
+            let color_run = unsafe { color_enumerator.GetCurrentRun() }?;
+            let color_run = unsafe { &*color_run };
+
+            let color_analysis = unsafe {
+                self.components.factory.CreateGlyphRunAnalysis(
+                    &color_run.Base.glyphRun as *const _,
+                    Some(transform),
+                    rendering_mode,
+                    measuring_mode,
+                    DWRITE_GRID_FIT_MODE_DEFAULT,
+                    DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                    baseline_origin.x,
+                    baseline_origin.y,
+                )
+            }?;
+
+            let color_bounds =
+                unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1) }?;
+
+            let color_size = size(
+                color_bounds.right - color_bounds.left,
+                color_bounds.bottom - color_bounds.top,
+            );
+            if color_size.width > 0 && color_size.height > 0 {
+                let mut alpha_data = vec![0u8; (color_size.width * color_size.height * 3) as usize];
+                unsafe {
+                    color_analysis.CreateAlphaTexture(
+                        DWRITE_TEXTURE_CLEARTYPE_3x1,
+                        &color_bounds,
+                        &mut alpha_data,
+                    )
+                }?;
+
+                let run_color = {
+                    let run_color = color_run.Base.runColor;
+                    Rgba {
+                        r: run_color.r,
+                        g: run_color.g,
+                        b: run_color.b,
+                        a: run_color.a,
+                    }
+                };
+                let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
+                let alpha_data = alpha_data
+                    .chunks_exact(3)
+                    .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
+                    .collect::<Vec<_>>();
+                glyph_layers.push(GlyphLayerTexture::new(
+                    &self.gpu_state,
+                    run_color,
+                    bounds,
+                    &alpha_data,
+                )?);
+            }
+
+            let has_next = unsafe { color_enumerator.MoveNext() }
+                .map(|e| e.as_bool())
+                .unwrap_or(false);
+            if !has_next {
+                break;
+            }
+        }
+
+        let params = glyph_layers
+            .iter()
+            .enumerate()
+            .map(|(index, e)| GlyphLayerTextureParams {
+                run_color: e.run_color,
+                bounds: e.bounds,
+                alpha_texture_index: index as u32,
+            })
+            .collect::<Vec<_>>();
+
+        let params_buffer = {
+            let desc = D3D11_BUFFER_DESC {
+                ByteWidth: (std::mem::size_of::<GlyphLayerTextureParams>() * params.len()) as u32,
+                Usage: D3D11_USAGE_DYNAMIC,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.0 as u32,
+                StructureByteStride: std::mem::size_of::<GlyphLayerTextureParams>() as u32,
+            };
+
+            let mut buffer = None;
+            unsafe {
+                self.gpu_state
+                    .device
+                    .CreateBuffer(&desc, None, Some(&mut buffer))
+            }?;
+            buffer.unwrap()
+        };
+        let params_buffer_view = {
+            let mut view = None;
+            unsafe {
+                self.gpu_state.device.CreateShaderResourceView(
+                    &params_buffer,
+                    None,
+                    Some(&mut view),
+                )
+            }?;
+            [view]
+        };
+
+        unsafe {
+            let mut dest = std::mem::zeroed();
+            self.gpu_state.device_context.Map(
+                &params_buffer,
+                0,
+                D3D11_MAP_WRITE_DISCARD,
+                0,
+                Some(&mut dest),
+            )?;
+            std::ptr::copy_nonoverlapping(params.as_ptr(), dest.pData as *mut _, params.len());
+            self.gpu_state.device_context.Unmap(&params_buffer, 0);
+        };
+
+        let textures = glyph_layers
+            .iter()
+            .map(|layer| Some(layer.texture_view.clone()))
+            .collect::<Vec<_>>();
+
+        let vertex_shader = {
+            let source =
+                shader_resources::build_shader_blob("color_text_raster", "vertex", "vs_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    source.GetBufferPointer() as *mut u8,
+                    source.GetBufferSize(),
+                )
+            };
+            let mut shader = None;
+            unsafe {
+                self.gpu_state
+                    .device
+                    .CreateVertexShader(bytes, None, Some(&mut shader))
+            }?;
+            shader.unwrap()
+        };
+
+        let pixel_shader = {
+            let source =
+                shader_resources::build_shader_blob("color_text_raster", "pixel", "ps_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    source.GetBufferPointer() as *mut u8,
+                    source.GetBufferSize(),
+                )
+            };
+            let mut shader = None;
+            unsafe {
+                self.gpu_state
+                    .device
+                    .CreatePixelShader(bytes, None, Some(&mut shader))
+            }?;
+            shader.unwrap()
+        };
+
+        #[cfg(feature = "enable-renderdoc")]
+        self.renderdoc
+            .0
+            .write()
+            .start_frame_capture(std::ptr::null(), std::ptr::null());
+
+        let device_context = &self.gpu_state.device_context;
+        unsafe { device_context.VSSetShaderResources(0, Some(textures.as_slice())) };
+        unsafe { device_context.PSSetShaderResources(0, Some(textures.as_slice())) };
+        unsafe { device_context.VSSetShaderResources(1, Some(&params_buffer_view)) };
+        unsafe { device_context.PSSetShaderResources(1, Some(&params_buffer_view)) };
+        unsafe { device_context.VSSetShader(&vertex_shader, None) };
+        unsafe { device_context.PSSetShader(&pixel_shader, None) };
+
+        unsafe { device_context.DrawInstanced(4, params.len() as u32, 0, 0) };
+
+        #[cfg(feature = "enable-renderdoc")]
+        self.renderdoc
+            .0
+            .write()
+            .end_frame_capture(std::ptr::null(), std::ptr::null());
+
+        println!("render finished");
+
+        Ok(Vec::new())
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -1094,6 +1365,84 @@ impl Drop for DirectWriteState {
                 .UnregisterFontFileLoader(&self.components.in_memory_loader);
         }
     }
+}
+
+struct GlyphLayerTexture {
+    run_color: Rgba,
+    bounds: Bounds<i32>,
+    texture: ID3D11Texture2D,
+    texture_view: ID3D11ShaderResourceView,
+}
+
+impl GlyphLayerTexture {
+    pub fn new(
+        gpu_state: &GPUState,
+        run_color: Rgba,
+        bounds: Bounds<i32>,
+        alpha_data: &[u8],
+    ) -> Result<Self> {
+        let texture_size = bounds.size;
+
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: texture_size.width as u32,
+            Height: texture_size.height as u32,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+            MiscFlags: 0,
+        };
+
+        let texture = {
+            let mut texture: Option<ID3D11Texture2D> = None;
+            unsafe {
+                gpu_state
+                    .device
+                    .CreateTexture2D(&desc, None, Some(&mut texture))?
+            };
+            texture.unwrap()
+        };
+        let texture_view = {
+            let mut view: Option<ID3D11ShaderResourceView> = None;
+            unsafe {
+                gpu_state
+                    .device
+                    .CreateShaderResourceView(&texture, None, Some(&mut view))?
+            };
+            view.unwrap()
+        };
+
+        unsafe {
+            gpu_state.device_context.UpdateSubresource(
+                &texture,
+                0,
+                None,
+                alpha_data.as_ptr() as _,
+                (texture_size.width * 4) as u32,
+                0,
+            )
+        };
+
+        Ok(GlyphLayerTexture {
+            run_color,
+            bounds,
+            texture,
+            texture_view,
+        })
+    }
+}
+
+#[repr(C)]
+struct GlyphLayerTextureParams {
+    run_color: Rgba,
+    bounds: Bounds<i32>,
+    alpha_texture_index: u32,
 }
 
 struct TextRendererWrapper(pub IDWriteTextRenderer);
