@@ -1683,8 +1683,8 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                     } => {
                         // Only retry for specific status codes
                         let should_retry = matches!(
-                            status,
-                            &StatusCode::TOO_MANY_REQUESTS | &StatusCode::SERVICE_UNAVAILABLE
+                            *status,
+                            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
                         ) || status.as_u16() == 529;
 
                         if !should_retry {
