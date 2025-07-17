@@ -14,8 +14,8 @@ pub enum ClaudeTool {
     Glob(Option<GlobToolParams>),
     Grep(Option<GrepToolParams>),
     Terminal(Option<BashToolParams>),
-    WebFetch,
-    WebSearch,
+    WebFetch(Option<WebFetchToolParams>),
+    WebSearch(Option<WebSearchToolParams>),
     TodoWrite,
     ExitPlanMode,
     Other {
@@ -36,8 +36,8 @@ impl ClaudeTool {
             "Glob" => Self::Glob(serde_json::from_value(input).log_err()),
             "Grep" => Self::Grep(serde_json::from_value(input).log_err()),
             "Bash" => Self::Terminal(serde_json::from_value(input).log_err()),
-            "WebFetch" => Self::WebFetch,
-            "WebSearch" => Self::WebSearch,
+            "WebFetch" => Self::WebFetch(serde_json::from_value(input).log_err()),
+            "WebSearch" => Self::WebSearch(serde_json::from_value(input).log_err()),
             "TodoWrite" => Self::TodoWrite,
             "exit_plan_mode" => Self::ExitPlanMode,
             "Task" => Self::ExitPlanMode,
@@ -86,8 +86,10 @@ impl ClaudeTool {
             ClaudeTool::Glob(None) => "Glob".into(),
             ClaudeTool::Grep(Some(params)) => params.to_string(),
             ClaudeTool::Grep(None) => "Grep".into(),
-            ClaudeTool::WebFetch => "Fetch".into(),
-            ClaudeTool::WebSearch => "Web Search".into(),
+            ClaudeTool::WebFetch(Some(params)) => format!("Fetch {}", params.url),
+            ClaudeTool::WebFetch(None) => "Fetch".into(),
+            ClaudeTool::WebSearch(Some(params)) => format!("Web Seach: {}", params),
+            ClaudeTool::WebSearch(None) => "Web Search".into(),
             ClaudeTool::TodoWrite => "Update TODOs".into(),
             ClaudeTool::ExitPlanMode => "Exit Plan Mode".into(),
             ClaudeTool::Other { name, .. } => name.clone(),
@@ -115,8 +117,8 @@ impl ClaudeTool {
             Self::Glob(_) => acp::Icon::FileSearch,
             Self::Grep(_) => acp::Icon::Regex,
             Self::Terminal(_) => acp::Icon::Terminal,
-            Self::WebSearch => acp::Icon::Globe,
-            Self::WebFetch => acp::Icon::Globe,
+            Self::WebSearch(_) => acp::Icon::Globe,
+            Self::WebFetch(_) => acp::Icon::Globe,
             Self::TodoWrite => acp::Icon::LightBulb,
             Self::ExitPlanMode => acp::Icon::Hammer,
             Self::Other { .. } => acp::Icon::Hammer,
@@ -126,8 +128,11 @@ impl ClaudeTool {
     pub fn confirmation(&self, description: Option<String>) -> acp::ToolCallConfirmation {
         match &self {
             Self::Edit(_) | Self::Write(_) => acp::ToolCallConfirmation::Edit { description },
-            Self::WebFetch => acp::ToolCallConfirmation::Fetch {
-                urls: vec![],
+            Self::WebFetch(params) => acp::ToolCallConfirmation::Fetch {
+                urls: params
+                    .as_ref()
+                    .map(|p| vec![p.url.clone()])
+                    .unwrap_or_default(),
                 description,
             },
             Self::Terminal(Some(BashToolParams {
@@ -144,7 +149,7 @@ impl ClaudeTool {
             | Self::Glob(_)
             | Self::Grep(_)
             | Self::TodoWrite
-            | Self::WebSearch
+            | Self::WebSearch(_)
             | Self::ExitPlanMode
             | Self::ReadFile(_)
             | Self::Other { .. } => acp::ToolCallConfirmation::Other {
@@ -192,8 +197,8 @@ impl ClaudeTool {
             | Self::Glob(_)
             | Self::Grep(_)
             | Self::Terminal(_)
-            | Self::WebFetch
-            | Self::WebSearch
+            | Self::WebFetch(_)
+            | Self::WebSearch(_)
             | Self::TodoWrite
             | Self::ExitPlanMode
             | Self::Other { .. } => vec![],
@@ -282,39 +287,39 @@ pub struct LsToolParams {
 
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct GrepToolParams {
-    /// Search pattern
+    /// Regex pattern to search for
     pub pattern: String,
-    /// Path to search in (omit for current directory)
+    /// File/directory to search (defaults to current directory)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    /// Output mode
+    /// "content" (shows lines), "files_with_matches" (default), "count"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_mode: Option<GrepOutputMode>,
-    /// Glob pattern to filter files
+    /// Filter files with glob pattern like "*.js"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub glob: Option<String>,
-    /// File type filter
+    /// File type filter like "js", "py", "rust"
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub file_type: Option<String>,
     /// Case insensitive search
     #[serde(rename = "-i", default, skip_serializing_if = "is_false")]
     pub case_insensitive: bool,
-    /// Show line numbers
+    /// Show line numbers (content mode only)
     #[serde(rename = "-n", default, skip_serializing_if = "is_false")]
     pub line_numbers: bool,
-    /// Lines after match
+    /// Lines after match (content mode only)
     #[serde(rename = "-A", skip_serializing_if = "Option::is_none")]
     pub after_context: Option<u32>,
-    /// Lines before match
+    /// Lines before match (content mode only)
     #[serde(rename = "-B", skip_serializing_if = "Option::is_none")]
     pub before_context: Option<u32>,
-    /// Lines around match
+    /// Lines before and after match (content mode only)
     #[serde(rename = "-C", skip_serializing_if = "Option::is_none")]
     pub context: Option<u32>,
-    /// Enable multiline matching
+    /// Enable multiline/cross-line matching
     #[serde(default, skip_serializing_if = "is_false")]
     pub multiline: bool,
-    /// Limit number of results
+    /// Limit output to first N results
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head_limit: Option<u32>,
 }
@@ -393,4 +398,41 @@ pub enum GrepOutputMode {
     Content,
     FilesWithMatches,
     Count,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct WebFetchToolParams {
+    /// Valid URL to fetch
+    #[serde(rename = "url")]
+    pub url: String,
+    /// What to extract from content
+    pub prompt: String,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct WebSearchToolParams {
+    /// Search query (min 2 chars)
+    pub query: String,
+    /// Only include these domains
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_domains: Vec<String>,
+    /// Exclude these domains
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_domains: Vec<String>,
+}
+
+impl std::fmt::Display for WebSearchToolParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"{}\"", self.query)?;
+
+        if !self.allowed_domains.is_empty() {
+            write!(f, " (allowed: {})", self.allowed_domains.join(", "))?;
+        }
+
+        if !self.blocked_domains.is_empty() {
+            write!(f, " (blocked: {})", self.blocked_domains.join(", "))?;
+        }
+
+        Ok(())
+    }
 }
