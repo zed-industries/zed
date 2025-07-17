@@ -73,13 +73,18 @@
     }
   },
   {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "shift-enter": "search::SelectPreviousMatch"
+    }
+  },
+  {
     "context": "BufferSearchBar || ProjectSearchBar",
     "bindings": {
-      "shift-enter": "search::SelectPreviousMatch",
-      "ctrl-alt-c": "search::ToggleCaseSensitive",
-      "ctrl-alt-e": "search::ToggleSelection",
-      "ctrl-alt-w": "search::ToggleWholeWord",
-      "ctrl-alt-x": "search::ToggleRegex"
+      "alt-c": "search::ToggleCaseSensitive",
+      "alt-e": "search::ToggleSelection",
+      "alt-x": "search::ToggleRegex",
+      "alt-w": "search::ToggleWholeWord"
     }
   },
   {

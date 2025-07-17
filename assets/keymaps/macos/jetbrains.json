@@ -71,9 +71,14 @@
     }
   },
   {
+    "context": "BufferSearchBar",
+    "bindings": {
+      "shift-enter": "search::SelectPreviousMatch"
+    }
+  },
+  {
     "context": "BufferSearchBar || ProjectSearchBar",
     "bindings": {
-      "shift-enter": "search::SelectPreviousMatch",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-e": "search::ToggleSelection",
       "alt-x": "search::ToggleRegex",
