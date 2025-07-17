@@ -2223,7 +2223,14 @@ impl ActionArgumentsEditor {
 
             let editor = cx.new_window_entity(|window, cx| {
                 let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
-                let mut editor = Editor::new(editor::EditorMode::AutoHeight { min_lines: 1, max_lines: Some(10) },multi_buffer, project.upgrade(), window, cx);
+                let mut editor = Editor::new(editor::EditorMode::Full { scale_ui_elements_with_buffer_font_size: true, show_active_line_background: false, sized_by_content: true },multi_buffer, project.upgrade(), window, cx);
+                editor.set_show_line_numbers(false, cx);
+                editor.set_searchable(false);
+                editor.set_show_scrollbars(false, cx);
+                editor.set_show_breakpoints(false, cx);
+                editor.set_show_edit_predictions(Some(false), window, cx);
+                editor.set_show_runnables(false, cx);
+                editor.set_show_gutter(false, cx);
                 if let Some(arguments) = arguments {
                     editor.set_text(arguments, window, cx);
                 } else {
