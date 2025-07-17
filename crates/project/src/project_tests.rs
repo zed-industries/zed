@@ -7578,9 +7578,9 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        path!("/root"),
+        path!("/home"),
         json!({
-            "home": {
+            "zed": {
                 ".git": {},
                 "project": {
                     "a.txt": "A"
@@ -7589,9 +7589,8 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
 
-    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/home/zed/project").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
 
@@ -7608,7 +7607,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         assert!(containing.is_none());
     });
 
-    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/home/zed").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
     project
@@ -7628,7 +7627,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .work_directory_abs_path
                 .as_ref(),
-            Path::new(path!("/root/home"))
+            Path::new(path!("/home/zed"))
         );
     });
 }

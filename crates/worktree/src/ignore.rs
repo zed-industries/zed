@@ -4,6 +4,9 @@ use std::{ffi::OsStr, path::Path, sync::Arc};
 #[derive(Debug)]
 pub enum IgnoreStack {
     None,
+    Global {
+        ignore: Arc<Gitignore>,
+    },
     Some {
         abs_base_path: Arc<Path>,
         ignore: Arc<Gitignore>,
@@ -19,6 +22,10 @@ impl IgnoreStack {
 
     pub fn all() -> Arc<Self> {
         Arc::new(Self::All)
+    }
+
+    pub fn global(ignore: Arc<Gitignore>) -> Arc<Self> {
+        Arc::new(Self::Global { ignore })
     }
 
     pub fn append(self: Arc<Self>, abs_base_path: Arc<Path>, ignore: Arc<Gitignore>) -> Arc<Self> {
@@ -40,6 +47,11 @@ impl IgnoreStack {
         match self {
             Self::None => false,
             Self::All => true,
+            Self::Global { ignore } => match ignore.matched(abs_path, is_dir) {
+                ignore::Match::None => false,
+                ignore::Match::Ignore(_) => true,
+                ignore::Match::Whitelist(_) => false,
+            },
             Self::Some {
                 abs_base_path,
                 ignore,
