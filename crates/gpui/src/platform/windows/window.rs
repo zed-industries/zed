@@ -384,7 +384,8 @@ impl WindowsWindow {
             (WS_EX_TOOLWINDOW | WS_EX_LAYERED, WINDOW_STYLE(0x0))
         } else {
             (
-                WS_EX_APPWINDOW | WS_EX_LAYERED,
+                WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+                // WS_EX_APPWINDOW | WS_EX_LAYERED,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
@@ -461,7 +462,7 @@ impl WindowsWindow {
         // window is going to be composited with per-pixel alpha, but the render
         // pipeline is responsible for effectively calling UpdateLayeredWindow
         // at the appropriate time.
-        unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
+        // unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
 
         Ok(Self(state_ptr))
     }
