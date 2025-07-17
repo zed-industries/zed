@@ -2331,6 +2331,59 @@ impl Editor {
         editor
     }
 
+    pub fn editor_style(&self, cx: &mut App) -> EditorStyle {
+        let settings = ThemeSettings::get_global(cx);
+
+        let mut text_style = match self.mode {
+            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.ui_font.family.clone(),
+                font_features: settings.ui_font.features.clone(),
+                font_fallbacks: settings.ui_font.fallbacks.clone(),
+                font_size: rems(0.875).into(),
+                font_weight: settings.ui_font.weight,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
+                color: cx.theme().colors().editor_foreground,
+                font_family: settings.buffer_font.family.clone(),
+                font_features: settings.buffer_font.features.clone(),
+                font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                font_size: settings.buffer_font_size(cx).into(),
+                font_weight: settings.buffer_font.weight,
+                line_height: relative(settings.buffer_line_height.value()),
+                ..Default::default()
+            },
+        };
+        if let Some(text_style_refinement) = &self.text_style_refinement {
+            text_style.refine(text_style_refinement)
+        }
+
+        let background = match self.mode {
+            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
+            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
+            EditorMode::Full { .. } => cx.theme().colors().editor_background,
+            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
+        };
+
+        let unnecessary_code_fade = settings.unnecessary_code_fade;
+
+        EditorStyle {
+            background,
+            border: cx.theme().colors().border,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+            syntax: cx.theme().syntax().clone(),
+            status: cx.theme().status().clone(),
+            inlay_hints_style: make_inlay_hints_style(cx),
+            inline_completion_styles: make_suggestion_styles(cx),
+            unnecessary_code_fade,
+            show_underlines: self.diagnostics_enabled(),
+        }
+    }
+
     pub fn deploy_mouse_context_menu(
         &mut self,
         position: gpui::Point<Pixels>,
@@ -22600,57 +22653,7 @@ impl Focusable for Editor {
 
 impl Render for Editor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-
-        let mut text_style = match self.mode {
-            EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
-                color: cx.theme().colors().editor_foreground,
-                font_family: settings.ui_font.family.clone(),
-                font_features: settings.ui_font.features.clone(),
-                font_fallbacks: settings.ui_font.fallbacks.clone(),
-                font_size: rems(0.875).into(),
-                font_weight: settings.ui_font.weight,
-                line_height: relative(settings.buffer_line_height.value()),
-                ..Default::default()
-            },
-            EditorMode::Full { .. } | EditorMode::Minimap { .. } => TextStyle {
-                color: cx.theme().colors().editor_foreground,
-                font_family: settings.buffer_font.family.clone(),
-                font_features: settings.buffer_font.features.clone(),
-                font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                font_size: settings.buffer_font_size(cx).into(),
-                font_weight: settings.buffer_font.weight,
-                line_height: relative(settings.buffer_line_height.value()),
-                ..Default::default()
-            },
-        };
-        if let Some(text_style_refinement) = &self.text_style_refinement {
-            text_style.refine(text_style_refinement)
-        }
-
-        let background = match self.mode {
-            EditorMode::SingleLine { .. } => cx.theme().system().transparent,
-            EditorMode::AutoHeight { .. } => cx.theme().system().transparent,
-            EditorMode::Full { .. } => cx.theme().colors().editor_background,
-            EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
-        };
-
-        EditorElement::new(
-            &cx.entity(),
-            EditorStyle {
-                background,
-                border: cx.theme().colors().border,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
-                syntax: cx.theme().syntax().clone(),
-                status: cx.theme().status().clone(),
-                inlay_hints_style: make_inlay_hints_style(cx),
-                inline_completion_styles: make_suggestion_styles(cx),
-                unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
-                show_underlines: self.diagnostics_enabled(),
-            },
-        )
+        EditorElement::new(&cx.entity(), self.editor_style(cx))
     }
 }
 
