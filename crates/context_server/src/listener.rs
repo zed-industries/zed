@@ -8,11 +8,9 @@ use futures::{
     select_biased,
 };
 use gpui::{App, AppContext, AsyncApp, Task};
+use net::async_net::{UnixListener, UnixStream};
 use serde_json::{json, value::RawValue};
-use smol::{
-    net::unix::{UnixListener, UnixStream},
-    stream::StreamExt,
-};
+use smol::stream::StreamExt;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},

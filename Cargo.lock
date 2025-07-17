@@ -3424,6 +3424,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "log",
+ "net",
  "parking_lot",
  "postage",
  "schemars",

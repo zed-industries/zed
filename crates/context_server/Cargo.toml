@@ -21,6 +21,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
+net.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 schemars.workspace = true
