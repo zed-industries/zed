@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
-    "crates/acp",
+    "crates/acp_thread",
     "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
@@ -102,6 +102,7 @@ members = [
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/nc",
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
@@ -219,7 +220,7 @@ edition = "2024"
 # Workspace member crates
 #
 
-acp = { path = "crates/acp" }
+acp_thread = { path = "crates/acp_thread" }
 agent = { path = "crates/agent" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
@@ -317,6 +318,7 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
@@ -406,7 +408,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agentic-coding-protocol = { version = "0.0.9" }
+agentic-coding-protocol = "0.0.9"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"

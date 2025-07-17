@@ -715,7 +715,7 @@ fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVe
 
 impl WasmExtension {
     pub async fn load(
-        extension_dir: PathBuf,
+        extension_dir: &Path,
         manifest: &Arc<ExtensionManifest>,
         wasm_host: Arc<WasmHost>,
         cx: &AsyncApp,
