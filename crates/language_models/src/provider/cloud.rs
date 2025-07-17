@@ -675,19 +675,15 @@ where
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        // Try to parse as CloudApiError
         if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
-            // Check if this is an upstream error by looking at the code
             if cloud_error.code.starts_with("upstream_http_") {
-                // Determine the status code
                 let status = if let Some(status) = cloud_error.upstream_status {
-                    // Use the upstream_status field if present
                     status
                 } else if cloud_error.code.ends_with("_error") {
-                    // If it ends with "_error" but no status code, use what we got
                     error.status
                 } else {
-                    // Try to parse the status code from the code string (e.g., "upstream_http_429")
+                    // If there's a status code in the code string (e.g. "upstream_http_429")
+                    // then use that; otherwise, see if the JSON contains a status code.
                     cloud_error
                         .code
                         .strip_prefix("upstream_http_")
