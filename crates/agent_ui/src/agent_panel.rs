@@ -65,8 +65,9 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, Callout, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, Button, Callout, CheckboxWithLabel, ContextMenu, ElevationIndex, IconPosition,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName,
+    prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -2977,6 +2978,21 @@ impl AgentPanel {
             .size(IconSize::Small)
             .color(Color::Error);
 
+        let retry_button = Button::new("retry", "Retry")
+            .icon(IconName::RotateCw)
+            .icon_position(IconPosition::Start)
+            .on_click({
+                let thread = thread.clone();
+                move |_, window, cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.clear_last_error();
+                        thread.thread.update(cx, |thread, cx| {
+                            thread.retry_last_completion(Some(window.window_handle()), cx);
+                        });
+                    });
+                }
+            });
+
         div()
             .border_t_1()
             .border_color(cx.theme().colors().border)
@@ -2985,10 +3001,83 @@ impl AgentPanel {
                     .icon(icon)
                     .title(header)
                     .description(message.clone())
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .secondary_action(self.create_copy_button(message_with_header))
+                    .primary_action(retry_button)
+                    .secondary_action(self.dismiss_error_button(thread, cx))
+                    .tertiary_action(self.create_copy_button(message_with_header))
                     .bg_color(self.error_callout_bg(cx)),
             )
+            .into_any_element()
+    }
+
+    fn render_retryable_error(
+        &self,
+        message: SharedString,
+        can_enable_burn_mode: bool,
+        thread: &Entity<ActiveThread>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        let retry_button = Button::new("retry", "Retry")
+            .icon(IconName::RotateCw)
+            .icon_position(IconPosition::Start)
+            .on_click({
+                let thread = thread.clone();
+                move |_, window, cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.clear_last_error();
+                        thread.thread.update(cx, |thread, cx| {
+                            thread.retry_last_completion(Some(window.window_handle()), cx);
+                        });
+                    });
+                }
+            });
+
+        let mut actions = vec![retry_button];
+
+        if can_enable_burn_mode {
+            let burn_mode_button = Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
+                .icon(IconName::ZedBurnMode)
+                .icon_position(IconPosition::Start)
+                .on_click({
+                    let thread = thread.clone();
+                    move |_, window, cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.clear_last_error();
+                            thread.thread.update(cx, |thread, cx| {
+                                thread.enable_burn_mode_and_retry(Some(window.window_handle()), cx);
+                            });
+                        });
+                    }
+                });
+            actions.push(burn_mode_button);
+        }
+
+        actions.push(self.dismiss_error_button(thread, cx));
+        actions.push(self.create_copy_button(message.to_string()));
+
+        let mut callout = Callout::new()
+            .icon(icon)
+            .title("Error")
+            .description(message.clone())
+            .bg_color(self.error_callout_bg(cx));
+
+        for (i, action) in actions.into_iter().enumerate() {
+            if i == 0 {
+                callout = callout.primary_action(action);
+            } else if i == 1 {
+                callout = callout.secondary_action(action);
+            } else {
+                callout = callout.tertiary_action(action);
+            }
+        }
+
+        div()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(callout)
             .into_any_element()
     }
 
@@ -3233,6 +3322,15 @@ impl Render for AgentPanel {
                                     ThreadError::Message { header, message } => {
                                         self.render_error_message(header, message, thread, cx)
                                     }
+                                    ThreadError::RetryableError {
+                                        message,
+                                        can_enable_burn_mode,
+                                    } => self.render_retryable_error(
+                                        message,
+                                        *can_enable_burn_mode,
+                                        thread,
+                                        cx,
+                                    ),
                                 })
                                 .into_any(),
                         )

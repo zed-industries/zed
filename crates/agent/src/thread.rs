@@ -1262,11 +1262,50 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        self.flush_notifications(model.clone(), intent, cx);
+        let _checkpoint = self.finalize_pending_checkpoint(cx);
+        self.stream_completion(
+            self.to_completion_request(model.clone(), intent, cx),
+            model,
+            intent,
+            window,
+            cx,
+        );
+    }
 
-        let request = self.to_completion_request(model.clone(), intent, cx);
+    pub fn retry_last_completion(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        // Clear any existing error state
+        self.retry_state = None;
 
-        self.stream_completion(request, model, intent, window, cx);
+        // Get the model and intent from the last attempt
+        if let Some(configured_model) = self.configured_model.as_ref() {
+            let model = configured_model.model.clone();
+
+            // Determine the intent based on the current state
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+
+            self.send_to_model(model, intent, window, cx);
+        }
+    }
+
+    pub fn enable_burn_mode_and_retry(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        // Enable burn mode
+        self.completion_mode = CompletionMode::Burn;
+        cx.emit(ThreadEvent::ProfileChanged);
+
+        // Then retry
+        self.retry_last_completion(window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -2197,22 +2236,11 @@ impl Thread {
     ) -> bool {
         // Only retry if Burn Mode is enabled
         if self.completion_mode != CompletionMode::Burn {
-            // Add a message informing the user that enabling burn mode would allow retries
-            let error_message = format!(
-                "{}. Enable burn mode to automatically retry on errors.",
-                error
-            );
-            let id = self.next_message_id.post_inc();
-            self.messages.push(Message {
-                id,
-                role: Role::System,
-                segments: vec![MessageSegment::Text(error_message)],
-                loaded_context: LoadedContext::default(),
-                creases: Vec::new(),
-                is_hidden: false,
-                ui_only: true,
-            });
-            cx.emit(ThreadEvent::MessageAdded(id));
+            // Show error with retry options
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: error.to_string().into(),
+                can_enable_burn_mode: true,
+            }));
             return false;
         }
 
@@ -2295,6 +2323,12 @@ impl Thread {
 
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
+
+            // Show error with retry option but not burn mode option (since it's already enabled)
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: format!("Failed after {} retries: {}", max_attempts, error).into(),
+                can_enable_burn_mode: false,
+            }));
 
             false
         }
@@ -3205,6 +3239,11 @@ pub enum ThreadError {
     Message {
         header: SharedString,
         message: SharedString,
+    },
+    #[error("Retryable error: {message}")]
+    RetryableError {
+        message: SharedString,
+        can_enable_burn_mode: bool,
     },
 }
 
@@ -5152,6 +5191,18 @@ fn main() {{
             thread.set_completion_mode(CompletionMode::Normal);
         });
 
+        // Track error events
+        let error_events = Arc::new(Mutex::new(Vec::new()));
+        let error_events_clone = error_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::ShowError(error) = event {
+                    error_events_clone.lock().push(error.clone());
+                }
+            })
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -5175,24 +5226,22 @@ fn main() {{
             );
         });
 
-        // Check that an error message was added mentioning burn mode
-        thread.read_with(cx, |thread, _| {
-            let messages: Vec<_> = thread.messages().collect();
+        // Check that a retryable error was reported
+        let errors = error_events.lock();
+        assert!(!errors.is_empty(), "Should have received an error event");
+
+        if let ThreadError::RetryableError {
+            message: _,
+            can_enable_burn_mode,
+        } = &errors[0]
+        {
             assert!(
-                messages.iter().any(|msg| {
-                    msg.role == Role::System
-                        && msg.ui_only
-                        && msg.segments.iter().any(|seg| {
-                            if let MessageSegment::Text(text) = seg {
-                                text.contains("Enable burn mode to automatically retry")
-                            } else {
-                                false
-                            }
-                        })
-                }),
-                "Should have a message mentioning burn mode for retries"
+                *can_enable_burn_mode,
+                "Error should indicate burn mode can be enabled"
             );
-        });
+        } else {
+            panic!("Expected RetryableError, got {:?}", errors[0]);
+        }
 
         // Verify the thread is no longer generating
         thread.read_with(cx, |thread, _| {
