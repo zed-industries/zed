@@ -80,7 +80,6 @@ pub(crate) struct WindowsWindowStatePtr {
 impl WindowsWindowState {
     fn new(
         hwnd: HWND,
-        transparent: bool,
         cs: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
@@ -104,7 +103,7 @@ impl WindowsWindowState {
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
         // let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
-        let renderer = DirectXRenderer::new(gpu_context, hwnd, transparent)?;
+        let renderer = DirectXRenderer::new(gpu_context, hwnd)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -207,7 +206,6 @@ impl WindowsWindowStatePtr {
     fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
-            context.transparent,
             cs,
             context.current_cursor,
             context.display,
@@ -335,7 +333,6 @@ struct WindowCreateContext<'a> {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
-    transparent: bool,
     is_movable: bool,
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
@@ -381,11 +378,13 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW | WS_EX_LAYERED, WINDOW_STYLE(0x0))
+            (
+                WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+                WINDOW_STYLE(0x0),
+            )
         } else {
             (
                 WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
-                // WS_EX_APPWINDOW | WS_EX_LAYERED,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
@@ -403,7 +402,6 @@ impl WindowsWindow {
             handle,
             hide_title_bar,
             display,
-            transparent: false,
             is_movable: params.is_movable,
             min_size: params.window_min_size,
             executor,
@@ -455,14 +453,6 @@ impl WindowsWindow {
                 state: WindowOpenState::Windowed,
             });
         }
-        // The render pipeline will perform compositing on the GPU when the
-        // swapchain is configured correctly (see downstream of
-        // update_transparency).
-        // The following configuration is a one-time setup to ensure that the
-        // window is going to be composited with per-pixel alpha, but the render
-        // pipeline is responsible for effectively calling UpdateLayeredWindow
-        // at the appropriate time.
-        // unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
 
         Ok(Self(state_ptr))
     }
@@ -707,26 +697,21 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        let mut window_state = self.0.state.borrow_mut();
-        window_state
-            .renderer
-            .update_transparency(background_appearance)
-            .context("Updating window transparency")
-            .log_err();
+        let hwnd = self.0.hwnd;
 
         match background_appearance {
             WindowBackgroundAppearance::Opaque => {
                 // ACCENT_DISABLED
-                set_window_composition_attribute(window_state.hwnd, None, 0);
+                set_window_composition_attribute(hwnd, None, 0);
             }
             WindowBackgroundAppearance::Transparent => {
                 // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
-                set_window_composition_attribute(window_state.hwnd, None, 2);
+                set_window_composition_attribute(hwnd, None, 2);
             }
             WindowBackgroundAppearance::Blurred => {
                 // Enable acrylic blur
                 // ACCENT_ENABLE_ACRYLICBLURBEHIND
-                set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 0)), 4);
+                set_window_composition_attribute(hwnd, Some((0, 0, 0, 0)), 4);
             }
         }
     }
