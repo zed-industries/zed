@@ -1557,6 +1557,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
         //      - that being said, they're grouped in "frames", which should? help
         //  - pen is COMPLETELY separate here, barely registers in `wev`
         let mut frame = state.wl_touch_frame.get_or_insert_default();
+        log::debug!("wl_touch event: {:?}", event);
         match event {
             wl_touch::Event::Down {
                 id,
@@ -1662,7 +1663,8 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 // wayland clients don't seem to register a second finger down like a mouse button
                 // except when it's a two-finger tap
                 // long-press for "right-click"
-
+                
+                
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
                     let continuous = state.continuous_scroll_delta.take();
