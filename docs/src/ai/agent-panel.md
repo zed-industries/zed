@@ -121,7 +121,7 @@ Zed will store this profile in your settings using the same profile name as the 
 
 All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
 
-#### Tool Approval
+### Tool Approval
 
 Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
 
