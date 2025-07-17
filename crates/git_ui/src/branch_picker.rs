@@ -90,11 +90,21 @@ impl BranchList {
         let all_branches_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.branches()));
+        let default_branch_request = repository
+            .clone()
+            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
 
         cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
                 .context("No active repository")?
                 .await??;
+            let default_branch = default_branch_request
+                .context("No active repository")?
+                .await
+                .map(Result::ok)
+                .ok()
+                .flatten()
+                .flatten();
 
             let all_branches = cx
                 .background_spawn(async move {
@@ -124,6 +134,7 @@ impl BranchList {
 
             this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
+                    picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
                 })
@@ -192,6 +203,7 @@ struct BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Option<Vec<Branch>>,
+    default_branch: Option<SharedString>,
     repo: Option<Entity<Repository>>,
     style: BranchListStyle,
     selected_index: usize,
@@ -206,6 +218,7 @@ impl BranchListDelegate {
             repo,
             style,
             all_branches: None,
+            default_branch: None,
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
