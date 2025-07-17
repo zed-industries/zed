@@ -2,8 +2,6 @@ use std::{mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
-#[cfg(not(feature = "enable-renderdoc"))]
-use windows::Win32::Graphics::DirectComposition::*;
 use windows::Win32::{
     Foundation::{HMODULE, HWND},
     Graphics::{
@@ -12,6 +10,8 @@ use windows::Win32::{
         Dxgi::{Common::*, *},
     },
 };
+#[cfg(not(feature = "enable-renderdoc"))]
+use windows::{Win32::Graphics::DirectComposition::*, core::Interface};
 
 use crate::*;
 
