@@ -73,7 +73,7 @@ If not, other colors and tooltip messages will indicate what is happening.
 Once installation is all set, you can just come back to the Agent Panel and prompt away.
 Mentioning your MCP server by name already helps the agent to pick it up.
 
-Then, in case you want to ensure a given server will be used, you can create [a custom profile](./ai/agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflict) and turning on only the tools coming from the MCP server.
+Then, in case you want to ensure a given server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflict) and turning on only the tools coming from the MCP server.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that with their [Container Use MCP server](https://zed.dev/extensions/container-use-mcp-server):
 
