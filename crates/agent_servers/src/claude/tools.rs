@@ -88,7 +88,7 @@ impl ClaudeTool {
             ClaudeTool::Grep(None) => "Grep".into(),
             ClaudeTool::WebFetch(Some(params)) => format!("Fetch {}", params.url),
             ClaudeTool::WebFetch(None) => "Fetch".into(),
-            ClaudeTool::WebSearch(Some(params)) => format!("Web Seach: {}", params),
+            ClaudeTool::WebSearch(Some(params)) => format!("Web Search: {}", params),
             ClaudeTool::WebSearch(None) => "Web Search".into(),
             ClaudeTool::TodoWrite => "Update TODOs".into(),
             ClaudeTool::ExitPlanMode => "Exit Plan Mode".into(),
