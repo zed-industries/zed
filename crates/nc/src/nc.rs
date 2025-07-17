@@ -1,7 +1,4 @@
 use anyhow::Result;
-use futures::{AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _, io::BufReader, select};
-use net::async_net::UnixStream;
-use smol::{Async, io::AsyncBufReadExt};
 
 #[cfg(windows)]
 pub fn main(_socket: &str) -> Result<()> {
@@ -17,6 +14,10 @@ pub fn main(_socket: &str) -> Result<()> {
 /// The main function for when Zed is running in netcat mode
 #[cfg(not(windows))]
 pub fn main(socket: &str) -> Result<()> {
+    use futures::{AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _, io::BufReader, select};
+    use net::async_net::UnixStream;
+    use smol::{Async, io::AsyncBufReadExt};
+
     smol::block_on(async {
         let socket_stream = UnixStream::connect(socket).await?;
         let (socket_read, mut socket_write) = socket_stream.split();
