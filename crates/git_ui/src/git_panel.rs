@@ -65,6 +65,7 @@ use ui::{
     ScrollbarState, SplitButton, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt, maybe};
+use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use workspace::{
     Workspace,
@@ -342,7 +343,7 @@ pub struct GitPanel {
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
     signoff_enabled: bool,
-    pending_serialization: Task<Option<()>>,
+    pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
     max_width_item_index: Option<usize>,
@@ -518,7 +519,7 @@ impl GitPanel {
                 pending_commit: None,
                 amend_pending: false,
                 signoff_enabled: false,
-                pending_serialization: Task::ready(None),
+                pending_serialization: Task::ready(()),
                 single_staged_entry: None,
                 single_tracked_entry: None,
                 project,
@@ -709,31 +710,41 @@ impl GitPanel {
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
 
-        let Some(serialization_key) = self
-            .workspace
-            .read_with(cx, |workspace, _| Self::serialization_key(workspace))
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-
-        self.pending_serialization = cx.background_spawn(
-            async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedGitPanel {
-                            width,
-                            amend_pending,
-                            signoff_enabled,
-                        })?,
-                    )
-                    .await?;
-                anyhow::Ok(())
-            }
-            .log_err(),
-        );
+        self.pending_serialization = cx.spawn(async move |git_panel, cx| {
+            cx.background_executor()
+                .timer(SERIALIZATION_THROTTLE_TIME)
+                .await;
+            let Some(serialization_key) = git_panel
+                .update(cx, |git_panel, cx| {
+                    git_panel
+                        .workspace
+                        .read_with(cx, |workspace, _| Self::serialization_key(workspace))
+                        .ok()
+                        .flatten()
+                })
+                .ok()
+                .flatten()
+            else {
+                return;
+            };
+            cx.background_spawn(
+                async move {
+                    KEY_VALUE_STORE
+                        .write_kvp(
+                            serialization_key,
+                            serde_json::to_string(&SerializedGitPanel {
+                                width,
+                                amend_pending,
+                                signoff_enabled,
+                            })?,
+                        )
+                        .await?;
+                    anyhow::Ok(())
+                }
+                .log_err(),
+            )
+            .await;
+        });
     }
 
     pub(crate) fn set_modal_open(&mut self, open: bool, cx: &mut Context<Self>) {
