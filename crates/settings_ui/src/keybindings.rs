@@ -820,6 +820,24 @@ impl KeymapEditor {
         self.context_menu.is_some()
     }
 
+    fn render_no_matches_hint(&self, _window: &mut Window, _cx: &App) -> AnyElement {
+        let hint = match (self.filter_state, &self.search_mode) {
+            (FilterState::Conflicts, _) => {
+                if self.keybinding_conflict_state.any_conflicts() {
+                    "No conflicting keybinds found that match the provided query"
+                } else {
+                    "No conflicting keybinds found"
+                }
+            }
+            (FilterState::All, SearchMode::KeyStroke { .. }) => {
+                "No keybinds found matching the entered keystrokes"
+            }
+            (FilterState::All, SearchMode::Normal) => "No matches found for the provided query",
+        };
+
+        Label::new(hint).color(Color::Muted).into_any_element()
+    }
+
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected) = self.selected_index {
             let selected = selected + 1;
@@ -1292,6 +1310,10 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
+                    .empty_table_callback({
+                        let this = cx.entity();
+                        move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
+                    })
                     .column_widths([
                         DefiniteLength::Absolute(AbsoluteLength::Pixels(px(40.))),
                         DefiniteLength::Fraction(0.25),
