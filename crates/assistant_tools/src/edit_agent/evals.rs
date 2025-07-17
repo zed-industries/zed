@@ -12,6 +12,7 @@ use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext, Timer};
+use http_client::StatusCode;
 use indoc::{formatdoc, indoc};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
@@ -1687,7 +1688,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                         ) || status.as_u16() == 529;
 
                         if !should_retry {
-                            continue 'retry;
+                            return Err(err.into());
                         }
 
                         // Use server-provided retry_after if available, otherwise use default
