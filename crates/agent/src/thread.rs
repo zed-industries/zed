@@ -396,6 +396,7 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+    last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
 }
 
 #[derive(Clone, Debug)]
@@ -489,10 +490,11 @@ impl Thread {
             retry_state: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model,
+            configured_model: configured_model.clone(),
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -613,6 +615,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
@@ -1280,19 +1283,30 @@ impl Thread {
         // Clear any existing error state
         self.retry_state = None;
 
-        // Get the model and intent from the last attempt
-        if let Some(configured_model) = self.configured_model.as_ref() {
+        // Use the last error context if available, otherwise fall back to configured model
+        let (model, intent) = if let Some((model, intent)) = self.last_error_context.take() {
+            (model, intent)
+        } else if let Some(configured_model) = self.configured_model.as_ref() {
             let model = configured_model.model.clone();
-
-            // Determine the intent based on the current state
             let intent = if self.has_pending_tool_uses() {
                 CompletionIntent::ToolResults
             } else {
                 CompletionIntent::UserPrompt
             };
+            (model, intent)
+        } else if let Some(configured_model) = self.get_or_init_configured_model(cx) {
+            let model = configured_model.model.clone();
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+            (model, intent)
+        } else {
+            return;
+        };
 
-            self.send_to_model(model, intent, window, cx);
-        }
+        self.send_to_model(model, intent, window, cx);
     }
 
     pub fn enable_burn_mode_and_retry(
@@ -2234,7 +2248,10 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        // Only retry if Burn Mode is enabled
+        // Store context for manual retry
+        self.last_error_context = Some((model.clone(), intent));
+
+        // Only auto-retry if Burn Mode is enabled
         if self.completion_mode != CompletionMode::Burn {
             // Show error with retry options
             cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
@@ -2326,7 +2343,7 @@ impl Thread {
 
             // Show error with retry option but not burn mode option (since it's already enabled)
             cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
-                message: format!("Failed after {} retries: {}", max_attempts, error).into(),
+                message: format!("Failed after retrying: {}", error).into(),
                 can_enable_burn_mode: false,
             }));
 

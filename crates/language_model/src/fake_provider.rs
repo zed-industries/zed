@@ -188,6 +188,37 @@ impl LanguageModel for FakeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        // Check for debug environment variable to simulate errors
+        if let Ok(error_type) = std::env::var("ZED_SIMULATE_ERROR") {
+            return async move {
+                match error_type.as_str() {
+                    "rate_limit" => Err(LanguageModelCompletionError::RateLimitExceeded {
+                        provider: provider_name(),
+                        retry_after: Some(std::time::Duration::from_secs(30)),
+                    }),
+                    "server_overload" => Err(LanguageModelCompletionError::ServerOverloaded {
+                        provider: provider_name(),
+                        retry_after: Some(std::time::Duration::from_secs(5)),
+                    }),
+                    "internal_server" => {
+                        Err(LanguageModelCompletionError::ApiInternalServerError {
+                            provider: provider_name(),
+                            message: "Simulated internal server error".to_string(),
+                        })
+                    }
+                    _ => {
+                        // Unknown error type, proceed normally
+                        let (tx, rx) = mpsc::unbounded();
+                        self.current_completion_txs.lock().push((request, tx));
+                        Ok(rx
+                            .map(|text| Ok(LanguageModelCompletionEvent::Text(text)))
+                            .boxed())
+                    }
+                }
+            }
+            .boxed();
+        }
+
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
         async move {
