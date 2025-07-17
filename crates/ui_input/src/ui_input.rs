@@ -135,6 +135,7 @@ impl Render for SingleLineInput {
         let editor_style = EditorStyle {
             background: theme_color.ghost_element_background,
             local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
             text: text_style,
             ..Default::default()
         };

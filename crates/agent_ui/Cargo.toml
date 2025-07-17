@@ -16,7 +16,7 @@ doctest = false
 test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
-acp.workspace = true
+acp_thread.workspace = true
 agent.workspace = true
 agentic-coding-protocol.workspace = true
 agent_settings.workspace = true

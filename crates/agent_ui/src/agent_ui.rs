@@ -25,6 +25,7 @@ mod thread_history;
 mod tool_compatibility;
 mod ui;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
@@ -40,7 +41,7 @@ use language_model::{
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 
 pub use crate::active_thread::ActiveThread;
@@ -57,8 +58,6 @@ actions!(
     [
         /// Creates a new text-based conversation thread.
         NewTextThread,
-        /// Creates a new external agent conversation thread.
-        NewAcpThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
         /// Toggles the navigation menu for switching between threads and views.
@@ -131,6 +130,32 @@ actions!(
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
+}
+
+/// Creates a new external agent conversation thread.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewExternalAgentThread {
+    /// Which agent to use for the conversation.
+    agent: Option<ExternalAgent>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExternalAgent {
+    #[default]
+    Gemini,
+    ClaudeCode,
+}
+
+impl ExternalAgent {
+    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
+            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+        }
+    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.

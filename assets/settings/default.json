@@ -197,6 +197,8 @@
   //    "inline"
   // 3. Place snippets at the bottom of the completion list:
   //    "bottom"
+  // 4. Do not show snippets in the completion list:
+  //    "none"
   "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
@@ -817,7 +819,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
-          "project_notifications": true,
+          "project_notifications": false,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -837,7 +839,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
-          "project_notifications": true,
+          "project_notifications": false,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -1670,6 +1672,10 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "use_on_type_format": false
     },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],
