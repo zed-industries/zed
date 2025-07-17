@@ -22,9 +22,9 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 use util::ResultExt;
 
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Modal,
-    ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _,
-    Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
+    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
+    Styled as _, Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use workspace::{
@@ -179,14 +179,29 @@ impl FilterState {
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    keystroke_text: SharedString,
+    keystrokes: Vec<Keystroke>,
     context: Option<SharedString>,
+}
+
+#[derive(Debug)]
+struct KeybindConflict {
+    first_conflict_index: usize,
+    remaining_conflict_amount: usize,
+}
+
+impl KeybindConflict {
+    fn from_iter<'a>(mut indices: impl Iterator<Item = &'a usize>) -> Option<Self> {
+        indices.next().map(|index| Self {
+            first_conflict_index: *index,
+            remaining_conflict_amount: indices.count(),
+        })
+    }
 }
 
 #[derive(Default)]
 struct ConflictState {
     conflicts: Vec<usize>,
-    action_keybind_mapping: HashMap<ActionMapping, Vec<usize>>,
+    keybind_mapping: HashMap<ActionMapping, Vec<usize>>,
 }
 
 impl ConflictState {
@@ -197,7 +212,7 @@ impl ConflictState {
             .iter()
             .enumerate()
             .filter(|(_, binding)| {
-                !binding.keystroke_text.is_empty()
+                binding.keystrokes().is_some()
                     && binding
                         .source
                         .as_ref()
@@ -217,27 +232,26 @@ impl ConflictState {
                 .flatten()
                 .copied()
                 .collect(),
-            action_keybind_mapping,
+            keybind_mapping: action_keybind_mapping,
         }
     }
 
     fn conflicting_indices_for_mapping(
         &self,
-        action_mapping: ActionMapping,
+        action_mapping: &ActionMapping,
         keybind_idx: usize,
-    ) -> Option<Vec<usize>> {
-        self.action_keybind_mapping
-            .get(&action_mapping)
+    ) -> Option<KeybindConflict> {
+        self.keybind_mapping
+            .get(action_mapping)
             .and_then(|indices| {
-                let mut indices = indices.iter().filter(|&idx| *idx != keybind_idx).peekable();
-                indices.peek().is_some().then(|| indices.copied().collect())
+                KeybindConflict::from_iter(indices.iter().filter(|&idx| *idx != keybind_idx))
             })
     }
 
-    fn will_conflict(&self, action_mapping: ActionMapping) -> Option<Vec<usize>> {
-        self.action_keybind_mapping
-            .get(&action_mapping)
-            .and_then(|indices| indices.is_empty().not().then_some(indices.clone()))
+    fn will_conflict(&self, action_mapping: &ActionMapping) -> Option<KeybindConflict> {
+        self.keybind_mapping
+            .get(action_mapping)
+            .and_then(|indices| KeybindConflict::from_iter(indices.iter()))
     }
 
     fn has_conflict(&self, candidate_idx: &usize) -> bool {
@@ -267,7 +281,7 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
-    humanized_action_names: HashMap<&'static str, SharedString>,
+    humanized_action_names: HumanizedActionNameCache,
     show_hover_menus: bool,
 }
 
@@ -332,14 +346,6 @@ impl KeymapEditor {
         })
         .detach();
 
-        let humanized_action_names =
-            HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
-                (
-                    action_name,
-                    command_palette::humanize_action_name(action_name).into(),
-                )
-            }));
-
         let mut this = Self {
             workspace,
             keybindings: vec![],
@@ -356,8 +362,8 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
-            humanized_action_names,
             search_query_debounce: None,
+            humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
         };
 
@@ -381,6 +387,24 @@ impl KeymapEditor {
                 .collect(),
             SearchMode::Normal => Default::default(),
         }
+    }
+
+    fn filter_on_selected_binding_keystrokes(&mut self, cx: &mut Context<Self>) {
+        let Some(selected_binding) = self.selected_binding() else {
+            return;
+        };
+
+        let keystrokes = selected_binding
+            .keystrokes()
+            .map(Vec::from)
+            .unwrap_or_default();
+
+        self.filter_state = FilterState::All;
+        self.search_mode = SearchMode::KeyStroke { exact_match: true };
+
+        self.keystroke_editor.update(cx, |editor, cx| {
+            editor.set_keystrokes(keystrokes, cx);
+        });
     }
 
     fn on_query_changed(&mut self, cx: &mut Context<Self>) {
@@ -523,6 +547,7 @@ impl KeymapEditor {
     fn process_bindings(
         json_language: Arc<Language>,
         zed_keybind_context_language: Arc<Language>,
+        humanized_action_names: &HumanizedActionNameCache,
         cx: &mut App,
     ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
@@ -570,12 +595,14 @@ impl KeymapEditor {
             let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
-            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+            let humanized_action_name = humanized_action_names.get(action_name);
+            let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action_name,
                 action_arguments,
+                humanized_action_name,
                 action_docs,
                 action_schema: action_schema.get(action_name).cloned(),
                 context: Some(context),
@@ -587,12 +614,14 @@ impl KeymapEditor {
         let empty = SharedString::new_static("");
         for action_name in unmapped_action_names.into_iter() {
             let index = processed_bindings.len();
-            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+            let humanized_action_name = humanized_action_names.get(action_name);
+            let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
                 action_name,
                 action_arguments: None,
+                humanized_action_name,
                 action_docs: action_documentation.get(action_name).copied(),
                 action_schema: action_schema.get(action_name).cloned(),
                 context: None,
@@ -612,14 +641,14 @@ impl KeymapEditor {
                 load_keybind_context_language(workspace.clone(), cx).await;
 
             let (action_query, keystroke_query) = this.update(cx, |this, cx| {
-                let (key_bindings, string_match_candidates) =
-                    Self::process_bindings(json_language, zed_keybind_context_language, cx);
+                let (key_bindings, string_match_candidates) = Self::process_bindings(
+                    json_language,
+                    zed_keybind_context_language,
+                    &this.humanized_action_names,
+                    cx,
+                );
 
                 this.keybinding_conflict_state = ConflictState::new(&key_bindings);
-
-                if !this.keybinding_conflict_state.any_conflicts() {
-                    this.filter_state = FilterState::All;
-                }
 
                 this.keybindings = key_bindings;
                 this.string_match_candidates = Arc::new(string_match_candidates);
@@ -751,10 +780,6 @@ impl KeymapEditor {
     ) {
         let weak = cx.weak_entity();
         self.context_menu = self.selected_binding().map(|selected_binding| {
-            let key_strokes = selected_binding
-                .keystrokes()
-                .map(Vec::from)
-                .unwrap_or_default();
             let selected_binding_has_no_context = selected_binding
                 .context
                 .as_ref()
@@ -784,17 +809,9 @@ impl KeymapEditor {
                         Box::new(CopyContext),
                     )
                     .entry("Show matching keybindings", None, {
-                        let weak = weak.clone();
-                        let key_strokes = key_strokes.clone();
-
                         move |_, cx| {
                             weak.update(cx, |this, cx| {
-                                this.filter_state = FilterState::All;
-                                this.search_mode = SearchMode::KeyStroke { exact_match: true };
-
-                                this.keystroke_editor.update(cx, |editor, cx| {
-                                    editor.set_keystrokes(key_strokes.clone(), cx);
-                                });
+                                this.filter_on_selected_binding_keystrokes(cx);
                             })
                             .ok();
                         }
@@ -824,6 +841,24 @@ impl KeymapEditor {
 
     fn context_menu_deployed(&self) -> bool {
         self.context_menu.is_some()
+    }
+
+    fn render_no_matches_hint(&self, _window: &mut Window, _cx: &App) -> AnyElement {
+        let hint = match (self.filter_state, &self.search_mode) {
+            (FilterState::Conflicts, _) => {
+                if self.keybinding_conflict_state.any_conflicts() {
+                    "No conflicting keybinds found that match the provided query"
+                } else {
+                    "No conflicting keybinds found"
+                }
+            }
+            (FilterState::All, SearchMode::KeyStroke { .. }) => {
+                "No keybinds found matching the entered keystrokes"
+            }
+            (FilterState::All, SearchMode::Normal) => "No matches found for the provided query",
+        };
+
+        Label::new(hint).color(Color::Muted).into_any_element()
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
@@ -1064,11 +1099,35 @@ impl KeymapEditor {
     }
 }
 
+struct HumanizedActionNameCache {
+    cache: HashMap<&'static str, SharedString>,
+}
+
+impl HumanizedActionNameCache {
+    fn new(cx: &App) -> Self {
+        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
+            (
+                action_name,
+                command_palette::humanize_action_name(action_name).into(),
+            )
+        }));
+        Self { cache }
+    }
+
+    fn get(&self, action_name: &'static str) -> SharedString {
+        match self.cache.get(action_name) {
+            Some(name) => name.clone(),
+            None => action_name.into(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action_name: &'static str,
+    humanized_action_name: SharedString,
     action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
     action_schema: Option<schemars::Schema>,
@@ -1079,7 +1138,7 @@ struct ProcessedKeybinding {
 impl ProcessedKeybinding {
     fn get_action_mapping(&self) -> ActionMapping {
         ActionMapping {
-            keystroke_text: self.keystroke_text.clone(),
+            keystrokes: self.keystrokes().map(Vec::from).unwrap_or_default(),
             context: self
                 .context
                 .as_ref()
@@ -1223,38 +1282,39 @@ impl Render for KeymapEditor {
                                     window.dispatch_action(ToggleKeystrokeSearch.boxed_clone(), cx);
                                 }),
                             )
-                            .when(self.keybinding_conflict_state.any_conflicts(), |this| {
-                                this.child(
-                                    IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .tooltip({
-                                            let filter_state = self.filter_state;
+                            .child(
+                                IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .when(self.keybinding_conflict_state.any_conflicts(), |this| {
+                                        this.indicator(Indicator::dot().color(Color::Warning))
+                                    })
+                                    .tooltip({
+                                        let filter_state = self.filter_state;
 
-                                            move |window, cx| {
-                                                Tooltip::for_action(
-                                                    match filter_state {
-                                                        FilterState::All => "Show Conflicts",
-                                                        FilterState::Conflicts => "Hide Conflicts",
-                                                    },
-                                                    &ToggleConflictFilter,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .selected_icon_color(Color::Warning)
-                                        .toggle_state(matches!(
-                                            self.filter_state,
-                                            FilterState::Conflicts
-                                        ))
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                ToggleConflictFilter.boxed_clone(),
+                                        move |window, cx| {
+                                            Tooltip::for_action(
+                                                match filter_state {
+                                                    FilterState::All => "Show Conflicts",
+                                                    FilterState::Conflicts => "Hide Conflicts",
+                                                },
+                                                &ToggleConflictFilter,
+                                                window,
                                                 cx,
-                                            );
-                                        }),
-                                )
-                            }),
+                                            )
+                                        }
+                                    })
+                                    .selected_icon_color(Color::Warning)
+                                    .toggle_state(matches!(
+                                        self.filter_state,
+                                        FilterState::Conflicts
+                                    ))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            ToggleConflictFilter.boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            ),
                     )
                     .when_some(
                         match self.search_mode {
@@ -1310,13 +1370,17 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
+                    .empty_table_callback({
+                        let this = cx.entity();
+                        move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
+                    })
                     .column_widths([
-                        rems(2.5),
-                        rems(16.),
-                        rems(16.),
-                        rems(16.),
-                        rems(32.),
-                        rems(8.),
+                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(40.))),
+                        DefiniteLength::Fraction(0.25),
+                        DefiniteLength::Fraction(0.20),
+                        DefiniteLength::Fraction(0.14),
+                        DefiniteLength::Fraction(0.45),
+                        DefiniteLength::Fraction(0.08),
                     ])
                     .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
@@ -1393,10 +1457,9 @@ impl Render for KeymapEditor {
                                         .id(("keymap action", index))
                                         .child({
                                             if action_name != gpui::NoAction.name() {
-                                                this.humanized_action_names
-                                                    .get(action_name)
-                                                    .cloned()
-                                                    .unwrap_or(action_name.into())
+                                                binding
+                                                    .humanized_action_name
+                                                    .clone()
                                                     .into_any_element()
                                             } else {
                                                 const NULL: SharedString =
@@ -1606,7 +1669,7 @@ impl RenderOnce for SyntaxHighlightedText {
             runs.push(text_style.to_run(text.len() - offset));
         }
 
-        return StyledText::new(text).with_runs(runs);
+        StyledText::new(text).with_runs(runs)
     }
 }
 
@@ -1621,18 +1684,14 @@ impl InputError {
         Self::Warning(message.into())
     }
 
-    fn error(message: impl Into<SharedString>) -> Self {
-        Self::Error(message.into())
+    fn error(error: anyhow::Error) -> Self {
+        Self::Error(error.to_string().into())
     }
 
     fn content(&self) -> &SharedString {
         match self {
             InputError::Warning(content) | InputError::Error(content) => content,
         }
-    }
-
-    fn is_warning(&self) -> bool {
-        matches!(self, InputError::Warning(_))
     }
 }
 
@@ -1766,17 +1825,14 @@ impl KeybindingEditorModal {
         }
     }
 
-    fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
+    fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) {
         if self
             .error
             .as_ref()
-            .is_some_and(|old_error| old_error.is_warning() && *old_error == error)
+            .is_none_or(|old_error| *old_error != error)
         {
-            false
-        } else {
             self.error = Some(error);
             cx.notify();
-            true
         }
     }
 
@@ -1818,66 +1874,62 @@ impl KeybindingEditorModal {
         Ok(Some(context))
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save_or_display_error(&mut self, cx: &mut Context<Self>) {
+        self.save(cx).map_err(|err| self.set_error(err, cx)).ok();
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) -> Result<(), InputError> {
         let existing_keybind = self.editing_keybind.clone();
         let fs = self.fs.clone();
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
-        let new_keystrokes = match self.validate_keystrokes(cx) {
-            Err(err) => {
-                self.set_error(InputError::error(err.to_string()), cx);
-                return;
-            }
-            Ok(keystrokes) => keystrokes,
-        };
 
-        let new_context = match self.validate_context(cx) {
-            Err(err) => {
-                self.set_error(InputError::error(err.to_string()), cx);
-                return;
-            }
-            Ok(context) => context,
-        };
+        let new_keystrokes = self
+            .validate_keystrokes(cx)
+            .map_err(InputError::error)?
+            .into_iter()
+            .map(remove_key_char)
+            .collect::<Vec<_>>();
 
-        let new_action_args = match self.validate_action_arguments(cx) {
-            Err(input_err) => {
-                self.set_error(InputError::error(input_err.to_string()), cx);
-                return;
-            }
-            Ok(input) => input,
-        };
+        let new_context = self.validate_context(cx).map_err(InputError::error)?;
+        let new_action_args = self
+            .validate_action_arguments(cx)
+            .map_err(InputError::error)?;
 
         let action_mapping = ActionMapping {
-            keystroke_text: ui::text_for_keystrokes(&new_keystrokes, cx).into(),
-            context: new_context.as_ref().map(Into::into),
+            keystrokes: new_keystrokes,
+            context: new_context.map(SharedString::from),
         };
 
         let conflicting_indices = if self.creating {
             self.keymap_editor
                 .read(cx)
                 .keybinding_conflict_state
-                .will_conflict(action_mapping)
+                .will_conflict(&action_mapping)
         } else {
             self.keymap_editor
                 .read(cx)
                 .keybinding_conflict_state
-                .conflicting_indices_for_mapping(action_mapping, self.editing_keybind_idx)
+                .conflicting_indices_for_mapping(&action_mapping, self.editing_keybind_idx)
         };
-        if let Some(conflicting_indices) = conflicting_indices {
-            let first_conflicting_index = conflicting_indices[0];
+
+        conflicting_indices.map(|KeybindConflict {
+            first_conflict_index,
+            remaining_conflict_amount,
+        }|
+        {
             let conflicting_action_name = self
                 .keymap_editor
                 .read(cx)
                 .keybindings
-                .get(first_conflicting_index)
+                .get(first_conflict_index)
                 .map(|keybind| keybind.action_name);
 
             let warning_message = match conflicting_action_name {
                 Some(name) => {
-                    let confliction_action_amount = conflicting_indices.len() - 1;
-                    if confliction_action_amount > 0 {
+                    if remaining_conflict_amount > 0 {
                         format!(
                             "Your keybind would conflict with the \"{}\" action and {} other bindings",
-                            name, confliction_action_amount
+                            name, remaining_conflict_amount
                         )
                     } else {
                         format!("Your keybind would conflict with the \"{}\" action", name)
@@ -1886,23 +1938,26 @@ impl KeybindingEditorModal {
                 None => {
                     log::info!(
                         "Could not find action in keybindings with index {}",
-                        first_conflicting_index
+                        first_conflict_index
                     );
                     "Your keybind would conflict with other actions".to_string()
                 }
             };
 
-            if self.set_error(InputError::warning(warning_message), cx) {
-                return;
+            let warning = InputError::warning(warning_message);
+            if self.error.as_ref().is_some_and(|old_error| *old_error == warning) {
+                Ok(())
+           } else {
+                Err(warning)
             }
-        }
+        }).unwrap_or(Ok(()))?;
 
         let create = self.creating;
 
         let status_toast = StatusToast::new(
             format!(
                 "Saved edits to the {} action.",
-                command_palette::humanize_action_name(&self.editing_keybind.action_name)
+                &self.editing_keybind.humanized_action_name
             ),
             cx,
             move |this, _cx| {
@@ -1924,8 +1979,7 @@ impl KeybindingEditorModal {
             if let Err(err) = save_keybinding_update(
                 create,
                 existing_keybind,
-                &new_keystrokes,
-                new_context.as_deref(),
+                &action_mapping,
                 new_action_args.as_deref(),
                 &fs,
                 tab_size,
@@ -1933,17 +1987,11 @@ impl KeybindingEditorModal {
             .await
             {
                 this.update(cx, |this, cx| {
-                    this.set_error(InputError::error(err.to_string()), cx);
+                    this.set_error(InputError::error(err), cx);
                 })
                 .log_err();
             } else {
                 this.update(cx, |this, cx| {
-                    let action_mapping = ActionMapping {
-                        keystroke_text: ui::text_for_keystrokes(new_keystrokes.as_slice(), cx)
-                            .into(),
-                        context: new_context.map(SharedString::from),
-                    };
-
                     this.keymap_editor.update(cx, |keymap, cx| {
                         keymap.previous_edit = Some(PreviousEdit::Keybinding {
                             action_mapping,
@@ -1960,6 +2008,8 @@ impl KeybindingEditorModal {
             }
         })
         .detach();
+
+        Ok(())
     }
 
     fn key_context(&self) -> KeyContext {
@@ -1982,7 +2032,7 @@ impl KeybindingEditorModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        self.save(cx);
+        self.save_or_display_error(cx);
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1990,11 +2040,17 @@ impl KeybindingEditorModal {
     }
 }
 
+fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
+    Keystroke {
+        modifiers,
+        key,
+        ..Default::default()
+    }
+}
+
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
-        let action_name =
-            command_palette::humanize_action_name(&self.editing_keybind.action_name).to_string();
 
         v_flex()
             .w(rems(34.))
@@ -2014,7 +2070,9 @@ impl Render for KeybindingEditorModal {
                                 .gap_0p5()
                                 .border_b_1()
                                 .border_color(theme.border_variant)
-                                .child(Label::new(action_name))
+                                .child(Label::new(
+                                    self.editing_keybind.humanized_action_name.clone(),
+                                ))
                                 .when_some(self.editing_keybind.action_docs, |this, docs| {
                                     this.child(
                                         Label::new(docs).size(LabelSize::Small).color(Color::Muted),
@@ -2085,7 +2143,7 @@ impl Render for KeybindingEditorModal {
                                 )
                                 .child(Button::new("save-btn", "Save").on_click(cx.listener(
                                     |this, _event, _window, cx| {
-                                        this.save(cx);
+                                        this.save_or_display_error(cx);
                                     },
                                 ))),
                         ),
@@ -2273,8 +2331,7 @@ async fn load_keybind_context_language(
 async fn save_keybinding_update(
     create: bool,
     existing: ProcessedKeybinding,
-    new_keystrokes: &[Keystroke],
-    new_context: Option<&str>,
+    action_mapping: &ActionMapping,
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     tab_size: usize,
@@ -2301,8 +2358,8 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: new_context,
-        keystrokes: new_keystrokes,
+        context: action_mapping.context.as_ref().map(|a| &***a),
+        keystrokes: &action_mapping.keystrokes,
         action_name: &existing.action_name,
         action_arguments: new_args,
     };
@@ -2772,7 +2829,7 @@ impl Render for KeystrokeInput {
             IconName::PlayFilled
         };
 
-        return h_flex()
+        h_flex()
             .id("keystroke-input")
             .track_focus(&self.outer_focus_handle)
             .py_2()
@@ -2895,7 +2952,7 @@ impl Render for KeystrokeInput {
                                 this.clear_keystrokes(&ClearKeystrokes, window, cx);
                             })),
                     ),
-            );
+            )
     }
 }
 

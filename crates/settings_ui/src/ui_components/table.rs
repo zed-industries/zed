@@ -40,6 +40,10 @@ impl<const COLS: usize> TableContents<COLS> {
             TableContents::UniformList(data) => data.row_count,
         }
     }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 pub struct TableInteractionState {
@@ -375,6 +379,7 @@ pub struct Table<const COLS: usize = 3> {
     interaction_state: Option<WeakEntity<TableInteractionState>>,
     column_widths: Option<[Length; COLS]>,
     map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
+    empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -388,6 +393,7 @@ impl<const COLS: usize> Table<COLS> {
             interaction_state: None,
             column_widths: None,
             map_row: None,
+            empty_table_callback: None,
         }
     }
 
@@ -458,6 +464,15 @@ impl<const COLS: usize> Table<COLS> {
         callback: impl Fn((usize, Div), &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.map_row = Some(Rc::new(callback));
+        self
+    }
+
+    /// Provide a callback that is invoked when the table is rendered without any rows
+    pub fn empty_table_callback(
+        mut self,
+        callback: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.empty_table_callback = Some(Rc::new(callback));
         self
     }
 }
@@ -582,6 +597,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
         };
 
         let width = self.width;
+        let no_rows_rendered = self.rows.is_empty();
 
         let table = div()
             .when_some(width, |this, width| this.w(width))
@@ -661,6 +677,21 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             )
                         })
                     }),
+            )
+            .when_some(
+                no_rows_rendered
+                    .then_some(self.empty_table_callback)
+                    .flatten(),
+                |this, callback| {
+                    this.child(
+                        h_flex()
+                            .size_full()
+                            .p_3()
+                            .items_start()
+                            .justify_center()
+                            .child(callback(window, cx)),
+                    )
+                },
             )
             .when_some(
                 width.and(interaction_state.as_ref()),
