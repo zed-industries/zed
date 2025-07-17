@@ -134,7 +134,6 @@ pub trait Fs: Send + Sync {
     // fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
-    fn global_git_ignore_path(&self, abs_work_directory: &Path) -> Option<PathBuf>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -820,19 +819,6 @@ impl Fs for RealFs {
             .output()?;
 
         Ok(())
-    }
-
-    fn global_git_ignore_path(&self, abs_work_directory_path: &Path) -> Option<PathBuf> {
-        new_std_command("git")
-            .current_dir(abs_work_directory_path)
-            .args(&["config", "--get", "core.excludesFile"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .filter(|output| !output.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| Some(dirs::config_dir()?.join("git").join("ignore")))
     }
 
     fn is_fake(&self) -> bool {
@@ -2327,10 +2313,6 @@ impl Fs for FakeFs {
         _fallback_branch_name: String,
     ) -> Result<()> {
         smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
-    }
-
-    fn global_git_ignore_path(&self, _abs_work_directory: &Path) -> Option<PathBuf> {
-        None
     }
 
     fn is_fake(&self) -> bool {

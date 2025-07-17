@@ -3233,31 +3233,13 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let contents = fs.load(abs_path).await?;
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     let mut builder = GitignoreBuilder::new(parent);
-
-    if let Some(path) = fs.global_git_ignore_path(parent) {
-        if let Ok(contents) = fs.load(&path).await {
-            for line in contents.lines() {
-                let _ = builder.add_line(Some(path.clone()), line);
-            }
-        }
-    }
-
-    let repo_git_exclude_path = parent.join(".git").join("info").join("exclude");
-    if let Ok(contents) = fs.load(&repo_git_exclude_path).await {
-        for line in contents.lines() {
-            let _ = builder.add_line(Some(repo_git_exclude_path.clone()), line);
-        }
-    }
-
-    let contents = fs.load(abs_path).await?;
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
-
-    let gitignore = builder.build()?;
-    Ok(gitignore)
+    Ok(builder.build()?)
 }
 
 impl Deref for Worktree {
