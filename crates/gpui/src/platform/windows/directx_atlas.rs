@@ -12,7 +12,7 @@ use windows::Win32::Graphics::{
 
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Size, platform::AtlasTextureList,
+    Point, Size, platform::AtlasTextureList,
 };
 
 pub(crate) struct DirectXAtlas(Mutex<DirectXAtlasState>);
@@ -52,25 +52,6 @@ impl DirectXAtlas {
         let lock = self.0.lock();
         let tex = lock.texture(id);
         tex.view.clone()
-    }
-
-    pub(crate) fn allocate(
-        &self,
-        size: Size<DevicePixels>,
-        texture_kind: AtlasTextureKind,
-    ) -> Option<AtlasTile> {
-        self.0.lock().allocate(size, texture_kind)
-    }
-
-    pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
-        let mut lock = self.0.lock();
-        let textures = match texture_kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-        };
-        for texture in textures.iter_mut() {
-            texture.clear();
-        }
     }
 }
 
@@ -249,10 +230,6 @@ impl DirectXAtlasState {
 }
 
 impl DirectXAtlasTexture {
-    fn clear(&mut self) {
-        self.allocator.clear();
-    }
-
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
         let allocation = self.allocator.allocate(size.into())?;
         let tile = AtlasTile {
@@ -299,5 +276,20 @@ impl DirectXAtlasTexture {
 
     fn is_unreferenced(&mut self) -> bool {
         self.live_atlas_keys == 0
+    }
+}
+
+impl From<Size<DevicePixels>> for etagere::Size {
+    fn from(size: Size<DevicePixels>) -> Self {
+        etagere::Size::new(size.width.into(), size.height.into())
+    }
+}
+
+impl From<etagere::Point> for Point<DevicePixels> {
+    fn from(value: etagere::Point) -> Self {
+        Point {
+            x: DevicePixels::from(value.x),
+            y: DevicePixels::from(value.y),
+        }
     }
 }
