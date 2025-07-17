@@ -19,7 +19,6 @@ use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
-use wayland_client::event_created_child;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
@@ -35,6 +34,7 @@ use wayland_client::{
         wl_shm_pool, wl_surface,
     },
 };
+use wayland_client::{event_created_child, protocol::wl_touch};
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
@@ -195,6 +195,8 @@ pub(crate) struct WaylandClientState {
     gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
+    wl_touch: Option<wl_touch::WlTouch>,
+    wl_touch_frame: Option<WlTouchFrame>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
@@ -555,6 +557,8 @@ impl WaylandClient {
             gpu_context,
             wl_seat: seat,
             wl_pointer: None,
+            wl_touch: None,
+            wl_touch_frame: None,
             wl_keyboard: None,
             cursor_shape_device: None,
             data_device,
@@ -884,6 +888,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     if let Some(wl_pointer) = state.wl_pointer.take() {
                         wl_pointer.release();
                     }
+                    if let Some(wl_touch) = state.wl_touch.take() {
+                        wl_touch.release();
+                    }
                     if let Some(wl_keyboard) = state.wl_keyboard.take() {
                         wl_keyboard.release();
                     }
@@ -1152,6 +1159,20 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                 }
 
                 state.wl_keyboard = Some(keyboard);
+            }
+            if capabilities.contains(wl_seat::Capability::Touch) {
+                let touch = seat.get_touch(qh, ());
+                // state.cursor_shape_device = state
+                //     .globals
+                //     .cursor_shape_manager
+                //     .as_ref()
+                //     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&touch, qh, ()));
+
+                if let Some(wl_touch) = &state.wl_touch {
+                    wl_touch.release();
+                }
+
+                state.wl_touch = Some(touch);
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let pointer = seat.get_pointer(qh, ());
@@ -1495,6 +1516,214 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
         BTN_FORWARD | BTN_EXTRA => MouseButton::Navigate(NavigationDirection::Forward),
         _ => return None,
     })
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WlTouchEvent {
+    pub kind: WlTouchEventKind,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) enum WlTouchEventKind {
+    Down,
+    Up,
+    #[default]
+    Motion,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WlTouchFrame {
+    pub events: HashMap<i32, WlTouchEvent>,
+    pub first_touch_id: Option<i32>,
+}
+
+impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        wl_touch: &wl_touch::WlTouch,
+        event: wl_touch::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+        // initial sketch of this is going to use the mouse pointer-related structs
+        // few things to note (at least on my display looking at `wev` output):
+        //  - no "leave" event or similar, so long as you hold down your finger, it just keeps tracking
+        //  - each finger is a point, no "shape". this makes tracking 2-finger scrolling FUN(tm)
+        //      - that being said, they're grouped in "frames", which should? help
+        //  - pen is COMPLETELY separate here, barely registers in `wev`
+        let mut frame = state.wl_touch_frame.get_or_insert_default();
+        match event {
+            wl_touch::Event::Down {
+                id,
+                x,
+                y,
+                serial,
+                surface,
+                time,
+            } => {
+                let evt = WlTouchEvent {
+                    x,
+                    y,
+                    kind: WlTouchEventKind::Down,
+                };
+                if frame.events.is_empty() {
+                    frame.first_touch_id = Some(id);
+                }
+                frame.events.insert(id, evt);
+
+                state.serial_tracker.update(SerialKind::MouseEnter, serial);
+                state.mouse_location = Some(point(px(x as f32), px(y as f32)));
+                state.button_pressed = None;
+
+                if let Some(window) = get_window(&mut state, &surface.id()) {
+                    state.mouse_focused_window = Some(window.clone());
+
+                    if state.enter_token.is_some() {
+                        state.enter_token = None;
+                    }
+                    if let Some(style) = state.cursor_style {
+                        if let CursorStyle::None = style {
+                            let wl_pointer = state
+                                .wl_pointer
+                                .clone()
+                                .expect("window is focused by pointer");
+                            wl_pointer.set_cursor(serial, None, 0, 0);
+                        } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                            cursor_shape_device.set_shape(serial, style.to_shape());
+                        }
+                    }
+                    drop(state);
+                    window.set_hovered(true);
+                }
+            }
+            wl_touch::Event::Up { id, .. } => {
+                // these events will mostly just buffer and defer to when a Frame event is received
+                if let Some(old_evt) = frame.events.get_mut(&id) {
+                    old_evt.kind = WlTouchEventKind::Up;
+                } else {
+                    frame.events.insert(
+                        id,
+                        WlTouchEvent {
+                            x: 0.0,
+                            y: 0.0,
+                            kind: WlTouchEventKind::Up,
+                        },
+                    );
+                }
+            }
+            wl_touch::Event::Motion { time: _, id, x, y } => {
+                let evt = WlTouchEvent {
+                    x,
+                    y,
+                    kind: WlTouchEventKind::Motion,
+                };
+                frame.events.insert(id, evt);
+                let primary_id = frame.first_touch_id;
+                if state.mouse_focused_window.is_none() {
+                    return;
+                }
+                // only update pointer position for the first finger
+                if primary_id == Some(id) {
+                    state.mouse_location = Some(point(px(x as f32), px(y as f32)));
+                }
+
+                if let Some(window) = state.mouse_focused_window.clone() {
+                    if state
+                        .keyboard_focused_window
+                        .as_ref()
+                        .map_or(false, |keyboard_window| window.ptr_eq(&keyboard_window))
+                    {
+                        state.enter_token = None;
+                    }
+                    let input = PlatformInput::MouseMove(MouseMoveEvent {
+                        position: state.mouse_location.unwrap(),
+                        pressed_button: state.button_pressed,
+                        modifiers: state.modifiers,
+                    });
+                    drop(state);
+                    window.handle_input(input);
+                }
+            }
+            wl_touch::Event::Frame => {
+                // End of a group. So e.g. a 2-finger touch will produce 2 (down|motion|up) events
+                // and then one of these
+
+                // Winit seems to ignore these, but I think for MVP of touch input making minimal other changes
+                // I may need to handle more here, in order to distribute correct pointer events,
+                // since GPUI has no real notion of multiple pointers or touch.
+                //
+                // logic: handle motion/position, then handle down/up
+                // 2+ motion events in frame treated as select event, 1 finger as scroll
+                // wayland clients don't seem to register a second finger down like a mouse button
+                // except when it's a two-finger tap
+                // long-press for "right-click"
+
+                if state.scroll_event_received {
+                    state.scroll_event_received = false;
+                    let continuous = state.continuous_scroll_delta.take();
+                    let discrete = state.discrete_scroll_delta.take();
+                    if let Some(continuous) = continuous {
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position: state.mouse_location.unwrap(),
+                                delta: ScrollDelta::Pixels(continuous),
+                                modifiers: state.modifiers,
+                                touch_phase: TouchPhase::Moved,
+                            });
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    } else if let Some(discrete) = discrete {
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position: state.mouse_location.unwrap(),
+                                delta: ScrollDelta::Lines(discrete),
+                                modifiers: state.modifiers,
+                                touch_phase: TouchPhase::Moved,
+                            });
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    }
+                }
+            }
+            wl_touch::Event::Cancel => {
+                // looking with wev, i don't seem to get these?
+                // need to check w diff compositors
+                // currently handling like a leave event, same as Winit
+                frame.events.clear();
+                if let Some(focused_window) = state.mouse_focused_window.clone() {
+                    let input = PlatformInput::MouseExited(MouseExitEvent {
+                        position: state.mouse_location.unwrap(),
+                        pressed_button: state.button_pressed,
+                        modifiers: state.modifiers,
+                    });
+                    state.mouse_focused_window = None;
+                    state.mouse_location = None;
+                    state.button_pressed = None;
+
+                    drop(state);
+                    focused_window.handle_input(input);
+                    focused_window.set_hovered(false);
+                }
+            }
+            wl_touch::Event::Shape { .. } => {
+                // looking with wev, i don't seem to get these?
+                // need to check w diff compositors
+                // Doing nothing with this for now, will see if it's required for
+                // e.g. two-finger scrolling on some displays
+            }
+            wl_touch::Event::Orientation { .. } => {
+                // Doing nothing with this for now
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
