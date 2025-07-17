@@ -51,7 +51,7 @@ You can connect them by adding their commands directly to your `settings.json`, 
 ```
 
 Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open configuration` action).
-From there, you can add it through the modal that appears when clicking the "Add Custom Server" button.
+From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
 
 ## Using MCP Servers
 
@@ -59,21 +59,21 @@ From there, you can add it through the modal that appears when clicking the "Add
 
 Regardless of whether you're using MCP servers as an extension or adding them directly, most servers out there need some sort of configuration as part of the set up process.
 
-In the case of extensions, Zed will pop a modal surfacing what is required for you to properly set up a given server.
-For example, the GitHub MCP extension requires you do add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+In the case of extensions, Zed will show a modal displaying what is required for you to properly set up a given server.
+For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
-In the case of custom servers, make sure you figure out in the provider documentation what type of command, arguments, and environment variables are needed to be added to the JSON.
+In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.
 
-To check whether your MCP server is properly installed, go to the Agent Panel's settings view and watch the indicator dot to the side of their name.
+To check whether your MCP server is properly installed, go to the Agent Panel's settings view and watch the indicator dot next to its name.
 If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
 ### Using in the Agent Panel
 
-Once installation is all set, you can just come back to the Agent Panel and prompt away.
-Mentioning your MCP server by name already helps the agent to pick it up.
+Once installation is complete, you can return to the Agent Panel and start prompting.
+Mentioning your MCP server by name helps the agent pick it up.
 
-Then, in case you want to ensure a given server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflict) and turning on only the tools coming from the MCP server.
+If you want to ensure a given server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflicts) and turning on only the tools coming from the MCP server.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that with their [Container Use MCP server](https://zed.dev/extensions/container-use-mcp-server):
 
@@ -119,3 +119,9 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
   }
 }
 ```
+
+### Tool Approval
+
+Zed's Agent Panel includes the `agent.always_allow_tool_actions` setting that, if set to `false`, will require you to give permission for any editing attempt as well as tool calls coming from MCP servers.
+
+You can change this by setting this key to `true` in either your `settings.json` or through the Agent Panel's settings view.
