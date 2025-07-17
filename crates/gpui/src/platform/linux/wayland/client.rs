@@ -1700,14 +1700,14 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 };
                 frame.events.insert(id, evt);
                 let primary_id = frame.first_touch_id;
-                if state.mouse_focused_window.is_none() {
-                    return;
-                }
+
                 // only update pointer position for the first finger
                 if primary_id == Some(id) {
                     state.mouse_location = Some(point(px(x as f32), px(y as f32)));
                 }
-
+                if state.mouse_focused_window.is_none() {
+                    return;
+                }
                 if let Some(window) = state.mouse_focused_window.clone() {
                     if state
                         .keyboard_focused_window
@@ -1738,7 +1738,19 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 // wayland clients don't seem to register a second finger down like a mouse button
                 // except when it's a two-finger tap
                 // long-press for "right-click"
-
+                let (x, y) = if let Some(primary_id) = frame.first_touch_id {
+                    if let Some(evt) = frame.events.get(&primary_id) {
+                        (evt.x, evt.y)
+                    } else {
+                        frame
+                            .events
+                            .values()
+                            .next()
+                            .map_or((0.0, 0.0), |evt| (evt.x, evt.y))
+                    }
+                } else {
+                    (0.0, 0.0)
+                };
                 if frame.is_down_frame() {
                     let num_pressed = frame.num_down();
                     if num_pressed > 1 {
@@ -1773,8 +1785,8 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                                 .last_mouse_button
                                 .is_some_and(|prev_button| prev_button == button)
                             && is_within_click_distance(
-                                state.click.last_location,
-                                state.mouse_location.unwrap(),
+                                last_click_location,
+                                mouse_location.unwrap_or(point(px(x as f32), px(y as f32))),
                             )
                         {
                             state.click.current_count += 1;
@@ -1784,14 +1796,16 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
 
                         state.click.last_click = Instant::now();
                         state.click.last_mouse_button = Some(button);
-                        state.click.last_location = state.mouse_location.unwrap();
+                        state.click.last_location =
+                            mouse_location.unwrap_or(point(px(x as f32), px(y as f32)));
 
                         state.button_pressed = Some(button);
 
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::MouseDown(MouseDownEvent {
                                 button,
-                                position: state.mouse_location.unwrap(),
+                                position: mouse_location
+                                    .unwrap_or(point(px(x as f32), px(y as f32))),
                                 modifiers: state.modifiers,
                                 click_count: state.click.current_count,
                                 first_mouse: state.enter_token.take().is_some(),
@@ -1809,7 +1823,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     if let Some(window) = state.mouse_focused_window.clone() {
                         let input = PlatformInput::MouseUp(MouseUpEvent {
                             button,
-                            position: state.mouse_location.unwrap(),
+                            position: mouse_location.unwrap_or(point(px(x as f32), px(y as f32))),
                             modifiers: state.modifiers,
                             click_count: state.click.current_count,
                         });
@@ -1824,21 +1838,23 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         if down_elapsed > DOUBLE_CLICK_INTERVAL * 4
                             && is_within_click_distance(
                                 last_click_location,
-                                mouse_location.unwrap(),
+                                mouse_location.unwrap_or(point(px(x as f32), px(y as f32))),
                             )
                         {
                             let button = MouseButton::Right;
                             frame.button = Some(button);
                             state.click.last_click = Instant::now();
                             state.click.last_mouse_button = Some(button);
-                            state.click.last_location = state.mouse_location.unwrap();
+                            state.click.last_location =
+                                mouse_location.unwrap_or(point(px(x as f32), px(y as f32)));
 
                             state.button_pressed = Some(button);
 
                             if let Some(window) = state.mouse_focused_window.clone() {
                                 let input = PlatformInput::MouseDown(MouseDownEvent {
                                     button,
-                                    position: state.mouse_location.unwrap(),
+                                    position: mouse_location
+                                        .unwrap_or(point(px(x as f32), px(y as f32))),
                                     modifiers: state.modifiers,
                                     click_count: state.click.current_count,
                                     first_mouse: state.enter_token.take().is_some(),
@@ -1858,7 +1874,8 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     if let Some(continuous) = continuous {
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                position: state.mouse_location.unwrap(),
+                                position: mouse_location
+                                    .unwrap_or(point(px(x as f32), px(y as f32))),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
@@ -1869,7 +1886,8 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     } else if let Some(discrete) = discrete {
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                position: state.mouse_location.unwrap(),
+                                position: mouse_location
+                                    .unwrap_or(point(px(x as f32), px(y as f32))),
                                 delta: ScrollDelta::Lines(discrete),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
