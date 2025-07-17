@@ -64,15 +64,16 @@ For example, the GitHub MCP extension requires you do add a [Personal Access Tok
 
 In the case of custom servers, make sure you figure out in the provider documentation what type of command, arguments, and environment variables are needed to be added to the JSON.
 
+To check whether your MCP server is properly installed, go to the Agent Panel's settings view and watch the indicator dot to the side of their name.
+If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
+If not, other colors and tooltip messages will indicate what is happening.
+
 ### Using in the Agent Panel
 
-Once your MCP server is properly installed, you can go to the Agent Panel's settings view to see their state.
-If they're running correctly, you'll see a green indicator dot close to the server name.
-
-From this point, you can just come back to the Agent Panel and prompt away.
+Once installation is all set, you can just come back to the Agent Panel and prompt away.
 Mentioning your MCP server by name already helps the agent to pick it up.
 
-But, if you want to guarantee or ensure a given server will be used, you can create [a custom profile](./ai/agent-panel.md#custom-profiles) by turning off the built-in tools and turning on only the tools coming from the MCP server.
+Then, in case you want to ensure a given server will be used, you can create [a custom profile](./ai/agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflict) and turning on only the tools coming from the MCP server.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that with their [Container Use MCP server](https://zed.dev/extensions/container-use-mcp-server):
 
