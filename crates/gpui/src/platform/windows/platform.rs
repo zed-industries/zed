@@ -34,7 +34,6 @@ pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
-    // gpu_context: BladeContext,
     directx_devices: DirectXDevices,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
@@ -112,7 +111,6 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        // let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
         let directx_devices = DirectXDevices::new().context("Unable to init directx devices.")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
