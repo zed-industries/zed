@@ -837,7 +837,7 @@ impl crate::Keystroke {
                     && key.is_ascii()
                 {
                     if key.is_ascii_graphic() {
-                        key_utf8.clone()
+                        key_utf8.to_lowercase()
                     // map ctrl-a to a
                     } else if key_utf32 <= 0x1f {
                         ((key_utf32 as u8 + 0x60) as char).to_string()
