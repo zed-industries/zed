@@ -1525,7 +1525,7 @@ pub(crate) struct WlTouchEvent {
     pub y: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WlTouchEventKind {
     Down,
     Up,
@@ -1537,6 +1537,58 @@ pub(crate) enum WlTouchEventKind {
 pub(crate) struct WlTouchFrame {
     pub events: HashMap<i32, WlTouchEvent>,
     pub first_touch_id: Option<i32>,
+    pub time_down: Option<Instant>,
+    pub button: Option<MouseButton>,
+}
+
+impl WlTouchFrame {
+    pub fn num_touches(&self) -> usize {
+        self.events.len()
+    }
+    pub fn is_motion_frame(&self) -> bool {
+        self.events
+            .iter()
+            .all(|(_, e)| e.kind == WlTouchEventKind::Motion)
+    }
+
+    pub fn has_up(&self) -> bool {
+        self.events
+            .iter()
+            .any(|(_, e)| e.kind == WlTouchEventKind::Up)
+    }
+
+    pub fn has_down(&self) -> bool {
+        self.events
+            .iter()
+            .any(|(_, e)| e.kind == WlTouchEventKind::Down)
+    }
+
+    pub fn is_up_frame(&self) -> bool {
+        self.events
+            .iter()
+            .all(|(_, e)| e.kind == WlTouchEventKind::Up)
+    }
+
+    pub fn is_down_frame(&self) -> bool {
+        self.events
+            .iter()
+            .all(|(_, e)| e.kind == WlTouchEventKind::Down)
+    }
+
+    pub fn num_down(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|(_, e)| e.kind == WlTouchEventKind::Down)
+            .count()
+    }
+
+    pub fn clear_up(&mut self) {
+        self.events.retain(|_, e| e.kind != WlTouchEventKind::Up);
+    }
+
+    pub fn clear_down(&mut self) {
+        self.events.retain(|_, e| e.kind != WlTouchEventKind::Down);
+    }
 }
 
 impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
@@ -1556,6 +1608,9 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
         //  - each finger is a point, no "shape". this makes tracking 2-finger scrolling FUN(tm)
         //      - that being said, they're grouped in "frames", which should? help
         //  - pen is COMPLETELY separate here, barely registers in `wev`
+
+        let last_click_location = state.click.last_location;
+        let mouse_location = state.mouse_location;
         let mut frame = state.wl_touch_frame.get_or_insert_default();
         log::debug!("wl_touch event: {:?}", event);
         match event {
@@ -1616,6 +1671,26 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         },
                     );
                 }
+                // if ALL the touch points have been cleared
+                if frame.is_up_frame() {
+                    frame.events.clear();
+                    frame.first_touch_id = None;
+
+                    if let Some(focused_window) = state.mouse_focused_window.clone() {
+                        let input = PlatformInput::MouseExited(MouseExitEvent {
+                            position: state.mouse_location.unwrap(),
+                            pressed_button: state.button_pressed,
+                            modifiers: state.modifiers,
+                        });
+                        state.mouse_focused_window = None;
+                        state.mouse_location = None;
+                        state.button_pressed = None;
+
+                        drop(state);
+                        focused_window.handle_input(input);
+                        focused_window.set_hovered(false);
+                    }
+                }
             }
             wl_touch::Event::Motion { time: _, id, x, y } => {
                 let evt = WlTouchEvent {
@@ -1663,8 +1738,119 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 // wayland clients don't seem to register a second finger down like a mouse button
                 // except when it's a two-finger tap
                 // long-press for "right-click"
-                
-                
+
+                if frame.is_down_frame() {
+                    let num_pressed = frame.num_down();
+                    if num_pressed > 1 {
+                        // scroll?
+                    } else {
+                        frame.button = Some(MouseButton::Left);
+                        frame.time_down = Some(Instant::now());
+
+                        let button = frame.button.unwrap_or_default();
+                        if let Some(window) = state.keyboard_focused_window.clone() {
+                            if state.composing && state.text_input.is_some() {
+                                drop(state);
+                                // text_input_v3 don't have something like a reset function
+                                this.disable_ime();
+                                this.enable_ime();
+                                window.handle_ime(ImeInput::UnmarkText);
+                                state = client.borrow_mut();
+                            } else if let (Some(text), Some(compose)) =
+                                (state.pre_edit_text.take(), state.compose_state.as_mut())
+                            {
+                                compose.reset();
+                                drop(state);
+                                window.handle_ime(ImeInput::InsertText(text));
+                                state = client.borrow_mut();
+                            }
+                        }
+                        let click_elapsed = state.click.last_click.elapsed();
+
+                        if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && state
+                                .click
+                                .last_mouse_button
+                                .is_some_and(|prev_button| prev_button == button)
+                            && is_within_click_distance(
+                                state.click.last_location,
+                                state.mouse_location.unwrap(),
+                            )
+                        {
+                            state.click.current_count += 1;
+                        } else {
+                            state.click.current_count = 1;
+                        }
+
+                        state.click.last_click = Instant::now();
+                        state.click.last_mouse_button = Some(button);
+                        state.click.last_location = state.mouse_location.unwrap();
+
+                        state.button_pressed = Some(button);
+
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::MouseDown(MouseDownEvent {
+                                button,
+                                position: state.mouse_location.unwrap(),
+                                modifiers: state.modifiers,
+                                click_count: state.click.current_count,
+                                first_mouse: state.enter_token.take().is_some(),
+                            });
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                        return;
+                    }
+                } else if frame.has_up() {
+                    let button = frame.button.unwrap_or_default();
+                    frame.button = None;
+                    state.button_pressed = None;
+
+                    if let Some(window) = state.mouse_focused_window.clone() {
+                        let input = PlatformInput::MouseUp(MouseUpEvent {
+                            button,
+                            position: state.mouse_location.unwrap(),
+                            modifiers: state.modifiers,
+                            click_count: state.click.current_count,
+                        });
+                        drop(state);
+                        window.handle_input(input);
+                    }
+                    return;
+                } else {
+                    if let Some(down) = frame.time_down {
+                        let down_elapsed = down.elapsed();
+                        // long-press == right-click
+                        if down_elapsed > DOUBLE_CLICK_INTERVAL * 4
+                            && is_within_click_distance(
+                                last_click_location,
+                                mouse_location.unwrap(),
+                            )
+                        {
+                            let button = MouseButton::Right;
+                            frame.button = Some(button);
+                            state.click.last_click = Instant::now();
+                            state.click.last_mouse_button = Some(button);
+                            state.click.last_location = state.mouse_location.unwrap();
+
+                            state.button_pressed = Some(button);
+
+                            if let Some(window) = state.mouse_focused_window.clone() {
+                                let input = PlatformInput::MouseDown(MouseDownEvent {
+                                    button,
+                                    position: state.mouse_location.unwrap(),
+                                    modifiers: state.modifiers,
+                                    click_count: state.click.current_count,
+                                    first_mouse: state.enter_token.take().is_some(),
+                                });
+                                drop(state);
+                                window.handle_input(input);
+                            }
+                            return;
+                        }
+                    }
+                }
+
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
                     let continuous = state.continuous_scroll_delta.take();
@@ -1699,6 +1885,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 // need to check w diff compositors
                 // currently handling like a leave event, same as Winit
                 frame.events.clear();
+                frame.first_touch_id = None;
                 if let Some(focused_window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseExited(MouseExitEvent {
                         position: state.mouse_location.unwrap(),
