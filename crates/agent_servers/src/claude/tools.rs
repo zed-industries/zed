@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
 pub enum ClaudeTool {
+    // Task,
     Edit(Option<EditToolParams>),
     ReadFile(Option<ReadToolParams>),
-    Ls,
-    Glob,
+    Ls(Option<LsToolParams>),
+    Glob(Option<GlobToolParams>),
     Grep,
     Terminal(Option<BashToolParams>),
     WebFetch,
@@ -30,8 +31,8 @@ impl ClaudeTool {
             "mcp__zed__Edit" => Self::Edit(serde_json::from_value(input).log_err()),
             "MultiEdit" => Self::Edit(None),
             "Write" => Self::Edit(None),
-            "LS" => Self::Ls,
-            "Glob" => Self::Glob,
+            "LS" => Self::Ls(serde_json::from_value(input).log_err()),
+            "Glob" => Self::Glob(serde_json::from_value(input).log_err()),
             "Grep" => Self::Grep,
             "Bash" => Self::Terminal(serde_json::from_value(input).log_err()),
             "WebFetch" => Self::WebFetch,
@@ -62,9 +63,19 @@ impl ClaudeTool {
             ClaudeTool::Terminal(Some(params)) => format!("`{}`", params.command),
             ClaudeTool::Terminal(None) => "Terminal".into(),
             ClaudeTool::ReadFile(_) => "Read File".into(),
-            ClaudeTool::Ls => "List Directory".into(),
+            ClaudeTool::Ls(Some(params)) => {
+                format!("List Directory {}", params.path.to_string_lossy())
+            }
+            ClaudeTool::Ls(None) => "List Directory".into(),
             ClaudeTool::Edit(_) => "Edit".into(),
-            ClaudeTool::Glob => "Glob".into(),
+            ClaudeTool::Glob(Some(GlobToolParams { path, pattern })) => {
+                if let Some(path) = path {
+                    format!("Glob {}{pattern}", path.to_string_lossy())
+                } else {
+                    format!("Glob {pattern}")
+                }
+            }
+            ClaudeTool::Glob(None) => "Glob".into(),
             ClaudeTool::Grep => "Grep".into(),
             ClaudeTool::WebFetch => "Fetch".into(),
             ClaudeTool::WebSearch => "Web Search".into(),
@@ -90,8 +101,8 @@ impl ClaudeTool {
         match self {
             Self::Edit(_) => acp::Icon::Pencil,
             Self::ReadFile(_) => acp::Icon::FileSearch,
-            Self::Ls => acp::Icon::Folder,
-            Self::Glob => acp::Icon::FileSearch,
+            Self::Ls(_) => acp::Icon::Folder,
+            Self::Glob(_) => acp::Icon::FileSearch,
             Self::Grep => acp::Icon::Regex,
             Self::Terminal(_) => acp::Icon::Terminal,
             Self::WebSearch => acp::Icon::Globe,
@@ -112,14 +123,15 @@ impl ClaudeTool {
             Self::Terminal(Some(BashToolParams {
                 description,
                 command,
+                ..
             })) => acp::ToolCallConfirmation::Execute {
                 command: command.clone(),
                 root_command: command.clone(),
-                description: Some(description.clone()),
+                description: description.clone(),
             },
             Self::Terminal(None)
-            | Self::Ls
-            | Self::Glob
+            | Self::Ls(_)
+            | Self::Glob(_)
             | Self::Grep
             | Self::TodoWrite
             | Self::WebSearch
@@ -143,10 +155,20 @@ impl ClaudeTool {
                 path: abs_path.clone(),
                 line: *offset,
             }],
+            Self::Glob(Some(GlobToolParams {
+                path: Some(path), ..
+            })) => vec![ToolCallLocation {
+                path: path.clone(),
+                line: None,
+            }],
+            Self::Ls(Some(LsToolParams { path, .. })) => vec![ToolCallLocation {
+                path: path.clone(),
+                line: None,
+            }],
             Self::Edit(None)
             | Self::ReadFile(None)
-            | Self::Ls
-            | Self::Glob
+            | Self::Ls(None)
+            | Self::Glob(_)
             | Self::Grep
             | Self::Terminal(_)
             | Self::WebFetch
@@ -186,8 +208,10 @@ pub struct ReadToolParams {
     /// The absolute path to the file to read.
     pub abs_path: PathBuf,
     /// Which line to start reading from. Omit to start from the beginning.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u32>,
     /// How many lines to read. Omit for the whole file.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
 
@@ -199,6 +223,30 @@ pub struct ReadToolResponse {
 
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct BashToolParams {
-    pub description: String,
+    /// Shell command to execute
     pub command: String,
+    /// 5-10 word description of what command does
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Timeout in ms (max 600000ms/10min, default 120000ms)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u32>,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct GlobToolParams {
+    /// Glob pattern like **/*.js or src/**/*.ts
+    pub pattern: String,
+    /// Directory to search in (omit for current directory)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct LsToolParams {
+    /// Absolute path to directory
+    pub path: PathBuf,
+    /// Array of glob patterns to ignore
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<String>,
 }
