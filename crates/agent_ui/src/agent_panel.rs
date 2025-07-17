@@ -2199,7 +2199,9 @@ impl AgentPanel {
                 .map_or(true, |model| {
                     model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
                 }),
-            ActiveView::AcpThread { .. } | ActiveView::History | ActiveView::Configuration => false,
+            ActiveView::ExternalAgentThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => false,
         }
     }
 
