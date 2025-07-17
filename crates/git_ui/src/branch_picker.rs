@@ -227,6 +227,7 @@ impl BranchListDelegate {
 
     fn create_branch(
         &self,
+        from_branch: Option<SharedString>,
         new_branch_name: SharedString,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -236,6 +237,11 @@ impl BranchListDelegate {
         };
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
+            if let Some(based_branch) = from_branch {
+                repo.update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?
+                    .await??;
+            }
+
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name.to_string())
             })?
@@ -366,12 +372,22 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
         if entry.is_new {
-            self.create_branch(entry.branch.name().to_owned().into(), window, cx);
+            let from_branch = if secondary {
+                self.default_branch.clone()
+            } else {
+                None
+            };
+            self.create_branch(
+                from_branch,
+                entry.branch.name().to_owned().into(),
+                window,
+                cx,
+            );
             return;
         }
 
@@ -452,6 +468,21 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
+        let icon = if let Some(default_branch) = self.default_branch.as_ref()
+            && entry.is_new
+        {
+            Some(
+                IconButton::new("branch-from-default", IconName::GitBranchSmall).on_click(
+                    cx.listener(move |this, _, window, cx| {
+                        this.delegate.set_selected_index(ix, window, cx);
+                        this.delegate.confirm(true, window, cx);
+                    }),
+                ),
+            )
+        } else {
+            None
+        };
+
         let branch_name = if entry.is_new {
             h_flex()
                 .gap_1()
@@ -516,6 +547,7 @@ impl PickerDelegate for BranchListDelegate {
                                     .truncate()
                                     .color(Color::Muted)
                             }))
+                            .when_some(icon, |el, icon| el.child(icon))
                         }),
                 ),
         )
