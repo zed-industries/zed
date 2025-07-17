@@ -404,15 +404,5 @@ async fn test_partial_accept_inline_completion(cx: &mut gpui::TestAppContext) {
         editor.accept_partial_inline_completion(&Default::default(), window, cx);
     });
 
-    // Test documents current behavior - this shows the issue with partial accepts
-    // The fake provider doesn't adjust for what's already been typed
     cx.assert_editor_state("let x = helloˇ;");
-    cx.editor(|editor, _, _| {
-        // For providers that don't handle partial accepts properly,
-        // the completion might still be active but suggesting the wrong thing
-        println!(
-            "Has active completion after partial accept: {}",
-            editor.has_active_inline_completion()
-        );
-    });
 }
