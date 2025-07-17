@@ -22,7 +22,7 @@ use crate::{
     MovePageDown, MovePageUp, OpenFollowingPreview, OpenFollowingPreviewToTheSide, OpenPreview,
     OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
-    markdown_parser::parse_markdown,
+    markdown_parser::parse_markdown_with_project_root,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
 
@@ -491,15 +491,26 @@ impl MarkdownPreviewView {
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
 
-            let (contents, file_location) = view.update(cx, |_, cx| {
-                let editor = editor.read(cx);
-                let contents = editor.buffer().read(cx).snapshot(cx).text();
-                let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
-                (contents, file_location)
-            })?;
+            let (contents, file_location, project_root, project_files) =
+                view.update(cx, |view, cx| {
+                    let editor = editor.read(cx);
+                    let contents = editor.buffer().read(cx).snapshot(cx).text();
+                    let file_location =
+                        MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+                    let project_root = view.get_project_root(cx);
+                    let project_files = view.get_project_files(cx);
+                    (contents, file_location, project_root, project_files)
+                })?;
 
             let parsing_task = cx.background_spawn(async move {
-                parse_markdown(&contents, file_location, Some(language_registry)).await
+                parse_markdown_with_project_root(
+                    &contents,
+                    file_location,
+                    project_root,
+                    project_files,
+                    Some(language_registry),
+                )
+                .await
             });
             let contents = parsing_task.await;
             view.update(cx, move |view, cx| {
@@ -539,6 +550,52 @@ impl MarkdownPreviewView {
                 file.abs_path(cx).parent().map(|p| p.to_path_buf())
             } else {
                 None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn get_project_root(&self, cx: &App) -> Option<PathBuf> {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let project = workspace.project().read(cx);
+
+            // Get the first visible worktree as the project root
+            if let Some(worktree) = project.visible_worktrees(cx).next() {
+                return Some(worktree.read(cx).abs_path().to_path_buf());
+            }
+        }
+        None
+    }
+
+    fn get_project_files(&self, cx: &App) -> Option<Vec<PathBuf>> {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let project = workspace.project().read(cx);
+
+            let mut all_files = Vec::new();
+
+            // Collect all .md files from all visible worktrees
+            for worktree in project.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let worktree_root = worktree.abs_path();
+
+                // Get all entries and filter for .md files
+                for path in worktree.paths() {
+                    if let Some(extension) = path.extension() {
+                        if extension == "md" {
+                            let full_path = worktree_root.join(path.as_ref());
+                            all_files.push(full_path);
+                        }
+                    }
+                }
+            }
+
+            if all_files.is_empty() {
+                None
+            } else {
+                Some(all_files)
             }
         } else {
             None

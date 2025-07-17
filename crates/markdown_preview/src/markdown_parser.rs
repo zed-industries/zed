@@ -11,8 +11,27 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
+    parse_markdown_with_project_root(
+        markdown_input,
+        file_location_directory,
+        None,
+        None,
+        language_registry,
+    )
+    .await
+}
+
+pub async fn parse_markdown_with_project_root(
+    markdown_input: &str,
+    file_location_directory: Option<PathBuf>,
+    project_root: Option<PathBuf>,
+    project_files: Option<Vec<PathBuf>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+) -> ParsedMarkdown {
+    // Preprocess wiki-style [[link]]s before markdown parsing
+    let wiki_preprocessed = preprocess_wikilinks(markdown_input);
     // Preprocess LaTeX math syntax before markdown parsing
-    let preprocessed_input = preprocess_math_syntax(markdown_input);
+    let preprocessed_input = preprocess_math_syntax(&wiki_preprocessed);
 
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
@@ -21,6 +40,8 @@ pub async fn parse_markdown(
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
+        project_root,
+        project_files,
         language_registry,
     );
     let renderer = parser.parse_document().await;
@@ -89,6 +110,26 @@ fn find_closing_double_dollar(text: &str) -> Option<usize> {
     None
 }
 
+/// Preprocess wiki-style [[link]]s into standard markdown autolinks.
+fn preprocess_wikilinks(input: &str) -> String {
+    let mut result = String::new();
+    let mut rest = input;
+    while let Some(start) = rest.find("[[") {
+        result.push_str(&rest[..start]);
+        if let Some(end) = rest[start + 2..].find("]]") {
+            let inner = &rest[start + 2..start + 2 + end];
+            // Create autolink format which pulldown-cmark always recognizes
+            result.push_str(&format!("[{}](<{}.md>)", inner, inner));
+            rest = &rest[start + 2 + end + 2..];
+        } else {
+            result.push_str(&rest[start..]);
+            rest = "";
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 struct MarkdownParser<'a> {
     tokens: Vec<(Event<'a>, Range<usize>)>,
     /// The current index in the tokens array
@@ -96,6 +137,8 @@ struct MarkdownParser<'a> {
     /// The blocks that we have successfully parsed so far
     parsed: Vec<ParsedMarkdownElement>,
     file_location_directory: Option<PathBuf>,
+    project_root: Option<PathBuf>,
+    project_files: Option<Vec<PathBuf>>,
     language_registry: Option<Arc<LanguageRegistry>>,
 }
 
@@ -117,11 +160,15 @@ impl<'a> MarkdownParser<'a> {
     fn new(
         tokens: Vec<(Event<'a>, Range<usize>)>,
         file_location_directory: Option<PathBuf>,
+        project_root: Option<PathBuf>,
+        project_files: Option<Vec<PathBuf>>,
         language_registry: Option<Arc<LanguageRegistry>>,
     ) -> Self {
         Self {
             tokens,
             file_location_directory,
+            project_root,
+            project_files,
             language_registry,
             cursor: 0,
             parsed: vec![],
@@ -303,6 +350,7 @@ impl<'a> MarkdownParser<'a> {
 
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
+
                     let mut style = MarkdownHighlightStyle::default();
 
                     if bold_depth > 0 {
@@ -432,10 +480,35 @@ impl<'a> MarkdownParser<'a> {
                     Tag::Strong => bold_depth += 1,
                     Tag::Strikethrough => strikethrough_depth += 1,
                     Tag::Link { dest_url, .. } => {
-                        link = Link::identify(
-                            self.file_location_directory.clone(),
-                            dest_url.to_string(),
-                        );
+                        let dest_str = dest_url.to_string();
+
+                        // Check if this looks like a wiki link (ends with .md, from our preprocessing)
+                        if dest_str.ends_with(".md") {
+                            // This is likely a wiki link - search for existing file first
+                            let display_path = PathBuf::from(&dest_str);
+
+                            // Search for existing file in project
+                            let full_path =
+                                if let Some(existing_path) = self.find_file_in_project(&dest_str) {
+                                    existing_path
+                                } else if let Some(project_root) = &self.project_root {
+                                    // File doesn't exist, create in project root
+                                    project_root.join(&dest_str)
+                                } else if let Some(dir) = &self.file_location_directory {
+                                    // Fallback to file directory
+                                    dir.join(&dest_str)
+                                } else {
+                                    PathBuf::from(&dest_str)
+                                };
+
+                            link = Some(Link::Path {
+                                display_path,
+                                path: full_path,
+                            });
+                        } else {
+                            // Use normal link identification for other links
+                            link = Link::identify(self.file_location_directory.clone(), dest_str);
+                        }
                     }
                     Tag::Image { dest_url, .. } => {
                         if !text.is_empty() {
@@ -502,6 +575,20 @@ impl<'a> MarkdownParser<'a> {
         }
 
         markdown_text_like
+    }
+
+    fn find_file_in_project(&self, filename: &str) -> Option<PathBuf> {
+        if let Some(project_files) = &self.project_files {
+            // Search for files that end with the target filename
+            for file_path in project_files {
+                if let Some(file_name) = file_path.file_name() {
+                    if file_name.to_string_lossy() == filename {
+                        return Some(file_path.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn process_text_for_math(
@@ -1995,5 +2082,429 @@ fn main() {
         } else {
             panic!("Expected math block");
         }
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_preprocessing() {
+        // Test that wiki link preprocessing works correctly
+        let input = "This is a [[Test Note]] and another [[My Other Note]].";
+        let expected =
+            "This is a [Test Note](Test_Note.md) and another [My Other Note](My_Other_Note.md).";
+        let result = preprocess_wikilinks(input);
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_parsing() {
+        // Test that wiki links are parsed as clickable links
+        let parsed = parse("Here is a [[Test Note]] link.").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                println!("Parsed text: '{}'", text.contents);
+                println!("Regions: {:?}", text.regions);
+                println!("Region ranges: {:?}", text.region_ranges);
+
+                // Check if we have any links in the regions
+                let has_link = text.regions.iter().any(|region| region.link.is_some());
+                if !has_link {
+                    panic!("Expected to find a link in the parsed text regions");
+                }
+            } else {
+                panic!("Expected text chunk");
+            }
+        } else {
+            panic!("Expected paragraph");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_with_spaces() {
+        // Test wiki links with spaces in names
+        let parsed = parse("Link to [[My Test Note]] here.").await;
+        assert_eq!(parsed.children.len(), 1);
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                println!("Text with spaces: '{}'", text.contents);
+                println!("Regions: {:?}", text.regions);
+
+                // Should contain the link text
+                assert!(text.contents.contains("My Test Note"));
+
+                // Should have a link region
+                let has_link = text.regions.iter().any(|region| {
+                    if let Some(link) = &region.link {
+                        match link {
+                            Link::Path { display_path, .. } => {
+                                display_path.to_string_lossy().contains("My_Test_Note.md")
+                            }
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                });
+                assert!(has_link, "Expected to find a path link for My_Test_Note.md");
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_relative_to_project_root() {
+        // Test that wiki links should resolve relative to project root, not current file directory
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("wiki_test_project");
+        let _ = fs::remove_dir_all(&temp_dir); // Clean up if exists
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create project structure:
+        // temp_dir/
+        //   ├── current_file.md
+        //   ├── subdir/
+        //   │   └── nested_file.md
+        //   └── target_note.md
+
+        let subdir = temp_dir.join("subdir");
+        fs::create_dir_all(&subdir).unwrap();
+
+        let current_file = subdir.join("nested_file.md");
+        let target_file = temp_dir.join("target_note.md");
+
+        fs::write(&current_file, "# Nested File").unwrap();
+        fs::write(&target_file, "# Target Note").unwrap();
+
+        // Parse wiki link from the nested file
+        let markdown_content = "Link to [[target_note]] from nested location.";
+
+        // Currently uses file directory (subdir), but should use project root (temp_dir)
+        let parsed = parse_markdown_with_project_root(
+            markdown_content,
+            Some(subdir.clone()),   // This is the current file's directory
+            Some(temp_dir.clone()), // This is the project root
+            None,                   // No project files for this test
+            None,
+        )
+        .await;
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                if let Some(region) = text.regions.iter().find(|r| r.link.is_some()) {
+                    if let Some(Link::Path { path, .. }) = &region.link {
+                        println!("Current resolution: {:?}", path);
+                        println!("Expected path: {:?}", target_file);
+
+                        // Now this should resolve to temp_dir/target_note.md (correct)
+                        assert_eq!(
+                            path, &target_file,
+                            "Should resolve relative to project root"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_project_root_detection() {
+        // Test how we might detect project root for wiki link resolution
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("wiki_project_root_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create a typical project structure with common root indicators
+        let project_markers = vec![".git", "Cargo.toml", "package.json", ".zed"];
+
+        // Create one of these markers to indicate project root
+        fs::create_dir_all(temp_dir.join(".git")).unwrap();
+
+        let deep_nested = temp_dir.join("docs").join("guides").join("deep");
+        fs::create_dir_all(&deep_nested).unwrap();
+
+        let current_file = deep_nested.join("current.md");
+        fs::write(&current_file, "# Current File").unwrap();
+
+        // Test logic for finding project root from deeply nested file
+        let mut search_path = deep_nested.clone();
+        let mut project_root = None;
+
+        loop {
+            for marker in &project_markers {
+                if search_path.join(marker).exists() {
+                    project_root = Some(search_path.clone());
+                    break;
+                }
+            }
+
+            if project_root.is_some() {
+                break;
+            }
+
+            match search_path.parent() {
+                Some(parent) => search_path = parent.to_path_buf(),
+                None => break,
+            }
+        }
+
+        assert_eq!(project_root, Some(temp_dir.clone()));
+        println!("Found project root: {:?}", project_root);
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_comprehensive_project_structure() {
+        // Test wiki links work correctly across a realistic project structure
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("wiki_comprehensive_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create a realistic project structure:
+        // temp_dir/
+        //   ├── .git/
+        //   ├── README.md
+        //   ├── docs/
+        //   │   ├── guides/
+        //   │   │   └── getting_started.md
+        //   │   └── api_reference.md
+        //   ├── 100 reference system/
+        //   │   ├── index.md
+        //   │   └── concepts.md
+        //   └── 000 inbox/
+        //       └── random_notes.md
+
+        // Create directories
+        fs::create_dir_all(temp_dir.join(".git")).unwrap();
+        fs::create_dir_all(temp_dir.join("docs/guides")).unwrap();
+        fs::create_dir_all(temp_dir.join("100 reference system")).unwrap();
+        fs::create_dir_all(temp_dir.join("000 inbox")).unwrap();
+
+        // Create files with wiki links
+        let readme_content = "# Project\n\nSee [[getting_started]] and [[concepts]].";
+        let getting_started_content =
+            "# Getting Started\n\nRefer to [[concepts]] and [[api_reference]].";
+        let api_reference_content = "# API Reference\n\nBack to [[index]].";
+        let index_content = "# Reference System\n\nSee [[concepts]] for details.";
+        let concepts_content = "# Concepts\n\nCheck the [[getting_started]] guide.";
+
+        fs::write(temp_dir.join("README.md"), readme_content).unwrap();
+        fs::write(
+            temp_dir.join("docs/guides/getting_started.md"),
+            getting_started_content,
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("docs/api_reference.md"),
+            api_reference_content,
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("100 reference system/index.md"),
+            index_content,
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("100 reference system/concepts.md"),
+            concepts_content,
+        )
+        .unwrap();
+
+        // Test parsing from deeply nested file should resolve to project root
+        let nested_file_dir = temp_dir.join("docs/guides");
+        // Create a project files list for searching
+        let project_files = vec![
+            temp_dir.join("README.md"),
+            temp_dir.join("docs/guides/getting_started.md"),
+            temp_dir.join("docs/api_reference.md"),
+            temp_dir.join("100 reference system/index.md"),
+            temp_dir.join("100 reference system/concepts.md"),
+        ];
+
+        let parsed = parse_markdown_with_project_root(
+            getting_started_content,
+            Some(nested_file_dir.clone()),
+            Some(temp_dir.clone()),
+            Some(project_files.clone()),
+            None,
+        )
+        .await;
+
+        // Check that [[concepts]] resolves to project_root/concepts.md, not nested_dir/concepts.md
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[1] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                let concept_link = text.regions.iter().find(|r| {
+                    if let Some(Link::Path { path, .. }) = &r.link {
+                        path.file_name().unwrap().to_str().unwrap() == "concepts.md"
+                    } else {
+                        false
+                    }
+                });
+
+                assert!(concept_link.is_some(), "Should find concepts link");
+                if let Some(Link::Path { path, .. }) = &concept_link.unwrap().link {
+                    // Should resolve to the actual concepts.md file location
+                    let expected_path = temp_dir.join("100 reference system/concepts.md");
+                    assert_eq!(path, &expected_path);
+                    println!("✓ Wiki link correctly found existing file: {:?}", path);
+                }
+            }
+        }
+
+        // Test that links work regardless of spaces in directory names
+        let reference_system_content = "Link to [[getting_started]] from reference system.";
+        let parsed_from_spaced_dir = parse_markdown_with_project_root(
+            reference_system_content,
+            Some(temp_dir.join("100 reference system")),
+            Some(temp_dir.clone()),
+            Some(project_files),
+            None,
+        )
+        .await;
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed_from_spaced_dir.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                let link_found = text.regions.iter().any(|r| r.link.is_some());
+                assert!(
+                    link_found,
+                    "Should find wiki link even from directory with spaces"
+                );
+            }
+        }
+
+        println!("✓ All wiki link project structure tests passed");
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[gpui::test]
+    async fn test_wiki_link_finds_existing_files_anywhere_in_project() {
+        // Test that wiki links find existing files regardless of directory structure
+        use std::fs;
+
+        let temp_dir = std::env::temp_dir().join("wiki_file_search_test");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create complex project structure:
+        // temp_dir/
+        //   ├── inbox/
+        //   │   └── testfile1.md (contains [[lecture2]])
+        //   ├── school/
+        //   │   └── math/
+        //   │       └── semester1/
+        //   │           └── lecture2.md (target file)
+        //   └── notes/
+        //       └── lecture2_backup.md (different file)
+
+        let inbox_dir = temp_dir.join("inbox");
+        let math_dir = temp_dir.join("school/math/semester1");
+        let notes_dir = temp_dir.join("notes");
+
+        fs::create_dir_all(&inbox_dir).unwrap();
+        fs::create_dir_all(&math_dir).unwrap();
+        fs::create_dir_all(&notes_dir).unwrap();
+
+        // Create the files
+        let testfile1_content = "# Test File\n\nSee my [[lecture2]] notes.";
+        let lecture2_content = "# Lecture 2\n\nThis is the math lecture.";
+        let backup_content = "# Lecture 2 Backup\n\nThis is a backup.";
+
+        let testfile1_path = inbox_dir.join("testfile1.md");
+        let lecture2_path = math_dir.join("lecture2.md");
+        let backup_path = notes_dir.join("lecture2_backup.md");
+
+        fs::write(&testfile1_path, testfile1_content).unwrap();
+        fs::write(&lecture2_path, lecture2_content).unwrap();
+        fs::write(&backup_path, backup_content).unwrap();
+
+        // Create project files list (what would come from worktree scanning)
+        let project_files = vec![
+            testfile1_path.clone(),
+            lecture2_path.clone(),
+            backup_path.clone(),
+        ];
+
+        // Parse wiki link from inbox/testfile1.md
+        let parsed = parse_markdown_with_project_root(
+            testfile1_content,
+            Some(inbox_dir.clone()), // Current file directory
+            Some(temp_dir.clone()),  // Project root
+            Some(project_files),     // All project files
+            None,
+        )
+        .await;
+
+        // Check that [[lecture2]] resolves to the actual lecture2.md file, not inbox/lecture2.md
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[1] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                let lecture_link = text.regions.iter().find(|r| {
+                    if let Some(Link::Path { path, .. }) = &r.link {
+                        path.file_name().unwrap().to_str().unwrap() == "lecture2.md"
+                    } else {
+                        false
+                    }
+                });
+
+                assert!(lecture_link.is_some(), "Should find lecture2 link");
+                if let Some(Link::Path { path, .. }) = &lecture_link.unwrap().link {
+                    // Should resolve to school/math/semester1/lecture2.md, not inbox/lecture2.md
+                    assert_eq!(path, &lecture2_path);
+                    println!("✓ Wiki link correctly found existing file: {:?}", path);
+                }
+            }
+        }
+
+        // Test case where file doesn't exist - should fall back to project root
+        let missing_link_content = "Link to [[nonexistent_file]].";
+        let parsed_missing = parse_markdown_with_project_root(
+            missing_link_content,
+            Some(inbox_dir.clone()),
+            Some(temp_dir.clone()),
+            Some(vec![testfile1_path, lecture2_path, backup_path]), // Doesn't include nonexistent_file.md
+            None,
+        )
+        .await;
+
+        if let ParsedMarkdownElement::Paragraph(chunks) = &parsed_missing.children[0] {
+            if let MarkdownParagraphChunk::Text(text) = &chunks[0] {
+                let missing_link = text.regions.iter().find(|r| {
+                    if let Some(Link::Path { path, .. }) = &r.link {
+                        path.file_name().unwrap().to_str().unwrap() == "nonexistent_file.md"
+                    } else {
+                        false
+                    }
+                });
+
+                assert!(
+                    missing_link.is_some(),
+                    "Should create link for missing file"
+                );
+                if let Some(Link::Path { path, .. }) = &missing_link.unwrap().link {
+                    // Should fall back to project root for new files
+                    let expected_new_file = temp_dir.join("nonexistent_file.md");
+                    assert_eq!(path, &expected_new_file);
+                    println!(
+                        "✓ Missing file correctly defaults to project root: {:?}",
+                        path
+                    );
+                }
+            }
+        }
+
+        println!("✓ All project-wide file search tests passed");
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
