@@ -3922,13 +3922,17 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let bg_color = if is_marked {
+        let bg_color = if is_sticky {
+            cx.theme().colors().panel_sticky_entry_background
+        } else if is_marked {
             item_colors.marked
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if is_marked {
+        let bg_hover_color = if is_sticky {
+            cx.theme().colors().panel_sticky_entry_background
+        } else if is_marked {
             item_colors.marked
         } else {
             item_colors.hover
