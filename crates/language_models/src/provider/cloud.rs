@@ -644,15 +644,6 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
-fn deserialize_status_code<'de, D>(deserializer: D) -> Result<StatusCode, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let status_u16 = u16::deserialize(deserializer)?;
-    StatusCode::from_u16(status_u16)
-        .map_err(|_| serde::de::Error::custom(format!("invalid HTTP status code: {}", status_u16)))
-}
-
 /// Represents error responses from Zed's cloud API.
 ///
 /// Example JSON for an upstream HTTP error:
@@ -663,33 +654,54 @@ where
 ///   "upstream_status": 503
 /// }
 /// ```
-#[derive(serde::Deserialize)]
-#[serde(tag = "code")]
-enum CloudApiError {
-    #[serde(rename = "upstream_http_error")]
-    UpstreamHttpError {
-        message: String,
-        #[serde(deserialize_with = "deserialize_status_code")]
-        upstream_status: StatusCode,
-        #[serde(default)]
-        retry_after: Option<f64>,
-    },
+#[derive(Debug, serde::Deserialize)]
+struct CloudApiError {
+    code: String,
+    message: String,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_status_code")]
+    upstream_status: Option<StatusCode>,
+    #[serde(default)]
+    retry_after: Option<f64>,
+}
+
+fn deserialize_optional_status_code<'de, D>(deserializer: D) -> Result<Option<StatusCode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<u16> = Option::deserialize(deserializer)?;
+    Ok(opt.and_then(|code| StatusCode::from_u16(code).ok()))
 }
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        // Try to parse as upstream_http_error
-        if let Ok(CloudApiError::UpstreamHttpError {
-            message,
-            upstream_status,
-            retry_after,
-        }) = serde_json::from_str::<CloudApiError>(&error.body)
-        {
-            return LanguageModelCompletionError::UpstreamProviderError {
-                message,
-                status: upstream_status,
-                retry_after: retry_after.map(Duration::from_secs_f64),
-            };
+        // Try to parse as CloudApiError
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
+            // Check if this is an upstream error by looking at the code
+            if cloud_error.code.starts_with("upstream_http_") {
+                // Determine the status code
+                let status = if let Some(status) = cloud_error.upstream_status {
+                    // Use the upstream_status field if present
+                    status
+                } else if cloud_error.code.ends_with("_error") {
+                    // If it ends with "_error" but no status code, use what we got
+                    error.status
+                } else {
+                    // Try to parse the status code from the code string (e.g., "upstream_http_429")
+                    cloud_error
+                        .code
+                        .strip_prefix("upstream_http_")
+                        .and_then(|code_str| code_str.parse::<u16>().ok())
+                        .and_then(|code| StatusCode::from_u16(code).ok())
+                        .unwrap_or(error.status)
+                };
+
+                return LanguageModelCompletionError::UpstreamProviderError {
+                    message: cloud_error.message,
+                    status,
+                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+                };
+            }
         }
 
         let retry_after = None;
@@ -1428,7 +1440,34 @@ mod tests {
             ),
         }
 
-        // Test case 5: Invalid JSON in error body should fall back to regular error handling
+        // Test case 5: upstream_http_429 format should be converted to UpstreamProviderError
+        let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError {
+                message,
+                status,
+                retry_after,
+            } => {
+                assert_eq!(message, "Upstream Anthropic rate limit exceeded.");
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream_http_429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Test case 6: Invalid JSON in error body should fall back to regular error handling
         let error_body = "Not JSON at all";
 
         let api_error = ApiError {
