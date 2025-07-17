@@ -3202,7 +3202,10 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    div()
+                                        .min_w(rems_from_px(145.))
+                                        .child(LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    )
                                 )
                                 .child(
                                     h_flex()
@@ -3247,7 +3250,6 @@ impl ActiveThread {
                                                 },
                                             ))
                                         })
-                                        .child(ui::Divider::vertical())
                                         .child({
                                             let tool_id = tool_use.id.clone();
                                             Button::new("allow-tool-action", "Allow")
