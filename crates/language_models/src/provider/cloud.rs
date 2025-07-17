@@ -1342,7 +1342,7 @@ mod tests {
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
-        // Test case 1: upstream_http_error with 503 status should become ServerOverloaded
+        // upstream_http_error with 503 status should become ServerOverloaded
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
 
         let api_error = ApiError {
@@ -1366,7 +1366,7 @@ mod tests {
             ),
         }
 
-        // Test case 2: upstream_http_error with 500 status should become ApiInternalServerError
+        // upstream_http_error with 500 status should become ApiInternalServerError
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
 
         let api_error = ApiError {
@@ -1390,7 +1390,7 @@ mod tests {
             ),
         }
 
-        // Test case 3: upstream_http_error with 429 status should become RateLimitExceeded
+        // upstream_http_error with 429 status should become RateLimitExceeded
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
 
         let api_error = ApiError {
@@ -1414,7 +1414,7 @@ mod tests {
             ),
         }
 
-        // Test case 4: Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
         let error_body = "Regular internal server error";
 
         let api_error = ApiError {
@@ -1436,7 +1436,7 @@ mod tests {
             ),
         }
 
-        // Test case 5: upstream_http_429 format should be converted to UpstreamProviderError
+        // upstream_http_429 format should be converted to UpstreamProviderError
         let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
 
         let api_error = ApiError {
@@ -1463,7 +1463,7 @@ mod tests {
             ),
         }
 
-        // Test case 6: Invalid JSON in error body should fall back to regular error handling
+        // Invalid JSON in error body should fall back to regular error handling
         let error_body = "Not JSON at all";
 
         let api_error = ApiError {
