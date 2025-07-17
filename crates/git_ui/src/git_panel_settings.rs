@@ -76,7 +76,7 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
     
-    /// Customise the commit_message_prompt by overriding it.
+    /// Customize the commit_message_prompt by overriding it.
     /// 
     /// default: "{default_prompt}"
     pub commit_message_prompt: Option<String>,

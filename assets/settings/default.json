@@ -733,6 +733,9 @@
     //
     // Default: false
     "collapse_untracked_diff": false,
+    /// Customize the commit_message_prompt by overriding it.
+    /// 
+    /// default: "{default_prompt}"
     "commit_message_prompt": "{default_prompt}",
     "scrollbar": {
       // When to show the scrollbar in the git panel.
