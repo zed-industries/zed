@@ -31,66 +31,6 @@ use crate::claude::tools::ClaudeTool;
 use crate::{AgentServer, find_bin_in_path};
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
-impl AgentConnection for ClaudeAgentConnection {
-    /// Send a request to the agent and wait for a response.
-    fn request_any(
-        &self,
-        params: AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
-        let end_turn_tx = self.end_turn_tx.clone();
-        let outgoing_tx = self.outgoing_tx.clone();
-        async move {
-            match params {
-                // todo: consider sending an empty request so we get the init response?
-                AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
-                    acp::InitializeResponse {
-                        is_authenticated: true,
-                        protocol_version: ProtocolVersion::latest(),
-                    },
-                )),
-                AnyAgentRequest::AuthenticateParams(_) => {
-                    Err(anyhow!("Authentication not supported"))
-                }
-                AnyAgentRequest::SendUserMessageParams(message) => {
-                    let (tx, rx) = oneshot::channel();
-                    end_turn_tx.borrow_mut().replace(tx);
-                    let mut content = String::new();
-                    for chunk in message.chunks {
-                        match chunk {
-                            agentic_coding_protocol::UserMessageChunk::Text { text } => {
-                                content.push_str(&text)
-                            }
-                            agentic_coding_protocol::UserMessageChunk::Path { path } => {
-                                content.push_str(&format!("@{path:?}"))
-                            }
-                        }
-                    }
-                    outgoing_tx.unbounded_send(SdkMessage::User {
-                        message: Message {
-                            role: Role::User,
-                            content: Content::UntaggedText(content),
-                            id: None,
-                            model: None,
-                            stop_reason: None,
-                            stop_sequence: None,
-                            usage: None,
-                        },
-                        session_id: None,
-                    })?;
-                    rx.await??;
-                    Ok(AnyAgentResult::SendUserMessageResponse(
-                        acp::SendUserMessageResponse,
-                    ))
-                }
-                AnyAgentRequest::CancelSendMessageParams(_) => Ok(
-                    AnyAgentResult::CancelSendMessageResponse(acp::CancelSendMessageResponse),
-                ),
-            }
-        }
-        .boxed_local()
-    }
-}
-
 #[derive(Clone)]
 pub struct ClaudeCode;
 
@@ -108,7 +48,7 @@ impl AgentServer for ClaudeCode {
     }
 
     fn logo(&self) -> ui::IconName {
-        ui::IconName::AiAnthropic
+        ui::IconName::AiClaude
     }
 
     fn supports_always_allow(&self) -> bool {
@@ -168,7 +108,7 @@ impl AgentServer for ClaudeCode {
                         mcp_server::PERMISSION_TOOL
                     ),
                     "--allowedTools",
-                    "mcp__zed__Read",
+                    "mcp__zed__Read,mcp__zed__Edit",
                     "--disallowedTools",
                     "Read,Edit",
                 ])
@@ -226,6 +166,66 @@ impl AgentServer for ClaudeCode {
                 acp_thread::AcpThread::new(connection, title, None, project.clone(), cx)
             })
         })
+    }
+}
+
+impl AgentConnection for ClaudeAgentConnection {
+    /// Send a request to the agent and wait for a response.
+    fn request_any(
+        &self,
+        params: AnyAgentRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
+        let end_turn_tx = self.end_turn_tx.clone();
+        let outgoing_tx = self.outgoing_tx.clone();
+        async move {
+            match params {
+                // todo: consider sending an empty request so we get the init response?
+                AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
+                    acp::InitializeResponse {
+                        is_authenticated: true,
+                        protocol_version: ProtocolVersion::latest(),
+                    },
+                )),
+                AnyAgentRequest::AuthenticateParams(_) => {
+                    Err(anyhow!("Authentication not supported"))
+                }
+                AnyAgentRequest::SendUserMessageParams(message) => {
+                    let (tx, rx) = oneshot::channel();
+                    end_turn_tx.borrow_mut().replace(tx);
+                    let mut content = String::new();
+                    for chunk in message.chunks {
+                        match chunk {
+                            agentic_coding_protocol::UserMessageChunk::Text { text } => {
+                                content.push_str(&text)
+                            }
+                            agentic_coding_protocol::UserMessageChunk::Path { path } => {
+                                content.push_str(&format!("@{path:?}"))
+                            }
+                        }
+                    }
+                    outgoing_tx.unbounded_send(SdkMessage::User {
+                        message: Message {
+                            role: Role::User,
+                            content: Content::UntaggedText(content),
+                            id: None,
+                            model: None,
+                            stop_reason: None,
+                            stop_sequence: None,
+                            usage: None,
+                        },
+                        session_id: None,
+                    })?;
+                    rx.await??;
+                    Ok(AnyAgentResult::SendUserMessageResponse(
+                        acp::SendUserMessageResponse,
+                    ))
+                }
+                AnyAgentRequest::CancelSendMessageParams(_) => Ok(
+                    AnyAgentResult::CancelSendMessageResponse(acp::CancelSendMessageResponse),
+                ),
+            }
+        }
+        .boxed_local()
     }
 }
 
