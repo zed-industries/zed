@@ -827,6 +827,9 @@ impl crate::Keystroke {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if key_utf8.len() == 1 && key_utf8.chars().next().unwrap().is_ascii_graphic()
+                {
+                    key_utf8.clone()
                 } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
                     String::from(key_en)
                 } else {
