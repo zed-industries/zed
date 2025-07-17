@@ -10025,6 +10025,7 @@ fn compute_auto_height_layout(
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+    let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
@@ -10040,7 +10041,7 @@ fn compute_auto_height_layout(
     let text_width = width - gutter_dimensions.width;
     let overscroll = size(em_width, px(0.));
 
-    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - 2 * em_width;
+    let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_advance;
     if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
         if editor.set_wrap_width(Some(editor_width), cx) {
             snapshot = editor.snapshot(window, cx);
