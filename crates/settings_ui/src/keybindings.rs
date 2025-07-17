@@ -1212,10 +1212,11 @@ impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         let row_count = self.matches.len();
         let theme = cx.theme();
+        let focus_handle = &self.focus_handle;
 
         v_flex()
             .id("keymap-editor")
-            .track_focus(&self.focus_handle)
+            .track_focus(focus_handle)
             .key_context(self.key_context())
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -1267,13 +1268,18 @@ impl Render for KeymapEditor {
                                     IconName::Keyboard,
                                 )
                                 .shape(ui::IconButtonShape::Square)
-                                .tooltip(|window, cx| {
-                                    Tooltip::for_action(
-                                        "Search by Keystroke",
-                                        &ToggleKeystrokeSearch,
-                                        window,
-                                        cx,
-                                    )
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Search by Keystroke",
+                                            &ToggleKeystrokeSearch,
+                                            &focus_handle.clone(),
+                                            window,
+                                            cx,
+                                        )
+                                    }
                                 })
                                 .toggle_state(matches!(
                                     self.search_mode,
@@ -1291,14 +1297,16 @@ impl Render for KeymapEditor {
                                     })
                                     .tooltip({
                                         let filter_state = self.filter_state;
+                                        let focus_handle = focus_handle.clone();
 
                                         move |window, cx| {
-                                            Tooltip::for_action(
+                                            Tooltip::for_action_in(
                                                 match filter_state {
                                                     FilterState::All => "Show Conflicts",
                                                     FilterState::Conflicts => "Hide Conflicts",
                                                 },
                                                 &ToggleConflictFilter,
+                                                &focus_handle.clone(),
                                                 window,
                                                 cx,
                                             )
@@ -1334,33 +1342,33 @@ impl Render for KeymapEditor {
                                     })
                                     .child(self.keystroke_editor.clone())
                                     .child(
-                                        div().p_1().child(
-                                            IconButton::new(
-                                                "keystrokes-exact-match",
-                                                IconName::Equal,
-                                            )
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::for_action(
-                                                    if exact_match {
-                                                        "Partial match mode"
-                                                    } else {
-                                                        "Exact match mode"
-                                                    },
+                                        IconButton::new(
+                                            "keystrokes-exact-match",
+                                            IconName::CaseSensitive,
+                                        )
+                                        .tooltip({
+                                            let keystroke_focus_handle =
+                                                self.keystroke_editor.read(cx).focus_handle(cx);
+
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Toggle Exact Match Mode",
                                                     &ToggleExactKeystrokeMatching,
+                                                    &keystroke_focus_handle,
                                                     window,
                                                     cx,
                                                 )
-                                            })
-                                            .shape(IconButtonShape::Square)
-                                            .toggle_state(exact_match)
-                                            .on_click(
-                                                cx.listener(|_, _, window, cx| {
-                                                    window.dispatch_action(
-                                                        ToggleExactKeystrokeMatching.boxed_clone(),
-                                                        cx,
-                                                    );
-                                                }),
-                                            ),
+                                            }
+                                        })
+                                        .shape(IconButtonShape::Square)
+                                        .toggle_state(exact_match)
+                                        .on_click(
+                                            cx.listener(|_, _, window, cx| {
+                                                window.dispatch_action(
+                                                    ToggleExactKeystrokeMatching.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
                                         ),
                                     ),
                             )
