@@ -2128,6 +2128,8 @@ impl Thread {
     fn get_retry_strategy(error: &LanguageModelCompletionError) -> Option<RetryStrategy> {
         use LanguageModelCompletionError::*;
 
+        // Note: This now returns retry strategies for all retryable errors,
+        // but actual retries only happen when Burn Mode is enabled.
         // General strategy here:
         // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
         // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), try multiple times with exponential backoff.
@@ -2193,6 +2195,27 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Only retry if Burn Mode is enabled
+        if self.completion_mode != CompletionMode::Burn {
+            // Add a message informing the user that enabling burn mode would allow retries
+            let error_message = format!(
+                "{}. Enable burn mode to automatically retry on errors.",
+                error
+            );
+            let id = self.next_message_id.post_inc();
+            self.messages.push(Message {
+                id,
+                role: Role::System,
+                segments: vec![MessageSegment::Text(error_message)],
+                loaded_context: LoadedContext::default(),
+                creases: Vec::new(),
+                is_hidden: false,
+                ui_only: true,
+            });
+            cx.emit(ThreadEvent::MessageAdded(id));
+            return false;
+        }
+
         let Some(strategy) = strategy.or_else(|| Self::get_retry_strategy(error)) else {
             return false;
         };
@@ -4138,6 +4161,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4210,6 +4238,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
@@ -4286,6 +4319,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
@@ -4394,6 +4432,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4479,6 +4522,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // We'll use a wrapper to switch behavior after first failure
         struct RetryTestModel {
@@ -4648,6 +4696,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create a model that fails once then succeeds
         struct FailOnceModel {
             inner: Arc<FakeLanguageModel>,
@@ -4808,6 +4861,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create a model that returns rate limit error with retry_after
         struct RateLimitModel {
@@ -5083,11 +5141,79 @@ fn main() {{
     }
 
     #[gpui::test]
+    async fn test_no_retry_without_burn_mode(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Ensure we're in Normal mode (not Burn mode)
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Normal);
+        });
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify no retry state was created
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Should not have retry state in Normal mode"
+            );
+        });
+
+        // Check that an error message was added mentioning burn mode
+        thread.read_with(cx, |thread, _| {
+            let messages: Vec<_> = thread.messages().collect();
+            assert!(
+                messages.iter().any(|msg| {
+                    msg.role == Role::System
+                        && msg.ui_only
+                        && msg.segments.iter().any(|seg| {
+                            if let MessageSegment::Text(text) = seg {
+                                text.contains("Enable burn mode to automatically retry")
+                            } else {
+                                false
+                            }
+                        })
+                }),
+                "Should have a message mentioning burn mode for retries"
+            );
+        });
+
+        // Verify the thread is no longer generating
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                !thread.is_generating(),
+                "Should not be generating after error without retry"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
