@@ -162,7 +162,8 @@ enum InternalEvent {
     UpdateSelection(Point<Pixels>),
     // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
-    Copy,
+    // Whether keep selection when copy
+    Copy(Option<bool>),
     // Vi mode events
     ToggleViMode,
     ViMotion(ViMotion),
@@ -931,13 +932,13 @@ impl Terminal {
                 }
             }
 
-            InternalEvent::Copy => {
+            InternalEvent::Copy(keep_selection) => {
                 if let Some(txt) = term.selection_to_string() {
                     cx.write_to_clipboard(ClipboardItem::new_string(txt));
-
-                    let settings = TerminalSettings::get_global(cx);
-
-                    if !settings.keep_selection_on_copy {
+                    if !keep_selection.unwrap_or_else(|| {
+                        let settings = TerminalSettings::get_global(cx);
+                        settings.keep_selection_on_copy
+                    }) {
                         self.events.push_back(InternalEvent::SetSelection(None));
                     }
                 }
@@ -1108,8 +1109,8 @@ impl Terminal {
             .push_back(InternalEvent::SetSelection(selection));
     }
 
-    pub fn copy(&mut self) {
-        self.events.push_back(InternalEvent::Copy);
+    pub fn copy(&mut self, keep_selection: Option<bool>) {
+        self.events.push_back(InternalEvent::Copy(keep_selection));
     }
 
     pub fn clear(&mut self) {
@@ -1267,8 +1268,7 @@ impl Terminal {
             }
 
             "y" => {
-                self.events.push_back(InternalEvent::Copy);
-                self.events.push_back(InternalEvent::SetSelection(None));
+                self.copy(Some(false));
                 return;
             }
 
@@ -1653,7 +1653,7 @@ impl Terminal {
             }
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
-                self.copy();
+                self.copy(Some(true));
             }
 
             //Hyperlinks
@@ -1821,6 +1821,14 @@ impl Terminal {
                         })
                         .unwrap_or_else(|| "Terminal".to_string())
                 }),
+        }
+    }
+
+    pub fn kill_active_task(&mut self) {
+        if let Some(task) = self.task() {
+            if task.status == TaskStatus::Running {
+                self.pty_info.kill_current_process();
+            }
         }
     }
 

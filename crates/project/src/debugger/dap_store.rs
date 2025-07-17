@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    debugger::session::SessionQuirks,
     project_settings::ProjectSettings,
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
@@ -385,10 +386,11 @@ impl DapStore {
 
     pub fn new_session(
         &mut self,
-        label: SharedString,
+        label: Option<SharedString>,
         adapter: DebugAdapterName,
         task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
+        quirks: SessionQuirks,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
         let session_id = SessionId(util::post_inc(&mut self.next_session_id));
@@ -406,6 +408,7 @@ impl DapStore {
             label,
             adapter,
             task_context,
+            quirks,
             cx,
         );
 

@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-/// [RootPathTrie] is a workhorse of [super::ManifestTree]. It is responsible for determining the closest known project root for a given path.
+/// [RootPathTrie] is a workhorse of [super::ManifestTree]. It is responsible for determining the closest known entry for a given path.
 /// It also determines how much of a given path is unexplored, thus letting callers fill in that gap if needed.
 /// Conceptually, it allows one to annotate Worktree entries with arbitrary extra metadata and run closest-ancestor searches.
 ///
@@ -20,19 +20,16 @@ pub(super) struct RootPathTrie<Label> {
 }
 
 /// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
-/// - Present; we know there's definitely a project root at this node and it is the only label of that kind on the path to the root of a worktree
-/// (none of it's ancestors or descendants can contain the same present label)
+/// - Present; we know there's definitely a project root at this node.
 /// - Known Absent - we know there's definitely no project root at this node and none of it's ancestors are Present (descendants can be present though!).
-/// - Forbidden - we know there's definitely no project root at this node and none of it's ancestors or descendants can be Present.
 /// The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
 /// to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path, since we run searches
-/// from the leaf up to the root of the worktree. When any of the ancestors is forbidden, we don't need to look at the node or its ancestors.
-/// When there's a present labeled node on the path to the root, we don't need to ask the adapter to run the search at all.
+/// from the leaf up to the root of the worktree.
 ///
 /// In practical terms, it means that by storing label presence we don't need to do a project discovery on a given folder more than once
 /// (unless the node is invalidated, which can happen when FS entries are renamed/removed).
 ///
-/// Storing project absence allows us to recognize which paths have already been scanned for a project root unsuccessfully. This way we don't need to run
+/// Storing absent nodes allows us to recognize which paths have already been scanned for a project root unsuccessfully. This way we don't need to run
 /// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub(super) enum LabelPresence {
@@ -236,5 +233,26 @@ mod tests {
             visited_paths.into_iter().next().unwrap().as_ref(),
             Path::new("a/")
         );
+    }
+
+    #[test]
+    fn path_to_a_root_can_contain_multiple_known_nodes() {
+        let mut trie = RootPathTrie::<()>::new();
+        trie.insert(
+            &TriePath::from(Path::new("a/b")),
+            (),
+            LabelPresence::Present,
+        );
+        trie.insert(&TriePath::from(Path::new("a")), (), LabelPresence::Present);
+        let mut visited_paths = BTreeSet::new();
+        trie.walk(&TriePath::from(Path::new("a/b/c")), &mut |path, nodes| {
+            assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
+            if path.as_ref() != Path::new("a") && path.as_ref() != Path::new("a/b") {
+                panic!("Unexpected path: {}", path.as_ref().display());
+            }
+            assert!(visited_paths.insert(path.clone()));
+            ControlFlow::Continue(())
+        });
+        assert_eq!(visited_paths.len(), 2);
     }
 }

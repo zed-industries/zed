@@ -1711,6 +1711,27 @@ impl Workspace {
         history
     }
 
+    pub fn recent_active_item_by_type<T: 'static>(&self, cx: &App) -> Option<Entity<T>> {
+        let mut recent_item: Option<Entity<T>> = None;
+        let mut recent_timestamp = 0;
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+            let item_map: HashMap<EntityId, &Box<dyn ItemHandle>> =
+                pane.items().map(|item| (item.item_id(), item)).collect();
+            for entry in pane.activation_history() {
+                if entry.timestamp > recent_timestamp {
+                    if let Some(&item) = item_map.get(&entry.entity_id) {
+                        if let Some(typed_item) = item.act_as::<T>(cx) {
+                            recent_timestamp = entry.timestamp;
+                            recent_item = Some(typed_item);
+                        }
+                    }
+                }
+            }
+        }
+        recent_item
+    }
+
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
@@ -2777,6 +2798,7 @@ impl Workspace {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    None,
                     window,
                     cx,
                 )
@@ -3841,11 +3863,13 @@ impl Workspace {
                 if *local {
                     self.unfollow_in_pane(&pane, window, cx);
                 }
+                serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
+                } else if *local {
+                    self.set_active_pane(&pane, window, cx);
                 }
-                serialize_workspace = *focus_changed || pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
@@ -9452,6 +9476,7 @@ mod tests {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },
+                None,
                 window,
                 cx,
             )

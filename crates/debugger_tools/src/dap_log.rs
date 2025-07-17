@@ -399,7 +399,8 @@ impl LogStore {
             state.insert(DebugAdapterState::new(
                 id.session_id,
                 adapter_name,
-                session_label,
+                session_label
+                    .unwrap_or_else(|| format!("Session {} (child)", id.session_id.0).into()),
                 has_adapter_logs,
             ));
 

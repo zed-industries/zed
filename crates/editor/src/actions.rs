@@ -1,6 +1,7 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
 use gpui::{Action, actions};
+use project::project_settings::GoToDiagnosticSeverityFilter;
 use schemars::JsonSchema;
 use util::serde::default_true;
 
@@ -265,6 +266,24 @@ pub enum UuidVersion {
     V7,
 }
 
+/// Goes to the next diagnostic in the file.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
+/// Goes to the previous diagnostic in the file.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToPreviousDiagnostic {
+    #[serde(default)]
+    pub severity: GoToDiagnosticSeverityFilter,
+}
+
 actions!(
     debugger,
     [
@@ -406,10 +425,14 @@ actions!(
         FoldRecursive,
         /// Folds the selected ranges.
         FoldSelectedRanges,
+        /// Toggles focus back to the last active buffer.
+        ToggleFocus,
         /// Toggles folding at the current position.
         ToggleFold,
         /// Toggles recursive folding at the current position.
         ToggleFoldRecursive,
+        /// Toggles all folds in a buffer or all excerpts in multibuffer.
+        ToggleFoldAll,
         /// Formats the entire document.
         Format,
         /// Formats only the selected text.
@@ -422,8 +445,6 @@ actions!(
         GoToDefinition,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
-        /// Goes to the next diagnostic in the file.
-        GoToDiagnostic,
         /// Goes to the next diff hunk.
         GoToHunk,
         /// Goes to the previous diff hunk.
@@ -438,8 +459,6 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
-        /// Goes to the previous diagnostic in the file.
-        GoToPreviousDiagnostic,
         /// Goes to the type definition of the symbol at cursor.
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.

@@ -40,12 +40,7 @@ impl PythonDebugAdapter {
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
-            vec![
-                user_installed_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-            ]
+            vec![user_installed_path.to_string_lossy().to_string()]
         } else if installed_in_venv {
             log::debug!("Using venv-installed debugpy");
             vec!["-m".to_string(), "debugpy.adapter".to_string()]
@@ -700,7 +695,7 @@ mod tests {
         let port = 5678;
 
         // Case 1: User-defined debugpy path (highest precedence)
-        let user_path = PathBuf::from("/custom/path/to/debugpy");
+        let user_path = PathBuf::from("/custom/path/to/debugpy/src/debugpy/adapter");
         let user_args = PythonDebugAdapter::generate_debugpy_arguments(
             &host,
             port,
@@ -717,7 +712,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        assert!(user_args[0].ends_with("src/debugpy/adapter"));
+        assert_eq!(user_args[0], "/custom/path/to/debugpy/src/debugpy/adapter");
         assert_eq!(user_args[1], "--host=127.0.0.1");
         assert_eq!(user_args[2], "--port=5678");
 

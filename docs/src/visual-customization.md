@@ -317,7 +317,7 @@ TBD: Centered layout related settings
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
 ```json
-  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom
+  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom, none
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
   "auto_signature_help": false,          // Show method signatures inside parentheses

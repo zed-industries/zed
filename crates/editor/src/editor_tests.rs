@@ -5081,7 +5081,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -5124,7 +5123,6 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
                 style: BlockStyle::Sticky,
                 render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             None,
             cx,
@@ -14736,7 +14734,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14745,7 +14743,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14754,7 +14752,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14763,7 +14761,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -21465,7 +21463,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21501,7 +21499,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
         })
         .await
         .unwrap();
