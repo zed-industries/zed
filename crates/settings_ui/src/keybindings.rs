@@ -1290,12 +1290,12 @@ impl Render for KeymapEditor {
                     .interactable(&self.table_interaction_state)
                     .striped()
                     .column_widths([
-                        rems(2.5),
-                        rems(16.),
-                        rems(16.),
-                        rems(16.),
-                        rems(32.),
-                        rems(8.),
+                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(40.))),
+                        DefiniteLength::Fraction(0.25),
+                        DefiniteLength::Fraction(0.20),
+                        DefiniteLength::Fraction(0.14),
+                        DefiniteLength::Fraction(0.45),
+                        DefiniteLength::Fraction(0.08),
                     ])
                     .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
