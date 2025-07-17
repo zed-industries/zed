@@ -254,34 +254,38 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 #[macro_export]
 macro_rules! common_e2e_tests {
     ($server:expr) => {
-        #[::gpui::test]
-        #[cfg_attr(not(feature = "e2e"), ignore)]
-        async fn basic(cx: &mut ::gpui::TestAppContext) {
-            $crate::e2e_tests::test_basic($server, cx).await;
-        }
+        mod common_e2e {
+            use super::*;
 
-        #[::gpui::test]
-        #[cfg_attr(not(feature = "e2e"), ignore)]
-        async fn path_mentions(cx: &mut ::gpui::TestAppContext) {
-            $crate::e2e_tests::test_path_mentions($server, cx).await;
-        }
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn basic(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_basic($server, cx).await;
+            }
 
-        #[::gpui::test]
-        #[cfg_attr(not(feature = "e2e"), ignore)]
-        async fn tool_call(cx: &mut ::gpui::TestAppContext) {
-            $crate::e2e_tests::test_tool_call($server, cx).await;
-        }
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn path_mentions(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_path_mentions($server, cx).await;
+            }
 
-        #[::gpui::test]
-        #[cfg_attr(not(feature = "e2e"), ignore)]
-        async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
-            $crate::e2e_tests::test_tool_call_with_confirmation($server, cx).await;
-        }
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn tool_call(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_tool_call($server, cx).await;
+            }
 
-        #[::gpui::test]
-        #[cfg_attr(not(feature = "e2e"), ignore)]
-        async fn cancel(cx: &mut ::gpui::TestAppContext) {
-            $crate::e2e_tests::test_cancel($server, cx).await;
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_tool_call_with_confirmation($server, cx).await;
+            }
+
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn cancel(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_cancel($server, cx).await;
+            }
         }
     };
 }
