@@ -1802,7 +1802,10 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     fake_server
         .start_progress(format!("{}/0", progress_token))
         .await;
-    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::RefreshInlayHints(fake_server.server.server_id())
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -1941,7 +1944,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             Some(worktree_id)
         )
     );
-    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::RefreshInlayHints(fake_server.server.server_id())
+    );
     fake_server.start_progress(progress_token).await;
     assert_eq!(
         events.next().await.unwrap(),
