@@ -389,38 +389,37 @@ pub async fn post_panic(
         }
     }
 
-    let backtrace = if panic.backtrace.len() > 25 {
-        let total = panic.backtrace.len();
-        format!(
-            "{}\n   and {} more",
-            panic
-                .backtrace
-                .iter()
-                .take(20)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n"),
-            total - 20
-        )
-    } else {
-        panic.backtrace.join("\n")
-    };
-
     if !report_to_slack(&panic) {
         return Ok(());
     }
 
-    let backtrace_with_summary = panic.payload + "\n" + &backtrace;
-
-    let version = if panic.release_channel == "nightly"
-        && let Some(sha) = panic.app_commit_sha
-    {
-        format!("Zed Nightly {}", sha.chars().take(7).collect::<String>())
-    } else {
-        panic.app_version
-    };
-
     if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
+        let backtrace = if panic.backtrace.len() > 25 {
+            let total = panic.backtrace.len();
+            format!(
+                "{}\n   and {} more",
+                panic
+                    .backtrace
+                    .iter()
+                    .take(20)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                total - 20
+            )
+        } else {
+            panic.backtrace.join("\n")
+        };
+        let backtrace_with_summary = panic.payload + "\n" + &backtrace;
+
+        let version = if panic.release_channel == "nightly"
+            && let Some(sha) = panic.app_commit_sha
+        {
+            format!("Zed Nightly {}", sha.chars().take(7).collect::<String>())
+        } else {
+            panic.app_version
+        };
+
         let payload = slack::WebhookBody::new(|w| {
             w.add_section(|s| s.text(slack::Text::markdown("Panic request".to_string())))
                 .add_section(|s| {
