@@ -670,9 +670,9 @@ impl VariableList {
         let focus_handle = self.focus_handle.clone();
         cx.spawn_in(window, async move |this, cx| {
             let can_toggle_data_breakpoint = if let Some(task) = can_toggle_data_breakpoint {
-                task.await.is_some()
+                task.await
             } else {
-                true
+                None
             };
             cx.update(|window, cx| {
                 let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
@@ -686,11 +686,35 @@ impl VariableList {
                                 menu.action("Go To Memory", GoToMemory.boxed_clone())
                             })
                             .action("Watch Variable", AddWatch.boxed_clone())
-                            .when(can_toggle_data_breakpoint, |menu| {
-                                menu.action(
-                                    "Toggle Data Breakpoint",
-                                    crate::ToggleDataBreakpoint.boxed_clone(),
-                                )
+                            .when_some(can_toggle_data_breakpoint, |mut menu, data_info| {
+                                menu = menu.separator();
+                                if let Some(access_types) = data_info.access_types {
+                                    for access in access_types {
+                                        menu = menu.action(
+                                            format!(
+                                                "Toggle {} Data Breakpoint",
+                                                match access {
+                                                    dap::DataBreakpointAccessType::Read => "Read",
+                                                    dap::DataBreakpointAccessType::Write => "Write",
+                                                    dap::DataBreakpointAccessType::ReadWrite =>
+                                                        "Read/Write",
+                                                }
+                                            ),
+                                            crate::ToggleDataBreakpoint {
+                                                access_type: Some(access),
+                                            }
+                                            .boxed_clone(),
+                                        );
+                                    }
+
+                                    menu
+                                } else {
+                                    menu.action(
+                                        "Toggle Data Breakpoint",
+                                        crate::ToggleDataBreakpoint { access_type: None }
+                                            .boxed_clone(),
+                                    )
+                                }
                             })
                     })
                     .when(entry.as_watcher().is_some(), |menu| {
@@ -729,7 +753,7 @@ impl VariableList {
 
     fn toggle_data_breakpoint(
         &mut self,
-        _: &crate::ToggleDataBreakpoint,
+        data_info: &crate::ToggleDataBreakpoint,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -759,9 +783,26 @@ impl VariableList {
         });
 
         let session = self.session.downgrade();
+        let access_type = data_info.access_type;
         cx.spawn(async move |_, cx| {
-            let Some(data_id) = data_breakpoint.await.and_then(|info| info.data_id) else {
+            let Some((data_id, access_types)) = data_breakpoint
+                .await
+                .and_then(|info| Some((info.data_id?, info.access_types)))
+            else {
                 return;
+            };
+
+            // Because user's can manually add this action to the keymap
+            // we check if access type is supported
+            let access_type = match access_types {
+                None => None,
+                Some(access_types) => {
+                    if access_type.is_some_and(|access_type| access_types.contains(&access_type)) {
+                        access_type
+                    } else {
+                        None
+                    }
+                }
             };
             _ = session.update(cx, |session, cx| {
                 session.create_data_breakpoint(
@@ -769,7 +810,7 @@ impl VariableList {
                     data_id.clone(),
                     dap::DataBreakpoint {
                         data_id,
-                        access_type: None,
+                        access_type,
                         condition: None,
                         hit_condition: None,
                     },
