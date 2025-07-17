@@ -267,7 +267,6 @@ struct KeymapEditor {
     selected_index: Option<usize>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
-    humanized_action_names: HashMap<&'static str, SharedString>,
 }
 
 enum PreviousEdit {
@@ -331,14 +330,6 @@ impl KeymapEditor {
         })
         .detach();
 
-        let humanized_action_names =
-            HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
-                (
-                    action_name,
-                    command_palette::humanize_action_name(action_name).into(),
-                )
-            }));
-
         let mut this = Self {
             workspace,
             keybindings: vec![],
@@ -355,7 +346,6 @@ impl KeymapEditor {
             selected_index: None,
             context_menu: None,
             previous_edit: None,
-            humanized_action_names,
             search_query_debounce: None,
         };
 
@@ -568,11 +558,14 @@ impl KeymapEditor {
             let action_docs = action_documentation.get(action_name).copied();
 
             let index = processed_bindings.len();
-            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+            let humanized_action_name: SharedString =
+                command_palette::humanize_action_name(action_name).into();
+            let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 ui_key_binding,
                 action_name,
+                humanized_action_name,
                 action_arguments,
                 action_docs,
                 action_schema: action_schema.get(action_name).cloned(),
@@ -585,11 +578,14 @@ impl KeymapEditor {
         let empty = SharedString::new_static("");
         for action_name in unmapped_action_names.into_iter() {
             let index = processed_bindings.len();
-            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
+            let humanized_action_name: SharedString =
+                command_palette::humanize_action_name(action_name).into();
+            let string_match_candidate = StringMatchCandidate::new(index, &humanized_action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: empty.clone(),
                 ui_key_binding: None,
                 action_name,
+                humanized_action_name,
                 action_arguments: None,
                 action_docs: action_documentation.get(action_name).copied(),
                 action_schema: action_schema.get(action_name).cloned(),
@@ -1062,6 +1058,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     ui_key_binding: Option<ui::KeyBinding>,
     action_name: &'static str,
+    humanized_action_name: SharedString,
     action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
     action_schema: Option<schemars::Schema>,
@@ -1356,10 +1353,9 @@ impl Render for KeymapEditor {
                                         .id(("keymap action", index))
                                         .child({
                                             if action_name != gpui::NoAction.name() {
-                                                this.humanized_action_names
-                                                    .get(action_name)
-                                                    .cloned()
-                                                    .unwrap_or(action_name.into())
+                                                binding
+                                                    .humanized_action_name
+                                                    .clone()
                                                     .into_any_element()
                                             } else {
                                                 const NULL: SharedString =
@@ -1856,7 +1852,7 @@ impl KeybindingEditorModal {
         let status_toast = StatusToast::new(
             format!(
                 "Saved edits to the {} action.",
-                command_palette::humanize_action_name(&self.editing_keybind.action_name)
+                &self.editing_keybind.humanized_action_name
             ),
             cx,
             move |this, _cx| {
