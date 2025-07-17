@@ -397,8 +397,6 @@ pub struct Thread {
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
     last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
-    #[cfg(debug_assertions)]
-    simulated_error_triggered: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -498,8 +496,6 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model: configured_model.clone(),
             profile: AgentProfile::new(profile_id, tools),
-            #[cfg(debug_assertions)]
-            simulated_error_triggered: false,
         }
     }
 
@@ -625,8 +621,6 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
-            #[cfg(debug_assertions)]
-            simulated_error_triggered: false,
         }
     }
 
@@ -1672,32 +1666,6 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        // HACK: Return a 500 error for testing retry UI (only once per thread)
-        #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_ERROR").is_ok() && !self.simulated_error_triggered {
-            self.simulated_error_triggered = true;
-            let error = LanguageModelCompletionError::ApiInternalServerError {
-                provider: model.provider_name(),
-                message: "Simulated 500 error for testing".to_string(),
-            };
-
-            // Ensure we have a configured model for retry
-            if self.configured_model.is_none() {
-                self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
-            }
-
-            if let Some(retry_strategy) = Self::get_retry_strategy(&error) {
-                self.handle_retryable_error_with_delay(
-                    &error,
-                    Some(retry_strategy),
-                    model,
-                    intent,
-                    window,
-                    cx,
-                );
-            }
-            return;
-        }
         self.tool_use_limit_reached = false;
 
         let pending_completion_id = post_inc(&mut self.completion_count);
