@@ -27,8 +27,9 @@ use workspace::{
 };
 
 pub struct TextDiffView {
-    source_editor: Entity<Editor>,
     diff_editor: Entity<Editor>,
+    title: SharedString,
+    path: Option<SharedString>,
     buffer_changes_tx: watch::Sender<()>,
     _recalculate_diff_task: Task<Result<()>>,
 }
@@ -163,9 +164,34 @@ impl TextDiffView {
         })
         .detach();
 
+        let editor = source_editor.read(cx);
+        let title = editor.buffer().read(cx).title(cx).to_string();
+        let selection_location_text = selection_location_text(editor, cx);
+        let selection_location_title = selection_location_text
+            .as_ref()
+            .map(|text| format!("{} ({})", title, text))
+            .unwrap_or(title);
+
+        let path = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .map(|b| {
+                b.read(cx)
+                    .file()
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+            })
+            .flatten()
+            .unwrap_or("untitled".into());
+
+        let selection_location_path = selection_location_text
+            .map(|text| format!("{} ({})", path, text))
+            .unwrap_or(path);
+
         Self {
-            source_editor,
             diff_editor,
+            title: format!("Clipboard ↔ {selection_location_title}").into(),
+            path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
                 while let Ok(_) = buffer_changes_rx.recv().await {
@@ -309,43 +335,12 @@ impl Item for TextDiffView {
             .into_any_element()
     }
 
-    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        let editor = self.source_editor.read(cx);
-        let title = editor.buffer().read(cx).title(cx).to_string();
-        let selection_location_text = selection_location_text(editor, cx);
-        let editor_label = match selection_location_text {
-            Some(selection_location_text) => {
-                format!("{} ({})", title, selection_location_text)
-            }
-            None => title,
-        };
-
-        format!("Clipboard ↔ {editor_label}").into()
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        self.title.clone()
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        let editor = self.source_editor.read(cx);
-        let path = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .map(|b| {
-                b.read(cx)
-                    .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
-            })
-            .flatten()
-            .unwrap_or("untitled".into());
-
-        let selection_location_text = selection_location_text(editor, cx);
-        let editor_label = match selection_location_text {
-            Some(selection_location_text) => {
-                format!("{} ({})", path, selection_location_text)
-            }
-            None => path,
-        };
-
-        Some(format!("Clipboard ↔ {editor_label}").into())
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        self.path.clone()
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
