@@ -32,6 +32,7 @@ pub(crate) struct DirectXRenderer {
 /// Direct3D objects
 #[derive(Clone)]
 pub(crate) struct DirectXDevices {
+    adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
     #[cfg(not(feature = "enable-renderdoc"))]
     dxgi_device: IDXGIDevice,
@@ -97,6 +98,7 @@ impl DirectXDevices {
         let dxgi_device: IDXGIDevice = device.cast()?;
 
         Ok(Self {
+            adapter,
             dxgi_factory,
             #[cfg(not(feature = "enable-renderdoc"))]
             dxgi_device,
@@ -395,6 +397,34 @@ impl DirectXRenderer {
             return Ok(());
         }
         Ok(())
+    }
+
+    pub(crate) fn gpu_specs(&self) -> Result<GpuSpecs> {
+        let desc = unsafe { self.devices.adapter.GetDesc1() }?;
+        let is_software_emulated = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+        let device_name = String::from_utf16_lossy(&desc.Description)
+            .trim_matches(char::from(0))
+            .to_string();
+        let driver_name = match desc.VendorId {
+            0x10DE => "NVIDIA Corporation".to_string(),
+            0x1002 => "AMD Corporation".to_string(),
+            0x8086 => "Intel Corporation".to_string(),
+            _ => "Unknown Vendor".to_string(),
+        };
+        let driver_version = match desc.VendorId {
+            0x10DE => nvidia::get_driver_version().context("Failed to get NVIDIA driver info"),
+            0x1002 => Err(anyhow::anyhow!("AMD driver info not implemented yet")),
+            0x8086 => Err(anyhow::anyhow!("Intel driver info not implemented yet")),
+            _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
+        }
+        .log_err()
+        .unwrap_or("Unknown Driver".to_string());
+        Ok(GpuSpecs {
+            is_software_emulated,
+            device_name,
+            driver_name,
+            driver_info: driver_version,
+        })
     }
 }
 
@@ -936,12 +966,11 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
             dxgi_factory
                 .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
         }?;
-        {
-            let desc = unsafe { adapter.GetDesc1() }?;
-            println!(
-                "Select GPU: {}",
-                String::from_utf16_lossy(&desc.Description)
-            );
+        if let Ok(desc) = unsafe { adapter.GetDesc1() } {
+            let gpu_name = String::from_utf16_lossy(&desc.Description)
+                .trim_matches(char::from(0))
+                .to_string();
+            log::info!("Using GPU: {}", gpu_name);
         }
         // Check to see whether the adapter supports Direct3D 11, but don't
         // create the actual device yet.
@@ -1336,6 +1365,81 @@ mod shader_resources {
                 return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
             Ok(compile_blob.unwrap())
+        }
+    }
+}
+
+mod nvidia {
+    use std::os::raw::{c_char, c_int, c_uint};
+
+    use anyhow::{Context, Result};
+    use windows::{
+        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
+        core::s,
+    };
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
+    const NVAPI_SHORT_STRING_MAX: usize = 64;
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L235
+    #[allow(non_camel_case_types)]
+    type NvAPI_ShortString = [c_char; NVAPI_SHORT_STRING_MAX];
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi.h#L87
+    #[allow(non_camel_case_types)]
+    type NvAPI_Initialize_t = unsafe extern "C" fn() -> c_int;
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L447
+    #[allow(non_camel_case_types)]
+    type NvAPI_SYS_GetDriverAndBranchVersion_t = unsafe extern "C" fn(
+        driver_version: *mut c_uint,
+        build_branch_string: *mut NvAPI_ShortString,
+    ) -> c_int;
+
+    pub(super) fn get_driver_version() -> Result<String> {
+        unsafe {
+            // Try to load the NVIDIA driver DLL
+            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
+            let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
+            let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
+
+            // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L33
+            let nvapi_init_ptr = nvapi_query(0x0150e828);
+            if nvapi_init_ptr.is_null() {
+                anyhow::bail!("Failed to get NVIDIA API function pointer");
+            }
+            let nvapi_init: NvAPI_Initialize_t = std::mem::transmute(nvapi_init_ptr);
+
+            let result = nvapi_init();
+            if result != 0 {
+                anyhow::bail!("Failed to initialize NVIDIA API, error code: {}", result);
+            }
+
+            // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L41
+            let nvapi_get_driver_version_ptr = nvapi_query(0x2926aaad);
+            if nvapi_get_driver_version_ptr.is_null() {
+                anyhow::bail!("Failed to get NVIDIA driver version function pointer");
+            }
+            let nvapi_get_driver_version: NvAPI_SYS_GetDriverAndBranchVersion_t =
+                std::mem::transmute(nvapi_get_driver_version_ptr);
+
+            let mut driver_version: c_uint = 0;
+            let mut build_branch_string: NvAPI_ShortString = [0; NVAPI_SHORT_STRING_MAX];
+            let result = nvapi_get_driver_version(
+                &mut driver_version as *mut c_uint,
+                &mut build_branch_string as *mut NvAPI_ShortString,
+            );
+
+            if result != 0 {
+                anyhow::bail!(
+                    "Failed to get NVIDIA driver version, error code: {}",
+                    result
+                );
+            }
+            let major = driver_version / 100;
+            let minor = driver_version % 100;
+            Ok(format!("{}.{}", major, minor))
         }
     }
 }

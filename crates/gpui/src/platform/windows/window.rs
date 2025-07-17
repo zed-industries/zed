@@ -104,6 +104,7 @@ impl WindowsWindowState {
         let restore_from_minimized = None;
         // let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let renderer = DirectXRenderer::new(gpu_context, hwnd)?;
+        println!("GPU specs: {:#?}", renderer.gpu_specs());
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -801,7 +802,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        // todo(windows)
+        // There is no such thing on Windows.
     }
 }
 
