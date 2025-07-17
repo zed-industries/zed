@@ -4427,6 +4427,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
