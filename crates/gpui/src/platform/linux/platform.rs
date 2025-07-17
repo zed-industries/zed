@@ -826,6 +826,7 @@ impl crate::Keystroke {
             Keysym::BackSpace => "backspace".to_owned(),
             Keysym::Tab => "tab".to_owned(),
             Keysym::Delete => "delete".to_owned(),
+            Keysym::Escape => "escape".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
