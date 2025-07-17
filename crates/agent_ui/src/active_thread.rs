@@ -1036,7 +1036,7 @@ impl ActiveThread {
                             .collect::<Vec<_>>()
                             .join("\n");
                         self.last_error = Some(ThreadError::Message {
-                            header: "Error interacting with language model".into(),
+                            header: "Error".into(),
                             message: error_message.into(),
                         });
                     }
