@@ -1,65 +1,72 @@
-use std::{collections::HashMap, hash::BuildHasherDefault, sync::Arc};
+use std::{mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
-use collections::FxHasher;
-// #[cfg(not(feature = "enable-renderdoc"))]
-// use windows::Win32::Graphics::DirectComposition::*;
-use windows::{
-    Win32::{
-        Foundation::{HMODULE, HWND},
-        Graphics::{
-            Direct3D::*,
-            Direct3D11::*,
-            Dxgi::{Common::*, *},
-        },
+use windows::Win32::{
+    Foundation::{HMODULE, HWND},
+    Graphics::{
+        Direct3D::*,
+        Direct3D11::*,
+        Dxgi::{Common::*, *},
     },
-    core::*,
 };
+#[cfg(not(feature = "enable-renderdoc"))]
+use windows::{Win32::Graphics::DirectComposition::*, core::Interface};
 
 use crate::*;
+
+const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
+// This configuration is used for MSAA rendering, and it's guaranteed to be supported by DirectX 11.
+const MULTISAMPLE_COUNT: u32 = 4;
 
 pub(crate) struct DirectXRenderer {
     atlas: Arc<DirectXAtlas>,
     devices: DirectXDevices,
-    context: DirectXContext,
+    resources: DirectXResources,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
-    hwnd: HWND,
-    transparent: bool,
+    #[cfg(not(feature = "enable-renderdoc"))]
+    _direct_composition: DirectComposition,
 }
 
+/// Direct3D objects
 #[derive(Clone)]
 pub(crate) struct DirectXDevices {
+    adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
+    #[cfg(not(feature = "enable-renderdoc"))]
     dxgi_device: IDXGIDevice,
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
 }
 
-struct DirectXContext {
+struct DirectXResources {
+    // Direct3D rendering objects
     swap_chain: IDXGISwapChain1,
-    back_buffer: [Option<ID3D11RenderTargetView>; 1],
+    render_target: ManuallyDrop<ID3D11Texture2D>,
+    render_target_view: [Option<ID3D11RenderTargetView>; 1],
+    msaa_target: ID3D11Texture2D,
+    msaa_view: [Option<ID3D11RenderTargetView>; 1],
+
+    // Cached window size and viewport
+    width: u32,
+    height: u32,
     viewport: [D3D11_VIEWPORT; 1],
-    // #[cfg(not(feature = "enable-renderdoc"))]
-    // direct_composition: DirectComposition,
 }
 
 struct DirectXRenderPipelines {
-    shadow_pipeline: PipelineState,
-    quad_pipeline: PipelineState,
-    paths_pipeline: PipelineState,
-    paths_indirect_draw_buffer: ID3D11Buffer,
-    underline_pipeline: PipelineState,
-    mono_sprites: PipelineState,
-    poly_sprites: PipelineState,
+    shadow_pipeline: PipelineState<Shadow>,
+    quad_pipeline: PipelineState<Quad>,
+    paths_pipeline: PathsPipelineState,
+    underline_pipeline: PipelineState<Underline>,
+    mono_sprites: PipelineState<MonochromeSprite>,
+    poly_sprites: PipelineState<PolychromeSprite>,
 }
 
 struct DirectXGlobalElements {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
     blend_state: ID3D11BlendState,
-    blend_state_for_pr: ID3D11BlendState,
 }
 
 #[repr(C)]
@@ -70,12 +77,12 @@ struct DrawInstancedIndirectArgs {
     start_instance_location: u32,
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
-// struct DirectComposition {
-//     comp_device: IDCompositionDevice,
-//     comp_target: IDCompositionTarget,
-//     comp_visual: IDCompositionVisual,
-// }
+#[cfg(not(feature = "enable-renderdoc"))]
+struct DirectComposition {
+    comp_device: IDCompositionDevice,
+    comp_target: IDCompositionTarget,
+    comp_visual: IDCompositionVisual,
+}
 
 impl DirectXDevices {
     pub(crate) fn new() -> Result<Self> {
@@ -87,10 +94,13 @@ impl DirectXDevices {
             get_device(&adapter, Some(&mut device), Some(&mut context))?;
             (device.unwrap(), context.unwrap())
         };
+        #[cfg(not(feature = "enable-renderdoc"))]
         let dxgi_device: IDXGIDevice = device.cast()?;
 
         Ok(Self {
+            adapter,
             dxgi_factory,
+            #[cfg(not(feature = "enable-renderdoc"))]
             dxgi_device,
             device,
             device_context,
@@ -99,22 +109,33 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
+    pub(crate) fn new(devices: &DirectXDevices, hwnd: HWND) -> Result<Self> {
         let atlas = Arc::new(DirectXAtlas::new(
             devices.device.clone(),
             devices.device_context.clone(),
         ));
-        let context = DirectXContext::new(devices, hwnd, transparent)?;
+
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let resources = DirectXResources::new(devices)?;
+        #[cfg(feature = "enable-renderdoc")]
+        let resources = DirectXResources::new(devices, hwnd)?;
+
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
+
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
+        #[cfg(not(feature = "enable-renderdoc"))]
+        direct_composition.set_swap_chain(&resources.swap_chain)?;
+
         Ok(DirectXRenderer {
             atlas,
             devices: devices.clone(),
-            context,
+            resources,
             globals,
             pipelines,
-            hwnd,
-            transparent,
+            #[cfg(not(feature = "enable-renderdoc"))]
+            _direct_composition: direct_composition,
         })
     }
 
@@ -122,15 +143,56 @@ impl DirectXRenderer {
         self.atlas.clone()
     }
 
-    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
-        pre_draw(
+    fn pre_draw(&self) -> Result<()> {
+        update_buffer(
             &self.devices.device_context,
-            &self.globals.global_params_buffer,
-            &self.context.viewport,
-            &self.context.back_buffer,
-            [0.0, 0.0, 0.0, 0.0],
-            &self.globals.blend_state,
+            self.globals.global_params_buffer[0].as_ref().unwrap(),
+            &[GlobalParams {
+                viewport_size: [
+                    self.resources.viewport[0].Width,
+                    self.resources.viewport[0].Height,
+                ],
+                ..Default::default()
+            }],
         )?;
+        unsafe {
+            self.devices
+                .device_context
+                .ClearRenderTargetView(self.resources.msaa_view[0].as_ref().unwrap(), &[0.0; 4]);
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.msaa_view), None);
+            self.devices
+                .device_context
+                .RSSetViewports(Some(&self.resources.viewport));
+            self.devices.device_context.OMSetBlendState(
+                &self.globals.blend_state,
+                None,
+                0xFFFFFFFF,
+            );
+        }
+        Ok(())
+    }
+
+    fn present(&self) -> Result<()> {
+        unsafe {
+            self.devices.device_context.ResolveSubresource(
+                &*self.resources.render_target,
+                0,
+                &self.resources.msaa_target,
+                0,
+                RENDER_TARGET_FORMAT,
+            );
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+            self.resources.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
+        self.pre_draw()?;
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
@@ -155,98 +217,51 @@ impl DirectXRenderer {
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),))?;
         }
-        unsafe { self.context.swap_chain.Present(0, DXGI_PRESENT(0)) }.ok()?;
-        Ok(())
+        self.present()
     }
 
     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
-        unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
-        drop(self.context.back_buffer[0].take().unwrap());
+        let width = new_size.width.0.max(1) as u32;
+        let height = new_size.height.0.max(1) as u32;
+        if self.resources.width == width && self.resources.height == height {
+            return Ok(());
+        }
         unsafe {
-            self.context.swap_chain.ResizeBuffers(
+            // Clear the render target before resizing
+            self.devices.device_context.OMSetRenderTargets(None, None);
+            ManuallyDrop::drop(&mut self.resources.render_target);
+            drop(self.resources.render_target_view[0].take().unwrap());
+
+            self.resources.swap_chain.ResizeBuffers(
                 BUFFER_COUNT as u32,
-                new_size.width.0 as u32,
-                new_size.height.0 as u32,
-                DXGI_FORMAT_B8G8R8A8_UNORM,
+                width,
+                height,
+                RENDER_TARGET_FORMAT,
                 DXGI_SWAP_CHAIN_FLAG(0),
             )?;
+
+            self.resources
+                .recreate_resources(&self.devices, width, height)?;
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
         }
-        let backbuffer = set_render_target_view(
-            &self.context.swap_chain,
-            &self.devices.device,
-            &self.devices.device_context,
-        )?;
-        self.context.back_buffer[0] = Some(backbuffer);
-        self.context.viewport = set_viewport(
-            &self.devices.device_context,
-            new_size.width.0 as f32,
-            new_size.height.0 as f32,
-        );
         Ok(())
-    }
-
-    // #[cfg(not(feature = "enable-renderdoc"))]
-    // pub(crate) fn update_transparency(
-    //     &mut self,
-    //     background_appearance: WindowBackgroundAppearance,
-    // ) -> Result<()> {
-    //     // We only support setting `Transparent` and `Opaque` for now.
-    //     match background_appearance {
-    //         WindowBackgroundAppearance::Opaque => {
-    //             if self.transparent {
-    //                 return Err(anyhow::anyhow!(
-    //                     "Set opaque backgroud from transparent background, a restart is required. Or, you can open a new window."
-    //                 ));
-    //             }
-    //         }
-    //         WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
-    //             if !self.transparent {
-    //                 return Err(anyhow::anyhow!(
-    //                     "Set transparent backgroud from opaque background, a restart is required. Or, you can open a new window."
-    //                 ));
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
-    // #[cfg(feature = "enable-renderdoc")]
-    pub(crate) fn update_transparency(
-        &mut self,
-        background_appearance: WindowBackgroundAppearance,
-    ) -> Result<()> {
-        if background_appearance != WindowBackgroundAppearance::Opaque {
-            Err(anyhow::anyhow!(
-                "Set transparent background not supported when feature \"enable-renderdoc\" is enabled."
-            ))
-        } else {
-            Ok(())
-        }
     }
 
     fn draw_shadows(&mut self, shadows: &[Shadow]) -> Result<()> {
         if shadows.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.shadow_pipeline,
-            std::mem::size_of::<Shadow>(),
-            shadows.len(),
+        self.pipelines.shadow_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.shadow_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.shadow_pipeline.buffer,
             shadows,
         )?;
-        draw_normal(
+        self.pipelines.shadow_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.shadow_pipeline,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             shadows.len() as u32,
         )
     }
@@ -255,25 +270,15 @@ impl DirectXRenderer {
         if quads.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.quad_pipeline,
-            std::mem::size_of::<Quad>(),
-            quads.len(),
+        self.pipelines.quad_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.quad_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.quad_pipeline.buffer,
             quads,
         )?;
-        draw_normal(
+        self.pipelines.quad_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.quad_pipeline,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             quads.len() as u32,
         )
     }
@@ -282,7 +287,6 @@ impl DirectXRenderer {
         if paths.is_empty() {
             return Ok(());
         }
-        println!("Drawing {} paths", paths.len());
         let mut vertices = Vec::new();
         let mut sprites = Vec::with_capacity(paths.len());
         let mut draw_indirect_commands = Vec::with_capacity(paths.len());
@@ -296,11 +300,10 @@ impl DirectXRenderer {
             });
             start_vertex_location += path.vertices.len() as u32;
 
-            vertices.extend(path.vertices.iter().map(|v| PathVertex {
+            vertices.extend(path.vertices.iter().map(|v| DirectXPathVertex {
                 xy_position: v.xy_position,
-                content_mask: ContentMask {
-                    bounds: path.content_mask.bounds,
-                },
+                content_mask: path.content_mask.bounds,
+                sprite_index: i as u32,
             }));
 
             sprites.push(PathSprite {
@@ -309,64 +312,34 @@ impl DirectXRenderer {
             });
         }
 
-        update_buffer_capacity(
-            &self.pipelines.paths_pipeline,
-            std::mem::size_of::<PathSprite>(),
-            sprites.len(),
+        self.pipelines.paths_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.paths_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.paths_pipeline.buffer,
             &sprites,
-        )?;
-        update_indirect_buffer(
-            &self.devices.device_context,
-            &self.pipelines.paths_indirect_draw_buffer,
+            &vertices,
             &draw_indirect_commands,
         )?;
-        prepare_indirect_draws(
+        self.pipelines.paths_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.paths_pipeline,
-            &self.context.viewport,
+            paths.len(),
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-        )?;
-
-        for i in 0..paths.len() {
-            draw_indirect(
-                &self.devices.device_context,
-                &self.pipelines.paths_indirect_draw_buffer,
-                (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
-            );
-        }
-        Ok(())
+        )
     }
 
     fn draw_underlines(&mut self, underlines: &[Underline]) -> Result<()> {
         if underlines.is_empty() {
             return Ok(());
         }
-        update_buffer_capacity(
-            &self.pipelines.underline_pipeline,
-            std::mem::size_of::<Underline>(),
-            underlines.len(),
+        self.pipelines.underline_pipeline.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.underline_pipeline, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.underline_pipeline.buffer,
             underlines,
         )?;
-        draw_normal(
+        self.pipelines.underline_pipeline.draw(
             &self.devices.device_context,
-            &self.pipelines.underline_pipeline,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
-            4,
             underlines.len() as u32,
         )
     }
@@ -379,24 +352,16 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        update_buffer_capacity(
-            &self.pipelines.mono_sprites,
-            std::mem::size_of::<MonochromeSprite>(),
-            sprites.len(),
+        self.pipelines.mono_sprites.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.mono_sprites, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.mono_sprites.buffer,
             sprites,
         )?;
-        draw_with_texture(
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.mono_sprites.draw_with_texture(
             &self.devices.device_context,
-            &self.pipelines.mono_sprites,
             &texture_view,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             &self.globals.sampler,
             sprites.len() as u32,
@@ -411,24 +376,16 @@ impl DirectXRenderer {
         if sprites.is_empty() {
             return Ok(());
         }
-        let texture_view = self.atlas.get_texture_view(texture_id);
-        update_buffer_capacity(
-            &self.pipelines.poly_sprites,
-            std::mem::size_of::<PolychromeSprite>(),
-            sprites.len(),
+        self.pipelines.poly_sprites.update_buffer(
             &self.devices.device,
-        )
-        .map(|input| update_pipeline(&mut self.pipelines.poly_sprites, input));
-        update_buffer(
             &self.devices.device_context,
-            &self.pipelines.poly_sprites.buffer,
             sprites,
         )?;
-        draw_with_texture(
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.poly_sprites.draw_with_texture(
             &self.devices.device_context,
-            &self.pipelines.poly_sprites,
             &texture_view,
-            &self.context.viewport,
+            &self.resources.viewport,
             &self.globals.global_params_buffer,
             &self.globals.sampler,
             sprites.len() as u32,
@@ -441,88 +398,125 @@ impl DirectXRenderer {
         }
         Ok(())
     }
+
+    pub(crate) fn gpu_specs(&self) -> Result<GpuSpecs> {
+        let desc = unsafe { self.devices.adapter.GetDesc1() }?;
+        let is_software_emulated = (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0;
+        let device_name = String::from_utf16_lossy(&desc.Description)
+            .trim_matches(char::from(0))
+            .to_string();
+        let driver_name = match desc.VendorId {
+            0x10DE => "NVIDIA Corporation".to_string(),
+            0x1002 => "AMD Corporation".to_string(),
+            0x8086 => "Intel Corporation".to_string(),
+            _ => "Unknown Vendor".to_string(),
+        };
+        let driver_version = match desc.VendorId {
+            0x10DE => nvidia::get_driver_version(),
+            0x1002 => Err(anyhow::anyhow!("AMD driver info not implemented yet")),
+            0x8086 => intel::get_driver_version(&self.devices.adapter),
+            _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
+        }
+        .context("Failed to get gpu driver info")
+        .log_err()
+        .unwrap_or("Unknown Driver".to_string());
+        Ok(GpuSpecs {
+            is_software_emulated,
+            device_name,
+            driver_name,
+            driver_info: driver_version,
+        })
+    }
 }
 
-impl DirectXContext {
-    pub fn new(devices: &DirectXDevices, hwnd: HWND, transparent: bool) -> Result<Self> {
-        // #[cfg(not(feature = "enable-renderdoc"))]
-        // let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, transparent)?;
-        // #[cfg(feature = "enable-renderdoc")]
+impl DirectXResources {
+    pub fn new(
+        devices: &DirectXDevices,
+        #[cfg(feature = "enable-renderdoc")] hwnd: HWND,
+    ) -> Result<Self> {
+        let width = 1;
+        let height = 1;
+
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
+        #[cfg(feature = "enable-renderdoc")]
         let swap_chain =
-            create_swap_chain_default(&devices.dxgi_factory, &devices.device, hwnd, transparent)?;
-        // #[cfg(not(feature = "enable-renderdoc"))]
-        // let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
-        // #[cfg(not(feature = "enable-renderdoc"))]
-        // direct_composition.set_swap_chain(&swap_chain)?;
-        let back_buffer = [Some(set_render_target_view(
-            &swap_chain,
-            &devices.device,
-            &devices.device_context,
-        )?)];
-        let viewport = set_viewport(&devices.device_context, 1.0, 1.0);
+            create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?;
+
+        let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
+            create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(Self {
             swap_chain,
-            back_buffer,
+            render_target,
+            render_target_view,
+            msaa_target,
+            msaa_view,
+            width,
+            height,
             viewport,
-            // #[cfg(not(feature = "enable-renderdoc"))]
-            // direct_composition,
         })
+    }
+
+    #[inline]
+    fn recreate_resources(
+        &mut self,
+        devices: &DirectXDevices,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
+        let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
+            create_resources(devices, &self.swap_chain, width, height)?;
+        self.render_target = render_target;
+        self.render_target_view = render_target_view;
+        self.msaa_target = msaa_target;
+        self.msaa_view = msaa_view;
+        self.viewport = viewport;
+        self.width = width;
+        self.height = height;
+        Ok(())
     }
 }
 
 impl DirectXRenderPipelines {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let shadow_pipeline = create_pipieline(
+        let shadow_pipeline = PipelineState::new(
             device,
+            "shadow_pipeline",
             "shadow_vertex",
             "shadow_fragment",
-            std::mem::size_of::<Shadow>(),
-            32,
+            4,
         )?;
-        let quad_pipeline = create_pipieline(
+        let quad_pipeline =
+            PipelineState::new(device, "quad_pipeline", "quad_vertex", "quad_fragment", 64)?;
+        let paths_pipeline = PathsPipelineState::new(device)?;
+        let underline_pipeline = PipelineState::new(
             device,
-            "quad_vertex",
-            "quad_fragment",
-            std::mem::size_of::<Quad>(),
-            32,
-        )?;
-        let paths_pipeline = create_pipieline(
-            device,
-            "paths_vertex",
-            "paths_fragment",
-            std::mem::size_of::<PathSprite>(),
-            32,
-        )?;
-        let underline_pipeline = create_pipieline(
-            device,
+            "underline_pipeline",
             "underline_vertex",
             "underline_fragment",
-            std::mem::size_of::<Underline>(),
-            32,
+            4,
         )?;
-        let mono_sprites = create_pipieline(
+        let mono_sprites = PipelineState::new(
             device,
+            "monochrome_sprite_pipeline",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            std::mem::size_of::<MonochromeSprite>(),
-            32,
+            512,
         )?;
-        let poly_sprites = create_pipieline(
+        let poly_sprites = PipelineState::new(
             device,
+            "polychrome_sprite_pipeline",
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
-            std::mem::size_of::<PolychromeSprite>(),
-            32,
+            16,
         )?;
-        let paths_indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
 
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
             paths_pipeline,
-            paths_indirect_draw_buffer,
             underline_pipeline,
             mono_sprites,
             poly_sprites,
@@ -530,29 +524,29 @@ impl DirectXRenderPipelines {
     }
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
-// impl DirectComposition {
-//     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-//         let comp_device = get_comp_device(&dxgi_device)?;
-//         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-//         let comp_visual = unsafe { comp_device.CreateVisual() }?;
+#[cfg(not(feature = "enable-renderdoc"))]
+impl DirectComposition {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
-//         Ok(Self {
-//             comp_device,
-//             comp_target,
-//             comp_visual,
-//         })
-//     }
+        Ok(Self {
+            comp_device,
+            comp_target,
+            comp_visual,
+        })
+    }
 
-//     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
-//         unsafe {
-//             self.comp_visual.SetContent(swap_chain)?;
-//             self.comp_target.SetRoot(&self.comp_visual)?;
-//             self.comp_device.Commit()?;
-//         }
-//         Ok(())
-//     }
-// }
+    pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
+        unsafe {
+            self.comp_visual.SetContent(swap_chain)?;
+            self.comp_target.SetRoot(&self.comp_visual)?;
+            self.comp_device.Commit()?;
+        }
+        Ok(())
+    }
+}
 
 impl DirectXGlobalElements {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
@@ -588,13 +582,11 @@ impl DirectXGlobalElements {
         };
 
         let blend_state = create_blend_state(device)?;
-        let blend_state_for_pr = create_blend_state_for_path_raster(device)?;
 
         Ok(Self {
             global_params_buffer,
             sampler,
             blend_state,
-            blend_state_for_pr,
         })
     }
 }
@@ -606,12 +598,343 @@ struct GlobalParams {
     _pad: u64,
 }
 
-struct PipelineState {
+struct PipelineState<T> {
+    label: &'static str,
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
     view: [Option<ID3D11ShaderResourceView>; 1],
+    _marker: std::marker::PhantomData<T>,
+}
+
+struct PathsPipelineState {
+    vertex: ID3D11VertexShader,
+    fragment: ID3D11PixelShader,
+    buffer: ID3D11Buffer,
+    buffer_size: usize,
+    vertex_buffer: Option<ID3D11Buffer>,
+    vertex_buffer_size: usize,
+    indirect_draw_buffer: ID3D11Buffer,
+    indirect_buffer_size: usize,
+    input_layout: ID3D11InputLayout,
+    view: [Option<ID3D11ShaderResourceView>; 1],
+}
+
+impl<T> PipelineState<T> {
+    fn new(
+        device: &ID3D11Device,
+        label: &'static str,
+        vertex_entry: &str,
+        fragment_entry: &str,
+        buffer_size: usize,
+    ) -> Result<Self> {
+        let vertex = {
+            let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            create_vertex_shader(device, bytes)?
+        };
+        let fragment = {
+            let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            create_fragment_shader(device, bytes)?
+        };
+        let buffer = create_buffer(device, std::mem::size_of::<T>(), buffer_size)?;
+        let view = create_buffer_view(device, &buffer)?;
+
+        Ok(PipelineState {
+            label,
+            vertex,
+            fragment,
+            buffer,
+            buffer_size,
+            view,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    fn update_buffer(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        data: &[T],
+    ) -> Result<()> {
+        if self.buffer_size < data.len() {
+            let new_buffer_size = data.len().next_power_of_two();
+            log::info!(
+                "Updating {} buffer size from {} to {}",
+                self.label,
+                self.buffer_size,
+                new_buffer_size
+            );
+            let buffer = create_buffer(device, std::mem::size_of::<T>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+            self.buffer_size = new_buffer_size;
+        }
+        update_buffer(device_context, &self.buffer, data)
+    }
+
+    fn draw(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        instance_count: u32,
+    ) -> Result<()> {
+        set_pipeline_state(
+            device_context,
+            &self.view,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            viewport,
+            &self.vertex,
+            &self.fragment,
+            global_params,
+        );
+        unsafe {
+            device_context.DrawInstanced(4, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+
+    fn draw_with_texture(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        texture: &[Option<ID3D11ShaderResourceView>],
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+        sampler: &[Option<ID3D11SamplerState>],
+        instance_count: u32,
+    ) -> Result<()> {
+        set_pipeline_state(
+            device_context,
+            &self.view,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            viewport,
+            &self.vertex,
+            &self.fragment,
+            global_params,
+        );
+        unsafe {
+            device_context.PSSetSamplers(0, Some(sampler));
+            device_context.VSSetShaderResources(0, Some(texture));
+            device_context.PSSetShaderResources(0, Some(texture));
+
+            device_context.DrawInstanced(4, instance_count, 0, 0);
+        }
+        Ok(())
+    }
+}
+
+impl PathsPipelineState {
+    fn new(device: &ID3D11Device) -> Result<Self> {
+        let (vertex, vertex_shader) = {
+            let shader_blob = shader_resources::build_shader_blob("paths_vertex", "vs_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            (create_vertex_shader(device, bytes)?, shader_blob)
+        };
+        let fragment = {
+            let shader_blob = shader_resources::build_shader_blob("paths_fragment", "ps_5_0")?;
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    shader_blob.GetBufferPointer() as *mut u8,
+                    shader_blob.GetBufferSize(),
+                )
+            };
+            create_fragment_shader(device, bytes)?
+        };
+        let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), 32)?;
+        let view = create_buffer_view(device, &buffer)?;
+        let vertex_buffer = Some(create_buffer(
+            device,
+            std::mem::size_of::<DirectXPathVertex>(),
+            32,
+        )?);
+        let indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
+        // Create input layout
+        let input_layout = unsafe {
+            let shader_bytes = std::slice::from_raw_parts(
+                vertex_shader.GetBufferPointer() as *const u8,
+                vertex_shader.GetBufferSize(),
+            );
+            let mut layout = None;
+            device.CreateInputLayout(
+                &[
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("POSITION"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 0,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("TEXCOORD"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 8,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("TEXCOORD"),
+                        SemanticIndex: 1,
+                        Format: DXGI_FORMAT_R32G32_FLOAT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 16,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                    D3D11_INPUT_ELEMENT_DESC {
+                        SemanticName: windows::core::s!("GLOBALIDX"),
+                        SemanticIndex: 0,
+                        Format: DXGI_FORMAT_R32_UINT,
+                        InputSlot: 0,
+                        AlignedByteOffset: 24,
+                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
+                        InstanceDataStepRate: 0,
+                    },
+                ],
+                shader_bytes,
+                Some(&mut layout),
+            )?;
+            layout.unwrap()
+        };
+
+        Ok(Self {
+            vertex,
+            fragment,
+            buffer,
+            buffer_size: 32,
+            vertex_buffer,
+            vertex_buffer_size: 32,
+            indirect_draw_buffer,
+            indirect_buffer_size: 32,
+            input_layout,
+            view,
+        })
+    }
+
+    fn update_buffer(
+        &mut self,
+        device: &ID3D11Device,
+        device_context: &ID3D11DeviceContext,
+        buffer_data: &[PathSprite],
+        vertices_data: &[DirectXPathVertex],
+        draw_commands: &[DrawInstancedIndirectArgs],
+    ) -> Result<()> {
+        if self.buffer_size < buffer_data.len() {
+            let new_buffer_size = buffer_data.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline buffer size from {} to {}",
+                self.buffer_size,
+                new_buffer_size
+            );
+            let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), new_buffer_size)?;
+            let view = create_buffer_view(device, &buffer)?;
+            self.buffer = buffer;
+            self.view = view;
+            self.buffer_size = new_buffer_size;
+        }
+        update_buffer(device_context, &self.buffer, buffer_data)?;
+        if self.vertex_buffer_size < vertices_data.len() {
+            let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline vertex buffer size from {} to {}",
+                self.vertex_buffer_size,
+                new_vertex_buffer_size
+            );
+            let vertex_buffer = create_buffer(
+                device,
+                std::mem::size_of::<DirectXPathVertex>(),
+                new_vertex_buffer_size,
+            )?;
+            self.vertex_buffer = Some(vertex_buffer);
+            self.vertex_buffer_size = new_vertex_buffer_size;
+        }
+        update_buffer(
+            device_context,
+            self.vertex_buffer.as_ref().unwrap(),
+            vertices_data,
+        )?;
+        if self.indirect_buffer_size < draw_commands.len() {
+            let new_indirect_buffer_size = draw_commands.len().next_power_of_two();
+            log::info!(
+                "Updating Paths Pipeline indirect buffer size from {} to {}",
+                self.indirect_buffer_size,
+                new_indirect_buffer_size
+            );
+            let indirect_draw_buffer =
+                create_indirect_draw_buffer(device, new_indirect_buffer_size)?;
+            self.indirect_draw_buffer = indirect_draw_buffer;
+            self.indirect_buffer_size = new_indirect_buffer_size;
+        }
+        update_buffer(device_context, &self.indirect_draw_buffer, draw_commands)?;
+        Ok(())
+    }
+
+    fn draw(
+        &self,
+        device_context: &ID3D11DeviceContext,
+        count: usize,
+        viewport: &[D3D11_VIEWPORT],
+        global_params: &[Option<ID3D11Buffer>],
+    ) -> Result<()> {
+        set_pipeline_state(
+            device_context,
+            &self.view,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            viewport,
+            &self.vertex,
+            &self.fragment,
+            global_params,
+        );
+        unsafe {
+            const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
+            device_context.IASetVertexBuffers(
+                0,
+                1,
+                Some(&self.vertex_buffer),
+                Some(&STRIDE),
+                Some(&0),
+            );
+            device_context.IASetInputLayout(&self.input_layout);
+        }
+        for i in 0..count {
+            unsafe {
+                device_context.DrawInstancedIndirect(
+                    &self.indirect_draw_buffer,
+                    (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+#[repr(C)]
+struct DirectXPathVertex {
+    xy_position: Point<ScaledPixels>,
+    content_mask: Bounds<ScaledPixels>,
+    sprite_index: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -621,11 +944,20 @@ struct PathSprite {
     color: Background,
 }
 
+impl Drop for DirectXResources {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.render_target);
+        }
+    }
+}
+
+#[inline]
 fn get_dxgi_factory() -> Result<IDXGIFactory6> {
     #[cfg(debug_assertions)]
     let factory_flag = DXGI_CREATE_FACTORY_DEBUG;
     #[cfg(not(debug_assertions))]
-    let factory_flag = 0u32;
+    let factory_flag = DXGI_CREATE_FACTORY_FLAGS::default();
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
@@ -635,12 +967,11 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
             dxgi_factory
                 .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
         }?;
-        {
-            let desc = unsafe { adapter.GetDesc1() }?;
-            println!(
-                "Select GPU: {}",
-                String::from_utf16_lossy(&desc.Description)
-            );
+        if let Ok(desc) = unsafe { adapter.GetDesc1() } {
+            let gpu_name = String::from_utf16_lossy(&desc.Description)
+                .trim_matches(char::from(0))
+                .to_string();
+            log::info!("Using GPU: {}", gpu_name);
         }
         // Check to see whether the adapter supports Direct3D 11, but don't
         // create the actual device yet.
@@ -667,6 +998,8 @@ fn get_device(
             D3D_DRIVER_TYPE_UNKNOWN,
             HMODULE::default(),
             device_flags,
+            // 4x MSAA is required for Direct3D Feature Level 10.1 or better
+            // 8x MSAA is required for Direct3D Feature Level 11.0 or better
             Some(&[D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1]),
             D3D11_SDK_VERSION,
             device,
@@ -676,54 +1009,52 @@ fn get_device(
     })
 }
 
-// #[cfg(not(feature = "enable-renderdoc"))]
-// fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
-//     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
-// }
+#[cfg(not(feature = "enable-renderdoc"))]
+fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
+    Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
+}
 
-// fn create_swap_chain(
-//     dxgi_factory: &IDXGIFactory6,
-//     device: &ID3D11Device,
-//     transparent: bool,
-// ) -> Result<IDXGISwapChain1> {
-//     let alpha_mode = if transparent {
-//         DXGI_ALPHA_MODE_PREMULTIPLIED
-//     } else {
-//         DXGI_ALPHA_MODE_IGNORE
-//     };
-//     let desc = DXGI_SWAP_CHAIN_DESC1 {
-//         Width: 1,
-//         Height: 1,
-//         Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-//         Stereo: false.into(),
-//         SampleDesc: DXGI_SAMPLE_DESC {
-//             Count: 1,
-//             Quality: 0,
-//         },
-//         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-//         BufferCount: BUFFER_COUNT as u32,
-//         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
-//         Scaling: DXGI_SCALING_STRETCH,
-//         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-//         AlphaMode: alpha_mode,
-//         Flags: 0,
-//     };
-//     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
-// }
+#[cfg(not(feature = "enable-renderdoc"))]
+fn create_swap_chain(
+    dxgi_factory: &IDXGIFactory6,
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<IDXGISwapChain1> {
+    let desc = DXGI_SWAP_CHAIN_DESC1 {
+        Width: width,
+        Height: height,
+        Format: RENDER_TARGET_FORMAT,
+        Stereo: false.into(),
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        BufferCount: BUFFER_COUNT as u32,
+        // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
+        Scaling: DXGI_SCALING_STRETCH,
+        SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        Flags: 0,
+    };
+    Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
+}
 
-// #[cfg(feature = "enable-renderdoc")]
-fn create_swap_chain_default(
+#[cfg(feature = "enable-renderdoc")]
+fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     hwnd: HWND,
-    _transparent: bool,
+    width: u32,
+    height: u32,
 ) -> Result<IDXGISwapChain1> {
     use windows::Win32::Graphics::Dxgi::DXGI_MWA_NO_ALT_ENTER;
 
     let desc = DXGI_SWAP_CHAIN_DESC1 {
-        Width: 1,
-        Height: 1,
-        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        Width: width,
+        Height: height,
+        Format: RENDER_TARGET_FORMAT,
         Stereo: false.into(),
         SampleDesc: DXGI_SAMPLE_DESC {
             Count: 1,
@@ -742,23 +1073,84 @@ fn create_swap_chain_default(
     Ok(swap_chain)
 }
 
-fn set_render_target_view(
+#[inline]
+fn create_resources(
+    devices: &DirectXDevices,
     swap_chain: &IDXGISwapChain1,
-    device: &ID3D11Device,
-    device_context: &ID3D11DeviceContext,
-) -> Result<ID3D11RenderTargetView> {
-    // In dx11, ID3D11RenderTargetView is supposed to always point to the new back buffer.
-    // https://stackoverflow.com/questions/65246961/does-the-backbuffer-that-a-rendertargetview-points-to-automagically-change-after
-    let back_buffer = unsafe {
-        let resource: ID3D11Texture2D = swap_chain.GetBuffer(0)?;
-        let mut buffer: Option<ID3D11RenderTargetView> = None;
-        device.CreateRenderTargetView(&resource, None, Some(&mut buffer))?;
-        buffer.unwrap()
-    };
-    unsafe { device_context.OMSetRenderTargets(Some(&[Some(back_buffer.clone())]), None) };
-    Ok(back_buffer)
+    width: u32,
+    height: u32,
+) -> Result<(
+    ManuallyDrop<ID3D11Texture2D>,
+    [Option<ID3D11RenderTargetView>; 1],
+    ID3D11Texture2D,
+    [Option<ID3D11RenderTargetView>; 1],
+    [D3D11_VIEWPORT; 1],
+)> {
+    let (render_target, render_target_view) =
+        create_render_target_and_its_view(&swap_chain, &devices.device)?;
+    let (msaa_target, msaa_view) = create_msaa_target_and_its_view(&devices.device, width, height)?;
+    let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
+    Ok((
+        render_target,
+        render_target_view,
+        msaa_target,
+        msaa_view,
+        viewport,
+    ))
 }
 
+#[inline]
+fn create_render_target_and_its_view(
+    swap_chain: &IDXGISwapChain1,
+    device: &ID3D11Device,
+) -> Result<(
+    ManuallyDrop<ID3D11Texture2D>,
+    [Option<ID3D11RenderTargetView>; 1],
+)> {
+    let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
+    let mut render_target_view = None;
+    unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
+    Ok((
+        ManuallyDrop::new(render_target),
+        [Some(render_target_view.unwrap())],
+    ))
+}
+
+#[inline]
+fn create_msaa_target_and_its_view(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<(ID3D11Texture2D, [Option<ID3D11RenderTargetView>; 1])> {
+    let msaa_target = unsafe {
+        let mut output = None;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: RENDER_TARGET_FORMAT,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: MULTISAMPLE_COUNT,
+                Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        device.CreateTexture2D(&desc, None, Some(&mut output))?;
+        output.unwrap()
+    };
+    let msaa_view = unsafe {
+        let mut output = None;
+        device.CreateRenderTargetView(&msaa_target, None, Some(&mut output))?;
+        output.unwrap()
+    };
+    Ok((msaa_target, [Some(msaa_view)]))
+}
+
+#[inline]
 fn set_viewport(
     device_context: &ID3D11DeviceContext,
     width: f32,
@@ -776,6 +1168,7 @@ fn set_viewport(
     viewport
 }
 
+#[inline]
 fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceContext) -> Result<()> {
     let desc = D3D11_RASTERIZER_DESC {
         FillMode: D3D11_FILL_SOLID,
@@ -786,7 +1179,8 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
         SlopeScaledDepthBias: 0.0,
         DepthClipEnable: true.into(),
         ScissorEnable: false.into(),
-        MultisampleEnable: false.into(),
+        // MultisampleEnable: false.into(),
+        MultisampleEnable: true.into(),
         AntialiasedLineEnable: false.into(),
     };
     let rasterizer_state = unsafe {
@@ -799,6 +1193,7 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_blend_desc
+#[inline]
 fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
     // device performs the blend in linear space, which is ideal.
@@ -818,63 +1213,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     }
 }
 
-fn create_blend_state_for_path_raster(device: &ID3D11Device) -> Result<ID3D11BlendState> {
-    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
-    // device performs the blend in linear space, which is ideal.
-    let mut desc = D3D11_BLEND_DESC::default();
-    desc.RenderTarget[0].BlendEnable = true.into();
-    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
-    unsafe {
-        let mut state = None;
-        device.CreateBlendState(&desc, Some(&mut state))?;
-        Ok(state.unwrap())
-    }
-}
-
-fn create_pipieline(
-    device: &ID3D11Device,
-    vertex_entry: &str,
-    fragment_entry: &str,
-    element_size: usize,
-    buffer_size: usize,
-) -> Result<PipelineState> {
-    let vertex = {
-        let shader_blob = shader_resources::build_shader_blob(vertex_entry, "vs_5_0")?;
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                shader_blob.GetBufferPointer() as *mut u8,
-                shader_blob.GetBufferSize(),
-            )
-        };
-        create_vertex_shader(device, bytes)?
-    };
-    let fragment = {
-        let shader_blob = shader_resources::build_shader_blob(fragment_entry, "ps_5_0")?;
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                shader_blob.GetBufferPointer() as *mut u8,
-                shader_blob.GetBufferSize(),
-            )
-        };
-        create_fragment_shader(device, bytes)?
-    };
-    let buffer = create_buffer(device, element_size, buffer_size)?;
-    let view = create_buffer_view(device, &buffer)?;
-    Ok(PipelineState {
-        vertex,
-        fragment,
-        buffer,
-        buffer_size,
-        view,
-    })
-}
-
+#[inline]
 fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11VertexShader> {
     unsafe {
         let mut shader = None;
@@ -883,6 +1222,7 @@ fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11Ver
     }
 }
 
+#[inline]
 fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11PixelShader> {
     unsafe {
         let mut shader = None;
@@ -891,6 +1231,7 @@ fn create_fragment_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11P
     }
 }
 
+#[inline]
 fn create_buffer(
     device: &ID3D11Device,
     element_size: usize,
@@ -909,6 +1250,7 @@ fn create_buffer(
     Ok(buffer.unwrap())
 }
 
+#[inline]
 fn create_buffer_view(
     device: &ID3D11Device,
     buffer: &ID3D11Buffer,
@@ -918,18 +1260,12 @@ fn create_buffer_view(
     Ok([view])
 }
 
-fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: u32) -> Result<ID3D11Buffer> {
-    // let desc = D3D11_BUFFER_DESC {
-    //     ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
-    //     Usage: D3D11_USAGE_DYNAMIC,
-    //     BindFlags: D3D11_BIND_INDIRECT_DRAW.0 as u32,
-    //     MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
-    //     ..Default::default()
-    // };
+#[inline]
+fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: usize) -> Result<ID3D11Buffer> {
     let desc = D3D11_BUFFER_DESC {
-        ByteWidth: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32 * buffer_size,
+        ByteWidth: (std::mem::size_of::<DrawInstancedIndirectArgs>() * buffer_size) as u32,
         Usage: D3D11_USAGE_DYNAMIC,
-        BindFlags: D3D11_BIND_INDEX_BUFFER.0 as u32,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
         MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
         StructureByteStride: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32,
@@ -939,72 +1275,7 @@ fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: u32) -> Resul
     Ok(buffer.unwrap())
 }
 
-fn update_global_params(
-    device_context: &ID3D11DeviceContext,
-    buffer: &[Option<ID3D11Buffer>; 1],
-    globals: GlobalParams,
-) -> Result<()> {
-    let buffer = buffer[0].as_ref().unwrap();
-    unsafe {
-        let mut data = std::mem::zeroed();
-        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut data))?;
-        std::ptr::copy_nonoverlapping(&globals, data.pData as *mut _, 1);
-        device_context.Unmap(buffer, 0);
-    }
-    Ok(())
-}
-
-fn pre_draw(
-    device_context: &ID3D11DeviceContext,
-    global_params_buffer: &[Option<ID3D11Buffer>; 1],
-    view_port: &[D3D11_VIEWPORT; 1],
-    render_target_view: &[Option<ID3D11RenderTargetView>; 1],
-    clear_color: [f32; 4],
-    blend_state: &ID3D11BlendState,
-) -> Result<()> {
-    update_global_params(
-        device_context,
-        global_params_buffer,
-        GlobalParams {
-            viewport_size: [view_port[0].Width, view_port[0].Height],
-            ..Default::default()
-        },
-    )?;
-    unsafe {
-        device_context.RSSetViewports(Some(view_port));
-        device_context.OMSetRenderTargets(Some(render_target_view), None);
-        device_context.ClearRenderTargetView(render_target_view[0].as_ref().unwrap(), &clear_color);
-        device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
-    }
-    Ok(())
-}
-
-fn update_buffer_capacity(
-    pipeline: &PipelineState,
-    element_size: usize,
-    data_size: usize,
-    device: &ID3D11Device,
-) -> Option<(ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1])> {
-    if pipeline.buffer_size >= data_size {
-        return None;
-    }
-    println!("buffer too small: {} < {}", pipeline.buffer_size, data_size);
-    let buffer_size = data_size.next_power_of_two();
-    println!("New size: {}", buffer_size);
-    let buffer = create_buffer(device, element_size, buffer_size).unwrap();
-    let view = create_buffer_view(device, &buffer).unwrap();
-    Some((buffer, buffer_size, view))
-}
-
-fn update_pipeline(
-    pipeline: &mut PipelineState,
-    input: (ID3D11Buffer, usize, [Option<ID3D11ShaderResourceView>; 1]),
-) {
-    pipeline.buffer = input.0;
-    pipeline.buffer_size = input.1;
-    pipeline.view = input.2;
-}
-
+#[inline]
 fn update_buffer<T>(
     device_context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
@@ -1019,99 +1290,26 @@ fn update_buffer<T>(
     Ok(())
 }
 
-fn update_indirect_buffer(
+#[inline]
+fn set_pipeline_state(
     device_context: &ID3D11DeviceContext,
-    buffer: &ID3D11Buffer,
-    data: &[DrawInstancedIndirectArgs],
-) -> Result<()> {
-    unsafe {
-        let mut dest = std::mem::zeroed();
-        device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
-        std::ptr::copy_nonoverlapping(data.as_ptr(), dest.pData as _, data.len());
-        device_context.Unmap(buffer, 0);
-    }
-    Ok(())
-}
-
-fn prepare_indirect_draws(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState,
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
+    buffer_view: &[Option<ID3D11ShaderResourceView>],
     topology: D3D_PRIMITIVE_TOPOLOGY,
-) -> Result<()> {
-    unsafe {
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
-        device_context.IASetPrimitiveTopology(topology);
-        device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
-    }
-    Ok(())
-}
-
-fn draw_indirect(
-    device_context: &ID3D11DeviceContext,
-    indirect_draw_buffer: &ID3D11Buffer,
-    offset: u32,
+    viewport: &[D3D11_VIEWPORT],
+    vertex_shader: &ID3D11VertexShader,
+    fragment_shader: &ID3D11PixelShader,
+    global_params: &[Option<ID3D11Buffer>],
 ) {
     unsafe {
-        device_context.DrawInstancedIndirect(indirect_draw_buffer, offset);
-    }
-}
-
-fn draw_normal(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState,
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
-    topology: D3D_PRIMITIVE_TOPOLOGY,
-    vertex_count: u32,
-    instance_count: u32,
-) -> Result<()> {
-    unsafe {
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
+        device_context.VSSetShaderResources(1, Some(buffer_view));
+        device_context.PSSetShaderResources(1, Some(buffer_view));
         device_context.IASetPrimitiveTopology(topology);
         device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
+        device_context.VSSetShader(vertex_shader, None);
+        device_context.PSSetShader(fragment_shader, None);
         device_context.VSSetConstantBuffers(0, Some(global_params));
         device_context.PSSetConstantBuffers(0, Some(global_params));
-
-        device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
     }
-    Ok(())
-}
-
-fn draw_with_texture(
-    device_context: &ID3D11DeviceContext,
-    pipeline: &PipelineState,
-    texture: &[Option<ID3D11ShaderResourceView>],
-    viewport: &[D3D11_VIEWPORT],
-    global_params: &[Option<ID3D11Buffer>],
-    sampler: &[Option<ID3D11SamplerState>],
-    instance_count: u32,
-) -> Result<()> {
-    unsafe {
-        device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        device_context.RSSetViewports(Some(viewport));
-        device_context.VSSetShader(&pipeline.vertex, None);
-        device_context.PSSetShader(&pipeline.fragment, None);
-        device_context.VSSetConstantBuffers(0, Some(global_params));
-        device_context.PSSetConstantBuffers(0, Some(global_params));
-        device_context.VSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetShaderResources(1, Some(&pipeline.view));
-        device_context.PSSetSamplers(0, Some(sampler));
-        device_context.VSSetShaderResources(0, Some(texture));
-        device_context.PSSetShaderResources(0, Some(texture));
-
-        device_context.DrawInstanced(4, instance_count, 0, 0);
-    }
-    Ok(())
 }
 
 const BUFFER_COUNT: usize = 3;
@@ -1125,7 +1323,6 @@ mod shader_resources {
     use windows_core::{HSTRING, PCSTR};
 
     pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
-        println!("Building shader: {}", entry);
         unsafe {
             let mut entry = entry.to_owned();
             let mut target = target.to_owned();
@@ -1139,11 +1336,6 @@ mod shader_resources {
             target.push_str("\0");
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
-            println!(
-                "Compiling shader: {} with target: {}",
-                entry_point.display(),
-                target_cstr.display()
-            );
             #[cfg(debug_assertions)]
             let compile_flag = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
             #[cfg(not(debug_assertions))]
@@ -1159,7 +1351,6 @@ mod shader_resources {
                 &mut compile_blob,
                 Some(&mut error_blob),
             );
-            println!("Shader compile result: {:?}", ret);
             if ret.is_err() {
                 let Some(error_blob) = error_blob else {
                     return Err(anyhow::anyhow!("{ret:?}"));
@@ -1170,11 +1361,97 @@ mod shader_resources {
                     string_len,
                     string_len,
                 );
-                let error_string = String::from_utf8_lossy(&error_string_encode);
-                println!("Shader compile error: {}", error_string);
+                let error_string = String::from_utf8_lossy(&error_string_encode).to_string();
+                log::error!("Shader compile error: {}", error_string);
                 return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
             Ok(compile_blob.unwrap())
         }
+    }
+}
+
+mod nvidia {
+    use std::{
+        ffi::CStr,
+        os::raw::{c_char, c_int, c_uint},
+    };
+
+    use anyhow::{Context, Result};
+    use windows::{
+        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
+        core::s,
+    };
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L180
+    const NVAPI_SHORT_STRING_MAX: usize = 64;
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L235
+    #[allow(non_camel_case_types)]
+    type NvAPI_ShortString = [c_char; NVAPI_SHORT_STRING_MAX];
+
+    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L447
+    #[allow(non_camel_case_types)]
+    type NvAPI_SYS_GetDriverAndBranchVersion_t = unsafe extern "C" fn(
+        driver_version: *mut c_uint,
+        build_branch_string: *mut NvAPI_ShortString,
+    ) -> c_int;
+
+    pub(super) fn get_driver_version() -> Result<String> {
+        unsafe {
+            // Try to load the NVIDIA driver DLL
+            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
+            let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
+            let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
+
+            // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L41
+            let nvapi_get_driver_version_ptr = nvapi_query(0x2926aaad);
+            if nvapi_get_driver_version_ptr.is_null() {
+                anyhow::bail!("Failed to get NVIDIA driver version function pointer");
+            }
+            let nvapi_get_driver_version: NvAPI_SYS_GetDriverAndBranchVersion_t =
+                std::mem::transmute(nvapi_get_driver_version_ptr);
+
+            let mut driver_version: c_uint = 0;
+            let mut build_branch_string: NvAPI_ShortString = [0; NVAPI_SHORT_STRING_MAX];
+            let result = nvapi_get_driver_version(
+                &mut driver_version as *mut c_uint,
+                &mut build_branch_string as *mut NvAPI_ShortString,
+            );
+
+            if result != 0 {
+                anyhow::bail!(
+                    "Failed to get NVIDIA driver version, error code: {}",
+                    result
+                );
+            }
+            let major = driver_version / 100;
+            let minor = driver_version % 100;
+            let branch_string = CStr::from_ptr(build_branch_string.as_ptr());
+            Ok(format!(
+                "{}.{} {}",
+                major,
+                minor,
+                branch_string.to_string_lossy()
+            ))
+        }
+    }
+}
+
+mod intel {
+    use windows::{
+        Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice},
+        core::Interface,
+    };
+
+    pub(super) fn get_driver_version(adapter: &IDXGIAdapter1) -> anyhow::Result<String> {
+        let number = unsafe { adapter.CheckInterfaceSupport(&IDXGIDevice::IID as _) }?;
+        Ok(format!(
+            "{}.{}.{}.{}",
+            number >> 48,
+            (number >> 32) & 0xFFFF,
+            (number >> 16) & 0xFFFF,
+            number & 0xFFFF
+        ))
     }
 }

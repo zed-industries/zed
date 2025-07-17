@@ -181,12 +181,8 @@ fn handle_size_msg(
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
     if lock.restore_from_minimized.is_some() {
-        // lock.renderer
-        //     .update_drawable_size_even_if_unchanged(new_size);
-        lock.renderer.resize(new_size).log_err();
         lock.callbacks.request_frame = lock.restore_from_minimized.take();
     } else {
-        // lock.renderer.update_drawable_size(new_size);
         lock.renderer.resize(new_size).log_err();
     }
     let new_size = new_size.to_pixels(scale_factor);
