@@ -1624,7 +1624,7 @@ enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(HashSet<Arc<Language>>),
-    RefreshRequested,
+    RefreshRequested(LanguageServerId),
     ExcerptsRemoved(Vec<ExcerptId>),
 }
 
@@ -1636,7 +1636,7 @@ impl InlayHintRefreshReason {
             Self::SettingsChange(_) => "settings change",
             Self::NewLinesShown => "new lines shown",
             Self::BufferEdited(_) => "buffer edited",
-            Self::RefreshRequested => "refresh requested",
+            Self::RefreshRequested(_) => "refresh requested",
             Self::ExcerptsRemoved(_) => "excerpts removed",
         }
     }
@@ -1877,8 +1877,11 @@ impl Editor {
                     project::Event::RefreshCodeLens => {
                         // we always query lens with actions, without storing them, always refreshing them
                     }
-                    project::Event::RefreshInlayHints => {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                    project::Event::RefreshInlayHints(server_id) => {
+                        editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::RefreshRequested(*server_id),
+                                cx,
+                            );
                     }
                     project::Event::LanguageServerAdded(..)
                     | project::Event::LanguageServerRemoved(..) => {
@@ -5284,7 +5287,7 @@ impl Editor {
             InlayHintRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }
-            InlayHintRefreshReason::RefreshRequested => {
+            InlayHintRefreshReason::RefreshRequested(_) => {
                 (InvalidationStrategy::RefreshRequested, None)
             }
         };
@@ -17493,9 +17496,9 @@ impl Editor {
                         HashSet::default(),
                         cx,
                     );
-                    cx.emit(project::Event::RefreshInlayHints);
                 });
             });
+            self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         }
     }
 
