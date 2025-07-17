@@ -5,17 +5,13 @@ use acp_thread::{
     AcpThread, AgentThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallStatus,
 };
 use agentic_coding_protocol as acp;
-use anyhow::Result;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AsyncApp, Entity, TestAppContext};
+use gpui::{Entity, TestAppContext};
 use indoc::indoc;
-use language::language_settings::{AllLanguageSettings, LanguageSettings};
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use util::path;
-
-use crate::{AgentServerCommand, AgentServerVersion, StdioAgentServer};
 
 pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
     let fs = init_test(cx).await;
@@ -305,10 +301,10 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         crate::AllAgentServersSettings::override_global(
             AllAgentServersSettings {
                 claude: Some(AgentServerSettings {
-                    command: crate::claude::tests::local_command().into(),
+                    command: crate::claude::tests::local_command(),
                 }),
                 gemini: Some(AgentServerSettings {
-                    command: crate::gemini::tests::local_command().into(),
+                    command: crate::gemini::tests::local_command(),
                 }),
             },
             cx,
