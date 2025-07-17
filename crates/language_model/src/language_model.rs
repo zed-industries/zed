@@ -119,6 +119,7 @@ pub enum LanguageModelCompletionError {
     #[error("{message}")]
     UpstreamProviderError {
         message: String,
+        status: StatusCode,
         retry_after: Option<Duration>,
     },
     #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]

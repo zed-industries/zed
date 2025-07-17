@@ -671,28 +671,24 @@ enum CloudApiError {
         message: String,
         #[serde(deserialize_with = "deserialize_status_code")]
         upstream_status: StatusCode,
+        #[serde(default)]
+        retry_after: Option<f64>,
     },
 }
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
+        // Try to parse as upstream_http_error
         if let Ok(CloudApiError::UpstreamHttpError {
             message,
             upstream_status,
+            retry_after,
         }) = serde_json::from_str::<CloudApiError>(&error.body)
         {
-            // Determine retry_after based on the upstream status
-            let retry_after = match upstream_status {
-                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
-                    Some(Duration::from_secs(5))
-                }
-                _ if upstream_status.as_u16() == 529 => Some(Duration::from_secs(5)),
-                _ => None,
-            };
-
             return LanguageModelCompletionError::UpstreamProviderError {
                 message,
-                retry_after,
+                status: upstream_status,
+                retry_after: retry_after.map(Duration::from_secs_f64),
             };
         }
 
