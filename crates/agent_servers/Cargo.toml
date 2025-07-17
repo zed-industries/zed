@@ -24,6 +24,7 @@ collections.workspace = true
 context_server.workspace = true
 futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 log.workspace = true
 paths.workspace = true
 project.workspace = true
