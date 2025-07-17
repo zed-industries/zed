@@ -22,9 +22,9 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
-    WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
@@ -504,7 +504,8 @@ impl TitleBar {
                     )
                 })
                 .on_click(move |_, window, cx| {
-                    let _ = workspace.update(cx, |_this, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        window.focus(&this.active_pane().focus_handle(cx));
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 })
