@@ -395,6 +395,8 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

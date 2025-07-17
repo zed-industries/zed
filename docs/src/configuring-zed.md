@@ -639,6 +639,12 @@ List of `string` values
 "snippet_sort_order": "bottom"
 ```
 
+4. Do not show snippets in the completion list at all:
+
+```json
+"snippet_sort_order": "none"
+```
+
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.
