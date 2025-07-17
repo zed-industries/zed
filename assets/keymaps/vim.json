@@ -213,7 +213,10 @@
       "ctrl-w g space": "editor::OpenExcerptsSplit",
       "ctrl-6": "pane::AlternateFile",
       "ctrl-^": "pane::AlternateFile",
-      ".": "vim::Repeat"
+      ".": "vim::Repeat",
+      "ctrl-w p": "workspace::CycleLeftDockPanels",
+      "ctrl-w P": "workspace::CycleRightDockPanels",
+      "ctrl-w b": "workspace::CycleBottomDockPanels"
     }
   },
   {

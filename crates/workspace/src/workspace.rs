@@ -177,6 +177,12 @@ actions!(
         ActivateNextWindow,
         /// Switches to the previous window.
         ActivatePreviousWindow,
+        /// Cycles to the next panel in the left dock.
+        CycleLeftDockPanels,
+        /// Cycles to the next panel in the right dock.
+        CycleRightDockPanels,
+        /// Cycles to the next panel in the bottom dock.
+        CycleBottomDockPanels,
         /// Adds a folder to the current project.
         AddFolderToProject,
         /// Clears all notifications.
@@ -3017,6 +3023,55 @@ impl Workspace {
             .find_map(|dock| dock.read(cx).panel::<T>())
     }
 
+    /// Cycle to the next panel in the left dock
+    pub fn cycle_left_dock_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_dock_panels(DockPosition::Left, window, cx);
+    }
+
+    /// Cycle to the next panel in the right dock
+    pub fn cycle_right_dock_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_dock_panels(DockPosition::Right, window, cx);
+    }
+
+    /// Cycle to the next panel in the bottom dock
+    pub fn cycle_bottom_dock_panels(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_dock_panels(DockPosition::Bottom, window, cx);
+    }
+
+    /// Cycle to the next panel in the specified dock
+    fn cycle_dock_panels(
+        &mut self,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dock = self.dock_at_position(position);
+        let panels_len = dock.read(cx).panels_len();
+
+        if panels_len == 0 {
+            return;
+        }
+
+        dock.update(cx, |dock, cx| {
+            let current_index = dock.active_panel_index();
+            let next_index = match current_index {
+                Some(index) => (index + 1) % panels_len,
+                None => 0,
+            };
+
+            dock.activate_panel(next_index, window, cx);
+            dock.set_open(true, window, cx);
+
+            // Focus the newly activated panel
+            if let Some(panel) = dock.active_panel() {
+                panel.panel_focus_handle(cx).focus(window);
+            }
+        });
+
+        self.serialize_workspace(window, cx);
+        cx.notify();
+    }
+
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
         dock_to_reveal: Option<DockPosition>,
@@ -5522,6 +5577,21 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ToggleBottomDock, window, cx| {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CycleLeftDockPanels, window, cx| {
+                    workspace.cycle_left_dock_panels(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CycleRightDockPanels, window, cx| {
+                    workspace.cycle_right_dock_panels(window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CycleBottomDockPanels, window, cx| {
+                    workspace.cycle_bottom_dock_panels(window, cx);
                 },
             ))
             .on_action(cx.listener(
