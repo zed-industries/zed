@@ -1371,7 +1371,10 @@ mod shader_resources {
 }
 
 mod nvidia {
-    use std::os::raw::{c_char, c_int, c_uint};
+    use std::{
+        ffi::CStr,
+        os::raw::{c_char, c_int, c_uint},
+    };
 
     use anyhow::{Context, Result};
     use windows::{
@@ -1385,10 +1388,6 @@ mod nvidia {
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L235
     #[allow(non_camel_case_types)]
     type NvAPI_ShortString = [c_char; NVAPI_SHORT_STRING_MAX];
-
-    // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi.h#L87
-    #[allow(non_camel_case_types)]
-    type NvAPI_Initialize_t = unsafe extern "C" fn() -> c_int;
 
     // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_lite_common.h#L447
     #[allow(non_camel_case_types)]
@@ -1404,18 +1403,6 @@ mod nvidia {
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
             let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
-
-            // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L33
-            let nvapi_init_ptr = nvapi_query(0x0150e828);
-            if nvapi_init_ptr.is_null() {
-                anyhow::bail!("Failed to get NVIDIA API function pointer");
-            }
-            let nvapi_init: NvAPI_Initialize_t = std::mem::transmute(nvapi_init_ptr);
-
-            let result = nvapi_init();
-            if result != 0 {
-                anyhow::bail!("Failed to initialize NVIDIA API, error code: {}", result);
-            }
 
             // https://github.com/NVIDIA/nvapi/blob/7cb76fce2f52de818b3da497af646af1ec16ce27/nvapi_interface.h#L41
             let nvapi_get_driver_version_ptr = nvapi_query(0x2926aaad);
@@ -1440,7 +1427,13 @@ mod nvidia {
             }
             let major = driver_version / 100;
             let minor = driver_version % 100;
-            Ok(format!("{}.{}", major, minor))
+            let branch_string = CStr::from_ptr(build_branch_string.as_ptr());
+            Ok(format!(
+                "{}.{} {}",
+                major,
+                minor,
+                branch_string.to_string_lossy()
+            ))
         }
     }
 }
