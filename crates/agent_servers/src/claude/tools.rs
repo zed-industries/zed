@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use agentic_coding_protocol::{self as acp, PushToolCallParams, ToolCallLocation};
+use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -16,7 +17,7 @@ pub enum ClaudeTool {
     Terminal(Option<BashToolParams>),
     WebFetch(Option<WebFetchToolParams>),
     WebSearch(Option<WebSearchToolParams>),
-    TodoWrite,
+    TodoWrite(Option<TodoWriteToolParams>),
     ExitPlanMode,
     Other {
         name: String,
@@ -38,7 +39,7 @@ impl ClaudeTool {
             "Bash" => Self::Terminal(serde_json::from_value(input).log_err()),
             "WebFetch" => Self::WebFetch(serde_json::from_value(input).log_err()),
             "WebSearch" => Self::WebSearch(serde_json::from_value(input).log_err()),
-            "TodoWrite" => Self::TodoWrite,
+            "TodoWrite" => Self::TodoWrite(serde_json::from_value(input).log_err()),
             "exit_plan_mode" => Self::ExitPlanMode,
             "Task" => Self::ExitPlanMode,
             // Inferred from name
@@ -90,7 +91,11 @@ impl ClaudeTool {
             ClaudeTool::WebFetch(None) => "Fetch".into(),
             ClaudeTool::WebSearch(Some(params)) => format!("Web Search: {}", params),
             ClaudeTool::WebSearch(None) => "Web Search".into(),
-            ClaudeTool::TodoWrite => "Update TODOs".into(),
+            ClaudeTool::TodoWrite(Some(params)) => format!(
+                "Update TODOs: {}",
+                params.todos.iter().map(|todo| &todo.content).join(", ")
+            ),
+            ClaudeTool::TodoWrite(None) => "Update TODOs".into(),
             ClaudeTool::ExitPlanMode => "Exit Plan Mode".into(),
             ClaudeTool::Other { name, .. } => name.clone(),
         }
@@ -119,7 +124,7 @@ impl ClaudeTool {
             Self::Terminal(_) => acp::Icon::Terminal,
             Self::WebSearch(_) => acp::Icon::Globe,
             Self::WebFetch(_) => acp::Icon::Globe,
-            Self::TodoWrite => acp::Icon::LightBulb,
+            Self::TodoWrite(_) => acp::Icon::LightBulb,
             Self::ExitPlanMode => acp::Icon::Hammer,
             Self::Other { .. } => acp::Icon::Hammer,
         }
@@ -148,7 +153,7 @@ impl ClaudeTool {
             | Self::Ls(_)
             | Self::Glob(_)
             | Self::Grep(_)
-            | Self::TodoWrite
+            | Self::TodoWrite(_)
             | Self::WebSearch(_)
             | Self::ExitPlanMode
             | Self::ReadFile(_)
@@ -199,7 +204,7 @@ impl ClaudeTool {
             | Self::Terminal(_)
             | Self::WebFetch(_)
             | Self::WebSearch(_)
-            | Self::TodoWrite
+            | Self::TodoWrite(_)
             | Self::ExitPlanMode
             | Self::Other { .. } => vec![],
         }
@@ -386,6 +391,39 @@ impl std::fmt::Display for GrepToolParams {
 
         Ok(())
     }
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoPriority {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+pub struct Todo {
+    /// Unique identifier
+    pub id: String,
+    /// Task description
+    pub content: String,
+    /// Priority level of the todo
+    pub priority: TodoPriority,
+    /// Current status of the todo
+    pub status: TodoStatus,
+}
+
+#[derive(Deserialize, JsonSchema, Debug)]
+pub struct TodoWriteToolParams {
+    pub todos: Vec<Todo>,
 }
 
 fn is_false(v: &bool) -> bool {
