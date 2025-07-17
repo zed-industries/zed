@@ -2089,13 +2089,11 @@ impl Render for KeybindingEditorModal {
                                     Button::new("cancel", "Cancel")
                                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                                 )
-                                .child(
-                                    Button::new("save-btn", "Save")
-                                        .disabled(self.has_error())
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.save_or_display_error(cx);
-                                        })),
-                                ),
+                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                    |this, _event, _window, cx| {
+                                        this.save_or_display_error(cx);
+                                    },
+                                ))),
                         ),
                     ),
             )
