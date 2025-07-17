@@ -412,11 +412,12 @@ impl DirectXRenderer {
             _ => "Unknown Vendor".to_string(),
         };
         let driver_version = match desc.VendorId {
-            0x10DE => nvidia::get_driver_version().context("Failed to get NVIDIA driver info"),
+            0x10DE => nvidia::get_driver_version(),
             0x1002 => Err(anyhow::anyhow!("AMD driver info not implemented yet")),
-            0x8086 => Err(anyhow::anyhow!("Intel driver info not implemented yet")),
+            0x8086 => intel::get_driver_version(&self.devices.adapter),
             _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
         }
+        .context("Failed to get gpu driver info")
         .log_err()
         .unwrap_or("Unknown Driver".to_string());
         Ok(GpuSpecs {
@@ -1441,5 +1442,23 @@ mod nvidia {
             let minor = driver_version % 100;
             Ok(format!("{}.{}", major, minor))
         }
+    }
+}
+
+mod intel {
+    use windows::{
+        Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice},
+        core::Interface,
+    };
+
+    pub(super) fn get_driver_version(adapter: &IDXGIAdapter1) -> anyhow::Result<String> {
+        let number = unsafe { adapter.CheckInterfaceSupport(&IDXGIDevice::IID as _) }?;
+        Ok(format!(
+            "{}.{}.{}.{}",
+            number >> 48,
+            (number >> 32) & 0xFFFF,
+            (number >> 16) & 0xFFFF,
+            number & 0xFFFF
+        ))
     }
 }
