@@ -1231,16 +1231,15 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::toggle_conflict_filter))
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
+            .on_mouse_move(cx.listener(|this, _, _window, _cx| {
+                this.show_hover_menus = true;
+            }))
             .size_full()
             .p_2()
             .gap_1()
             .bg(theme.colors().editor_background)
-            .on_mouse_move(cx.listener(|this, _, _window, _cx| {
-                this.show_hover_menus = true;
-            }))
             .child(
                 v_flex()
-                    .p_2()
                     .gap_2()
                     .child(
                         h_flex()
@@ -1340,6 +1339,7 @@ impl Render for KeymapEditor {
                                             this.pr_7()
                                         }
                                     })
+                                    .gap_2()
                                     .child(self.keystroke_editor.clone())
                                     .child(
                                         IconButton::new(
@@ -2780,7 +2780,7 @@ impl Render for KeystrokeInput {
             .editor_background
             .blend(colors.text_accent.opacity(0.1));
 
-        let recording_pulse = || {
+        let recording_pulse = |color: Color| {
             Icon::new(IconName::Circle)
                 .size(IconSize::Small)
                 .color(Color::Error)
@@ -2790,7 +2790,7 @@ impl Render for KeystrokeInput {
                         .repeat()
                         .with_easing(gpui::pulsating_between(0.4, 0.8)),
                     {
-                        let color = Color::Error.color(cx);
+                        let color = color.color(cx);
                         move |this, delta| this.color(Color::Custom(color.opacity(delta)))
                     },
                 )
@@ -2806,7 +2806,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(recording_pulse())
+            .child(recording_pulse(Color::Error))
             .child(
                 Label::new("REC")
                     .size(LabelSize::XSmall)
@@ -2824,7 +2824,7 @@ impl Render for KeystrokeInput {
                 .editor_background
                 .blend(colors.text_accent.opacity(0.1)))
             .rounded_sm()
-            .child(recording_pulse())
+            .child(recording_pulse(Color::Accent))
             .child(
                 Label::new("SEARCH")
                     .size(LabelSize::XSmall)
