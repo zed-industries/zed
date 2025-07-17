@@ -1642,7 +1642,7 @@ struct KeybindingEditorModal {
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<SingleLineInput>,
-    action_arguments_editor: Option<Entity<Editor>>,
+    action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -1715,31 +1715,13 @@ impl KeybindingEditorModal {
             input
         });
 
-        let action_arguments_editor = editing_keybind.action_schema.clone().map(|_schema| {
+        let action_arguments_editor = editing_keybind.action_schema.clone().map(|schema| {
+            let arguments = editing_keybind
+                .action_arguments
+                .as_ref()
+                .map(|args| args.text.clone());
             cx.new(|cx| {
-                let mut editor = Editor::auto_height_unbounded(1, window, cx);
-                let workspace = workspace.clone();
-
-                if let Some(arguments) = editing_keybind.action_arguments.clone() {
-                    editor.set_text(arguments.text, window, cx);
-                } else {
-                    // TODO: default value from schema?
-                    editor.set_placeholder_text("Action Arguments", cx);
-                }
-                cx.spawn(async |editor, cx| {
-                    let json_language = load_json_language(workspace, cx).await;
-                    editor
-                        .update(cx, |editor, cx| {
-                            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                                buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(Some(json_language), cx)
-                                });
-                            }
-                        })
-                        .context("Failed to load JSON language for editing keybinding action arguments input")
-                })
-                .detach_and_log_err(cx);
-                editor
+                ActionArgumentsEditor::new(schema, arguments, workspace.clone(), window, cx)
             })
         });
 
@@ -1784,7 +1766,7 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).text(cx));
+            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
 
         let value = action_arguments
             .as_ref()
@@ -2032,7 +2014,7 @@ impl Render for KeybindingEditorModal {
                                         .gap_1()
                                         .child(self.keybind_editor.clone()),
                                 )
-                                .when_some(self.action_arguments_editor.clone(), |this, editor| {
+                                .when_some(self.action_arguments_editor.as_ref(), |this, editor| {
                                     this.child(
                                         v_flex()
                                             .mt_1p5()
@@ -2047,7 +2029,7 @@ impl Render for KeybindingEditorModal {
                                                     .bg(theme.editor_background)
                                                     .border_1()
                                                     .border_color(theme.border_variant)
-                                                    .child(editor),
+                                                    .child(editor.read(cx).editor.clone()),
                                             ),
                                     )
                                 })
@@ -2146,6 +2128,60 @@ impl KeybindingEditorModalFocusState {
             self.handles.len() as i32 - 1
         };
         self.focus_index(index_to_focus, window);
+    }
+}
+
+struct ActionArgumentsEditor {
+    schema: schemars::Schema,
+    editor: Entity<Editor>,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for ActionArgumentsEditor {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl ActionArgumentsEditor {
+    fn new(
+        schema: schemars::Schema,
+        arguments: Option<SharedString>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height_unbounded(1, window, cx);
+            let workspace = workspace.clone();
+
+            if let Some(arguments) = arguments {
+                editor.set_text(arguments, window, cx);
+            } else {
+                // TODO: default value from schema?
+                editor.set_placeholder_text("Action Arguments", cx);
+            }
+            cx.spawn(async |editor, cx| {
+                let json_language = load_json_language(workspace, cx).await;
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(json_language), cx)
+                            });
+                        }
+                    })
+                    .context("Failed to load JSON language for editing keybinding action arguments input")
+            })
+            .detach_and_log_err(cx);
+            editor
+        });
+        Self {
+            schema,
+            editor,
+            focus_handle,
+        }
     }
 }
 
