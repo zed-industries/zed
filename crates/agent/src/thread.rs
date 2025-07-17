@@ -1265,6 +1265,8 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
+        self.flush_notifications(model.clone(), intent, cx);
+
         let _checkpoint = self.finalize_pending_checkpoint(cx);
         self.stream_completion(
             self.to_completion_request(model.clone(), intent, cx),
