@@ -452,6 +452,8 @@ impl MarkdownPreviewView {
             },
         );
 
+        // editor_pane precomputed during view creation; no-op here
+
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,

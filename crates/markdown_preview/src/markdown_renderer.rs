@@ -819,7 +819,11 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
 
                     let element_id = cx.next_id(&inline_math.source_range);
                     info!("Creating inline math image element");
-                    let math_element = img(image_source).id(element_id).max_h(px(30.0)).into_any();
+                    let math_element = img(image_source)
+                        .id(element_id)
+                        .max_h(px(35.0)) // Larger size for better readability
+                        .flex_shrink_0() // Prevent shrinking
+                        .into_any();
                     inline_elements.push(math_element);
                     info!("Added inline math element to result");
                 }
@@ -1104,9 +1108,9 @@ impl MathWorld {
         let main_source = Source::new(
             FileId::new(None, VirtualPath::new("main.typ")),
             format!(
-                r#"#set page(width: auto, height: auto, margin: 8pt)
-#show math.equation: set text(font: "{}", size: 14pt, fill: white)
-#set text(font: "{}", size: 14pt, fill: white)
+                r#"#set page(width: auto, height: auto, margin: 2pt)
+#show math.equation: set text(font: "{}", size: 18pt, fill: white)
+#set text(font: "{}", size: 18pt, fill: white)
 $ {} $"#,
                 selected_font, selected_font, content
             ),
