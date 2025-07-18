@@ -377,6 +377,7 @@
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
       "ctrl-[": "editor::Cancel",
+      ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
       "left": "vim::WrappingLeft",
       "right": "vim::WrappingRight",
