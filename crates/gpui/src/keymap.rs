@@ -24,7 +24,7 @@ pub struct Keymap {
 }
 
 /// Index of a binding within a keymap.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BindingIndex(usize);
 
 impl Keymap {
@@ -167,65 +167,60 @@ impl Keymap {
         input: &[Keystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
-        let possibilities = self
+        let mut possibilities = self
             .bindings()
             .enumerate()
             .rev()
             .filter_map(|(ix, binding)| {
-                binding
-                    .match_keystrokes(input)
-                    .map(|pending| (BindingIndex(ix), binding, pending))
-            });
+                let depth = self.binding_enabled(binding, &context_stack)?;
+                let pending = binding.match_keystrokes(input)?;
+                Some((depth, BindingIndex(ix), binding, pending))
+            })
+            .collect::<Vec<_>>();
+        possibilities.sort_by(|(depth_a, ix_a, _, _), (depth_b, ix_b, _, _)| {
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        });
 
         let mut bindings: SmallVec<[(BindingIndex, KeyBinding, usize); 1]> = SmallVec::new();
 
         // (pending, is_no_action, depth, keystrokes)
         let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
 
-        'outer: for (binding_index, binding, pending) in possibilities {
-            for depth in (0..=context_stack.len()).rev() {
-                if self.binding_enabled(binding, &context_stack[0..depth]) {
-                    let is_no_action = is_no_action(&*binding.action);
-                    // We only want to consider a binding pending if it has an action
-                    // This, however, means that if we have both a NoAction binding and a binding
-                    // with an action at the same depth, we should still set is_pending to true.
-                    if let Some(pending_info) = pending_info_opt.as_mut() {
-                        let (
-                            already_pending,
-                            pending_is_no_action,
-                            pending_depth,
-                            pending_keystrokes,
-                        ) = *pending_info;
+        'outer: for (depth, binding_index, binding, pending) in possibilities {
+            let is_no_action = is_no_action(&*binding.action);
+            // We only want to consider a binding pending if it has an action
+            // This, however, means that if we have both a NoAction binding and a binding
+            // with an action at the same depth, we should still set is_pending to true.
+            if let Some(pending_info) = pending_info_opt.as_mut() {
+                let (already_pending, pending_is_no_action, pending_depth, pending_keystrokes) =
+                    *pending_info;
 
-                        // We only want to change the pending status if it's not already pending AND if
-                        // the existing pending status was set by a NoAction binding. This avoids a NoAction
-                        // binding erroneously setting the pending status to true when a binding with an action
-                        // already set it to false
-                        //
-                        // We also want to change the pending status if the keystrokes don't match,
-                        // meaning it's different keystrokes than the NoAction that set pending to false
-                        if pending
-                            && !already_pending
-                            && pending_is_no_action
-                            && (pending_depth == depth
-                                || pending_keystrokes != binding.keystrokes())
-                        {
-                            pending_info.0 = !is_no_action;
-                        }
-                    } else {
-                        pending_info_opt = Some((
-                            pending && !is_no_action,
-                            is_no_action,
-                            depth,
-                            binding.keystrokes(),
-                        ));
-                    }
-
-                    if !pending {
-                        bindings.push((binding_index, binding.clone(), depth));
-                        continue 'outer;
-                    }
+                // We only want to change the pending status if it's not already pending AND if
+                // the existing pending status was set by a NoAction binding. This avoids a NoAction
+                // binding erroneously setting the pending status to true when a binding with an action
+                // already set it to false
+                //
+                // We also want to change the pending status if the keystrokes don't match,
+                // meaning it's different keystrokes than the NoAction that set pending to false
+                if pending
+                    && !already_pending
+                    && pending_is_no_action
+                    && (pending_depth == depth || pending_keystrokes != binding.keystrokes())
+                {
+                    pending_info.0 = !is_no_action;
                 }
+            } else {
+                pending_info_opt = Some((
+                    pending && !is_no_action,
+                    is_no_action,
+                    depth,
+                    binding.keystrokes(),
+                ));
+            }
+
+            if !pending {
+                bindings.push((binding_index, binding.clone(), depth));
+                continue 'outer;
             }
         }
         // sort by descending depth
@@ -245,15 +240,13 @@ impl Keymap {
     }
 
     /// Check if the given binding is enabled, given a certain key context.
-    fn binding_enabled(&self, binding: &KeyBinding, context: &[KeyContext]) -> bool {
-        // If binding has a context predicate, it must match the current context,
+    /// Returns the deepest depth at which the binding matches, or None if it doesn't match.
+    fn binding_enabled(&self, binding: &KeyBinding, contexts: &[KeyContext]) -> Option<usize> {
         if let Some(predicate) = &binding.context_predicate {
-            if !predicate.eval(context) {
-                return false;
-            }
+            predicate.depth_of(contexts)
+        } else {
+            Some(contexts.len())
         }
-
-        true
     }
 }
 
@@ -280,18 +273,33 @@ mod tests {
         keymap.add_bindings(bindings.clone());
 
         // global bindings are enabled in all contexts
-        assert!(keymap.binding_enabled(&bindings[0], &[]));
-        assert!(keymap.binding_enabled(&bindings[0], &[KeyContext::parse("terminal").unwrap()]));
+        assert_eq!(keymap.binding_enabled(&bindings[0], &[]), Some(0));
+        assert_eq!(
+            keymap.binding_enabled(&bindings[0], &[KeyContext::parse("terminal").unwrap()]),
+            Some(1)
+        );
 
         // contextual bindings are enabled in contexts that match their predicate
-        assert!(!keymap.binding_enabled(&bindings[1], &[KeyContext::parse("barf x=y").unwrap()]));
-        assert!(keymap.binding_enabled(&bindings[1], &[KeyContext::parse("pane x=y").unwrap()]));
+        assert_eq!(
+            keymap.binding_enabled(&bindings[1], &[KeyContext::parse("barf x=y").unwrap()]),
+            None
+        );
+        assert_eq!(
+            keymap.binding_enabled(&bindings[1], &[KeyContext::parse("pane x=y").unwrap()]),
+            Some(1)
+        );
 
-        assert!(!keymap.binding_enabled(&bindings[2], &[KeyContext::parse("editor").unwrap()]));
-        assert!(keymap.binding_enabled(
-            &bindings[2],
-            &[KeyContext::parse("editor mode=full").unwrap()]
-        ));
+        assert_eq!(
+            keymap.binding_enabled(&bindings[2], &[KeyContext::parse("editor").unwrap()]),
+            None
+        );
+        assert_eq!(
+            keymap.binding_enabled(
+                &bindings[2],
+                &[KeyContext::parse("editor mode=full").unwrap()]
+            ),
+            Some(1)
+        );
     }
 
     #[test]

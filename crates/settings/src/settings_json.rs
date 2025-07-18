@@ -190,6 +190,7 @@ fn replace_value_in_json_text(
                 }
             }
 
+            let mut removed_comma = false;
             // Look backward for a preceding comma first
             let preceding_text = text.get(0..removal_start).unwrap_or("");
             if let Some(comma_pos) = preceding_text.rfind(',') {
@@ -197,10 +198,12 @@ fn replace_value_in_json_text(
                 let between_comma_and_key = text.get(comma_pos + 1..removal_start).unwrap_or("");
                 if between_comma_and_key.trim().is_empty() {
                     removal_start = comma_pos;
+                    removed_comma = true;
                 }
             }
-
-            if let Some(remaining_text) = text.get(existing_value_range.end..) {
+            if let Some(remaining_text) = text.get(existing_value_range.end..)
+                && !removed_comma
+            {
                 let mut chars = remaining_text.char_indices();
                 while let Some((offset, ch)) = chars.next() {
                     if ch == ',' {

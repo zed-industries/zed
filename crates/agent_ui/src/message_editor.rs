@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
-use crate::language_model_selector::ToggleModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     MaxModeTooltip,
@@ -29,8 +28,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
@@ -49,6 +48,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::Chat;
+use zed_actions::agent::ToggleModelSelector;
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
@@ -132,6 +132,7 @@ pub(crate) fn create_editor(
             placement: Some(ContextMenuPlacement::Above),
         });
         editor.register_addon(ContextCreasesAddon::new());
+        editor.register_addon(MessageEditorAddon::new());
         editor
     });
 
@@ -609,7 +610,11 @@ impl MessageEditor {
         )
     }
 
-    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_follow_toggle(
+        &self,
+        is_model_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let following = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -618,6 +623,7 @@ impl MessageEditor {
             .unwrap_or(false);
 
         IconButton::new("follow-agent", IconName::Crosshair)
+            .disabled(is_model_selected)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
@@ -786,7 +792,7 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.render_follow_toggle(is_model_selected, cx))
                                     .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
@@ -1487,6 +1493,31 @@ impl MessageEditor {
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
+}
+
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
 }
 
 impl Addon for ContextCreasesAddon {

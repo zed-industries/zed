@@ -34,7 +34,6 @@ pub fn init(cx: &mut App) {
                     workspace,
                     workspace.user_store().clone(),
                     workspace.client().clone(),
-                    workspace.app_state().fs.clone(),
                     window,
                     cx,
                 )
