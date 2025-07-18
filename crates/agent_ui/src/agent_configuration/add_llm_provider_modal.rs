@@ -42,15 +42,15 @@ struct AddLlmProviderInput {
 
 impl AddLlmProviderInput {
     fn new(provider: LlmCompatibleProvider, window: &mut Window, cx: &mut App) -> Self {
-        let provider_name = single_line_input(
-            "Provider Name",
-            provider.name(),
-            Some(provider.name()),
+        let provider_name = single_line_input("Provider Name", provider.name(), None, window, cx);
+        let api_url = single_line_input("API URL", provider.api_url(), None, window, cx);
+        let api_key = single_line_input(
+            "API Key",
+            "000000000000000000000000000000000000000000000000",
+            None,
             window,
             cx,
         );
-        let api_url = single_line_input("API URL", provider.api_url(), None, window, cx);
-        let api_key = single_line_input("API Key", "00000000", None, window, cx);
 
         Self {
             provider_name,
