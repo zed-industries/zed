@@ -1468,7 +1468,13 @@ mod nvidia {
     pub(super) fn get_driver_version() -> Result<String> {
         unsafe {
             // Try to load the NVIDIA driver DLL
-            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
+            #[cfg(target_pointer_width = "64")]
+            let nvidia_dll =
+                LoadLibraryA(s!("nvapi64.dll")).context(format!("Can't load nvapi64.dll"))?;
+            #[cfg(target_pointer_width = "32")]
+            let nvidia_dll =
+                LoadLibraryA(s!("nvapi.dll")).context(format!("Can't load nvapi.dll"))?;
+
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
             let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
