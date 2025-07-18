@@ -3008,7 +3008,7 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
                         contexts.insert(ident_a);
                         contexts.insert(ident_b);
                     }
-                    gpui::KeyBindingContextPredicate::Child(ctx_a, ctx_b) => {
+                    gpui::KeyBindingContextPredicate::Descendant(ctx_a, ctx_b) => {
                         queue.push(*ctx_a);
                         queue.push(*ctx_b);
                     }
