@@ -3889,7 +3889,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model,
                     }),
                     cx,
@@ -3973,7 +3973,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model: model.clone(),
                     }),
                     cx,

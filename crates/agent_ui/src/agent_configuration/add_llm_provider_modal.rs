@@ -170,7 +170,10 @@ fn save_provider_to_settings(
     if LanguageModelRegistry::read_global(cx)
         .providers()
         .iter()
-        .any(|provider| provider.name().0.as_ref() == provider_name.as_ref())
+        .any(|provider| {
+            provider.id().0.as_ref() == provider_name.as_ref()
+                || provider.name().0.as_ref() == provider_name.as_ref()
+        })
     {
         return Task::ready(Err(
             "Provider Name is already taken by another provider".into()
@@ -439,8 +442,12 @@ mod tests {
     use super::*;
     use editor::EditorSettings;
     use fs::FakeFs;
-    use gpui::{TestAppContext, UpdateGlobal as _, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
+    use language_model::{
+        LanguageModelProviderId, LanguageModelProviderName,
+        fake_provider::FakeLanguageModelProvider,
+    };
     use project::Project;
     use settings::{Settings as _, SettingsStore};
     use util::path;
@@ -533,16 +540,14 @@ mod tests {
         let cx = setup_test(cx).await;
 
         cx.update(|_window, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<AllLanguageModelSettings>(cx, |settings| {
-                    settings.openai_compatible.get_or_insert_default().insert(
-                        "someprovider".into(),
-                        OpenAiCompatibleSettingsContent {
-                            api_url: "someurl".to_string(),
-                            available_models: vec![],
-                        },
-                    );
-                });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(
+                    FakeLanguageModelProvider::new(
+                        LanguageModelProviderId::new("someprovider"),
+                        LanguageModelProviderName::new("Some Provider"),
+                    ),
+                    cx,
+                );
             });
         });
 
@@ -568,6 +573,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language_settings::init(cx);
             EditorSettings::register(cx);
+            language_model::init_settings(cx);
             language_models::init_settings(cx);
         });
 
