@@ -248,7 +248,7 @@ pub struct TerminalSettingsContent {
     /// - 75: Minimum for body text
     /// - 90: Preferred for body text
     ///
-    /// Default: 0 (no adjustment)
+    /// Default: 45
     pub minimum_contrast: Option<f32>,
 }
 
