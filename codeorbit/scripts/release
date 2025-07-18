@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-echo "This script will handle the signing and notarization of the release artifacts."
-echo "It is a placeholder and needs to be implemented."

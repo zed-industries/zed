@@ -1,9 +1,0 @@
-[package]
-name = "llm-router"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.70"
-
-[dependencies]
-# Dependencies for the LLM router will go here
-# e.g., reqwest, serde, tokio

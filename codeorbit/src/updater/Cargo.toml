@@ -1,8 +1,0 @@
-[package]
-name = "updater"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.70"
-
-[dependencies]
-# Dependencies for the TUF updater will go here

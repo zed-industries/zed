@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-nix develop --command bash -c "
-  cargo binstall --no-confirm cargo-watch
-  pnpm install --frozen-lockfile
-  concurrently \\
-    'cargo watch -x run -p codeorbit-backend' \\
-    'pnpm --filter frontend dev'
-"
