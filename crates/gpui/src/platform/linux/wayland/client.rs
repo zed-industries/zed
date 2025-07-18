@@ -19,11 +19,14 @@ use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
+use wayland_client::event_created_child;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_data_offer::WlDataOffer;
 use wayland_client::protocol::wl_pointer::AxisSource;
+#[cfg(feature = "touch-cursor-emulation")]
+use wayland_client::protocol::wl_touch;
 use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
@@ -34,7 +37,6 @@ use wayland_client::{
         wl_shm_pool, wl_surface,
     },
 };
-use wayland_client::{event_created_child, protocol::wl_touch};
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
@@ -195,7 +197,9 @@ pub(crate) struct WaylandClientState {
     gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
+    #[cfg(feature = "touch-cursor-emulation")]
     wl_touch: Option<wl_touch::WlTouch>,
+    #[cfg(feature = "touch-cursor-emulation")]
     wl_touch_frame: Option<WlTouchFrame>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
@@ -402,6 +406,11 @@ impl Drop for WaylandClient {
         if let Some(wl_pointer) = &state.wl_pointer {
             wl_pointer.release();
         }
+
+        #[cfg(feature = "touch-cursor-emulation")]
+        if let Some(wl_touch) = &state.wl_touch {
+            wl_touch.release();
+        }
         if let Some(cursor_shape_device) = &state.cursor_shape_device {
             cursor_shape_device.destroy();
         }
@@ -557,7 +566,9 @@ impl WaylandClient {
             gpu_context,
             wl_seat: seat,
             wl_pointer: None,
+            #[cfg(feature = "touch-cursor-emulation")]
             wl_touch: None,
+            #[cfg(feature = "touch-cursor-emulation")]
             wl_touch_frame: None,
             wl_keyboard: None,
             cursor_shape_device: None,
@@ -888,6 +899,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     if let Some(wl_pointer) = state.wl_pointer.take() {
                         wl_pointer.release();
                     }
+                    #[cfg(feature = "touch-cursor-emulation")]
                     if let Some(wl_touch) = state.wl_touch.take() {
                         wl_touch.release();
                     }
@@ -1160,13 +1172,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
 
                 state.wl_keyboard = Some(keyboard);
             }
+            #[cfg(feature = "touch-cursor-emulation")]
             if capabilities.contains(wl_seat::Capability::Touch) {
                 let touch = seat.get_touch(qh, ());
-                // state.cursor_shape_device = state
-                //     .globals
-                //     .cursor_shape_manager
-                //     .as_ref()
-                //     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&touch, qh, ()));
 
                 if let Some(wl_touch) = &state.wl_touch {
                     wl_touch.release();
@@ -1518,6 +1526,7 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
     })
 }
 
+#[cfg(feature = "touch-cursor-emulation")]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WlTouchEvent {
     pub kind: WlTouchEventKind,
@@ -1525,6 +1534,7 @@ pub(crate) struct WlTouchEvent {
     pub y: f64,
 }
 
+#[cfg(feature = "touch-cursor-emulation")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WlTouchEventKind {
     Down,
@@ -1533,6 +1543,7 @@ pub(crate) enum WlTouchEventKind {
     Motion,
 }
 
+#[cfg(feature = "touch-cursor-emulation")]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WlTouchFrame {
     pub events: HashMap<i32, WlTouchEvent>,
@@ -1541,6 +1552,7 @@ pub(crate) struct WlTouchFrame {
     pub button: Option<MouseButton>,
 }
 
+#[cfg(feature = "touch-cursor-emulation")]
 impl WlTouchFrame {
     pub fn has_up(&self) -> bool {
         self.events
@@ -1568,6 +1580,7 @@ impl WlTouchFrame {
     }
 }
 
+#[cfg(feature = "touch-cursor-emulation")]
 impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,

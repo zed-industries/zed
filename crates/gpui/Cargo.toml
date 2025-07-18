@@ -72,6 +72,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
+touch-cursor-emulation = []
 
 [lib]
 path = "src/gpui.rs"
@@ -302,3 +303,8 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "touch_cursor_emulation"
+path = "examples/touch_cursor_emulation.rs"
+required-features = ["touch-cursor-emulation"]
