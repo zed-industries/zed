@@ -9,7 +9,10 @@ fn main() {
     let target = env::var("CARGO_CFG_TARGET_OS");
     println!("cargo::rustc-check-cfg=cfg(gles)");
 
-    #[cfg(any(not(target_os = "macos"), feature = "macos-blade"))]
+    #[cfg(any(
+        not(any(target_os = "macos", target_os = "windows")),
+        feature = "macos-blade"
+    ))]
     check_wgsl_shaders();
 
     match target.as_deref() {
@@ -17,15 +20,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             macos::build();
         }
-        #[cfg(all(target_os = "windows", feature = "windows-manifest"))]
         Ok("windows") => {
-            let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
-            let rc_file = std::path::Path::new("resources/windows/gpui.rc");
-            println!("cargo:rerun-if-changed={}", manifest.display());
-            println!("cargo:rerun-if-changed={}", rc_file.display());
-            embed_resource::compile(rc_file, embed_resource::NONE)
-                .manifest_required()
-                .unwrap();
+            #[cfg(target_os = "windows")]
+            windows::build();
         }
         _ => (),
     };
@@ -241,5 +238,47 @@ mod macos {
             );
             process::exit(1);
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::path::PathBuf;
+
+    pub(super) fn build() {
+        // Link the AMD AGS library
+        link_amd_ags();
+
+        // Embed the Windows manifest and resource file
+        #[cfg(feature = "windows-manifest")]
+        embed_resource();
+    }
+
+    fn link_amd_ags() {
+        // We can not use relative paths in `cargo:rustc-link-search`, so we need to use the absolute path.
+        // See: https://stackoverflow.com/questions/41917096/how-do-i-make-rustc-link-search-relative-to-the-project-location
+        let lib_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("libs");
+        #[cfg(target_pointer_width = "64")]
+        let lib_name = "amd_ags_x64_2022_MT";
+        #[cfg(target_pointer_width = "32")]
+        let lib_name = "amd_ags_x86_2022_MT";
+        println!("cargo:rustc-link-lib=static={}", lib_name);
+        println!("cargo:rustc-link-search=native={}", lib_dir.display());
+        println!(
+            "cargo:rerun-if-changed={}/{}.lib",
+            lib_dir.display(),
+            lib_name
+        );
+    }
+
+    #[cfg(feature = "windows-manifest")]
+    fn embed_resource() {
+        let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
+        let rc_file = std::path::Path::new("resources/windows/gpui.rc");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rerun-if-changed={}", rc_file.display());
+        embed_resource::compile(rc_file, embed_resource::NONE)
+            .manifest_required()
+            .unwrap();
     }
 }
