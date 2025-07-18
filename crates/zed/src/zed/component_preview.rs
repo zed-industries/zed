@@ -369,7 +369,6 @@ impl ComponentPreview {
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
         entries.push(PreviewEntry::ActiveThread);
-        entries.push(PreviewEntry::Separator);
 
         let mut scopes: Vec<_> = scope_groups
             .keys()
@@ -517,16 +516,12 @@ impl ComponentPreview {
                             Vec::new()
                         };
                         if valid_positions.is_empty() {
-                            Label::new(name.clone())
-                                .color(Color::Default)
-                                .into_any_element()
+                            Label::new(name.clone()).into_any_element()
                         } else {
                             HighlightedLabel::new(name.clone(), valid_positions).into_any_element()
                         }
                     } else {
-                        Label::new(name.clone())
-                            .color(Color::Default)
-                            .into_any_element()
+                        Label::new(name.clone()).into_any_element()
                     })
                     .selectable(true)
                     .toggle_state(selected)
@@ -544,7 +539,7 @@ impl ComponentPreview {
                 let selected = self.active_page == PreviewPage::AllComponents;
 
                 ListItem::new(ix)
-                    .child(Label::new("All Components").color(Color::Default))
+                    .child(Label::new("All Components"))
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -557,7 +552,7 @@ impl ComponentPreview {
                 let selected = self.active_page == PreviewPage::ActiveThread;
 
                 ListItem::new(ix)
-                    .child(Label::new("Active Thread").color(Color::Default))
+                    .child(Label::new("Active Thread"))
                     .selectable(true)
                     .toggle_state(selected)
                     .inset(true)
@@ -583,7 +578,6 @@ impl ComponentPreview {
         h_flex()
             .w_full()
             .h_10()
-            .items_center()
             .child(Headline::new(title).size(HeadlineSize::XSmall))
             .child(Divider::horizontal())
     }
@@ -796,7 +790,7 @@ impl Render for ComponentPreview {
                         )
                         .track_scroll(self.nav_scroll_handle.clone())
                         .p_2p5()
-                        .w(px(240.))
+                        .w(px(229.))
                         .h_full()
                         .flex_1(),
                     )
