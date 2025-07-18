@@ -126,6 +126,7 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
+    "crates/security",
     "crates/semantic_index",
     "crates/semantic_version",
     "crates/session",

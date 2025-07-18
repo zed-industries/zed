@@ -1,0 +1,25 @@
+[package]
+name = "security"
+version = "0.0.1"
+authors = ["CodeOrbit Inc."]
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+path = "src/security.rs"
+
+[dependencies]
+anyhow = "1.0.86"
+collections = { path = "../collections" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+project = { path = "../project" }
+serde_json = { version = "1.0.117", features = ["raw_value"] }
+settings = { path = "../settings" }
+text = { path = "../text" }
+theme = { path = "../theme" }
+ui = { path = "../ui" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }

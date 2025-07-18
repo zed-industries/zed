@@ -426,6 +426,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
+    security::init(cx);
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(cx);

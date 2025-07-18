@@ -28,6 +28,7 @@ test-support = [
 [dependencies]
 any_vec.workspace = true
 anyhow.workspace = true
+security = { path = "../security" }
 async-recursion.workspace = true
 bincode = "1.2.1"
 call.workspace = true
