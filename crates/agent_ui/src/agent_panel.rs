@@ -52,7 +52,9 @@ use gpui::{
     pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{
+    ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
+};
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
@@ -1356,6 +1358,19 @@ impl AgentPanel {
                 }
 
                 self.new_thread(&NewThread::default(), window, cx);
+                if let Some((thread, model)) =
+                    self.active_thread(cx).zip(provider.default_model(cx))
+                {
+                    thread.update(cx, |thread, cx| {
+                        thread.set_configured_model(
+                            Some(ConfiguredModel {
+                                provider: provider.clone(),
+                                model,
+                            }),
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
@@ -2678,6 +2693,23 @@ impl AgentPanel {
             .size(IconSize::Small)
             .color(Color::Error);
 
+        let retry_button = Button::new("retry", "Retry")
+            .icon(IconName::RotateCw)
+            .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
+            .label_size(LabelSize::Small)
+            .on_click({
+                let thread = thread.clone();
+                move |_, window, cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.clear_last_error();
+                        thread.thread().update(cx, |thread, cx| {
+                            thread.retry_last_completion(Some(window.window_handle()), cx);
+                        });
+                    });
+                }
+            });
+
         div()
             .border_t_1()
             .border_color(cx.theme().colors().border)
@@ -2686,10 +2718,73 @@ impl AgentPanel {
                     .icon(icon)
                     .title(header)
                     .description(message.clone())
-                    .primary_action(self.dismiss_error_button(thread, cx))
-                    .secondary_action(self.create_copy_button(message_with_header))
+                    .primary_action(retry_button)
+                    .secondary_action(self.dismiss_error_button(thread, cx))
+                    .tertiary_action(self.create_copy_button(message_with_header))
                     .bg_color(self.error_callout_bg(cx)),
             )
+            .into_any_element()
+    }
+
+    fn render_retryable_error(
+        &self,
+        message: SharedString,
+        can_enable_burn_mode: bool,
+        thread: &Entity<ActiveThread>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let icon = Icon::new(IconName::XCircle)
+            .size(IconSize::Small)
+            .color(Color::Error);
+
+        let retry_button = Button::new("retry", "Retry")
+            .icon(IconName::RotateCw)
+            .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
+            .label_size(LabelSize::Small)
+            .on_click({
+                let thread = thread.clone();
+                move |_, window, cx| {
+                    thread.update(cx, |thread, cx| {
+                        thread.clear_last_error();
+                        thread.thread().update(cx, |thread, cx| {
+                            thread.retry_last_completion(Some(window.window_handle()), cx);
+                        });
+                    });
+                }
+            });
+
+        let mut callout = Callout::new()
+            .icon(icon)
+            .title("Error")
+            .description(message.clone())
+            .bg_color(self.error_callout_bg(cx))
+            .primary_action(retry_button);
+
+        if can_enable_burn_mode {
+            let burn_mode_button = Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
+                .icon(IconName::ZedBurnMode)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .label_size(LabelSize::Small)
+                .on_click({
+                    let thread = thread.clone();
+                    move |_, window, cx| {
+                        thread.update(cx, |thread, cx| {
+                            thread.clear_last_error();
+                            thread.thread().update(cx, |thread, cx| {
+                                thread.enable_burn_mode_and_retry(Some(window.window_handle()), cx);
+                            });
+                        });
+                    }
+                });
+            callout = callout.secondary_action(burn_mode_button);
+        }
+
+        div()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(callout)
             .into_any_element()
     }
 
@@ -2936,6 +3031,15 @@ impl Render for AgentPanel {
                                     ThreadError::Message { header, message } => {
                                         self.render_error_message(header, message, thread, cx)
                                     }
+                                    ThreadError::RetryableError {
+                                        message,
+                                        can_enable_burn_mode,
+                                    } => self.render_retryable_error(
+                                        message,
+                                        can_enable_burn_mode,
+                                        thread,
+                                        cx,
+                                    ),
                                 })
                                 .into_any(),
                         )
