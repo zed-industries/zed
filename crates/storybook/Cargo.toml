@@ -27,7 +27,6 @@ log.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
-reqwest_client.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
 simplelog.workspace = true

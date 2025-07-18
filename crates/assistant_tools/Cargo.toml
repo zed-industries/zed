@@ -78,7 +78,6 @@ language_models.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 pretty_assertions.workspace = true
-reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true

@@ -1,4 +1,5 @@
-﻿use anyhow::{Context as _, Result, anyhow};
+﻿mod google_test;
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -432,13 +433,21 @@ pub fn into_google(
     model_id: String,
     mode: GoogleModelMode,
 ) -> google_ai::GenerateContentRequest {
-    fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
-        content
+    fn map_content(
+        content: Vec<MessageContent>,
+        role: Role,
+        tools: &Option<Vec<google_ai::Tool>>,
+    ) -> Vec<Part> {
+        // Google's API expects that if a tool is defined, the first user message must be a text part.
+        let mut has_text = false;
+
+        let mut parts: Vec<Part> = content
             .into_iter()
             .flat_map(|content| match content {
                 language_model::MessageContent::Text(text)
                 | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
+                        has_text = true;
                         vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
                         vec![]
@@ -498,8 +507,32 @@ pub fn into_google(
                     }
                 }
             })
-            .collect()
+            .collect();
+
+        if role == Role::User && tools.is_some() && !has_text {
+            parts.insert(
+                0,
+                Part::TextPart(google_ai::TextPart {
+                    text: "Please describe the image.".to_string(),
+                }),
+            )
+        }
+        parts
     }
+
+    let tools = (request.tools.len() > 0).then(|| {
+        vec![google_ai::Tool {
+            function_declarations: request
+                .tools
+                .into_iter()
+                .map(|tool| FunctionDeclaration {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.input_schema,
+                })
+                .collect(),
+        }]
+    });
 
     let system_instructions = if request
         .messages
@@ -508,7 +541,7 @@ pub fn into_google(
     {
         let message = request.messages.remove(0);
         Some(SystemInstruction {
-            parts: map_content(message.content),
+            parts: map_content(message.content, message.role, &tools),
         })
     } else {
         None
@@ -521,7 +554,7 @@ pub fn into_google(
             .messages
             .into_iter()
             .filter_map(|message| {
-                let parts = map_content(message.content);
+                let parts = map_content(message.content, message.role, &tools);
                 if parts.is_empty() {
                     None
                 } else {
@@ -551,19 +584,7 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
-            vec![google_ai::Tool {
-                function_declarations: request
-                    .tools
-                    .into_iter()
-                    .map(|tool| FunctionDeclaration {
-                        name: tool.name,
-                        description: tool.description,
-                        parameters: tool.input_schema,
-                    })
-                    .collect(),
-            }]
-        }),
+        tools,
         tool_config: request.tool_choice.map(|choice| google_ai::ToolConfig {
             function_calling_config: google_ai::FunctionCallingConfig {
                 mode: match choice {

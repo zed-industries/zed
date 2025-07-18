@@ -20,7 +20,6 @@ jsonwebtoken.workspace = true
 log.workspace = true
 prost.workspace = true
 prost-types.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 workspace-hack.workspace = true
 

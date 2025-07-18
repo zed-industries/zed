@@ -119,7 +119,6 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
-    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -328,7 +327,6 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
-reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -515,14 +513,6 @@ rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/CodeOrbit-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
-    "charset",
-    "http2",
-    "macos-system-configuration",
-    "rustls-tls-native-roots",
-    "socks",
-    "stream",
-] }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -532,7 +522,6 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/CodeOrbit-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

@@ -50,7 +50,6 @@ wayland = [
     "filedescriptor",
     "xkbcommon",
     "open",
-    "scap",
 ]
 x11 = [
     "blade-graphics",
@@ -166,7 +165,6 @@ cosmic-text = { version = "0.14.0", optional = true }
 font-kit = { version = "0.14.0", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
-scap = { workspace = true, optional = true }
 
 calloop = { version = "0.13.0" }
 filedescriptor = { version = "0.8.2", optional = true }
@@ -230,7 +228,6 @@ http_client = { workspace = true, features = ["test-support"] }
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true
 unicode-segmentation.workspace = true
-reqwest_client = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

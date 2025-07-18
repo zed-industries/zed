@@ -107,7 +107,6 @@ recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 repl.workspace = true
-reqwest_client.workspace = true
 rope.workspace = true
 search.workspace = true
 serde.workspace = true

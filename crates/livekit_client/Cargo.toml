@@ -45,8 +45,6 @@ livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://git
     "__rustls-tls"
 ] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

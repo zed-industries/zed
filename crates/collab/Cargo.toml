@@ -46,7 +46,6 @@ prometheus = "0.14"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
-reqwest_client.workspace = true
 rpc.workspace = true
 rustc-demangle.workspace = true
 scrypt = "0.11"
