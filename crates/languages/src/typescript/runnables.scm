@@ -56,8 +56,8 @@
         (#eq? @_method "test")
         arguments: (
             arguments . [
-                (string (string_fragment) @run @test_name)
-                (identifier) @run @test_name
+                (string (string_fragment) @run @DENO_TEST_NAME)
+                (identifier) @run @DENO_TEST_NAME
             ]
         )
     ) @_js-test
@@ -76,7 +76,7 @@
         (#eq? @_method "test")
         arguments: (
             arguments . (function_expression
-                name: (identifier) @run @test_name
+                name: (identifier) @run @DENO_TEST_NAME
             )
         )
     ) @_js-test
