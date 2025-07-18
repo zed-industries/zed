@@ -43,6 +43,8 @@ use workspace::{OpenOptions, OpenVisible, Workspace};
 static MATH_SVG_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+static STIX_FONT_CACHE: Lazy<Mutex<Option<(FontBook, Vec<Font>)>>> = Lazy::new(|| Mutex::new(None));
+
 /// Look up a cached SVG; returns Some(svg) if present.
 fn cache_lookup(expr: &str) -> Option<String> {
     if let Ok(guard) = MATH_SVG_CACHE.lock() {
@@ -1068,86 +1070,120 @@ struct MathWorld {
     library: Prehashed<Library>,
     book: Prehashed<FontBook>,
     main_source: Source,
-    fonts: Vec<Font>,
 }
 
 impl MathWorld {
     fn new(content: &str) -> Self {
-        // Create a font book with system fonts
-        let mut fontdb = fontdb::Database::new();
-        fontdb.load_system_fonts();
-
-        // Find available math fonts
-        let mut available_fonts = Vec::new();
-        let mut math_font = None;
-
-        for face_info in fontdb.faces() {
-            if let Some(family) = face_info.families.get(0) {
-                let family_name = &family.0;
-                available_fonts.push(family_name.clone());
-
-                // Prioritize math fonts
-                if family_name.contains("STIX Two Math") {
-                    math_font = Some("STIX Two Math");
-                } else if math_font.is_none()
-                    && (family_name.contains("Libertinus Math")
-                        || family_name.contains("Latin Modern Math")
-                        || family_name.contains("Computer Modern")
-                        || family_name.contains("Cambria Math")
-                        || family_name.contains("Asana Math"))
-                {
-                    math_font = Some(family_name.as_str());
-                }
-            }
-        }
-
-        info!("Available font families: {}", available_fonts.len());
-        let selected_font = math_font.unwrap_or("serif");
-        info!("Selected math font: {}", selected_font);
+        let (book, _fonts) = Self::get_or_load_stix_font();
 
         let main_source = Source::new(
             FileId::new(None, VirtualPath::new("main.typ")),
             format!(
                 r#"#set page(width: auto, height: auto, margin: 2pt)
-#show math.equation: set text(font: "{}", size: 18pt, fill: white)
-#set text(font: "{}", size: 18pt, fill: white)
+#show math.equation: set text(font: "STIX Two Math", size: 18pt, fill: white)
+#set text(font: "STIX Two Math", size: 18pt, fill: white)
 $ {} $"#,
-                selected_font, selected_font, content
+                content
             ),
         );
-
-        // Load all system fonts
-        let mut fonts = Vec::new();
-        for face_info in fontdb.faces() {
-            if let Some((source, _)) = fontdb.face_source(face_info.id) {
-                match source {
-                    fontdb::Source::Binary(ref bytes) => {
-                        if let Some(font) =
-                            Font::new(Bytes::from(bytes.as_ref().as_ref()), face_info.index)
-                        {
-                            fonts.push(font);
-                        }
-                    }
-                    fontdb::Source::File(path) => {
-                        if let Ok(data) = std::fs::read(path) {
-                            if let Some(font) = Font::new(Bytes::from(data), face_info.index) {
-                                fonts.push(font);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        let book = FontBook::from_fonts(&fonts);
 
         Self {
             library: Prehashed::new(Library::builder().build()),
             book: Prehashed::new(book),
             main_source,
-            fonts,
         }
+    }
+
+    fn get_or_load_stix_font() -> (FontBook, Vec<Font>) {
+        let mut cache = STIX_FONT_CACHE.lock().unwrap();
+
+        if let Some((book, fonts)) = cache.as_ref() {
+            return (book.clone(), fonts.clone());
+        }
+
+        // Load only STIX Two Math font
+        let mut fontdb = fontdb::Database::new();
+        fontdb.load_system_fonts();
+
+        let mut stix_fonts = Vec::new();
+        let mut found_stix = false;
+
+        for face_info in fontdb.faces() {
+            if let Some(family) = face_info.families.get(0) {
+                let family_name = &family.0;
+
+                if family_name.contains("STIX Two Math") {
+                    found_stix = true;
+                    if let Some((source, _)) = fontdb.face_source(face_info.id) {
+                        match source {
+                            fontdb::Source::Binary(ref bytes) => {
+                                if let Some(font) =
+                                    Font::new(Bytes::from(bytes.as_ref().as_ref()), face_info.index)
+                                {
+                                    stix_fonts.push(font);
+                                }
+                            }
+                            fontdb::Source::File(path) => {
+                                if let Ok(data) = std::fs::read(path) {
+                                    if let Some(font) =
+                                        Font::new(Bytes::from(data), face_info.index)
+                                    {
+                                        stix_fonts.push(font);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if !found_stix {
+            log::warn!("STIX Two Math font not found, using system default");
+            // Fallback to loading a basic serif font
+            for face_info in fontdb.faces() {
+                if let Some(family) = face_info.families.get(0) {
+                    let family_name = &family.0;
+                    if family_name.to_lowercase().contains("serif") {
+                        if let Some((source, _)) = fontdb.face_source(face_info.id) {
+                            match source {
+                                fontdb::Source::Binary(ref bytes) => {
+                                    if let Some(font) = Font::new(
+                                        Bytes::from(bytes.as_ref().as_ref()),
+                                        face_info.index,
+                                    ) {
+                                        stix_fonts.push(font);
+                                        break;
+                                    }
+                                }
+                                fontdb::Source::File(path) => {
+                                    if let Ok(data) = std::fs::read(path) {
+                                        if let Some(font) =
+                                            Font::new(Bytes::from(data), face_info.index)
+                                        {
+                                            stix_fonts.push(font);
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let book = FontBook::from_fonts(&stix_fonts);
+        *cache = Some((book.clone(), stix_fonts.clone()));
+
+        log::info!(
+            "Loaded STIX Two Math font cache with {} fonts",
+            stix_fonts.len()
+        );
+
+        (book, stix_fonts)
     }
 }
 
@@ -1172,8 +1208,9 @@ impl World for MathWorld {
         Err(typst::diag::FileError::NotFound(std::path::PathBuf::new()))
     }
 
-    fn font(&self, index: usize) -> Option<Font> {
-        self.fonts.get(index).cloned()
+    fn font(&self, _index: usize) -> Option<Font> {
+        let (_book, fonts) = Self::get_or_load_stix_font();
+        fonts.get(_index).cloned()
     }
 
     fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
