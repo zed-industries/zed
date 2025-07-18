@@ -4248,6 +4248,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
+ "smol",
  "task",
  "util",
  "workspace-hack",
