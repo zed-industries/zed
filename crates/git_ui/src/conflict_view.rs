@@ -11,10 +11,7 @@ use gpui::{
 use language::{Anchor, Buffer, BufferId};
 use project::{ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _};
 use std::{ops::Range, sync::Arc};
-use ui::{
-    ActiveTheme, AnyElement, Element as _, StatefulInteractiveElement, Styled,
-    StyledTypography as _, Window, div, h_flex, rems,
-};
+use ui::{ActiveTheme, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
 
 pub(crate) struct ConflictAddon {
@@ -300,7 +297,6 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
-            render_in_minimap: true,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
@@ -391,20 +387,15 @@ fn render_conflict_buttons(
     cx: &mut BlockContext,
 ) -> AnyElement {
     h_flex()
-        .h(cx.line_height)
-        .items_end()
-        .ml(cx.margins.gutter.width)
         .id(cx.block_id)
-        .gap_0p5()
+        .h(cx.line_height)
+        .ml(cx.margins.gutter.width)
+        .items_end()
+        .gap_1()
+        .bg(cx.theme().colors().editor_background)
         .child(
-            div()
-                .id("ours")
-                .px_1()
-                .child("Take Ours")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("head", "Use HEAD")
+                .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
                     let conflict = conflict.clone();
@@ -423,14 +414,8 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            div()
-                .id("theirs")
-                .px_1()
-                .child("Take Theirs")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("origin", "Use Origin")
+                .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
                     let conflict = conflict.clone();
@@ -449,14 +434,8 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            div()
-                .id("both")
-                .px_1()
-                .child("Take Both")
-                .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
-                .hover(|this| this.bg(cx.theme().colors().element_background))
-                .cursor_pointer()
+            Button::new("both", "Use Both")
+                .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
                     let conflict = conflict.clone();

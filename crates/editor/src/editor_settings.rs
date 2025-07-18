@@ -52,7 +52,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
-    pub drag_and_drop_selection: bool,
+    pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
 }
 
@@ -275,6 +275,26 @@ pub struct ScrollbarAxes {
     pub vertical: bool,
 }
 
+/// Whether to allow drag and drop text selection in buffer.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DragAndDropSelection {
+    /// When true, enables drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    ///
+    /// Default: 300
+    #[serde(default = "default_drag_and_drop_selection_delay_ms")]
+    pub delay: u64,
+}
+
+fn default_drag_and_drop_selection_delay_ms() -> u64 {
+    300
+}
+
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
@@ -375,6 +395,8 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -536,10 +558,8 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub inline_code_actions: Option<bool>,
 
-    /// Whether to allow drag and drop text selection in buffer.
-    ///
-    /// Default: true
-    pub drag_and_drop_selection: Option<bool>,
+    /// Drag and drop related settings
+    pub drag_and_drop_selection: Option<DragAndDropSelection>,
 
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///

@@ -37,6 +37,48 @@ development build, run Zed with the following environment variable set:
 ZED_DEVELOPMENT_USE_KEYCHAIN=1
 ```
 
+## Performance Measurements
+
+Zed includes a frame time measurement system that can be used to profile how long it takes to render each frame. This is particularly useful when comparing rendering performance between different versions or when optimizing frame rendering code.
+
+### Using ZED_MEASUREMENTS
+
+To enable performance measurements, set the `ZED_MEASUREMENTS` environment variable:
+
+```sh
+export ZED_MEASUREMENTS=1
+```
+
+When enabled, Zed will print frame rendering timing information to stderr, showing how long each frame takes to render.
+
+### Performance Comparison Workflow
+
+Here's a typical workflow for comparing frame rendering performance between different versions:
+
+1. **Enable measurements:**
+
+   ```sh
+   export ZED_MEASUREMENTS=1
+   ```
+
+2. **Test the first version:**
+
+   - Checkout the commit you want to measure
+   - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-a`
+
+3. **Test the second version:**
+
+   - Checkout another commit you want to compare
+   - Run Zed in release mode and use it for 5-10 seconds: `cargo run --release &> version-b`
+
+4. **Generate comparison:**
+
+   ```sh
+   script/histogram version-a version-b
+   ```
+
+The `script/histogram` tool can accept as many measurement files as you like and will generate a histogram visualization comparing the frame rendering performance data between the provided versions.
+
 ## Contributor links
 
 - [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)

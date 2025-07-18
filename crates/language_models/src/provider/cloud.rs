@@ -164,46 +164,9 @@ impl State {
                     }
 
                     let response = Self::fetch_models(client, llm_api_token).await?;
-                    cx.update(|cx| {
-                        this.update(cx, |this, cx| {
-                            let mut models = Vec::new();
-
-                            for model in response.models {
-                                models.push(Arc::new(model.clone()));
-
-                                // Right now we represent thinking variants of models as separate models on the client,
-                                // so we need to insert variants for any model that supports thinking.
-                                if model.supports_thinking {
-                                    models.push(Arc::new(zed_llm_client::LanguageModel {
-                                        id: zed_llm_client::LanguageModelId(
-                                            format!("{}-thinking", model.id).into(),
-                                        ),
-                                        display_name: format!("{} Thinking", model.display_name),
-                                        ..model
-                                    }));
-                                }
-                            }
-
-                            this.default_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_model)
-                                .cloned();
-                            this.default_fast_model = models
-                                .iter()
-                                .find(|model| model.id == response.default_fast_model)
-                                .cloned();
-                            this.recommended_models = response
-                                .recommended_models
-                                .iter()
-                                .filter_map(|id| models.iter().find(|model| &model.id == id))
-                                .cloned()
-                                .collect();
-                            this.models = models;
-                            cx.notify();
-                        })
-                    })??;
-
-                    anyhow::Ok(())
+                    this.update(cx, |this, cx| {
+                        this.update_models(response, cx);
+                    })
                 })
                 .await
                 .context("failed to fetch Zed models")
@@ -214,12 +177,15 @@ impl State {
             }),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
-                |this, _listener, _event, cx| {
+                move |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(async move |_this, _cx| {
+                    cx.spawn(async move |this, cx| {
                         llm_api_token.refresh(&client).await?;
-                        anyhow::Ok(())
+                        let response = Self::fetch_models(client, llm_api_token).await?;
+                        this.update(cx, |this, cx| {
+                            this.update_models(response, cx);
+                        })
                     })
                     .detach_and_log_err(cx);
                 },
@@ -260,6 +226,41 @@ impl State {
                 cx.notify()
             })
         }));
+    }
+
+    fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
+        let mut models = Vec::new();
+
+        for model in response.models {
+            models.push(Arc::new(model.clone()));
+
+            // Right now we represent thinking variants of models as separate models on the client,
+            // so we need to insert variants for any model that supports thinking.
+            if model.supports_thinking {
+                models.push(Arc::new(zed_llm_client::LanguageModel {
+                    id: zed_llm_client::LanguageModelId(format!("{}-thinking", model.id).into()),
+                    display_name: format!("{} Thinking", model.display_name),
+                    ..model
+                }));
+            }
+        }
+
+        self.default_model = models
+            .iter()
+            .find(|model| model.id == response.default_model)
+            .cloned();
+        self.default_fast_model = models
+            .iter()
+            .find(|model| model.id == response.default_fast_model)
+            .cloned();
+        self.recommended_models = response
+            .recommended_models
+            .iter()
+            .filter_map(|id| models.iter().find(|model| &model.id == id))
+            .cloned()
+            .collect();
+        self.models = models;
+        cx.notify();
     }
 
     async fn fetch_models(
@@ -643,8 +644,62 @@ struct ApiError {
     headers: HeaderMap<HeaderValue>,
 }
 
+/// Represents error responses from Zed's cloud API.
+///
+/// Example JSON for an upstream HTTP error:
+/// ```json
+/// {
+///   "code": "upstream_http_error",
+///   "message": "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout",
+///   "upstream_status": 503
+/// }
+/// ```
+#[derive(Debug, serde::Deserialize)]
+struct CloudApiError {
+    code: String,
+    message: String,
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_optional_status_code")]
+    upstream_status: Option<StatusCode>,
+    #[serde(default)]
+    retry_after: Option<f64>,
+}
+
+fn deserialize_optional_status_code<'de, D>(deserializer: D) -> Result<Option<StatusCode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<u16> = Option::deserialize(deserializer)?;
+    Ok(opt.and_then(|code| StatusCode::from_u16(code).ok()))
+}
+
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
+            if cloud_error.code.starts_with("upstream_http_") {
+                let status = if let Some(status) = cloud_error.upstream_status {
+                    status
+                } else if cloud_error.code.ends_with("_error") {
+                    error.status
+                } else {
+                    // If there's a status code in the code string (e.g. "upstream_http_429")
+                    // then use that; otherwise, see if the JSON contains a status code.
+                    cloud_error
+                        .code
+                        .strip_prefix("upstream_http_")
+                        .and_then(|code_str| code_str.parse::<u16>().ok())
+                        .and_then(|code| StatusCode::from_u16(code).ok())
+                        .unwrap_or(error.status)
+                };
+
+                return LanguageModelCompletionError::UpstreamProviderError {
+                    message: cloud_error.message,
+                    status,
+                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+                };
+            }
+        }
+
         let retry_after = None;
         LanguageModelCompletionError::from_http_status(
             PROVIDER_NAME,
@@ -728,6 +783,13 @@ impl LanguageModel for CloudLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count as u64
+    }
+
+    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
+        self.model
+            .max_token_count_in_max_mode
+            .filter(|_| self.model.supports_max_mode)
+            .map(|max_token_count| max_token_count as u64)
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -828,6 +890,7 @@ impl LanguageModel for CloudLanguageModel {
         let intent = request.intent;
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
+        let thinking_allowed = request.thinking_allowed;
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
@@ -835,7 +898,7 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u64,
-                    if self.model.id.0.ends_with("-thinking") {
+                    if thinking_allowed && self.model.id.0.ends_with("-thinking") {
                         AnthropicModelMode::Thinking {
                             budget_tokens: Some(4_096),
                         }
@@ -1268,5 +1331,157 @@ impl Component for ZedAiConfiguration {
                 ])
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_client::http::{HeaderMap, StatusCode};
+    use language_model::LanguageModelCompletionError;
+
+    #[test]
+    fn test_api_error_conversion_with_upstream_http_error() {
+        // upstream_http_error with 503 status should become ServerOverloaded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 503, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_error with 500 status should become ApiInternalServerError
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the OpenAI API: internal server error"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_error with 429 status should become RateLimitExceeded
+        let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+                assert_eq!(
+                    message,
+                    "Received an error from the Google API: rate limit exceeded"
+                );
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream 429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        let error_body = "Regular internal server error";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(message, "Regular internal server error");
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for regular 500, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // upstream_http_429 format should be converted to UpstreamProviderError
+        let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::UpstreamProviderError {
+                message,
+                status,
+                retry_after,
+            } => {
+                assert_eq!(message, "Upstream Anthropic rate limit exceeded.");
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
+            }
+            _ => panic!(
+                "Expected UpstreamProviderError for upstream_http_429, got: {:?}",
+                completion_error
+            ),
+        }
+
+        // Invalid JSON in error body should fall back to regular error handling
+        let error_body = "Not JSON at all";
+
+        let api_error = ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: error_body.to_string(),
+            headers: HeaderMap::new(),
+        };
+
+        let completion_error: LanguageModelCompletionError = api_error.into();
+
+        match completion_error {
+            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
+                assert_eq!(provider, PROVIDER_NAME);
+            }
+            _ => panic!(
+                "Expected ApiInternalServerError for invalid JSON, got: {:?}",
+                completion_error
+            ),
+        }
     }
 }

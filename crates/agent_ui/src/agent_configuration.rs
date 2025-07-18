@@ -24,10 +24,11 @@ use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
+use proto::Plan;
 use settings::{Settings, update_settings_file};
 use ui::{
-    ContextMenu, Disclosure, ElevationIndex, Indicator, PopoverMenu, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
+    Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -171,20 +172,39 @@ impl AgentConfiguration {
             .copied()
             .unwrap_or(false);
 
+        let is_zed_provider = provider.id() == ZED_CLOUD_PROVIDER_ID;
+        let current_plan = if is_zed_provider {
+            self.workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).current_plan())
+        } else {
+            None
+        };
+
         v_flex()
-            .py_2()
-            .gap_1p5()
-            .border_t_1()
-            .border_color(cx.theme().colors().border.opacity(0.6))
+            .when(is_expanded, |this| this.mb_2())
+            .child(
+                div()
+                    .opacity(0.6)
+                    .px_2()
+                    .child(Divider::horizontal().color(DividerColor::Border)),
+            )
             .child(
                 h_flex()
+                    .map(|this| {
+                        if is_expanded {
+                            this.mt_2().mb_1()
+                        } else {
+                            this.my_2()
+                        }
+                    })
                     .w_full()
-                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
                             .id(provider_id_string.clone())
                             .cursor_pointer()
+                            .px_2()
                             .py_0p5()
                             .w_full()
                             .justify_between()
@@ -198,14 +218,31 @@ impl AgentConfiguration {
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(Label::new(provider_name.clone()).size(LabelSize::Large))
-                                    .when(
-                                        provider.is_authenticated(cx) && !is_expanded,
-                                        |parent| {
-                                            parent.child(
-                                                Icon::new(IconName::Check).color(Color::Success),
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new(provider_name.clone())
+                                                    .size(LabelSize::Large),
                                             )
-                                        },
+                                            .map(|this| {
+                                                if is_zed_provider {
+                                                    this.gap_2().child(
+                                                        self.render_zed_plan_info(current_plan, cx),
+                                                    )
+                                                } else {
+                                                    this.when(
+                                                        provider.is_authenticated(cx)
+                                                            && !is_expanded,
+                                                        |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                            }),
                                     ),
                             )
                             .child(
@@ -247,12 +284,16 @@ impl AgentConfiguration {
                         )
                     }),
             )
-            .when(is_expanded, |parent| match configuration_view {
-                Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(Label::new(format!(
-                    "No configuration view for {provider_name}",
-                ))),
-            })
+            .child(
+                div()
+                    .px_2()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    }),
+            )
     }
 
     fn render_provider_configuration_section(
@@ -262,12 +303,11 @@ impl AgentConfiguration {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
+                    .p(DynamicSpacing::Base16.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .pb_0()
                     .mb_2p5()
                     .gap_0p5()
                     .child(Headline::new("LLM Providers"))
@@ -276,10 +316,15 @@ impl AgentConfiguration {
                             .color(Color::Muted),
                     ),
             )
-            .children(
-                providers
-                    .into_iter()
-                    .map(|provider| self.render_provider_configuration_block(&provider, cx)),
+            .child(
+                div()
+                    .pl(DynamicSpacing::Base08.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .children(
+                        providers.into_iter().map(|provider| {
+                            self.render_provider_configuration_block(&provider, cx)
+                        }),
+                    ),
             )
     }
 
@@ -413,12 +458,43 @@ impl AgentConfiguration {
             .child(self.render_sound_notification(cx))
     }
 
+    fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(plan) = plan {
+            let free_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.05));
+
+            let pro_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.2));
+
+            let (plan_name, label_color, bg_color) = match plan {
+                Plan::Free => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+            };
+
+            Chip::new(plan_name.to_string())
+                .bg_color(bg_color)
+                .label_color(label_color)
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        }
+    }
+
     fn render_context_servers_section(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
+        let context_server_ids = self.context_server_store.read(cx).configured_server_ids();
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
@@ -473,6 +549,7 @@ impl AgentConfiguration {
                                         category_filter: Some(
                                             ExtensionCategoryFilter::ContextServers,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,

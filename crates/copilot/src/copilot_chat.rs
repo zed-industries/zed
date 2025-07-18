@@ -528,6 +528,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
+        is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let this = cx
@@ -562,7 +563,14 @@ impl CopilotChat {
         };
 
         let api_url = configuration.api_url_from_endpoint(&token.api_endpoint);
-        stream_completion(client.clone(), token.api_key, api_url.into(), request).await
+        stream_completion(
+            client.clone(),
+            token.api_key,
+            api_url.into(),
+            request,
+            is_user_initiated,
+        )
+        .await
     }
 
     pub fn set_configuration(
@@ -697,6 +705,7 @@ async fn stream_completion(
     api_key: String,
     completion_url: Arc<str>,
     request: Request,
+    is_user_initiated: bool,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
       ChatMessage::User { content }
@@ -706,6 +715,8 @@ async fn stream_completion(
       }
       _ => false,
   });
+
+    let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -719,7 +730,8 @@ async fn stream_completion(
         )
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("X-Initiator", request_initiator);
 
     if is_vision_request {
         request_builder =

@@ -25,6 +25,7 @@ use alacritty_terminal::{
 use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
+use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
@@ -257,12 +258,18 @@ impl Render for TerminalOutput {
                 point: ic.point,
                 cell: ic.cell.clone(),
             });
-        let (cells, rects) =
-            TerminalElement::layout_grid(grid, 0, &text_style, text_system, None, window, cx);
+        let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
+        let (rects, batched_text_runs) =
+            TerminalElement::layout_grid(grid, 0, &text_style, None, minimum_contrast, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
-        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0) + 1;
+        let num_lines = batched_text_runs
+            .iter()
+            .map(|b| b.start_point.line)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let height = num_lines as f32 * text_line_height;
 
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
@@ -290,15 +297,14 @@ impl Render for TerminalOutput {
                     );
                 }
 
-                for cell in cells {
-                    cell.paint(
+                for batch in batched_text_runs {
+                    batch.paint(
                         bounds.origin,
                         &terminal::TerminalBounds {
                             cell_width,
                             line_height: text_line_height,
                             bounds,
                         },
-                        bounds,
                         window,
                         cx,
                     );

@@ -1,9 +1,7 @@
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
-use crate::ui::{
-    AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
-};
+use crate::ui::{AddedContext, AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::{AgentPanel, ModelUsageContext};
 use agent::{
     ContextStore, LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, TextThreadStore,
@@ -789,6 +787,15 @@ impl ActiveThread {
                     .unwrap()
             }
         });
+
+        let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
+            Some(cx.observe_release(&workspace, |this, _, cx| {
+                this.dismiss_notifications(cx);
+            }))
+        } else {
+            None
+        };
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -834,6 +841,10 @@ impl ActiveThread {
                     cx,
                 );
             }
+        }
+
+        if let Some(subscription) = workspace_subscription {
+            this._subscriptions.push(subscription);
         }
 
         this
@@ -985,30 +996,57 @@ impl ActiveThread {
             | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::Stopped(reason) => match reason {
-                Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
-                    self.play_notification_sound(window, cx);
-                    self.show_notification(
-                        if used_tools {
-                            "Finished running tools"
-                        } else {
-                            "New message"
-                        },
-                        IconName::ZedAssistant,
-                        window,
-                        cx,
-                    );
+            ThreadEvent::Stopped(reason) => {
+                match reason {
+                    Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
+                        let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                        self.notify_with_sound(
+                            if used_tools {
+                                "Finished running tools"
+                            } else {
+                                "New message"
+                            },
+                            IconName::ZedAssistant,
+                            window,
+                            cx,
+                        );
+                    }
+                    Ok(StopReason::ToolUse) => {
+                        // Don't notify for intermediate tool use
+                    }
+                    Ok(StopReason::Refusal) => {
+                        self.notify_with_sound(
+                            "Language model refused to respond",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        self.notify_with_sound(
+                            "Agent stopped due to an error",
+                            IconName::Warning,
+                            window,
+                            cx,
+                        );
+
+                        let error_message = error
+                            .chain()
+                            .map(|err| err.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.last_error = Some(ThreadError::Message {
+                            header: "Error".into(),
+                            message: error_message.into(),
+                        });
+                    }
                 }
-                _ => {}
-            },
+            }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.play_notification_sound(window, cx);
-                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
+                self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::ToolUseLimitReached => {
-                self.play_notification_sound(window, cx);
-                self.show_notification(
+                self.notify_with_sound(
                     "Consecutive tool use limit reached.",
                     IconName::Warning,
                     window,
@@ -1026,6 +1064,7 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
+                self.clear_last_error();
                 if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                     thread.message(*message_id).map(|message| {
                         RenderedMessage::from_segments(
@@ -1042,6 +1081,7 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::MessageEdited(message_id) => {
+                self.clear_last_error();
                 if let Some(index) = self.messages.iter().position(|id| id == message_id) {
                     if let Some(rendered_message) = self.thread.update(cx, |thread, cx| {
                         thread.message(*message_id).map(|message| {
@@ -1149,9 +1189,6 @@ impl ActiveThread {
                 self.save_thread(cx);
                 cx.notify();
             }
-            ThreadEvent::RetriesFailed { message } => {
-                self.show_notification(message, ui::IconName::Warning, window, cx);
-            }
         }
     }
 
@@ -1204,6 +1241,17 @@ impl ActiveThread {
                 // Don't show anything
             }
         }
+    }
+
+    fn notify_with_sound(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        window: &mut Window,
+        cx: &mut Context<ActiveThread>,
+    ) {
+        self.play_notification_sound(window, cx);
+        self.show_notification(caption, icon, window, cx);
     }
 
     fn pop_up(
@@ -1461,6 +1509,7 @@ impl ActiveThread {
                             &configured_model.model,
                             cx,
                         ),
+                        thinking_allowed: true,
                     };
 
                     Some(configured_model.model.count_tokens(request, cx))
@@ -1818,7 +1867,7 @@ impl ActiveThread {
                 .my_3()
                 .mx_5()
                 .when(is_generating_stale || message.is_hidden, |this| {
-                    this.child(AnimatedLabel::new("").size(LabelSize::Small))
+                    this.child(LoadingLabel::new("").size(LabelSize::Small))
                 })
         });
 
@@ -2580,11 +2629,11 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::LightBulb)
-                                            .size(IconSize::XSmall)
+                                        Icon::new(IconName::ToolBulb)
+                                            .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(AnimatedLabel::new("Thinking").size(LabelSize::Small)),
+                                    .child(LoadingLabel::new("Thinking").size(LabelSize::Small)),
                             )
                             .child(
                                 h_flex()
@@ -2994,7 +3043,7 @@ impl ActiveThread {
                                         .overflow_x_scroll()
                                         .child(
                                             Icon::new(tool_use.icon)
-                                                .size(IconSize::XSmall)
+                                                .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
                                         .child(
@@ -3153,7 +3202,10 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    AnimatedLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    div()
+                                        .min_w(rems_from_px(145.))
+                                        .child(LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    )
                                 )
                                 .child(
                                     h_flex()
@@ -3198,7 +3250,6 @@ impl ActiveThread {
                                                 },
                                             ))
                                         })
-                                        .child(ui::Divider::vertical())
                                         .child({
                                             let tool_id = tool_use.id.clone();
                                             Button::new("allow-tool-action", "Allow")

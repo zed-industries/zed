@@ -112,7 +112,8 @@ To disable this behavior use:
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
-    "show_sign_in": true            // Show/hide sign-in button
+    "show_sign_in": true,           // Show/hide sign-in button
+    "show_menus": false             // Show/hide menus
   },
 ```
 
@@ -316,7 +317,7 @@ TBD: Centered layout related settings
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
 ```json
-  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom
+  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom, none
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
   "auto_signature_help": false,          // Show method signatures inside parentheses
@@ -447,7 +448,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
-    // Default cursor shape for the terminal (block, bar, underline, hollow)
+    // Default cursor shape for the terminal cursor (block, bar, underline, hollow)
     "cursor_shape": "block",
 
     // Environment variables to add to terminal's process environment

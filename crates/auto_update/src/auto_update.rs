@@ -35,7 +35,7 @@ actions!(
         Check,
         /// Dismisses the update error message.
         DismissErrorMessage,
-        /// Opens the release notes for the current version.
+        /// Opens the release notes for the current version in a browser.
         ViewReleaseNotes,
     ]
 );
@@ -638,7 +638,7 @@ impl AutoUpdater {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("ZedUpdateInstaller.exe"),
+            "windows" => Ok("zed_editor_installer.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
