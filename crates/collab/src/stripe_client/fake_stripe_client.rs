@@ -147,7 +147,7 @@ impl StripeClient for FakeStripeClient {
     ) -> Result<StripeSubscription> {
         let now = Utc::now();
 
-        // Note: automatic_tax is accepted but not stored in our fake subscription
+        // Note: automatic_tax is accepted but not stored in this fake subscription
         // This is sufficient for testing the API contract
         let _automatic_tax = params.automatic_tax;
 
