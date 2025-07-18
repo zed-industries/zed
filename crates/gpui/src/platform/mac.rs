@@ -33,7 +33,7 @@ mod platform;
 mod window;
 mod window_appearance;
 
-use crate::{DevicePixels, Pixels, Size, px, size};
+use crate::{DevicePixels, Pixels, Size, phypx, px, size};
 use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
@@ -158,6 +158,6 @@ impl From<NSRect> for Size<Pixels> {
 impl From<NSRect> for Size<DevicePixels> {
     fn from(rect: NSRect) -> Self {
         let NSSize { width, height } = rect.size;
-        size(DevicePixels(width as i32), DevicePixels(height as i32))
+        size(phypx(width as i32), phypx(height as i32))
     }
 }

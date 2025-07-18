@@ -285,8 +285,8 @@ impl X11ClientStatePtr {
                 b.push(
                     xim::AttributeName::SpotLocation,
                     xim::Point {
-                        x: u32::from(bounds.origin.x + bounds.size.width) as i16,
-                        y: u32::from(bounds.origin.y + bounds.size.height) as i16,
+                        x: (bounds.origin.x + bounds.size.width).0 as i16,
+                        y: (bounds.origin.y + bounds.size.height).0 as i16,
                     },
                 );
             })

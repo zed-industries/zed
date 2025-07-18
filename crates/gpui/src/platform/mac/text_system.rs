@@ -2,7 +2,7 @@ use crate::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
     FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
     RenderGlyphParams, Result, SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size,
-    point, px, size, swap_rgba_pa_to_bgra,
+    phypx, point, px, size, swap_rgba_pa_to_bgra,
 };
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
@@ -353,10 +353,10 @@ impl MacTextSystemState {
             // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
             let mut bitmap_size = glyph_bounds.size;
             if params.subpixel_variant.x > 0 {
-                bitmap_size.width += DevicePixels(1);
+                bitmap_size.width += phypx(1);
             }
             if params.subpixel_variant.y > 0 {
-                bitmap_size.height += DevicePixels(1);
+                bitmap_size.height += phypx(1);
             }
             let bitmap_size = bitmap_size;
 
@@ -582,8 +582,8 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+            origin: point(phypx(rect.origin_x()), phypx(rect.origin_y())),
+            size: size(phypx(rect.width()), phypx(rect.height())),
         }
     }
 }
