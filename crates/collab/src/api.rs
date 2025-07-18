@@ -100,6 +100,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
         .route("/user", get(update_or_create_authenticated_user))
         .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
+        .route("/users/:id/refresh_llm_tokens", post(refresh_llm_tokens))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .merge(billing::router())
         .merge(contributors::router())
@@ -333,4 +334,16 @@ async fn create_access_token(
         user_id: impersonated_user_id.unwrap_or(user_id),
         encrypted_access_token,
     }))
+}
+
+#[derive(Serialize)]
+struct RefreshLlmTokensResponse {}
+
+async fn refresh_llm_tokens(
+    Path(user_id): Path<UserId>,
+    Extension(rpc_server): Extension<Arc<rpc::Server>>,
+) -> Result<Json<RefreshLlmTokensResponse>> {
+    rpc_server.refresh_llm_tokens_for_user(user_id).await;
+
+    Ok(Json(RefreshLlmTokensResponse {}))
 }
