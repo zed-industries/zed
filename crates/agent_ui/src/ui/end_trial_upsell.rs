@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use ai_onboarding::AgentPanelOnboardingCard;
+use ai_onboarding::{AgentPanelOnboardingCard, BulletItem};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
-use ui::prelude::*;
+use ui::{Divider, List, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
@@ -17,7 +17,65 @@ impl EndTrialUpsell {
 }
 
 impl RenderOnce for EndTrialUpsell {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let pro_section = v_flex()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new("Pro")
+                            .size(LabelSize::Small)
+                            .color(Color::Accent)
+                            .buffer_font(cx),
+                    )
+                    .child(Divider::horizontal()),
+            )
+            .child(
+                List::new()
+                    .child(BulletItem::new("500 prompts per month with Claude models"))
+                    .child(BulletItem::new("Unlimited edit predictions")),
+            )
+            .child(
+                Button::new("cta-button", "Upgrade to Zed Pro")
+                    .full_width()
+                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                    .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+            );
+
+        let free_section = v_flex()
+            .mt_1p5()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new("Free")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .child(Divider::horizontal()),
+            )
+            .child(
+                List::new()
+                    .child(BulletItem::new(
+                        "50 prompts per month with the Claude models",
+                    ))
+                    .child(BulletItem::new(
+                        "2000 accepted edit predictions using our open-source Zeta model",
+                    )),
+            )
+            .child(
+                Button::new("dismiss-button", "Stay on Free")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .on_click({
+                        let callback = self.dismiss_upsell.clone();
+                        move |_, window, cx| callback(window, cx)
+                    }),
+            );
+
         AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro trial has expired."))
             .child(
@@ -26,24 +84,8 @@ impl RenderOnce for EndTrialUpsell {
                     .color(Color::Muted)
                     .mb_1(),
             )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("cta-button", "Upgrade to Zed Pro")
-                            .full_width()
-                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                    )
-                    .child(
-                        Button::new("dismiss-button", "Stay on Free")
-                            .full_width()
-                            .on_click({
-                                let callback = self.dismiss_upsell.clone();
-                                move |_, window, cx| callback(window, cx)
-                            }),
-                    ),
-            )
+            .child(pro_section)
+            .child(free_section)
     }
 }
 

@@ -2188,6 +2188,36 @@ impl AgentPanel {
             return false;
         }
 
+        match &self.active_view {
+            ActiveView::Thread { thread, .. } => {
+                if thread
+                    .read(cx)
+                    .thread()
+                    .read(cx)
+                    .configured_model()
+                    .map_or(false, |model| {
+                        model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                    })
+                {
+                    return false;
+                }
+            }
+            ActiveView::TextThread { .. } => {
+                if LanguageModelRegistry::global(cx)
+                    .read(cx)
+                    .default_model()
+                    .map_or(false, |model| {
+                        model.provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                    })
+                {
+                    return false;
+                }
+            }
+            ActiveView::ExternalAgentThread { .. }
+            | ActiveView::History
+            | ActiveView::Configuration => return false,
+        }
+
         let plan = self.user_store.read(cx).current_plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
@@ -2611,7 +2641,7 @@ impl AgentPanel {
                         this.clear_last_error();
                     });
 
-                    cx.open_url(&zed_urls::account_url(cx));
+                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
                     cx.notify();
                 }
             }))
