@@ -29,6 +29,7 @@ pub struct WorkspaceSettings {
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub item_opening_behavior: ItemOpeningBehavior,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -114,6 +115,16 @@ pub enum RestoreOnStartupBehavior {
     /// Restore all workspaces that were open when quitting Zed.
     #[default]
     LastSession,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemOpeningBehavior {
+    /// Open items in the last active pane
+    #[default]
+    ActivePane,
+    /// Open items in the leftmost center pane
+    LeftmostPane,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +213,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub close_on_file_delete: Option<bool>,
+    /// Controls which pane new items and tool windows open in
+    /// Values: active_pane, leftmost_pane
+    ///
+    /// Default: active_pane
+    pub item_opening_behavior: Option<ItemOpeningBehavior>,
 }
 
 #[derive(Deserialize)]
