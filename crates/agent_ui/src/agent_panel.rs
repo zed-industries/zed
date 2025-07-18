@@ -93,45 +93,30 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
                 .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
@@ -140,9 +125,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
@@ -151,9 +133,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         match &panel.read(cx).active_view {
@@ -169,9 +148,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &Follow, window, cx| {
-                    if AgentSettings::get_global(cx).disable_ai {
-                        return;
-                    }
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
@@ -752,9 +728,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if AgentSettings::get_global(cx).disable_ai {
-            return;
-        }
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
@@ -1664,10 +1637,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx)
-            && AgentSettings::get_global(cx).button
-            && !AgentSettings::get_global(cx).disable_ai)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {

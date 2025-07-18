@@ -219,7 +219,7 @@ impl InlineAssistant {
         cx: &mut Context<Workspace>,
     ) {
         let settings = AgentSettings::get_global(cx);
-        if !settings.enabled || settings.disable_ai {
+        if !settings.enabled {
             return;
         }
 
