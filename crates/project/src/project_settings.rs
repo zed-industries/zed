@@ -89,6 +89,15 @@ pub struct DapSettings {
     pub args: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LspInstanceMode {
+    /// Create separate language server instances for each project root
+    PerRoot,
+    /// Use a single language server instance for the entire workspace
+    Single,
+}
+
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettings {
@@ -515,6 +524,10 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    /// Controls how language server instances are created.
+    /// - "per_root": Create separate instances for each project root (default)
+    /// - "single": Use a single instance for the entire workspace
+    pub instance_mode: Option<LspInstanceMode>,
 }
 
 impl Default for LspSettings {
@@ -524,6 +537,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            instance_mode: None,
         }
     }
 }
