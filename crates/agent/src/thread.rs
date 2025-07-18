@@ -1530,12 +1530,6 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Option<PendingToolUse> {
-        let action_log = self.action_log.read(cx);
-
-        if !action_log.has_unnotified_user_edits() {
-            return None;
-        }
-
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
         let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
@@ -1544,6 +1538,13 @@ impl Thread {
         };
 
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+            return None;
+        }
+
+        if self
+            .action_log
+            .update(cx, |log, cx| log.unnotified_user_edits(cx).is_none())
+        {
             return None;
         }
 
