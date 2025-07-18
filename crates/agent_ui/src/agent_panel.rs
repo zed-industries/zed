@@ -2282,6 +2282,14 @@ impl AgentPanel {
         })))
     }
 
+    fn render_new_thread_buttons(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+    }
+
     fn render_thread_empty_state(
         &self,
         window: &mut Window,
@@ -2463,6 +2471,71 @@ impl AgentPanel {
                     .when_some(configuration_error.as_ref(), |this, err| {
                         this.child(self.render_configuration_error(err, &focus_handle, window, cx))
                     })
+                    .child(
+                        h_flex()
+                            .mt_2()
+                            .pl_1p5()
+                            .pb_1()
+                            .w_full()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Recent")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .p_1()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .child("helloooo"),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .child("helloooo"),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .child("helloooo"),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .child("helloooo"),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .child("helloooo"),
+                                    ),
+                            ),
+                    )
             })
     }
 

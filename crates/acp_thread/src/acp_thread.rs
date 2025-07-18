@@ -453,6 +453,48 @@ impl Diff {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub entries: Vec<PlanEntry>,
+}
+
+#[derive(Debug)]
+pub struct PlanStats<'a> {
+    pub in_progress_entry: Option<&'a PlanEntry>,
+    pub pending: u32,
+    pub completed: u32,
+}
+
+impl Plan {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn stats(&self) -> PlanStats<'_> {
+        let mut stats = PlanStats {
+            in_progress_entry: None,
+            pending: 0,
+            completed: 0,
+        };
+
+        for entry in &self.entries {
+            match &entry.status {
+                acp::PlanEntryStatus::Pending => {
+                    stats.pending += 1;
+                }
+                acp::PlanEntryStatus::InProgress => {
+                    stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
+                }
+                acp::PlanEntryStatus::Completed => {
+                    stats.completed += 1;
+                }
+            }
+        }
+
+        stats
+    }
+}
+
 #[derive(Debug)]
 pub struct PlanEntry {
     pub content: Entity<Markdown>,
@@ -473,7 +515,7 @@ impl PlanEntry {
 pub struct AcpThread {
     title: SharedString,
     entries: Vec<AgentThreadEntry>,
-    plan: Box<[PlanEntry]>,
+    plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
@@ -838,17 +880,26 @@ impl AcpThread {
         }
     }
 
-    pub fn plan(&self) -> &[PlanEntry] {
+    pub fn plan(&self) -> &Plan {
         &self.plan
     }
 
     pub fn update_plan(&mut self, request: acp::UpdatePlanParams, cx: &mut Context<Self>) {
-        self.plan = request
-            .entries
-            .into_iter()
-            .map(|entry| PlanEntry::from_acp(entry, cx))
-            .collect();
+        self.plan = Plan {
+            entries: request
+                .entries
+                .into_iter()
+                .map(|entry| PlanEntry::from_acp(entry, cx))
+                .collect(),
+        };
 
+        cx.notify();
+    }
+
+    pub fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
+        self.plan
+            .entries
+            .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
         cx.notify();
     }
 
@@ -1167,6 +1218,17 @@ pub struct AcpClientDelegate {
 impl AcpClientDelegate {
     pub fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
         Self { thread, cx }
+    }
+
+    pub async fn clear_completed_plan_entries(&self) -> Result<()> {
+        let cx = &mut self.cx.clone();
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.clear_completed_plan_entries(cx))
+        })?
+        .context("Failed to update thread")?;
+
+        Ok(())
     }
 
     pub async fn request_existing_tool_call_confirmation(

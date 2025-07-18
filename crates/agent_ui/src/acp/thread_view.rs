@@ -1,4 +1,4 @@
-use acp_thread::PlanEntry;
+use acp_thread::{Plan, PlanEntry};
 use agent_servers::AgentServer;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -1445,7 +1445,7 @@ impl AcpThreadView {
         container.into_any()
     }
 
-    fn render_bar(
+    fn render_activity_bar(
         &self,
         thread_entity: &Entity<AcpThread>,
         window: &mut Window,
@@ -1454,9 +1454,9 @@ impl AcpThreadView {
         let thread = thread_entity.read(cx);
         let action_log = thread.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
-        let plan_entries = thread.plan();
+        let plan = thread.plan();
 
-        if changed_buffers.is_empty() && plan_entries.is_empty() {
+        if changed_buffers.is_empty() && plan.is_empty() {
             return None;
         }
 
@@ -1480,35 +1480,94 @@ impl AcpThreadView {
                 blur_radius: px(3.),
                 spread_radius: px(0.),
             }])
-            .when(!plan_entries.is_empty(), |this| {
-                this.child(self.render_plan_summary(plan_entries, cx))
+            .when(!plan.is_empty(), |this| {
+                this.child(self.render_plan_summary(plan, window, cx))
                     .when(self.plan_expanded, |parent| {
-                        parent.child(self.render_plan_entries(plan_entries, window, cx))
+                        parent.child(self.render_plan_entries(plan, window, cx))
                     })
             })
             .when(!changed_buffers.is_empty(), |this| {
-                this.child(self.render_edits_summary(
-                    action_log,
-                    &changed_buffers,
-                    self.edits_expanded,
-                    pending_edits,
-                    window,
-                    cx,
-                ))
-                .when(self.edits_expanded, |parent| {
-                    parent.child(self.render_edited_files(
+                this.child(Divider::horizontal())
+                    .child(self.render_edits_summary(
                         action_log,
                         &changed_buffers,
+                        self.edits_expanded,
                         pending_edits,
+                        window,
                         cx,
                     ))
-                })
+                    .when(self.edits_expanded, |parent| {
+                        parent.child(self.render_edited_files(
+                            action_log,
+                            &changed_buffers,
+                            pending_edits,
+                            cx,
+                        ))
+                    })
             })
             .into_any()
             .into()
     }
 
-    fn render_plan_summary(&self, entries: &[PlanEntry], cx: &Context<Self>) -> Div {
+    fn render_plan_summary(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
+        let stats = plan.stats();
+
+        let title = if let Some(entry) = stats.in_progress_entry
+            && !self.plan_expanded
+        {
+            h_flex()
+                .w_full()
+                .gap_1()
+                .text_xs()
+                .text_color(cx.theme().colors().text_muted)
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Current:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(MarkdownElement::new(
+                            entry.content.clone(),
+                            plan_label_markdown_style(&entry.status, window, cx),
+                        )),
+                )
+                .when(stats.pending > 0, |this| {
+                    this.child(
+                        Label::new(format!("{} left", stats.pending))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .mr_1(),
+                    )
+                })
+        } else {
+            let status_label = if stats.pending == 0 {
+                "All Done".to_string()
+            } else if stats.completed == 0 {
+                format!("{}", plan.entries.len())
+            } else {
+                format!("{}/{}", stats.completed, plan.entries.len())
+            };
+
+            h_flex()
+                .w_full()
+                .gap_1()
+                .justify_between()
+                .child(
+                    Label::new("Plan")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new(status_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .mr_1(),
+                )
+        };
+
         h_flex()
             .p_1()
             .justify_between()
@@ -1517,28 +1576,11 @@ impl AcpThreadView {
             })
             .child(
                 h_flex()
-                    .id("edits-container")
-                    .cursor_pointer()
+                    .id("plan_summary")
                     .w_full()
                     .gap_1()
-                    .child(Disclosure::new("edits-disclosure", self.plan_expanded))
-                    .map(|this| {
-                        this.child(
-                            Label::new("Plan")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                        .child(
-                            Label::new(format!(
-                                "{} {}",
-                                entries.len(),
-                                if entries.len() == 1 { "item" } else { "items" }
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        )
-                    })
+                    .child(Disclosure::new("plan_disclosure", self.plan_expanded))
+                    .child(title)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.plan_expanded = !this.plan_expanded;
                         cx.notify();
@@ -1546,60 +1588,50 @@ impl AcpThreadView {
             )
     }
 
-    fn render_plan_entries(
-        &self,
-        entries: &[PlanEntry],
-        window: &mut Window,
-        cx: &Context<Self>,
-    ) -> Div {
-        let editor_bg_color = cx.theme().colors().editor_background;
-
-        v_flex().children(entries.into_iter().enumerate().flat_map(|(index, entry)| {
-            let overlay_gradient = linear_gradient(
-                90.,
-                linear_color_stop(editor_bg_color, 1.),
-                linear_color_stop(editor_bg_color.opacity(0.2), 0.),
-            );
-
+    fn render_plan_entries(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
+        v_flex().children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
             let element = h_flex()
-                .relative()
                 .py_1()
-                .pl_2()
-                .pr_1()
+                .px_2()
                 .gap_2()
                 .justify_between()
-                .bg(editor_bg_color)
-                .when(index < entries.len() - 1, |parent| {
+                .bg(cx.theme().colors().editor_background)
+                .when(index < plan.entries.len() - 1, |parent| {
                     parent.border_color(cx.theme().colors().border).border_b_1()
                 })
                 .child(
                     h_flex()
                         .id(("plan_entry", index))
-                        .pr_8()
                         .gap_1p5()
                         .max_w_full()
                         .overflow_x_scroll()
-                        .child(Icon::new(IconName::Circle).size(IconSize::XSmall))
+                        .text_xs()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(match entry.status {
+                            acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                                .into_any_element(),
+                            acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
+                                .size(IconSize::Small)
+                                .color(Color::Accent)
+                                .with_animation(
+                                    "running",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                )
+                                .into_any_element(),
+                            acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
+                                .size(IconSize::Small)
+                                .color(Color::Success)
+                                .into_any_element(),
+                        })
                         .child(MarkdownElement::new(
                             entry.content.clone(),
-                            default_markdown_style(false, window, cx),
+                            plan_label_markdown_style(&entry.status, window, cx),
                         )),
-                )
-                .child(
-                    h_flex()
-                        .child(format!("{:?}", entry.priority))
-                        .child(format!("{:?}", entry.status)),
-                )
-                .child(
-                    div()
-                        .id("gradient-overlay")
-                        .absolute()
-                        .h_full()
-                        .w_12()
-                        .top_0()
-                        .bottom_0()
-                        .right(px(152.))
-                        .bg(overlay_gradient),
                 );
 
             Some(element)
@@ -2256,7 +2288,7 @@ impl Render for AcpThreadView {
                                 .child(LoadingLabel::new("").size(LabelSize::Small))
                                 .into(),
                         })
-                        .children(self.render_bar(&thread, window, cx))
+                        .children(self.render_activity_bar(&thread, window, cx))
                     } else {
                         this.child(self.render_empty_state(cx))
                     }
@@ -2435,5 +2467,29 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+fn plan_label_markdown_style(
+    status: &acp::PlanEntryStatus,
+    window: &Window,
+    cx: &App,
+) -> MarkdownStyle {
+    let default_md_style = default_markdown_style(false, window, cx);
+
+    MarkdownStyle {
+        base_text_style: TextStyle {
+            color: cx.theme().colors().text_muted,
+            strikethrough: if matches!(status, acp::PlanEntryStatus::Completed) {
+                Some(gpui::StrikethroughStyle {
+                    thickness: px(1.),
+                    color: Some(cx.theme().colors().text_muted.opacity(0.8)),
+                })
+            } else {
+                None
+            },
+            ..default_md_style.base_text_style
+        },
+        ..default_md_style
     }
 }
