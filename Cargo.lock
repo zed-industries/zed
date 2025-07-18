@@ -213,6 +213,7 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
+ "language_models",
  "languages",
  "log",
  "lsp",

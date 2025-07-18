@@ -25,7 +25,7 @@ use crate::provider::{
 };
 
 /// Initializes the language model settings.
-pub fn init(cx: &mut App) {
+pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
