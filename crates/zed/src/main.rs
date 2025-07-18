@@ -175,6 +175,17 @@ pub fn main() {
         return;
     }
 
+    // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
+    if let Some(socket) = &args.nc {
+        match nc::main(socket) {
+            Ok(()) => return,
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                process::exit(1);
+            }
+        }
+    }
+
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
@@ -746,6 +757,23 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
+    if let Some(extension) = request.extension_id {
+        cx.spawn(async move |cx| {
+            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+            workspace.update(cx, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(zed_actions::Extensions {
+                        category_filter: None,
+                        id: Some(extension),
+                    }),
+                    cx,
+                );
+            })
+        })
+        .detach_and_log_err(cx);
+        return;
+    }
+
     if let Some(connection_options) = request.ssh_connection {
         cx.spawn(async move |mut cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
@@ -1150,6 +1178,11 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+
+    /// Used for the MCP Server, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    nc: Option<String>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]

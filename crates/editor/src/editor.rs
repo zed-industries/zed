@@ -356,6 +356,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
             workspace.register_action(Editor::cancel_language_server_work);
+            workspace.register_action(Editor::toggle_focus);
         },
     )
     .detach();
@@ -2381,13 +2382,17 @@ impl Editor {
         }
 
         match self.context_menu.borrow().as_ref() {
-            Some(CodeContextMenu::Completions(_)) => {
-                key_context.add("menu");
-                key_context.add("showing_completions");
+            Some(CodeContextMenu::Completions(menu)) => {
+                if menu.visible() {
+                    key_context.add("menu");
+                    key_context.add("showing_completions");
+                }
             }
-            Some(CodeContextMenu::CodeActions(_)) => {
-                key_context.add("menu");
-                key_context.add("showing_code_actions")
+            Some(CodeContextMenu::CodeActions(menu)) => {
+                if menu.visible() {
+                    key_context.add("menu");
+                    key_context.add("showing_code_actions")
+                }
             }
             None => {}
         }
@@ -16954,6 +16959,18 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn toggle_focus(
+        workspace: &mut Workspace,
+        _: &actions::ToggleFocus,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(item) = workspace.recent_active_item_by_type::<Self>(cx) else {
+            return;
+        };
+        workspace.activate_item(&item, true, true, window, cx);
+    }
+
     pub fn toggle_fold(
         &mut self,
         _: &actions::ToggleFold,
@@ -20549,6 +20566,7 @@ impl Editor {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.selection_drag_state = SelectionDragState::None;
         self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 

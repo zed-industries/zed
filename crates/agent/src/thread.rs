@@ -396,6 +396,7 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+    last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
 }
 
 #[derive(Clone, Debug)]
@@ -489,10 +490,11 @@ impl Thread {
             retry_state: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model,
+            configured_model: configured_model.clone(),
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -613,6 +615,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
@@ -1264,9 +1267,58 @@ impl Thread {
 
         self.flush_notifications(model.clone(), intent, cx);
 
-        let request = self.to_completion_request(model.clone(), intent, cx);
+        let _checkpoint = self.finalize_pending_checkpoint(cx);
+        self.stream_completion(
+            self.to_completion_request(model.clone(), intent, cx),
+            model,
+            intent,
+            window,
+            cx,
+        );
+    }
 
-        self.stream_completion(request, model, intent, window, cx);
+    pub fn retry_last_completion(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        // Clear any existing error state
+        self.retry_state = None;
+
+        // Use the last error context if available, otherwise fall back to configured model
+        let (model, intent) = if let Some((model, intent)) = self.last_error_context.take() {
+            (model, intent)
+        } else if let Some(configured_model) = self.configured_model.as_ref() {
+            let model = configured_model.model.clone();
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+            (model, intent)
+        } else if let Some(configured_model) = self.get_or_init_configured_model(cx) {
+            let model = configured_model.model.clone();
+            let intent = if self.has_pending_tool_uses() {
+                CompletionIntent::ToolResults
+            } else {
+                CompletionIntent::UserPrompt
+            };
+            (model, intent)
+        } else {
+            return;
+        };
+
+        self.send_to_model(model, intent, window, cx);
+    }
+
+    pub fn enable_burn_mode_and_retry(
+        &mut self,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.completion_mode = CompletionMode::Burn;
+        cx.emit(ThreadEvent::ProfileChanged);
+        self.retry_last_completion(window, cx);
     }
 
     pub fn used_tools_since_last_user_message(&self) -> bool {
@@ -1532,7 +1584,9 @@ impl Thread {
     ) -> Option<PendingToolUse> {
         let action_log = self.action_log.read(cx);
 
-        action_log.unnotified_stale_buffers(cx).next()?;
+        if !action_log.has_unnotified_user_edits() {
+            return None;
+        }
 
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
@@ -2144,6 +2198,35 @@ impl Thread {
                     max_attempts: MAX_RETRY_ATTEMPTS,
                 })
             }
+            UpstreamProviderError {
+                status,
+                retry_after,
+                ..
+            } => match *status {
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
+                    Some(RetryStrategy::Fixed {
+                        delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                        max_attempts: MAX_RETRY_ATTEMPTS,
+                    })
+                }
+                StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
+                    delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                    // Internal Server Error could be anything, so only retry once.
+                    max_attempts: 1,
+                }),
+                status => {
+                    // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
+                    // but we frequently get them in practice. See https://http.dev/529
+                    if status.as_u16() == 529 {
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: MAX_RETRY_ATTEMPTS,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            },
             ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
                 max_attempts: 1,
@@ -2191,6 +2274,23 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Store context for the Retry button
+        self.last_error_context = Some((model.clone(), intent));
+
+        // Only auto-retry if Burn Mode is enabled
+        if self.completion_mode != CompletionMode::Burn {
+            // Show error with retry options
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: format!(
+                    "{}\n\nTo automatically retry when similar errors happen, enable Burn Mode.",
+                    error
+                )
+                .into(),
+                can_enable_burn_mode: true,
+            }));
+            return false;
+        }
+
         let Some(strategy) = strategy.or_else(|| Self::get_retry_strategy(error)) else {
             return false;
         };
@@ -2270,6 +2370,13 @@ impl Thread {
 
             // Stop generating since we're giving up on retrying.
             self.pending_completions.clear();
+
+            // Show error alongside a Retry button, but no
+            // Enable Burn Mode button (since it's already enabled)
+            cx.emit(ThreadEvent::ShowError(ThreadError::RetryableError {
+                message: format!("Failed after retrying: {}", error).into(),
+                can_enable_burn_mode: false,
+            }));
 
             false
         }
@@ -3181,6 +3288,11 @@ pub enum ThreadError {
         header: SharedString,
         message: SharedString,
     },
+    #[error("Retryable error: {message}")]
+    RetryableError {
+        message: SharedString,
+        can_enable_burn_mode: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -3253,7 +3365,6 @@ mod tests {
     use futures::stream::BoxStream;
     use gpui::TestAppContext;
     use http_client;
-    use indoc::indoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         LanguageModelCompletionError, LanguageModelName, LanguageModelProviderId,
@@ -3582,6 +3693,7 @@ fn main() {{
     }
 
     #[gpui::test]
+    #[ignore] // turn this test on when project_notifications tool is re-enabled
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
@@ -3614,6 +3726,7 @@ fn main() {{
                 cx,
             );
         });
+        cx.run_until_parked();
 
         // We shouldn't have a stale buffer notification yet
         let notifications = thread.read_with(cx, |thread, _| {
@@ -3643,11 +3756,13 @@ fn main() {{
                 cx,
             )
         });
+        cx.run_until_parked();
 
         // Check for the stale buffer warning
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         let notifications = thread.read_with(cx, |thread, _cx| {
             find_tool_uses(thread, "project_notifications")
@@ -3661,12 +3776,8 @@ fn main() {{
             panic!("`project_notifications` should return text");
         };
 
-        let expected_content = indoc! {"[The following is an auto-generated notification; do not reply]
-
-        These files have changed since the last read:
-        - code.rs
-        "};
-        assert_eq!(notification_content, expected_content);
+        assert!(notification_content.contains("These files have changed since the last read:"));
+        assert!(notification_content.contains("code.rs"));
 
         // Insert another user message and flush notifications again
         thread.update(cx, |thread, cx| {
@@ -3682,6 +3793,7 @@ fn main() {{
         thread.update(cx, |thread, cx| {
             thread.flush_notifications(model.clone(), CompletionIntent::UserPrompt, cx)
         });
+        cx.run_until_parked();
 
         // There should be no new notifications (we already flushed one)
         let notifications = thread.read_with(cx, |thread, _cx| {
@@ -4136,6 +4248,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4208,6 +4325,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
@@ -4284,6 +4406,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns internal server error
         let model = Arc::new(ErrorInjector::new(TestError::InternalServerError));
@@ -4392,6 +4519,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
 
@@ -4477,6 +4609,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // We'll use a wrapper to switch behavior after first failure
         struct RetryTestModel {
@@ -4646,6 +4783,11 @@ fn main() {{
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
+
         // Create a model that fails once then succeeds
         struct FailOnceModel {
             inner: Arc<FakeLanguageModel>,
@@ -4806,6 +4948,11 @@ fn main() {{
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create a model that returns rate limit error with retry_after
         struct RateLimitModel {
@@ -5081,11 +5228,89 @@ fn main() {{
     }
 
     #[gpui::test]
+    async fn test_no_retry_without_burn_mode(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+        let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Ensure we're in Normal mode (not Burn mode)
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Normal);
+        });
+
+        // Track error events
+        let error_events = Arc::new(Mutex::new(Vec::new()));
+        let error_events_clone = error_events.clone();
+
+        let _subscription = thread.update(cx, |_, cx| {
+            cx.subscribe(&thread, move |_, _, event: &ThreadEvent, _| {
+                if let ThreadEvent::ShowError(error) = event {
+                    error_events_clone.lock().push(error.clone());
+                }
+            })
+        });
+
+        // Create model that returns overloaded error
+        let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
+
+        // Insert a user message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Hello!", ContextLoadResult::default(), None, vec![], cx);
+        });
+
+        // Start completion
+        thread.update(cx, |thread, cx| {
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify no retry state was created
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.retry_state.is_none(),
+                "Should not have retry state in Normal mode"
+            );
+        });
+
+        // Check that a retryable error was reported
+        let errors = error_events.lock();
+        assert!(!errors.is_empty(), "Should have received an error event");
+
+        if let ThreadError::RetryableError {
+            message: _,
+            can_enable_burn_mode,
+        } = &errors[0]
+        {
+            assert!(
+                *can_enable_burn_mode,
+                "Error should indicate burn mode can be enabled"
+            );
+        } else {
+            panic!("Expected RetryableError, got {:?}", errors[0]);
+        }
+
+        // Verify the thread is no longer generating
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                !thread.is_generating(),
+                "Should not be generating after error without retry"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_retry_cancelled_on_stop(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
         let project = create_test_project(cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
+
+        // Enable Burn Mode to allow retries
+        thread.update(cx, |thread, _| {
+            thread.set_completion_mode(CompletionMode::Burn);
+        });
 
         // Create model that returns overloaded error
         let model = Arc::new(ErrorInjector::new(TestError::Overloaded));
