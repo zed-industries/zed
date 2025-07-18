@@ -314,3 +314,6 @@ path = "examples/touch_cursor_emulation.rs"
 required-features = ["touch-cursor-emulation"]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+name = "touch_cursor_emulation"
+path = "examples/touch_cursor_emulation.rs"
+required-features = ["touch-cursor-emulation"]
