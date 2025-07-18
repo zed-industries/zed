@@ -1384,7 +1384,7 @@ impl CodeActionsMenu {
         }
     }
 
-    fn visible(&self) -> bool {
+    pub fn visible(&self) -> bool {
         !self.actions.is_empty()
     }
 
