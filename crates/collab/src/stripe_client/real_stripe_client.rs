@@ -10,16 +10,17 @@ use stripe::{
     CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionSubscriptionDataTrialSettings,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
-    CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
-    SubscriptionId, SubscriptionItem, SubscriptionItemId, UpdateCustomer, UpdateSubscriptionItems,
+    CreateCustomer, CreateSubscriptionAutomaticTax, Customer, CustomerId, ListCustomers, Price,
+    PriceId, Recurring, Subscription, SubscriptionId, SubscriptionItem, SubscriptionItemId,
+    UpdateCustomer, UpdateSubscriptionAutomaticTax, UpdateSubscriptionItems,
     UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
     UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeBillingAddressCollection, StripeCancellationDetails,
-    StripeCancellationDetailsReason, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    CreateCustomerParams, StripeAutomaticTax, StripeBillingAddressCollection,
+    StripeCancellationDetails, StripeCancellationDetailsReason, StripeCheckoutSession,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
@@ -151,16 +152,7 @@ impl StripeClient for RealStripeClient {
                 })
                 .collect(),
         );
-
-        // Enable automatic tax if requested
-        if let Some(automatic_tax) = params.automatic_tax {
-            if automatic_tax.enabled {
-                // Note: async-stripe may require setting automatic_tax directly
-                // on the CreateSubscription struct. The exact API depends on the version.
-                // For now, we'll add a comment indicating where this should be set.
-                // TODO: Set create_subscription.automatic_tax when async-stripe supports it
-            }
-        }
+        create_subscription.automatic_tax = params.automatic_tax.map(Into::into);
 
         let subscription = Subscription::create(&self.client, create_subscription).await?;
 
@@ -174,30 +166,25 @@ impl StripeClient for RealStripeClient {
     ) -> Result<()> {
         let subscription_id = subscription_id.try_into()?;
 
-        let update_subscription = stripe::UpdateSubscription {
-            items: params.items.map(|items| {
-                items
-                    .into_iter()
-                    .map(|item| UpdateSubscriptionItems {
-                        price: item.price.map(|price| price.to_string()),
-                        ..Default::default()
-                    })
-                    .collect()
-            }),
-            trial_settings: params.trial_settings.map(Into::into),
-            ..Default::default()
-        };
-
-        // Enable automatic tax if requested
-        if let Some(automatic_tax) = params.automatic_tax {
-            if automatic_tax.enabled {
-                // Note: async-stripe may require setting automatic_tax directly
-                // on the UpdateSubscription struct. The exact API depends on the version.
-                // TODO: Set update_subscription.automatic_tax when async-stripe supports it
-            }
-        }
-
-        stripe::Subscription::update(&self.client, &subscription_id, update_subscription).await?;
+        stripe::Subscription::update(
+            &self.client,
+            &subscription_id,
+            stripe::UpdateSubscription {
+                items: params.items.map(|items| {
+                    items
+                        .into_iter()
+                        .map(|item| UpdateSubscriptionItems {
+                            price: item.price.map(|price| price.to_string()),
+                            ..Default::default()
+                        })
+                        .collect()
+                }),
+                trial_settings: params.trial_settings.map(Into::into),
+                automatic_tax: params.automatic_tax.map(Into::into),
+                ..Default::default()
+            },
+        )
+        .await?;
 
         Ok(())
     }
@@ -378,6 +365,24 @@ impl From<SubscriptionItem> for StripeSubscriptionItem {
         Self {
             id: value.id.into(),
             price: value.price.map(Into::into),
+        }
+    }
+}
+
+impl From<StripeAutomaticTax> for CreateSubscriptionAutomaticTax {
+    fn from(value: StripeAutomaticTax) -> Self {
+        Self {
+            enabled: value.enabled,
+            liability: None,
+        }
+    }
+}
+
+impl From<StripeAutomaticTax> for UpdateSubscriptionAutomaticTax {
+    fn from(value: StripeAutomaticTax) -> Self {
+        Self {
+            enabled: value.enabled,
+            liability: None,
         }
     }
 }
@@ -615,8 +620,3 @@ impl From<StripeTaxIdCollection> for stripe::CreateCheckoutSessionTaxIdCollectio
         }
     }
 }
-
-// Note: async-stripe automatic tax support
-// The automatic_tax field needs to be set directly on CreateSubscription/UpdateSubscription
-// structs when the async-stripe crate adds support for it. For now, the StripeAutomaticTax
-// type serves as a placeholder to maintain API compatibility.

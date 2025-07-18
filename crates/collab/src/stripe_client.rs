@@ -226,12 +226,8 @@ pub struct StripeTaxIdCollection {
     pub enabled: bool,
 }
 
-/// Automatic tax configuration for Stripe subscriptions.
-/// When enabled, Stripe automatically calculates taxes based on customer location
-/// and configured tax registrations.
 #[derive(Debug, Clone)]
 pub struct StripeAutomaticTax {
-    /// Whether automatic tax calculation is enabled for the subscription
     pub enabled: bool,
 }
 

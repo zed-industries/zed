@@ -147,10 +147,6 @@ impl StripeClient for FakeStripeClient {
     ) -> Result<StripeSubscription> {
         let now = Utc::now();
 
-        // Note: automatic_tax is accepted but not stored in this fake subscription
-        // This is sufficient for testing the API contract
-        let _automatic_tax = params.automatic_tax;
-
         let subscription = StripeSubscription {
             id: StripeSubscriptionId(format!("sub_{}", Uuid::new_v4()).into()),
             customer: params.customer,
@@ -184,9 +180,6 @@ impl StripeClient for FakeStripeClient {
         params: UpdateSubscriptionParams,
     ) -> Result<()> {
         let subscription = self.get_subscription(subscription_id).await?;
-
-        // Note: automatic_tax is accepted but not processed in fake client
-        let _automatic_tax = params.automatic_tax.clone();
 
         self.update_subscription_calls
             .lock()
