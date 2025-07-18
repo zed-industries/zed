@@ -1533,7 +1533,6 @@ impl Thread {
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
         let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            debug_panic!("`project_notifications` tool not found");
             return None;
         };
 
