@@ -64,15 +64,11 @@ impl SystemWindowTabs {
                             );
                         }
                     })
-                    .register_action(|_, _: &MergeAllWindows, window, cx| {
+                    .register_action(|_, _: &MergeAllWindows, window, _cx| {
                         window.merge_all_windows();
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::merge_all_windows(cx, tab_group);
-                        }
                     })
-                    .register_action(|_, _: &MoveTabToNewWindow, window, cx| {
+                    .register_action(|_, _: &MoveTabToNewWindow, window, _cx| {
                         window.move_tab_to_new_window();
-                        SystemWindowTabController::sync_system_window_tab_groups(cx, window)
                     });
             },
         ));
@@ -301,6 +297,10 @@ impl Render for SystemWindowTabs {
                 )
             })
             .collect::<Vec<_>>();
+
+        if number_of_tabs < 2 {
+            return h_flex().into_any_element();
+        }
 
         h_flex()
             .w_full()
