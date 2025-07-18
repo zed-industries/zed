@@ -114,7 +114,7 @@ use language::{
     EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
     Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        self, InlayHintKind, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
@@ -1171,7 +1171,33 @@ pub struct Editor {
     selection_drag_state: SelectionDragState,
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
+    inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
+}
+
+#[derive(Debug)]
+struct LspInlayHintData {
+    enabled: bool,
+    modifiers_override: bool,
+    enabled_in_settings: bool,
+    allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
+    cache_version: Option<usize>,
+    inlays: Vec<InlayId>,
+    inlay_tasks: HashMap<BufferId, BTreeMap<Range<BufferRow>, Task<()>>>,
+}
+
+impl LspInlayHintData {
+    pub fn new(settings: InlayHintSettings) -> Self {
+        Self {
+            modifiers_override: false,
+            enabled: settings.enabled,
+            enabled_in_settings: settings.enabled,
+            inlays: Vec::new(),
+            inlay_tasks: HashMap::default(),
+            allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
+            cache_version: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2175,6 +2201,7 @@ impl Editor {
             tasks_update_task: None,
             pull_diagnostics_task: Task::ready(()),
             colors: None,
+            inlay_hints: None,
             next_color_inlay_id: 0,
             linked_edit_ranges: Default::default(),
             in_project_search: false,
@@ -2323,6 +2350,7 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
+            editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
             editor.update_lsp_data(false, None, window, cx);
         }
 
