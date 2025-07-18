@@ -279,6 +279,7 @@ actions!(
         SelectNextDirectory,
         /// Selects the previous directory.
         SelectPrevDirectory,
+        UndoFsOperation,
     ]
 );
 
@@ -2277,6 +2278,14 @@ impl ProjectPanel {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
             cx.notify();
         }
+    }
+
+    fn undo_fs_operation(&mut self, _: &UndoFsOperation, _: &mut Window, cx: &mut Context<Self>) {
+        let task = self
+            .project
+            .update(cx, |project, cx| project.undo_fs_operation(cx));
+
+        task.detach_and_log_err(cx);
     }
 
     fn create_paste_path(
@@ -5182,6 +5191,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
+                        .on_action(cx.listener(Self::undo_fs_operation))
                         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
                             if event.up.click_count > 1 {
                                 if let Some(entry_id) = this.last_worktree_root_id {
