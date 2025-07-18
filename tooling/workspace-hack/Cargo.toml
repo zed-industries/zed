@@ -284,7 +284,6 @@ winnow = { version = "0.7", features = ["simd"] }
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
-coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -310,11 +309,9 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.x86_64-apple-darwin.build-dependencies]
-clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
-coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -344,7 +341,6 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
-coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -370,11 +366,9 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
-clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
-coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
