@@ -1632,40 +1632,13 @@ mod tests {
             r#"
             [
               {
-                "bindings": {
-                  "cmd-alt-ctrl-y": "workspace::CloseAllDocks"
-                }
-              },
-              {
                 "context": "Editor",
                 "bindings": {
-                  "ctrl-alt-cmd-down": "editor::GoToHunk",
-                  "ctrl-alt-cmd-up": "editor::GoToPreviousHunk",
-                  "cmd-/": [
-                    "editor::ToggleComments",
-                    {
-                      "advance_downwards": true
-                    }
-                  ],
                   "cmd-k cmd-u": "editor::ConvertToUpperCase",
                   "cmd-k cmd-l": "editor::ConvertToLowerCase",
                   "cmd-[": "pane::GoBack",
-                  "cmd-]": "pane::GoForward"
                 }
               },
-              {
-                "context": "Editor && (showing_code_actions || showing_completions)",
-                "bindings": {
-                  "cmd-up": "editor::ContextMenuFirst",
-                  "cmd-down": "editor::ContextMenuLast"
-                }
-              },
-              {
-                "context": "Pane",
-                "bindings": {
-                  "cmd-shift-f": "workspace::NewSearch"
-                }
-              }
             ]
             "#,
             KeybindUpdateOperation::Remove {
@@ -1680,39 +1653,12 @@ mod tests {
             r#"
             [
               {
-                "bindings": {
-                  "cmd-alt-ctrl-y": "workspace::CloseAllDocks"
-                }
-              },
-              {
                 "context": "Editor",
                 "bindings": {
-                  "ctrl-alt-cmd-down": "editor::GoToHunk",
-                  "ctrl-alt-cmd-up": "editor::GoToPreviousHunk",
-                  "cmd-/": [
-                    "editor::ToggleComments",
-                    {
-                      "advance_downwards": true
-                    }
-                  ],
                   "cmd-k cmd-u": "editor::ConvertToUpperCase",
                   "cmd-[": "pane::GoBack",
-                  "cmd-]": "pane::GoForward"
                 }
               },
-              {
-                "context": "Editor && (showing_code_actions || showing_completions)",
-                "bindings": {
-                  "cmd-up": "editor::ContextMenuFirst",
-                  "cmd-down": "editor::ContextMenuLast"
-                }
-              },
-              {
-                "context": "Pane",
-                "bindings": {
-                  "cmd-shift-f": "workspace::NewSearch"
-                }
-              }
             ]
             "#,
         );
