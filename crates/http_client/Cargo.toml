@@ -21,6 +21,7 @@ anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true
 http.workspace = true
+http-body.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
