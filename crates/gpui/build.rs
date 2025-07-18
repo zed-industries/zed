@@ -126,7 +126,7 @@ mod macos {
             "ContentMask".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
-            "PathInputIndex".into(),
+            "PathRasterizationInputIndex".into(),
             "PathVertex_ScaledPixels".into(),
             "ShadowInputIndex".into(),
             "Shadow".into(),
