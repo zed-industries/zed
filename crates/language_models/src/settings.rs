@@ -57,7 +57,7 @@ pub struct AllLanguageModelSettingsContent {
     pub ollama: Option<OllamaSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
-    pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettingsContent>,
+    pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel: Option<VercelSettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -239,14 +239,16 @@ impl settings::Settings for AllLanguageModelSettings {
             );
 
             // OpenAI Compatible
-            for (id, openai_compatible_settings) in value.openai_compatible.clone() {
-                settings.openai_compatible.insert(
-                    id,
-                    OpenAiCompatibleSettings {
-                        api_url: openai_compatible_settings.api_url,
-                        available_models: openai_compatible_settings.available_models,
-                    },
-                );
+            if let Some(openai_compatible) = value.openai_compatible.clone() {
+                for (id, openai_compatible_settings) in openai_compatible {
+                    settings.openai_compatible.insert(
+                        id,
+                        OpenAiCompatibleSettings {
+                            api_url: openai_compatible_settings.api_url,
+                            available_models: openai_compatible_settings.available_models,
+                        },
+                    );
+                }
             }
 
             // Vercel

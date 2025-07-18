@@ -208,7 +208,7 @@ fn save_provider_to_settings(
             .map_err(|_| "Failed to write API key to keychain")?;
         cx.update(|cx| {
             update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-                settings.openai_compatible.insert(
+                settings.openai_compatible.get_or_insert_default().insert(
                     provider_name,
                     OpenAiCompatibleSettingsContent {
                         api_url,
@@ -442,7 +442,7 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal as _, VisualTestContext};
     use language::language_settings;
     use project::Project;
-    use settings::SettingsStore;
+    use settings::{Settings as _, SettingsStore};
     use util::path;
 
     #[gpui::test]
@@ -535,7 +535,7 @@ mod tests {
         cx.update(|_window, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageModelSettings>(cx, |settings| {
-                    settings.openai_compatible.insert(
+                    settings.openai_compatible.get_or_insert_default().insert(
                         "someprovider".into(),
                         OpenAiCompatibleSettingsContent {
                             api_url: "someurl".to_string(),
