@@ -189,12 +189,12 @@ pub(crate) trait Platform: 'static {
         false
     }
     #[cfg(feature = "screen-capture")]
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
+    #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
-    #[cfg(not(feature = "screen-capture"))]
-    fn screen_capture_sources(&self)
-    -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
             .send(Err(anyhow::anyhow!(
