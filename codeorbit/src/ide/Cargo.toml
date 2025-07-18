@@ -1,0 +1,8 @@
+[package]
+name = "codeorbit-ide"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+
+[dependencies]
+tauri = { version = "1.2", features = ["shell-open"] }

@@ -1,0 +1,13 @@
+name: build-sign-sbom
+on: push
+strategy:
+  matrix:
+    os: [macos-14, ubuntu-22.04, windows-2022]
+    arch: [x64, arm64]
+steps:
+  - uses: actions/checkout@v4
+  - uses: DeterminateSystems/nix-installer-action@main
+  - run: nix build .#codeorbit -L
+  - run: cosign sign-blob --yes ./result/bin/codeorbit
+  - uses: anchore/sbom-action@v0
+  - uses: softprops/action-gh-release@v2

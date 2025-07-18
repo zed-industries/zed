@@ -1,0 +1,8 @@
+network:
+  egress_allowlist: ["*.github.com","*.sigstore.dev","*.ohos.com"]
+dependencies:
+  max_cve_score: 0
+  banned_licenses: ["GPL-3.0-only","AGPL-3.0"]
+secrets:
+  storage: os-enclave
+  injection: runtime-env
