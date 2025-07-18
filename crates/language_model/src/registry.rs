@@ -403,16 +403,17 @@ mod tests {
     fn test_register_providers(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
+        let provider = FakeLanguageModelProvider::default();
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider::default(), cx);
+            registry.register_provider(provider.clone(), cx);
         });
 
         let providers = registry.read(cx).providers();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id(), LanguageModelProviderId::new("fake"));
+        assert_eq!(providers[0].id(), provider.id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(LanguageModelProviderId::new("Fake"), cx);
+            registry.unregister_provider(provider.id(), cx);
         });
 
         let providers = registry.read(cx).providers();
