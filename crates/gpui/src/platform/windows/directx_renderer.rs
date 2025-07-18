@@ -1282,11 +1282,15 @@ const BUFFER_COUNT: usize = 3;
 
 mod shader_resources {
     use anyhow::Result;
-    // use windows::Win32::Graphics::Direct3D::{
-    //     Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
-    //     ID3DBlob,
-    // };
-    // use windows_core::{HSTRING, PCSTR};
+
+    #[cfg(debug_assertions)]
+    use windows::{
+        Win32::Graphics::Direct3D::{
+            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
+            ID3DBlob,
+        },
+        core::{HSTRING, PCSTR},
+    };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub(super) enum ShaderModule {
@@ -1306,17 +1310,35 @@ mod shader_resources {
 
     pub(super) struct RawShaderBytes<'t> {
         inner: &'t [u8],
+
+        #[cfg(debug_assertions)]
+        _blob: ID3DBlob,
     }
 
     impl<'t> RawShaderBytes<'t> {
         pub(super) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
-            Ok(Self::from_bytes(module, target))
+            #[cfg(not(debug_assertions))]
+            {
+                Ok(Self::from_bytes(module, target))
+            }
+            #[cfg(debug_assertions)]
+            {
+                let blob = build_shader_blob(module, target)?;
+                let inner = unsafe {
+                    std::slice::from_raw_parts(
+                        blob.GetBufferPointer() as *const u8,
+                        blob.GetBufferSize(),
+                    )
+                };
+                Ok(Self { inner, _blob: blob })
+            }
         }
 
-        pub(super) fn as_bytes(&self) -> &'t [u8] {
+        pub(super) fn as_bytes(&'t self) -> &'t [u8] {
             self.inner
         }
 
+        #[cfg(not(debug_assertions))]
         fn from_bytes(module: ShaderModule, target: ShaderTarget) -> Self {
             let bytes = match module {
                 ShaderModule::Quad => match target {
@@ -1348,32 +1370,38 @@ mod shader_resources {
         }
     }
 
-    #[cfg(not(debug_assertions))]
-    pub(super) fn build_shader_blob(entry: &str, target: &str) -> Result<ID3DBlob> {
+    #[cfg(debug_assertions)]
+    pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
-            let mut entry = entry.to_owned();
-            let mut target = target.to_owned();
+            let entry = format!(
+                "{}_{}\0",
+                entry.as_str(),
+                match target {
+                    ShaderTarget::Vertex => "vertex",
+                    ShaderTarget::Fragment => "fragment",
+                }
+            );
+            let target = match target {
+                ShaderTarget::Vertex => "vs_5_0\0",
+                ShaderTarget::Fragment => "ps_5_0\0",
+            };
+
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("src/platform/windows/shaders.hlsl")
-                .canonicalize()
-                .unwrap();
-            entry.push_str("\0");
-            target.push_str("\0");
+                .canonicalize()?;
+
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
-            #[cfg(debug_assertions)]
-            let compile_flag = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-            #[cfg(not(debug_assertions))]
-            let compile_flag = 0;
+
             let ret = D3DCompileFromFile(
                 &HSTRING::from(shader_path.to_str().unwrap()),
                 None,
                 None,
                 entry_point,
                 target_cstr,
-                compile_flag,
+                D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
                 0,
                 &mut compile_blob,
                 Some(&mut error_blob),
@@ -1382,13 +1410,10 @@ mod shader_resources {
                 let Some(error_blob) = error_blob else {
                     return Err(anyhow::anyhow!("{ret:?}"));
                 };
-                let string_len = error_blob.GetBufferSize();
-                let error_string_encode = Vec::from_raw_parts(
-                    error_blob.GetBufferPointer() as *mut u8,
-                    string_len,
-                    string_len,
-                );
-                let error_string = String::from_utf8_lossy(&error_string_encode).to_string();
+
+                let error_string =
+                    std::ffi::CStr::from_ptr(error_blob.GetBufferPointer() as *const i8)
+                        .to_string_lossy();
                 log::error!("Shader compile error: {}", error_string);
                 return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
@@ -1396,10 +1421,12 @@ mod shader_resources {
         }
     }
 
+    #[cfg(not(debug_assertions))]
     include!(concat!(env!("OUT_DIR"), "/shaders_bytes.rs"));
 
+    #[cfg(debug_assertions)]
     impl ShaderModule {
-        pub fn as_str(&self) -> &'static str {
+        pub fn as_str(&self) -> &str {
             match self {
                 ShaderModule::Quad => "quad",
                 ShaderModule::Shadow => "shadow",
@@ -1410,11 +1437,6 @@ mod shader_resources {
             }
         }
     }
-
-    // pub fn quad_vertex_shader() -> &'static [u8] {
-    //     unsafe {
-    //         std::slice::from_raw_parts(g_quad_vertex.as_ptr() as *const u8, g_quad_vertex.len())
-    //     }
 }
 
 mod nvidia {

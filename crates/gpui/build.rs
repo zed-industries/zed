@@ -254,6 +254,7 @@ mod windows {
         link_amd_ags();
 
         // Compile HLSL shaders
+        #[cfg(not(debug_assertions))]
         compile_shaders();
 
         // Embed the Windows manifest and resource file
