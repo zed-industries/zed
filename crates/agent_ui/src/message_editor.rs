@@ -29,8 +29,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, KeyContext, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
