@@ -10969,10 +10969,14 @@ name = "onboarding"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "command_palette",
+ "command_palette_hooks",
  "db",
  "feature_flags",
+ "fs",
  "gpui",
  "settings",
+ "theme",
  "ui",
  "util",
  "workspace",

@@ -1,16 +1,20 @@
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::FeatureFlag;
+use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
+use fs::Fs;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     Image, IntoElement, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
     image_cache, img,
 };
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
+use theme::{SystemAppearance, ThemeMode, ThemeSettings};
 use ui::{
-    ActiveTheme as _, Color, Divider, FluentBuilder, Headline, Icon, IconName, InteractiveElement,
-    KeyBinding, Label, LabelCommon, ParentElement as _, StatefulInteractiveElement, Styled, Vector,
-    VectorName, div, divider, h_flex, rems, v_flex,
+    ActiveTheme as _, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider,
+    FluentBuilder, Headline, Icon, IconName, InteractiveElement, KeyBinding, Label, LabelCommon,
+    ParentElement as _, StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector,
+    VectorName, div, divider, h_flex, rems, v_container, v_flex,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -35,28 +39,97 @@ actions!(
     ]
 );
 
-pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
+pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenOnboarding, cx| {
-        with_active_or_new_workspace(cx, f);
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            workspace
+                .with_local_workspace(window, cx, |workspace, window, cx| {
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<Onboarding>());
+
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let settings_page = Onboarding::new(workspace.weak_handle(), cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(settings_page),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .detach();
+        });
     });
+    cx.observe_new::<Workspace>(|_, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+
+        let onboarding_actions = [std::any::TypeId::of::<OpenOnboarding>()];
+
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&onboarding_actions);
+        });
+
+        cx.observe_flag::<OnBoardingFeatureFlag, _>(window, move |is_enabled, _, _, cx| {
+            if is_enabled {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.show_action_types(onboarding_actions.iter());
+                });
+            } else {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&onboarding_actions);
+                });
+            }
+        })
+        .detach();
+    })
+    .detach();
+}
+
+pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
     open_new(
         Default::default(),
         app_state,
         cx,
         |workspace, window, cx| {
-            workspace.toggle_dock(DockPosition::Left, window, cx);
-            let onboarding_page = Onboarding::new(workspace.weak_handle(), cx);
-            workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
+            {
+                workspace.toggle_dock(DockPosition::Left, window, cx);
+                let onboarding_page = Onboarding::new(workspace.weak_handle(), cx);
+                workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
-            window.focus(&onboarding_page.focus_handle(cx));
+                window.focus(&onboarding_page.focus_handle(cx));
 
-            cx.notify();
-
+                cx.notify();
+            };
             db::write_and_log(cx, || {
                 KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
             });
         },
     )
+}
+
+fn read_theme_selection(cx: &App) -> ThemeMode {
+    let settings = ThemeSettings::get_global(cx);
+    settings
+        .theme_selection
+        .as_ref()
+        .and_then(|selection| selection.mode())
+        .unwrap_or_default()
+}
+
+fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
+    let fs = <dyn Fs>::global(cx);
+
+    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
+        settings.set_mode(theme_mode);
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +225,42 @@ impl Onboarding {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        v_flex()
+        let theme_mode = read_theme_selection(cx);
+
+        v_container().child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .child(Label::new("Theme"))
+                .child(
+                    h_flex()
+                        .rounded_md()
+                        .child(
+                            ToggleButton::new("light", "Light")
+                                .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
+                                .toggle_state(theme_mode == ThemeMode::Light)
+                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Light, cx))
+                                .first(),
+                        )
+                        .child(
+                            ToggleButton::new("dark", "Dark")
+                                .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
+                                .toggle_state(theme_mode == ThemeMode::Dark)
+                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Dark, cx))
+                                .last(),
+                        )
+                        .child(
+                            ToggleButton::new("system", "System")
+                                .style(ButtonStyle::Filled)
+                                .size(ButtonSize::Large)
+                                .toggle_state(theme_mode == ThemeMode::System)
+                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::System, cx))
+                                .middle(),
+                        ),
+                ),
+        )
     }
 
     fn render_editing_page(
@@ -160,7 +268,8 @@ impl Onboarding {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        div().child("editing page")
+        // div().child("editing page")
+        "Right"
     }
 
     fn render_ai_setup_page(
@@ -174,48 +283,47 @@ impl Onboarding {
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        image_cache(gpui::retain_all("onboarding-page")).child(
-            h_flex()
-                .key_context("onboarding-page")
-                .px_24()
-                .py_12()
-                .items_start()
-                .child(
-                    v_flex()
-                        .w_1_3()
-                        .h_full()
-                        .child(
-                            h_flex()
-                                .pt_0p5()
-                                .child(Vector::square(VectorName::ZedLogo, rems(2.)))
-                                .child(
-                                    v_flex()
-                                        .left_1()
-                                        .items_center()
-                                        .child(Headline::new("Welcome to Zed"))
-                                        .child(
-                                            Label::new("The editor for what's next")
-                                                .color(Color::Muted)
-                                                .italic(),
-                                        ),
-                                ),
-                        )
-                        .p_1()
-                        .child(Divider::horizontal_dashed())
-                        .child(
-                            v_flex().gap_1().children([
-                                self.render_page_nav(SelectedPage::Basics, window, cx)
-                                    .into_element(),
-                                self.render_page_nav(SelectedPage::Editing, window, cx)
-                                    .into_element(),
-                                self.render_page_nav(SelectedPage::AiSetup, window, cx)
-                                    .into_element(),
-                            ]),
-                        ),
-                )
-                .child(Divider::vertical_dashed())
-                .child(div().w_2_3().h_full().child(self.render_page(window, cx))),
-        )
+        h_flex()
+            .image_cache(gpui::retain_all("onboarding-page"))
+            .key_context("onboarding-page")
+            .px_24()
+            .py_12()
+            .items_start()
+            .child(
+                v_flex()
+                    .w_1_3()
+                    .h_full()
+                    .child(
+                        h_flex()
+                            .pt_0p5()
+                            .child(Vector::square(VectorName::ZedLogo, rems(2.)))
+                            .child(
+                                v_flex()
+                                    .left_1()
+                                    .items_center()
+                                    .child(Headline::new("Welcome to Zed"))
+                                    .child(
+                                        Label::new("The editor for what's next")
+                                            .color(Color::Muted)
+                                            .italic(),
+                                    ),
+                            ),
+                    )
+                    .p_1()
+                    .child(Divider::horizontal_dashed())
+                    .child(
+                        v_flex().gap_1().children([
+                            self.render_page_nav(SelectedPage::Basics, window, cx)
+                                .into_element(),
+                            self.render_page_nav(SelectedPage::Editing, window, cx)
+                                .into_element(),
+                            self.render_page_nav(SelectedPage::AiSetup, window, cx)
+                                .into_element(),
+                        ]),
+                    ),
+            )
+            // .child(Divider::vertical_dashed())
+            .child(div().w_2_3().h_full().child(self.render_page(window, cx)))
     }
 }
 

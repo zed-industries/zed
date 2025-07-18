@@ -620,6 +620,7 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         welcome::init(cx);
+        onboarding::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
