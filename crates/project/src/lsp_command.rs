@@ -63,12 +63,23 @@ pub(crate) fn make_text_document_identifier(path: &Path) -> Result<lsp::TextDocu
     })
 }
 
-pub(crate) fn make_lsp_text_document_position(
-    path: &Path,
+pub(crate) fn text_document_identifier_for_file(
+    file: &Arc<dyn language::File>,
+    cx: &App,
+) -> Result<lsp::TextDocumentIdentifier> {
+    let uri = file
+        .lsp_url(cx)
+        .ok_or_else(|| anyhow::anyhow!("File does not support LSP operations"))?;
+    Ok(lsp::TextDocumentIdentifier { uri })
+}
+
+pub(crate) fn text_document_position_for_file(
+    file: &Arc<dyn language::File>,
     position: PointUtf16,
+    cx: &App,
 ) -> Result<lsp::TextDocumentPositionParams> {
     Ok(lsp::TextDocumentPositionParams {
-        text_document: make_text_document_identifier(path)?,
+        text_document: text_document_identifier_for_file(file, cx)?,
         position: point_to_lsp(position),
     })
 }
@@ -87,7 +98,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
 
     fn to_lsp_params_or_response(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         language_server: &Arc<LanguageServer>,
         cx: &App,
@@ -96,7 +107,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     > {
         if self.check_capabilities(language_server.adapter_server_capabilities()) {
             Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
+                file,
                 buffer,
                 language_server,
                 cx,
@@ -111,7 +122,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         language_server: &Arc<LanguageServer>,
         cx: &App,
@@ -287,7 +298,7 @@ impl LspCommand for PrepareRename {
 
     fn to_lsp_params_or_response(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         language_server: &Arc<LanguageServer>,
         cx: &App,
@@ -301,7 +312,7 @@ impl LspCommand for PrepareRename {
                 prepare_provider: Some(true),
                 ..
             })) => Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
+                file,
                 buffer,
                 language_server,
                 cx,
@@ -318,12 +329,12 @@ impl LspCommand for PrepareRename {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::TextDocumentPositionParams> {
-        make_lsp_text_document_position(path, self.position)
+        text_document_position_for_file(file, self.position, cx)
     }
 
     async fn response_from_lsp(
@@ -479,13 +490,13 @@ impl LspCommand for PerformRename {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::RenameParams> {
         Ok(lsp::RenameParams {
-            text_document_position: make_lsp_text_document_position(path, self.position)?,
+            text_document_position: text_document_position_for_file(file, self.position, cx)?,
             new_name: self.new_name.clone(),
             work_done_progress_params: Default::default(),
         })
@@ -609,13 +620,17 @@ impl LspCommand for GetDefinitions {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::GotoDefinitionParams> {
         Ok(lsp::GotoDefinitionParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -712,13 +727,17 @@ impl LspCommand for GetDeclarations {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::GotoDeclarationParams> {
         Ok(lsp::GotoDeclarationParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -814,13 +833,17 @@ impl LspCommand for GetImplementations {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::GotoImplementationParams> {
         Ok(lsp::GotoImplementationParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -913,13 +936,17 @@ impl LspCommand for GetTypeDefinitions {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::GotoTypeDefinitionParams> {
         Ok(lsp::GotoTypeDefinitionParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -1302,13 +1329,13 @@ impl LspCommand for GetReferences {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::ReferenceParams> {
         Ok(lsp::ReferenceParams {
-            text_document_position: make_lsp_text_document_position(path, self.position)?,
+            text_document_position: text_document_position_for_file(file, self.position, cx)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
             context: lsp::ReferenceContext {
@@ -1480,13 +1507,17 @@ impl LspCommand for GetDocumentHighlights {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::DocumentHighlightParams> {
         Ok(lsp::DocumentHighlightParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -1636,13 +1667,13 @@ impl LspCommand for GetDocumentSymbols {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::DocumentSymbolParams> {
         Ok(lsp::DocumentSymbolParams {
-            text_document: make_text_document_identifier(path)?,
+            text_document: text_document_identifier_for_file(file, cx)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })
@@ -1831,13 +1862,17 @@ impl LspCommand for GetSignatureHelp {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _cx: &App,
+        cx: &App,
     ) -> Result<lsp::SignatureHelpParams> {
         Ok(lsp::SignatureHelpParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             context: None,
             work_done_progress_params: Default::default(),
         })
@@ -1944,13 +1979,17 @@ impl LspCommand for GetHover {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::HoverParams> {
         Ok(lsp::HoverParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
+            text_document_position_params: text_document_position_for_file(
+                file,
+                self.position,
+                cx,
+            )?,
             work_done_progress_params: Default::default(),
         })
     }
@@ -2173,13 +2212,13 @@ impl LspCommand for GetCompletions {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::CompletionParams> {
         Ok(lsp::CompletionParams {
-            text_document_position: make_lsp_text_document_position(path, self.position)?,
+            text_document_position: text_document_position_for_file(file, self.position, cx)?,
             context: Some(self.context.clone()),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -2544,10 +2583,10 @@ impl LspCommand for GetCodeActions {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         language_server: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::CodeActionParams> {
         let mut relevant_diagnostics = Vec::new();
         for entry in buffer
@@ -2578,7 +2617,7 @@ impl LspCommand for GetCodeActions {
         };
 
         Ok(lsp::CodeActionParams {
-            text_document: make_text_document_identifier(path)?,
+            text_document: text_document_identifier_for_file(file, cx)?,
             range: range_to_lsp(self.range.to_point_utf16(buffer))?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -2789,13 +2828,13 @@ impl LspCommand for OnTypeFormatting {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::DocumentOnTypeFormattingParams> {
         Ok(lsp::DocumentOnTypeFormattingParams {
-            text_document_position: make_lsp_text_document_position(path, self.position)?,
+            text_document_position: text_document_position_for_file(file, self.position, cx)?,
             ch: self.trigger.clone(),
             options: self.options.clone(),
         })
@@ -3296,14 +3335,16 @@ impl LspCommand for InlayHints {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::InlayHintParams> {
         Ok(lsp::InlayHintParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: file_path_to_lsp_url(path)?,
+                uri: file
+                    .lsp_url(cx)
+                    .ok_or_else(|| anyhow::anyhow!("File does not support LSP operations"))?,
             },
             range: range_to_lsp(self.range.to_point_utf16(buffer))?,
             work_done_progress_params: Default::default(),
@@ -3454,14 +3495,16 @@ impl LspCommand for GetCodeLens {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::CodeLensParams> {
         Ok(lsp::CodeLensParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: file_path_to_lsp_url(path)?,
+                uri: file
+                    .lsp_url(cx)
+                    .ok_or_else(|| anyhow::anyhow!("File does not support LSP operations"))?,
             },
             work_done_progress_params: lsp::WorkDoneProgressParams::default(),
             partial_result_params: lsp::PartialResultParams::default(),
@@ -3603,14 +3646,14 @@ impl LspCommand for LinkedEditingRange {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         buffer: &Buffer,
         _server: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::LinkedEditingRangeParams> {
         let position = self.position.to_point_utf16(&buffer.snapshot());
         Ok(lsp::LinkedEditingRangeParams {
-            text_document_position_params: make_lsp_text_document_position(path, position)?,
+            text_document_position_params: text_document_position_for_file(file, position, cx)?,
             work_done_progress_params: Default::default(),
         })
     }
@@ -4028,10 +4071,10 @@ impl LspCommand for GetDocumentDiagnostics {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         language_server: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
         let identifier = match language_server.capabilities().diagnostic_provider {
             Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier,
@@ -4043,7 +4086,9 @@ impl LspCommand for GetDocumentDiagnostics {
 
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: file_path_to_lsp_url(path)?,
+                uri: file
+                    .lsp_url(cx)
+                    .ok_or_else(|| anyhow::anyhow!("File does not support LSP operations"))?,
             },
             identifier,
             previous_result_id: self.previous_result_id.clone(),
@@ -4225,13 +4270,13 @@ impl LspCommand for GetDocumentColor {
 
     fn to_lsp(
         &self,
-        path: &Path,
+        file: &Arc<dyn language::File>,
         _: &Buffer,
         _: &Arc<LanguageServer>,
-        _: &App,
+        cx: &App,
     ) -> Result<lsp::DocumentColorParams> {
         Ok(lsp::DocumentColorParams {
-            text_document: make_text_document_identifier(path)?,
+            text_document: text_document_identifier_for_file(file, cx)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         })

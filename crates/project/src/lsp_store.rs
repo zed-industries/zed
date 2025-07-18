@@ -1,4 +1,5 @@
 pub mod clangd_ext;
+pub mod deno_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
@@ -147,6 +148,7 @@ pub struct LocalLspStore {
     languages: Arc<LanguageRegistry>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), BTreeSet<LanguageServerId>>,
     yarn: Entity<YarnPathStore>,
+    deno_virtual_documents: Entity<crate::deno_virtual_documents::DenoVirtualDocumentStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
     buffers_being_formatted: HashSet<BufferId>,
     last_workspace_edits_by_language_server: HashMap<LanguageServerId, ProjectTransaction>,
@@ -946,6 +948,7 @@ impl LocalLspStore {
                 }
             })
             .detach();
+
         language_server
             .on_notification::<lsp::notification::ShowMessage, _>({
                 let this = this.clone();
@@ -1126,16 +1129,20 @@ impl LocalLspStore {
         buffer: &Buffer,
         cx: &mut App,
     ) -> Vec<LanguageServerId> {
-        if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
-            let worktree_id = file.worktree_id(cx);
-
-            let path: Arc<Path> = file
-                .path()
-                .parent()
-                .map(Arc::from)
-                .unwrap_or_else(|| file.path().clone());
-            let worktree_path = ProjectPath { worktree_id, path };
-            self.language_server_ids_for_project_path(worktree_path, language, cx)
+        if let Some((file, language)) = buffer.file().zip(buffer.language()) {
+            // Check if the file supports LSP
+            if file.lsp_url(cx).is_some() {
+                let worktree_id = file.worktree_id(cx);
+                let path: Arc<Path> = file
+                    .path()
+                    .parent()
+                    .map(Arc::from)
+                    .unwrap_or_else(|| file.path().clone());
+                let worktree_path = ProjectPath { worktree_id, path };
+                self.language_server_ids_for_project_path(worktree_path, language, cx)
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         }
@@ -2346,28 +2353,28 @@ impl LocalLspStore {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
-        let Some(file) = File::from_dyn(buffer.file()) else {
+        let Some(file) = buffer.file() else {
             return;
         };
-        if !file.is_local() {
-            return;
-        }
 
-        let abs_path = file.abs_path(cx);
-        let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
+        let Some(uri) = file.lsp_url(cx) else {
             return;
         };
-        let initial_snapshot = buffer.text_snapshot();
+
         let worktree_id = file.worktree_id(cx);
+        let initial_snapshot = buffer.text_snapshot();
 
         let Some(language) = buffer.language().cloned() else {
             return;
         };
+
+        // Get the path for the file
         let path: Arc<Path> = file
             .path()
             .parent()
             .map(Arc::from)
             .unwrap_or_else(|| file.path().clone());
+
         let Some(worktree) = self
             .worktree_store
             .read(cx)
@@ -2490,7 +2497,7 @@ impl LocalLspStore {
                         };
                         let lsp_store = self.weak.clone();
                         let server_name = server_node.name();
-                        let buffer_abs_path = abs_path.to_string_lossy().to_string();
+                        let buffer_abs_path = uri.to_string();
                         cx.defer(move |cx| {
                             lsp_store.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id: server_id,
@@ -2559,7 +2566,7 @@ impl LocalLspStore {
                 name: None,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: uri.to_string(),
                     },
                 ),
             });
@@ -3684,6 +3691,9 @@ impl LspStore {
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<deno_ext::FetchVirtualTextDocument>,
+        );
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3736,6 +3746,8 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Self {
         let yarn = YarnPathStore::new(fs.clone(), cx);
+        let deno_virtual_documents =
+            crate::deno_virtual_documents::DenoVirtualDocumentStore::new(fs.clone(), cx);
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -3783,6 +3795,7 @@ impl LspStore {
                 prettier_store,
                 environment,
                 http_client,
+                deno_virtual_documents,
                 fs,
                 yarn,
                 next_diagnostic_group_id: Default::default(),
@@ -4140,11 +4153,14 @@ impl LspStore {
             // We run early exits on non-existing buffers AFTER we mark the buffer as registered in order to handle buffer saving.
             // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
             // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
-            // servers in practice (we don't support non-file URI schemes in our LSP impl).
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            // servers in practice.
+            let buffer_snapshot = buffer.read(cx);
+            let Some(file) = buffer_snapshot.file() else {
                 return handle;
             };
-            if !file.is_local() {
+
+            // Check if the file supports LSP
+            if file.lsp_url(cx).is_none() {
                 return handle;
             }
 
@@ -4478,18 +4494,12 @@ impl LspStore {
         };
 
         let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-
-        let Some(file) = file else {
+        let Some(file) = buffer.file() else {
             return Task::ready(Ok(Default::default()));
         };
 
-        let lsp_params = match request.to_lsp_params_or_response(
-            &file.abs_path(cx),
-            buffer,
-            &language_server,
-            cx,
-        ) {
+        let lsp_params = match request.to_lsp_params_or_response(file, buffer, &language_server, cx)
+        {
             Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
             Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
 
@@ -7378,6 +7388,16 @@ impl LspStore {
 
             let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
             for (adapter, server, delegate) in servers {
+                // TODO
+                // For some reason, the Deno LSP cannot respond properly to textDocument/definition requests once it has received a workspace/didChangeConfiguration notification.
+                // This issue does not occur with external packages (e.g. deno:/https/jsr.io/%40fresh/core/2.0.0-alpha.37/src/plugins/fs_routes/mod.ts), but it does happen with built-in packages (e.g. deno:/asset/lib.deno.console.d.ts).
+                // As a result, the “Go to Definition” feature fails for something like console.log after sending workspace/didChangeConfiguration.
+                // So far, we haven’t been able to create a minimal, standalone reproducible example that clearly demonstrates this is a bug in the Deno LSP.
+                // For now, we’re simply skipping workspace/didChangeConfiguration entirely, though this is probably not the best approach.
+                if adapter.name().0.contains("deno") {
+                    continue;
+                }
+
                 let settings = LocalLspStore::workspace_configuration_for_adapter(
                     adapter,
                     fs.as_ref(),
@@ -7801,9 +7821,23 @@ impl LspStore {
         language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        cx.spawn(async move |lsp_store, cx| {
-            // Escape percent-encoded string.
+        let original_url = abs_path.clone();
+
+        cx.spawn(async move |lsp_store, mut cx| {
             let current_scheme = abs_path.scheme().to_owned();
+
+            // Handle Deno virtual documents (deno:/https/... format)
+            if current_scheme == "deno" {
+                return deno_ext::open_deno_virtual_document(
+                    lsp_store,
+                    original_url,
+                    language_server_id,
+                    language_server_name,
+                    &mut cx,
+                )
+                .await;
+            }
+
             let _ = abs_path.set_scheme("file");
 
             let abs_path = abs_path
