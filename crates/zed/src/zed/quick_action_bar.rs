@@ -575,7 +575,9 @@ impl Render for QuickActionBar {
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
+                AgentSettings::get_global(cx).enabled
+                    && AgentSettings::get_global(cx).button
+                    && !workspace::GeneralSettings::get_global(cx).disable_ai,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

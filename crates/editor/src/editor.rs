@@ -2852,6 +2852,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if self.show_inline_completions_override.is_some() {
             self.set_show_edit_predictions(None, window, cx);
         } else {
@@ -7140,6 +7143,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
@@ -7177,6 +7183,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if self.has_active_inline_completion() {
             self.cycle_inline_completion(Direction::Next, window, cx);
         } else {
@@ -7195,6 +7204,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if self.has_active_inline_completion() {
             self.cycle_inline_completion(Direction::Prev, window, cx);
         } else {
@@ -7213,6 +7225,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if self.show_edit_predictions_in_menu() {
             self.hide_context_menu(window, cx);
         }

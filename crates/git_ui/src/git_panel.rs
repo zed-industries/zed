@@ -53,7 +53,7 @@ use project::{
     git_store::{GitStoreEvent, Repository},
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings, SettingsStore};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -1801,11 +1801,17 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         self.generate_commit_message(cx);
     }
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if !self.can_commit() {
             return;
         }
@@ -2933,6 +2939,9 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return None;
+        }
         current_language_model(cx).is_some().then(|| {
             if self.generate_commit_message_task.is_some() {
                 return h_flex()
@@ -2958,16 +2967,15 @@ impl GitPanel {
             }
 
             let can_commit = self.can_commit();
-            let editor_focus_handle = self.commit_editor.focus_handle(cx);
+            let _editor_focus_handle = self.commit_editor.focus_handle(cx);
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
                 .tooltip(move |window, cx| {
                     if can_commit {
-                        Tooltip::for_action_in(
+                        Tooltip::for_action(
                             "Generate Commit Message",
                             &git::GenerateCommitMessage,
-                            &editor_focus_handle,
                             window,
                             cx,
                         )

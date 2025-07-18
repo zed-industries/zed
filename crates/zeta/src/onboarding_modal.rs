@@ -46,6 +46,9 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
             client,

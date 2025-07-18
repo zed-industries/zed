@@ -538,11 +538,23 @@ fn initialize_panels(
 
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
-            let agent_panel =
-                agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
-                    .await?;
+            // Check if AI is disabled globally
+            let ai_disabled = workspace_handle.update_in(cx, |_, _, cx| {
+                workspace::GeneralSettings::get_global(cx).disable_ai
+            })?;
 
-            Some(agent_panel)
+            if ai_disabled {
+                None
+            } else {
+                let agent_panel = agent_ui::AgentPanel::load(
+                    workspace_handle.clone(),
+                    prompt_builder,
+                    cx.clone(),
+                )
+                .await?;
+
+                Some(agent_panel)
+            }
         } else {
             None
         };
@@ -558,7 +570,7 @@ fn initialize_panels(
             // functions so that we only register the actions once.
             //
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if is_assistant2_enabled {
+            if is_assistant2_enabled && !workspace::GeneralSettings::get_global(cx).disable_ai {
                 <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,

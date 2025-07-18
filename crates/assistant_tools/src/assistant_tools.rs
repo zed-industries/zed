@@ -30,6 +30,7 @@ use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
 use web_search_tool::WebSearchTool;
 
+use settings::Settings;
 pub(crate) use templates::*;
 
 use crate::create_directory_tool::CreateDirectoryTool;
@@ -85,6 +86,12 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
+    // Don't register web search if AI is disabled
+    if workspace::GeneralSettings::get_global(cx).disable_ai {
+        ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+        return;
+    }
+
     let using_zed_provider = registry
         .read(cx)
         .default_model()

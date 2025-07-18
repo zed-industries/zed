@@ -2,6 +2,7 @@ use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zet
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
+use settings::Settings;
 use std::time::Duration;
 use ui::{KeyBinding, List, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -55,6 +56,9 @@ impl RateCompletionView {
 
 impl RateCompletionModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+        if workspace::GeneralSettings::get_global(cx).disable_ai {
+            return;
+        }
         if let Some(zeta) = Zeta::global(cx) {
             workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
 

@@ -4,7 +4,7 @@ use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -14,6 +14,11 @@ use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+    // Check if AI is disabled globally
+    if workspace::GeneralSettings::get_global(cx).disable_ai {
+        return;
+    }
+
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -43,15 +48,18 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
-            let provider = all_language_settings(None, cx).edit_predictions.provider;
-            assign_edit_prediction_provider(
-                editor,
-                provider,
-                &client,
-                user_store.clone(),
-                window,
-                cx,
-            );
+            // Skip assigning edit prediction provider if AI is disabled
+            if !workspace::GeneralSettings::get_global(cx).disable_ai {
+                let provider = all_language_settings(None, cx).edit_predictions.provider;
+                assign_edit_prediction_provider(
+                    editor,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    window,
+                    cx,
+                );
+            }
         }
     })
     .detach();

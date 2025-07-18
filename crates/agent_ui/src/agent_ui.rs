@@ -209,6 +209,11 @@ pub fn init(
     AgentSettings::register(cx);
     SlashCommandSettings::register(cx);
 
+    // Check if AI is disabled globally
+    if workspace::GeneralSettings::get_global(cx).disable_ai {
+        return;
+    }
+
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
     if !is_eval {
