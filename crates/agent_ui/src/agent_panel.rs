@@ -2981,6 +2981,8 @@ impl AgentPanel {
         let retry_button = Button::new("retry", "Retry")
             .icon(IconName::RotateCw)
             .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
+            .label_size(LabelSize::Small)
             .on_click({
                 let thread = thread.clone();
                 move |_, window, cx| {
@@ -3023,6 +3025,8 @@ impl AgentPanel {
         let retry_button = Button::new("retry", "Retry")
             .icon(IconName::RotateCw)
             .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
+            .label_size(LabelSize::Small)
             .on_click({
                 let thread = thread.clone();
                 move |_, window, cx| {
@@ -3046,6 +3050,8 @@ impl AgentPanel {
             let burn_mode_button = Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
                 .icon(IconName::ZedBurnMode)
                 .icon_position(IconPosition::Start)
+                .icon_size(IconSize::Small)
+                .label_size(LabelSize::Small)
                 .on_click({
                     let thread = thread.clone();
                     move |_, window, cx| {
