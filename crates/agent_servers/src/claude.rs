@@ -281,14 +281,18 @@ impl ClaudeAgentConnection {
                         } => {
                             let id = tool_id_map.borrow_mut().remove(&tool_use_id);
                             if let Some(id) = id {
+                                let content = content.to_string();
                                 delegate
                                     .update_tool_call(UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
-                                        content: Some(ToolCallContent::Markdown {
-                                            // For now we only include text content
-                                            markdown: content.to_string(),
-                                        }),
+                                        // Don't unset existing content
+                                        content: (!content.is_empty()).then_some(
+                                            ToolCallContent::Markdown {
+                                                // For now we only include text content
+                                                markdown: content,
+                                            },
+                                        ),
                                     })
                                     .await
                                     .log_err();
@@ -577,7 +581,7 @@ pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    // crate::common_e2e_tests!(ClaudeCode);
+    crate::common_e2e_tests!(ClaudeCode);
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {
