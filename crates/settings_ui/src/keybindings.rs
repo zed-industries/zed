@@ -567,7 +567,10 @@ impl KeymapEditor {
         let mut string_match_candidates = Vec::new();
 
         for key_binding in key_bindings {
-            let source = key_binding.meta().map(settings::KeybindSource::from_meta);
+            let source = key_binding
+                .meta()
+                .map(settings::KeybindSource::try_from_meta)
+                .and_then(|source| source.log_err());
 
             let keystroke_text = ui::text_for_keystrokes(key_binding.keystrokes(), cx);
             let ui_key_binding = Some(

@@ -992,13 +992,17 @@ impl KeybindSource {
     }
 
     pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
-        match index {
+        Self::try_from_meta(index).unwrap()
+    }
+
+    pub fn try_from_meta(index: KeyBindingMetaIndex) -> Result<Self> {
+        Ok(match index {
             Self::USER => KeybindSource::User,
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
-            _ => unreachable!(),
-        }
+            _ => anyhow::bail!("Invalid keybind source {:?}", index),
+        })
     }
 }
 
