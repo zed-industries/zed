@@ -327,10 +327,6 @@ mod windows {
                 &rust_binding_path,
             );
         }
-        println!(
-            "cargo:warning=Successfully compiled shaders. Output written to: {}",
-            rust_binding_path
-        );
     }
 
     fn find_fxc_compiler() -> String {
