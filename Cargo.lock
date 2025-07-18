@@ -16823,8 +16823,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-html"
 version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261b708e5d92061ede329babaaa427b819329a9d427a1d710abb0f67bbef63ee"
+source = "git+https://github.com/mantou132/tree-sitter-html?rev=755c2e2d664ecf6f663106544517bb578beba6a8#755c2e2d664ecf6f663106544517bb578beba6a8"
 dependencies = [
  "cc",
  "tree-sitter-language",

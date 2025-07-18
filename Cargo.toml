@@ -591,7 +591,7 @@ tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
-tree-sitter-html = "0.23"
+tree-sitter-html = { git = "https://github.com/mantou132/tree-sitter-html", rev = "755c2e2d664ecf6f663106544517bb578beba6a8" }
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
