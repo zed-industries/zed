@@ -744,56 +744,56 @@ jobs:
       # excludes the final package to only cache dependencies
       cachix-filter: "-zed-editor-[0-9.]*-nightly"
 
-  bundle-windows-x64:
-    timeout-minutes: 120
-    name: Create a Windows installer
-    runs-on: [self-hosted, Windows, X64]
-    if: false && ( ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }} )
-    needs: [windows_tests]
-    env:
-      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
-      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
-      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
-      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
-      FILE_DIGEST: SHA256
-      TIMESTAMP_DIGEST: SHA256
-      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+  # bundle-windows-x64:
+  #   timeout-minutes: 120
+  #   name: Create a Windows installer
+  #   runs-on: [self-hosted, Windows, X64]
+  #   if: false && ( ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }} )
+  #   needs: [windows_tests]
+  #   env:
+  #     AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+  #     AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+  #     AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+  #     ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+  #     CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+  #     ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+  #     FILE_DIGEST: SHA256
+  #     TIMESTAMP_DIGEST: SHA256
+  #     TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         clean: false
 
-      - name: Determine version and release channel
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
-          script/determine-release-channel.ps1
+  #     - name: Determine version and release channel
+  #       working-directory: ${{ env.ZED_WORKSPACE }}
+  #       if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  #       run: |
+  #         # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+  #         script/determine-release-channel.ps1
 
-      - name: Build Zed installer
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: script/bundle-windows.ps1
+  #     - name: Build Zed installer
+  #       working-directory: ${{ env.ZED_WORKSPACE }}
+  #       run: script/bundle-windows.ps1
 
-      - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
-        with:
-          name: ZedEditorUserSetup-x64-${{ github.event.pull_request.head.sha || github.sha }}.exe
-          path: ${{ env.SETUP_PATH }}
+  #     - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
+  #       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+  #       if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+  #       with:
+  #         name: ZedEditorUserSetup-x64-${{ github.event.pull_request.head.sha || github.sha }}.exe
+  #         path: ${{ env.SETUP_PATH }}
 
-      - name: Upload Artifacts to release
-        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        # Re-enable when we are ready to publish windows preview releases
-        if: false && ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
-        with:
-          draft: true
-          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-          files: ${{ env.SETUP_PATH }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #     - name: Upload Artifacts to release
+  #       uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+  #       # Re-enable when we are ready to publish windows preview releases
+  #       if: false && ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
+  #       with:
+  #         draft: true
+  #         prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+  #         files: ${{ env.SETUP_PATH }}
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   auto-release-preview:
     name: Auto release preview
