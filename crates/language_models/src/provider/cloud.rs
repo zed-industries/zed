@@ -1081,7 +1081,6 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        const ZED_UPGRADE_URL: &str = "https://zed.dev/account/upgrade";
         let young_account_banner = YoungAccountBanner;
 
         let is_pro = self.plan == Some(proto::Plan::ZedPro);
@@ -1119,7 +1118,7 @@ impl RenderOnce for ZedAiConfiguration {
             Button::new("upgrade", "Upgrade to Pro")
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .full_width()
-                .on_click(|_, _, cx| cx.open_url(ZED_UPGRADE_URL))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
                 .into_any_element()
         };
 

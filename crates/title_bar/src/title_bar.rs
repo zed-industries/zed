@@ -20,7 +20,7 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
@@ -681,7 +681,7 @@ impl TitleBar {
                                     .into_any_element()
                             },
                             move |_, cx| {
-                                cx.open_url("https://zed.dev/account");
+                                cx.open_url(&zed_urls::account_url(cx));
                             },
                         )
                         .separator()

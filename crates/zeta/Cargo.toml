@@ -6,9 +6,6 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 exclude = ["fixtures"]
 
-[package.metadata.cargo-machete]
-ignored = ["ai_onboarding"]
-
 [lints]
 workspace = true
 

@@ -126,7 +126,8 @@ pub enum ButtonStyle {
     /// coloring like an error or success button.
     Tinted(TintColor),
 
-    /// dl: todo
+    /// Usually used as a secondary action that should have more emphasis than
+    /// a fully transparent button.
     Outlined,
 
     /// The default button style, used for most buttons. Has a transparent background,
