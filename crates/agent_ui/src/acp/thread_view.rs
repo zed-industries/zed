@@ -1,3 +1,4 @@
+use acp_thread::PlanEntry;
 use agent_servers::AgentServer;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -65,6 +66,7 @@ pub struct AcpThreadView {
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
+    plan_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
 }
 
@@ -182,6 +184,7 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             edits_expanded: false,
+            plan_expanded: false,
             message_history,
         }
     }
@@ -1442,7 +1445,7 @@ impl AcpThreadView {
         container.into_any()
     }
 
-    fn render_edits_bar(
+    fn render_bar(
         &self,
         thread_entity: &Entity<AcpThread>,
         window: &mut Window,
@@ -1451,8 +1454,9 @@ impl AcpThreadView {
         let thread = thread_entity.read(cx);
         let action_log = thread.action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let plan_entries = thread.plan();
 
-        if changed_buffers.is_empty() {
+        if changed_buffers.is_empty() && plan_entries.is_empty() {
             return None;
         }
 
@@ -1461,7 +1465,6 @@ impl AcpThreadView {
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
 
         let pending_edits = thread.has_pending_edit_tool_calls();
-        let expanded = self.edits_expanded;
 
         v_flex()
             .mt_1()
@@ -1477,27 +1480,133 @@ impl AcpThreadView {
                 blur_radius: px(3.),
                 spread_radius: px(0.),
             }])
-            .child(self.render_edits_bar_summary(
-                action_log,
-                &changed_buffers,
-                expanded,
-                pending_edits,
-                window,
-                cx,
-            ))
-            .when(expanded, |parent| {
-                parent.child(self.render_edits_bar_files(
+            .when(!plan_entries.is_empty(), |this| {
+                this.child(self.render_plan_summary(plan_entries, cx))
+                    .when(self.plan_expanded, |parent| {
+                        parent.child(self.render_plan_entries(plan_entries, window, cx))
+                    })
+            })
+            .when(!changed_buffers.is_empty(), |this| {
+                this.child(self.render_edits_summary(
                     action_log,
                     &changed_buffers,
+                    self.edits_expanded,
                     pending_edits,
+                    window,
                     cx,
                 ))
+                .when(self.edits_expanded, |parent| {
+                    parent.child(self.render_edited_files(
+                        action_log,
+                        &changed_buffers,
+                        pending_edits,
+                        cx,
+                    ))
+                })
             })
             .into_any()
             .into()
     }
 
-    fn render_edits_bar_summary(
+    fn render_plan_summary(&self, entries: &[PlanEntry], cx: &Context<Self>) -> Div {
+        h_flex()
+            .p_1()
+            .justify_between()
+            .when(self.plan_expanded, |this| {
+                this.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .id("edits-container")
+                    .cursor_pointer()
+                    .w_full()
+                    .gap_1()
+                    .child(Disclosure::new("edits-disclosure", self.plan_expanded))
+                    .map(|this| {
+                        this.child(
+                            Label::new("Plan")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                        .child(
+                            Label::new(format!(
+                                "{} {}",
+                                entries.len(),
+                                if entries.len() == 1 { "item" } else { "items" }
+                            ))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.plan_expanded = !this.plan_expanded;
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn render_plan_entries(
+        &self,
+        entries: &[PlanEntry],
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        let editor_bg_color = cx.theme().colors().editor_background;
+
+        v_flex().children(entries.into_iter().enumerate().flat_map(|(index, entry)| {
+            let overlay_gradient = linear_gradient(
+                90.,
+                linear_color_stop(editor_bg_color, 1.),
+                linear_color_stop(editor_bg_color.opacity(0.2), 0.),
+            );
+
+            let element = h_flex()
+                .relative()
+                .py_1()
+                .pl_2()
+                .pr_1()
+                .gap_2()
+                .justify_between()
+                .bg(editor_bg_color)
+                .when(index < entries.len() - 1, |parent| {
+                    parent.border_color(cx.theme().colors().border).border_b_1()
+                })
+                .child(
+                    h_flex()
+                        .id(("plan_entry", index))
+                        .pr_8()
+                        .gap_1p5()
+                        .max_w_full()
+                        .overflow_x_scroll()
+                        .child(Icon::new(IconName::Circle).size(IconSize::XSmall))
+                        .child(MarkdownElement::new(
+                            entry.content.clone(),
+                            default_markdown_style(false, window, cx),
+                        )),
+                )
+                .child(
+                    h_flex()
+                        .child(format!("{:?}", entry.priority))
+                        .child(format!("{:?}", entry.status)),
+                )
+                .child(
+                    div()
+                        .id("gradient-overlay")
+                        .absolute()
+                        .h_full()
+                        .w_12()
+                        .top_0()
+                        .bottom_0()
+                        .right(px(152.))
+                        .bg(overlay_gradient),
+                );
+
+            Some(element)
+        }))
+    }
+
+    fn render_edits_summary(
         &self,
         action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
@@ -1643,7 +1752,7 @@ impl AcpThreadView {
             )
     }
 
-    fn render_edits_bar_files(
+    fn render_edited_files(
         &self,
         action_log: &Entity<ActionLog>,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
@@ -2147,7 +2256,7 @@ impl Render for AcpThreadView {
                                 .child(LoadingLabel::new("").size(LabelSize::Small))
                                 .into(),
                         })
-                        .children(self.render_edits_bar(&thread, window, cx))
+                        .children(self.render_bar(&thread, window, cx))
                     } else {
                         this.child(self.render_empty_state(cx))
                     }

@@ -453,9 +453,27 @@ impl Diff {
     }
 }
 
+#[derive(Debug)]
+pub struct PlanEntry {
+    pub content: Entity<Markdown>,
+    pub priority: acp::PlanEntryPriority,
+    pub status: acp::PlanEntryStatus,
+}
+
+impl PlanEntry {
+    pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
+        Self {
+            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            priority: entry.priority,
+            status: entry.status,
+        }
+    }
+}
+
 pub struct AcpThread {
-    entries: Vec<AgentThreadEntry>,
     title: SharedString,
+    entries: Vec<AgentThreadEntry>,
+    plan: Box<[PlanEntry]>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
@@ -515,6 +533,7 @@ impl AcpThread {
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            plan: Default::default(),
             title,
             project,
             send_task: None,
@@ -817,6 +836,20 @@ impl AcpThread {
                 None
             }
         }
+    }
+
+    pub fn plan(&self) -> &[PlanEntry] {
+        &self.plan
+    }
+
+    pub fn update_plan(&mut self, request: acp::UpdatePlanParams, cx: &mut Context<Self>) {
+        self.plan = request
+            .entries
+            .into_iter()
+            .map(|entry| PlanEntry::from_acp(entry, cx))
+            .collect();
+
+        cx.notify();
     }
 
     pub fn set_project_location(&self, location: ToolCallLocation, cx: &mut Context<Self>) {
@@ -1229,6 +1262,18 @@ impl acp::Client for AcpClientDelegate {
             })
         })?
         .context("Failed to update thread")??;
+
+        Ok(())
+    }
+
+    async fn update_plan(&self, request: acp::UpdatePlanParams) -> Result<(), acp::Error> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.update_plan(request, cx))
+        })?
+        .context("Failed to update thread")?;
 
         Ok(())
     }

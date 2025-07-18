@@ -267,8 +267,17 @@ impl ClaudeAgentConnection {
                                 .log_err();
                         }
                         ContentChunk::ToolUse { id, name, input } => {
-                            if let Some(resp) = delegate
-                                .push_tool_call(ClaudeTool::infer(&name, input).as_acp())
+                            let claude_tool = ClaudeTool::infer(&name, input);
+
+                            if let ClaudeTool::TodoWrite(Some(params)) = claude_tool {
+                                delegate
+                                    .update_plan(acp::UpdatePlanParams {
+                                        entries: params.todos.into_iter().map(Into::into).collect(),
+                                    })
+                                    .await
+                                    .log_err();
+                            } else if let Some(resp) = delegate
+                                .push_tool_call(claude_tool.as_acp())
                                 .await
                                 .log_err()
                             {
