@@ -56,7 +56,7 @@
         (#eq? @_method "test")
         arguments: (
             arguments . [
-                (string) @run @test_name
+                (string (string_fragment) @run @test_name)
                 (identifier) @run @test_name
             ]
         )
