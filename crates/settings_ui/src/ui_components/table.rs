@@ -3,14 +3,16 @@ use std::{ops::Range, rc::Rc, time::Duration};
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AppContext, Axis, Context, Entity, FocusHandle, Length, ListHorizontalSizingBehavior,
-    ListSizingBehavior, MouseButton, Point, Task, UniformListScrollHandle, WeakEntity,
+    ListSizingBehavior, MouseButton, Point, Stateful, Task, UniformListScrollHandle, WeakEntity,
     transparent_black, uniform_list,
 };
+
+use itertools::intersperse_with;
 use settings::Settings as _;
 use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
-    InteractiveElement as _, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
+    InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
     Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledExt as _,
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
@@ -189,6 +191,67 @@ impl TableInteractionState {
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
+    }
+
+    fn render_resize_handles<const COLS: usize>(
+        &self,
+        column_widths: &[Length; COLS],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let spacers = column_widths
+            .iter()
+            .map(|width| base_cell_style(Some(*width)));
+
+        let mut column_ix = 0;
+        let dividers = intersperse_with(spacers, || {
+            let hovered =
+                window
+                    .use_keyed_state(("resize-hover", column_ix as u32), cx, |_window, _cx| false);
+
+            let div = div()
+                .relative()
+                .top_0()
+                .w_0p5()
+                .h_full()
+                .bg(cx.theme().colors().border_variant.opacity(0.5))
+                .when(*hovered.read(cx), |div| {
+                    div.bg(cx.theme().colors().border_focused)
+                })
+                .child(
+                    div()
+                        .id(("column-resize-handle", column_ix as u32))
+                        .absolute()
+                        .left_neg_0p5()
+                        .w_1p5()
+                        .h_full()
+                        .on_hover(move |&was_hovered, _, cx| {
+                            hovered.update(cx, |hovered, _| {
+                                *hovered = was_hovered;
+                            })
+                        })
+                        .cursor_col_resize()
+                        .on_mouse_down(MouseButton::Left, {
+                            let column_idx = column_ix;
+                            move |_event, _window, _cx| {
+                                // TODO: Emit resize event to parent
+                                eprintln!("Start resizing column {}", column_idx);
+                            }
+                        }),
+                );
+
+            column_ix += 1;
+            div
+        });
+
+        div()
+            .id("id")
+            .h_flex()
+            .absolute()
+            .w_full()
+            .inset_0()
+            .children(dividers)
+            .into_any_element()
     }
 
     fn render_vertical_scrollbar_track(
@@ -385,7 +448,7 @@ pub struct Table<const COLS: usize = 3> {
 impl<const COLS: usize> Table<COLS> {
     /// number of headers provided.
     pub fn new() -> Self {
-        Table {
+        Self {
             striped: false,
             width: None,
             headers: None,
@@ -459,9 +522,14 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
+    pub fn resizable_columns(mut self) -> Self {
+        self.resizable_columns = true;
+        self
+    }
+
     pub fn map_row(
         mut self,
-        callback: impl Fn((usize, Div), &mut Window, &mut App) -> AnyElement + 'static,
+        callback: impl Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.map_row = Some(Rc::new(callback));
         self
@@ -477,16 +545,19 @@ impl<const COLS: usize> Table<COLS> {
     }
 }
 
-fn base_cell_style(width: Option<Length>, cx: &App) -> Div {
+fn base_cell_style(width: Option<Length>) -> Div {
     div()
         .px_1p5()
         .when_some(width, |this, width| this.w(width))
         .when(width.is_none(), |this| this.flex_1())
         .justify_start()
-        .text_ui(cx)
         .whitespace_nowrap()
         .text_ellipsis()
         .overflow_hidden()
+}
+
+fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
+    base_cell_style(width).text_ui(cx)
 }
 
 pub fn render_row<const COLS: usize>(
@@ -507,33 +578,33 @@ pub fn render_row<const COLS: usize>(
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
 
-    let row = div().w_full().child(
-        h_flex()
-            .id("table_row")
-            .w_full()
-            .justify_between()
-            .px_1p5()
-            .py_1()
-            .when_some(bg, |row, bg| row.bg(bg))
-            .when(!is_striped, |row| {
-                row.border_b_1()
-                    .border_color(transparent_black())
-                    .when(!is_last, |row| row.border_color(cx.theme().colors().border))
-            })
-            .children(
-                items
-                    .map(IntoElement::into_any_element)
-                    .into_iter()
-                    .zip(column_widths)
-                    .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
-            ),
+    let mut row = h_flex()
+        .h_full()
+        .id(("table_row", row_index))
+        .w_full()
+        .justify_between()
+        .when_some(bg, |row, bg| row.bg(bg))
+        .when(!is_striped, |row| {
+            row.border_b_1()
+                .border_color(transparent_black())
+                .when(!is_last, |row| row.border_color(cx.theme().colors().border))
+        });
+
+    row = row.children(
+        items
+            .map(IntoElement::into_any_element)
+            .into_iter()
+            .zip(column_widths)
+            .map(|(cell, width)| base_cell_style_text(width, cx).px_1p5().py_1().child(cell)),
     );
 
-    if let Some(map_row) = table_context.map_row {
+    let row = if let Some(map_row) = table_context.map_row {
         map_row((row_index, row), window, cx)
     } else {
         row.into_any_element()
-    }
+    };
+
+    div().h_full().w_full().child(row).into_any_element()
 }
 
 pub fn render_header<const COLS: usize>(
@@ -557,7 +628,7 @@ pub fn render_header<const COLS: usize>(
             headers
                 .into_iter()
                 .zip(column_widths)
-                .map(|(h, width)| base_cell_style(width, cx).child(h)),
+                .map(|(h, width)| base_cell_style_text(width, cx).child(h)),
         )
 }
 
@@ -566,7 +637,7 @@ pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
     pub column_widths: Option<[Length; COLS]>,
-    pub map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
+    pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
@@ -660,6 +731,17 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             ),
                         ),
                     })
+                    .when_some(
+                        self.column_widths
+                            .as_ref()
+                            .zip(interaction_state.as_ref())
+                            .filter(|_| self.resizable_columns),
+                        |parent, (column_widths, state)| {
+                            parent.child(state.update(cx, |state, cx| {
+                                state.render_resize_handles(column_widths, window, cx)
+                            }))
+                        },
+                    )
                     .when_some(interaction_state.as_ref(), |this, interaction_state| {
                         this.map(|this| {
                             TableInteractionState::render_vertical_scrollbar_track(
