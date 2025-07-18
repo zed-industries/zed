@@ -277,10 +277,21 @@
     }
   },
   {
-    "context": "MessageEditor > Editor",
+    "context": "MessageEditor > Editor && !use_modifier_to_send",
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-enter": "agent::ChatWithFollow",
+      "ctrl-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor && use_modifier_to_send",
+    "bindings": {
+      "ctrl-enter": "agent::Chat",
+      "enter": "editor::Newline",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",

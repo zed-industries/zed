@@ -28,8 +28,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
@@ -132,6 +132,7 @@ pub(crate) fn create_editor(
             placement: Some(ContextMenuPlacement::Above),
         });
         editor.register_addon(ContextCreasesAddon::new());
+        editor.register_addon(MessageEditorAddon::new());
         editor
     });
 
@@ -1492,6 +1493,31 @@ impl MessageEditor {
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
+}
+
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
 }
 
 impl Addon for ContextCreasesAddon {
