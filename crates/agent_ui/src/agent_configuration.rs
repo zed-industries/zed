@@ -277,16 +277,41 @@ impl AgentConfiguration {
 
         v_flex()
             .child(
-                v_flex()
+                h_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
                     .pr(DynamicSpacing::Base20.rems(cx))
                     .pb_0()
                     .mb_2p5()
-                    .gap_0p5()
-                    .child(Headline::new("LLM Providers"))
+                    .justify_between()
                     .child(
-                        Label::new("Add at least one provider to use AI-powered features.")
-                            .color(Color::Muted),
+                        v_flex()
+                            .gap_0p5()
+                            .child(Headline::new("LLM Providers"))
+                            .child(
+                                Label::new("Add at least one provider to use AI-powered features.")
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        PopoverMenu::new("add-provider-popover")
+                            .trigger(
+                                Button::new("add-provider", "Add Provider")
+                                    .icon_position(IconPosition::Start)
+                                    .icon(IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .label_size(LabelSize::Small),
+                            )
+                            .anchor(gpui::Corner::TopRight)
+                            .menu(move |window, cx| {
+                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                    menu.header("Compatible APIs").entry(
+                                        "OpenAI",
+                                        None,
+                                        |_window, _cx| {},
+                                    )
+                                }))
+                            }),
                     ),
             )
             .child(
