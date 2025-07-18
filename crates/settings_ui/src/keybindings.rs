@@ -13,7 +13,8 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, WeakEntity, actions, anchored,
+    deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -1289,6 +1290,7 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .striped()
+                    .resizable_columns()
                     .column_widths([
                         rems(2.5),
                         rems(16.),
@@ -1434,15 +1436,14 @@ impl Render for KeymapEditor {
                                 .collect()
                         }),
                     )
-                    .map_row(
-                        cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
+                    .map_row(cx.processor(
+                        |this, (row_index, row): (usize, Stateful<Div>), _window, cx| {
                             let is_conflict = this.has_conflict(row_index);
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row_id = row_group_id(row_index);
 
                             let row = row
-                                .id(row_id.clone())
                                 .on_any_mouse_down(cx.listener(
                                     move |this,
                                           mouse_down_event: &gpui::MouseDownEvent,
@@ -1476,11 +1477,12 @@ impl Render for KeymapEditor {
                                 })
                                 .when(is_selected, |row| {
                                     row.border_color(cx.theme().colors().panel_focused_border)
+                                        .border_2()
                                 });
 
                             row.into_any_element()
-                        }),
-                    ),
+                        },
+                    )),
             )
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
                 // This ensures that the menu is not dismissed in cases where scroll events
