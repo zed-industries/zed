@@ -1623,4 +1623,98 @@ mod tests {
             .unindent(),
         );
     }
+
+    #[test]
+    fn test_keymap_remove() {
+        zlog::init_test();
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-alt-ctrl-y": "workspace::CloseAllDocks"
+                }
+              },
+              {
+                "context": "Editor",
+                "bindings": {
+                  "ctrl-alt-cmd-down": "editor::GoToHunk",
+                  "ctrl-alt-cmd-up": "editor::GoToPreviousHunk",
+                  "cmd-/": [
+                    "editor::ToggleComments",
+                    {
+                      "advance_downwards": true
+                    }
+                  ],
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-[": "pane::GoBack",
+                  "cmd-]": "pane::GoForward"
+                }
+              },
+              {
+                "context": "Editor && (showing_code_actions || showing_completions)",
+                "bindings": {
+                  "cmd-up": "editor::ContextMenuFirst",
+                  "cmd-down": "editor::ContextMenuLast"
+                }
+              },
+              {
+                "context": "Pane",
+                "bindings": {
+                  "cmd-shift-f": "workspace::NewSearch"
+                }
+              }
+            ]
+            "#,
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"
+            [
+              {
+                "bindings": {
+                  "cmd-alt-ctrl-y": "workspace::CloseAllDocks"
+                }
+              },
+              {
+                "context": "Editor",
+                "bindings": {
+                  "ctrl-alt-cmd-down": "editor::GoToHunk",
+                  "ctrl-alt-cmd-up": "editor::GoToPreviousHunk",
+                  "cmd-/": [
+                    "editor::ToggleComments",
+                    {
+                      "advance_downwards": true
+                    }
+                  ],
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-[": "pane::GoBack",
+                  "cmd-]": "pane::GoForward"
+                }
+              },
+              {
+                "context": "Editor && (showing_code_actions || showing_completions)",
+                "bindings": {
+                  "cmd-up": "editor::ContextMenuFirst",
+                  "cmd-down": "editor::ContextMenuLast"
+                }
+              },
+              {
+                "context": "Pane",
+                "bindings": {
+                  "cmd-shift-f": "workspace::NewSearch"
+                }
+              }
+            ]
+            "#,
+        );
+    }
 }
