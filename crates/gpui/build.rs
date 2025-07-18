@@ -292,7 +292,6 @@ mod windows {
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn compile_shaders() {
         use std::fs;
-        use std::process::{self, Command};
 
         let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
             .join("src/platform/windows/shaders.hlsl");
@@ -412,6 +411,7 @@ mod windows {
                 output_path,
                 "/Vn",
                 var_name,
+                "/O3",
                 shader_path,
             ])
             .output();
