@@ -1,4 +1,6 @@
 use ::serde::{Deserialize, Serialize};
+use anyhow::Context as _;
+use collections::HashMap;
 use gpui::{App, Entity, WeakEntity};
 use language::Buffer;
 use language::{File as _, LocalFile as _};
@@ -73,4 +75,70 @@ pub fn send_schema_associations_notification(
             }
         })
     })
+}
+
+struct SchemaContentRequest {}
+
+impl lsp::request::Request for SchemaContentRequest {
+    type Params = Vec<String>;
+
+    type Result = String;
+
+    const METHOD: &'static str = "vscode/content";
+}
+
+pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
+    language_server
+        .on_request::<SchemaContentRequest, _, _>(|params, cx| {
+            let mut generator = settings::KeymapFile::action_schema_generator();
+            let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
+            async move {
+                let all_schemas = all_schemas?;
+                eprintln!("Received request for schema {:?}", params);
+                let Some(uri) = params.get(0) else {
+                    anyhow::bail!("No URI");
+                };
+                let action_name = uri
+                    .strip_prefix("zed://schemas/action/")
+                    .context("Invalid URI")?;
+                let action_name = action_name.replace("__", "::");
+                let schema = root_schema_from_action_schema(
+                    all_schemas
+                        .get(action_name.as_str())
+                        .context("No schema found")?
+                        .as_ref(),
+                    &mut generator,
+                )
+                .to_value()
+                .to_string();
+
+                Ok(schema)
+            }
+        })
+        .detach();
+}
+
+fn root_schema_from_action_schema(
+    action_schema: Option<&schemars::Schema>,
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    let Some(action_schema) = action_schema else {
+        return schemars::json_schema!(false);
+    };
+    let meta_schema = generator
+        .settings()
+        .meta_schema
+        .as_ref()
+        .expect("meta_schema should be present in schemars settings")
+        .to_string();
+    let defs = generator.definitions();
+    let mut schema = schemars::json_schema!({
+        "$schema": meta_schema,
+        "allowTrailingCommas": true,
+        "$defs": defs,
+    });
+    schema
+        .ensure_object()
+        .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
+    schema
 }

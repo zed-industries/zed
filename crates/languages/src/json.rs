@@ -231,6 +231,19 @@ impl JsonLspAdapter {
             ))
         }
 
+        schemas
+            .as_array_mut()
+            .unwrap()
+            .extend(cx.all_action_names().iter().map(|name| {
+                let mut file_name = name.replace("::", "__");
+                let name_len = file_name.len();
+                file_name.push_str(".json");
+                serde_json::json!({
+                    "fileMatch": [file_name],
+                    "url": format!("zed://schemas/action/{}", &file_name[..name_len])
+                })
+            }));
+
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({

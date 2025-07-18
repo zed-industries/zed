@@ -2212,9 +2212,9 @@ impl ActionArgumentsEditor {
             };
 
             if let Some(project) = project.upgrade() {
-            cx.update(|_, cx| {
-                project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer.clone(), &vec![schema_association.clone()], cx);
-            })?;
+                cx.update(|_, cx| {
+                    project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer.clone(), &vec![schema_association.clone()], cx);
+                })?;
             }
 
             let open_lsp_handle = project.update(cx, |project, cx| {
@@ -2260,7 +2260,7 @@ impl ActionArgumentsEditor {
     }
 
     fn file_name_from_action_name(action_name: &'static str) -> String {
-        let mut file_name = action_name.replace("::", "_");
+        let mut file_name = action_name.replace("::", "__");
         file_name.push_str(".json");
         file_name
     }

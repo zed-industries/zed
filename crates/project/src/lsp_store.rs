@@ -1035,6 +1035,7 @@ impl LocalLspStore {
             })
             .detach();
 
+        json_language_server_ext::register_requests(this.clone(), language_server);
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
     }
