@@ -9,6 +9,7 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use agent_settings::AgentSettings;
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -539,9 +540,8 @@ fn initialize_panels(
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
             // Check if AI is disabled globally
-            let ai_disabled = workspace_handle.update_in(cx, |_, _, cx| {
-                workspace::GeneralSettings::get_global(cx).disable_ai
-            })?;
+            let ai_disabled = workspace_handle
+                .update_in(cx, |_, _, cx| AgentSettings::get_global(cx).disable_ai)?;
 
             if ai_disabled {
                 None
@@ -570,7 +570,7 @@ fn initialize_panels(
             // functions so that we only register the actions once.
             //
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if is_assistant2_enabled && !workspace::GeneralSettings::get_global(cx).disable_ai {
+            if is_assistant2_enabled && !AgentSettings::get_global(cx).disable_ai {
                 <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,

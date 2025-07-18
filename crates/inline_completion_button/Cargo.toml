@@ -13,6 +13,7 @@ path = "src/inline_completion_button.rs"
 doctest = false
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 client.workspace = true
 copilot.workspace = true

@@ -210,7 +210,7 @@ pub fn init(
     SlashCommandSettings::register(cx);
 
     // Check if AI is disabled globally
-    if workspace::GeneralSettings::get_global(cx).disable_ai {
+    if AgentSettings::get_global(cx).disable_ai {
         return;
     }
 

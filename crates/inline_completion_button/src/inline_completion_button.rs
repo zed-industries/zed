@@ -1,3 +1,4 @@
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use copilot::{Copilot, Status};
@@ -72,7 +73,7 @@ enum SupermavenButtonStatus {
 impl Render for InlineCompletionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Hide the button entirely if AI is disabled
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return div();
         }
 

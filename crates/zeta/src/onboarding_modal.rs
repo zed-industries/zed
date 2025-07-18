@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
+use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
@@ -46,7 +47,7 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         workspace.toggle_modal(window, cx, |_window, cx| Self {

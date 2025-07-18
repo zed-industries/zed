@@ -52,6 +52,7 @@ pub mod test;
 
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
+use agent_settings::AgentSettings;
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
@@ -2852,7 +2853,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if self.show_inline_completions_override.is_some() {
@@ -7143,7 +7144,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if !self.has_active_inline_completion() {
@@ -7183,7 +7184,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if self.has_active_inline_completion() {
@@ -7204,7 +7205,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if self.has_active_inline_completion() {
@@ -7225,7 +7226,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if self.show_edit_predictions_in_menu() {

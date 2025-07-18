@@ -577,7 +577,7 @@ impl Render for QuickActionBar {
             .when(
                 AgentSettings::get_global(cx).enabled
                     && AgentSettings::get_global(cx).button
-                    && !workspace::GeneralSettings::get_global(cx).disable_ai,
+                    && !AgentSettings::get_global(cx).disable_ai,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

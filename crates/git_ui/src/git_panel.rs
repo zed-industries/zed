@@ -1801,7 +1801,7 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         self.generate_commit_message(cx);
@@ -1809,7 +1809,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return;
         }
         if !self.can_commit() {
@@ -2939,7 +2939,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if workspace::GeneralSettings::get_global(cx).disable_ai {
+        if AgentSettings::get_global(cx).disable_ai {
             return None;
         }
         current_language_model(cx).is_some().then(|| {

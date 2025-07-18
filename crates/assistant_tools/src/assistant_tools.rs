@@ -22,6 +22,7 @@ mod web_search_tool;
 
 use std::sync::Arc;
 
+use agent_settings::AgentSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
@@ -87,7 +88,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
     // Don't register web search if AI is disabled
-    if workspace::GeneralSettings::get_global(cx).disable_ai {
+    if AgentSettings::get_global(cx).disable_ai {
         ToolRegistry::global(cx).unregister_tool(WebSearchTool);
         return;
     }

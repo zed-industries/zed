@@ -1,5 +1,4 @@
 pub mod dock;
-mod general_settings;
 pub mod history_manager;
 pub mod item;
 mod modal_layer;
@@ -16,7 +15,6 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use general_settings::GeneralSettings;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -507,7 +505,6 @@ impl From<WorkspaceId> for i64 {
 }
 
 pub fn init_settings(cx: &mut App) {
-    general_settings::GeneralSettings::register(cx);
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);

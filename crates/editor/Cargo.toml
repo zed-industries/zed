@@ -29,6 +29,7 @@ test-support = [
 ]
 
 [dependencies]
+agent_settings.workspace = true
 aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
