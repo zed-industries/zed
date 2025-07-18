@@ -62,6 +62,10 @@ impl AddLlmProviderInput {
     fn add_model(&mut self, window: &mut Window, cx: &mut App) {
         self.models.push(ModelInput::new(window, cx));
     }
+
+    fn remove_model(&mut self, index: usize) {
+        self.models.remove(index);
+    }
 }
 
 struct ModelInput {
@@ -299,16 +303,16 @@ impl AddLlmProviderModal {
                     self.input
                         .models
                         .iter()
-                        .map(|model| self.render_model(model, cx)),
+                        .enumerate()
+                        .map(|(ix, _)| self.render_model(ix, cx)),
                 ),
         )
     }
 
-    fn render_model(
-        &self,
-        model: &ModelInput,
-        _cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    fn render_model(&self, ix: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let has_more_than_one_model = self.input.models.len() > 1;
+        let model = &self.input.models[ix];
+
         v_flex()
             .gap_2()
             .child(model.name.clone())
@@ -319,6 +323,16 @@ impl AddLlmProviderModal {
                     .child(model.max_output_tokens.clone()),
             )
             .child(model.max_tokens.clone())
+            .when(has_more_than_one_model, |this| {
+                this.child(
+                    Button::new(("remove-model", ix), "Remove Model")
+                        .icon(IconName::Trash)
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.input.remove_model(ix);
+                            cx.notify();
+                        })),
+                )
+            })
     }
 }
 
@@ -335,10 +349,15 @@ impl ModalView for AddLlmProviderModal {}
 impl Render for AddLlmProviderModal {
     fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let window_height = window.viewport_size().height;
+        let max_height = window_height - px(200.);
 
         div()
+            .id("add-llm-provider-modal")
             .elevation_3(cx)
             .w(rems(34.))
+            .max_h(max_height)
+            .overflow_scroll()
             .key_context("AddLlmProviderModal")
             .on_action(cx.listener(Self::cancel))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
