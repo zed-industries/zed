@@ -637,7 +637,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "29"
+wasmtime-wasi = "33"
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
