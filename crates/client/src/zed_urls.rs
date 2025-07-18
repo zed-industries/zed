@@ -17,3 +17,8 @@ fn server_url(cx: &App) -> &str {
 pub fn account_url(cx: &App) -> String {
     format!("{server_url}/account", server_url = server_url(cx))
 }
+
+/// Returns the URL to the upgrade page on zed.dev.
+pub fn upgrade_to_zed_pro_url(cx: &App) -> String {
+    format!("{server_url}/account/upgrade", server_url = server_url(cx))
+}

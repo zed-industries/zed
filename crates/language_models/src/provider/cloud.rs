@@ -1,3 +1,4 @@
+use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -500,7 +501,7 @@ fn render_accept_terms(
             )
             .child({
                 match view_kind {
-                    LanguageModelProviderTosView::PromptEditorPopup => {
+                    LanguageModelProviderTosView::TextThreadPopup => {
                         button_container.w_full().justify_end()
                     }
                     LanguageModelProviderTosView::Configuration => {
@@ -1126,6 +1127,7 @@ struct ZedAiConfiguration {
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
     has_accepted_terms_of_service: bool,
+    account_too_young: bool,
     accept_terms_of_service_in_progress: bool,
     accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
@@ -1133,18 +1135,18 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
+        let young_account_banner = YoungAccountBanner;
 
         let is_pro = self.plan == Some(proto::Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
             (Some(proto::Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+                "You have access to Zed's hosted LLMs through your Pro subscription."
             }
             (Some(proto::Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+                "You have access to Zed's hosted LLMs through your Pro trial."
             }
             (Some(proto::Plan::Free), Some(_)) => {
-                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+                "You have basic access to Zed's hosted LLMs through the Free plan."
             }
             _ => {
                 if self.eligible_for_trial {
@@ -1154,68 +1156,76 @@ impl RenderOnce for ZedAiConfiguration {
                 }
             }
         };
+
         let manage_subscription_buttons = if is_pro {
-            h_flex().child(
-                Button::new("manage_settings", "Manage Subscription")
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-            )
+            Button::new("manage_settings", "Manage Subscription")
+                .style(ButtonStyle::Tinted(TintColor::Accent))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
+                .into_any_element()
+        } else if self.plan.is_none() || self.eligible_for_trial {
+            Button::new("start_trial", "Start 14-day Free Pro Trial")
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                .full_width()
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
+                .into_any_element()
         } else {
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("learn_more", "Learn more")
-                        .style(ButtonStyle::Subtle)
-                        .on_click(|_, _, cx| cx.open_url(ZED_PRICING_URL)),
-                )
-                .child(
-                    Button::new(
-                        "upgrade",
-                        if self.plan.is_none() && self.eligible_for_trial {
-                            "Start Trial"
-                        } else {
-                            "Upgrade"
-                        },
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .color(Color::Accent)
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                )
+            Button::new("upgrade", "Upgrade to Pro")
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                .full_width()
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
+                .into_any_element()
         };
 
-        if self.is_connected {
-            v_flex()
-                .gap_3()
-                .w_full()
-                .when(!self.has_accepted_terms_of_service, |this| {
-                    this.child(render_accept_terms(
-                        LanguageModelProviderTosView::Configuration,
-                        self.accept_terms_of_service_in_progress,
-                        {
-                            let callback = self.accept_terms_of_service_callback.clone();
-                            move |window, cx| (callback)(window, cx)
-                        },
-                    ))
-                })
-                .when(self.has_accepted_terms_of_service, |this| {
-                    this.child(subscription_text)
-                        .child(manage_subscription_buttons)
-                })
-        } else {
-            v_flex()
+        if !self.is_connected {
+            return v_flex()
                 .gap_2()
-                .child(Label::new("Use Zed AI to access hosted language models."))
+                .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
-                    Button::new("sign_in", "Sign In")
+                    Button::new("sign_in", "Sign In to use Zed AI")
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
+                        .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
+                        .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();
                             move |_, window, cx| (callback)(window, cx)
                         }),
-                )
+                );
         }
+
+        v_flex()
+            .gap_2()
+            .w_full()
+            .when(!self.has_accepted_terms_of_service, |this| {
+                this.child(render_accept_terms(
+                    LanguageModelProviderTosView::Configuration,
+                    self.accept_terms_of_service_in_progress,
+                    {
+                        let callback = self.accept_terms_of_service_callback.clone();
+                        move |window, cx| (callback)(window, cx)
+                    },
+                ))
+            })
+            .map(|this| {
+                if self.has_accepted_terms_of_service && self.account_too_young {
+                    this.child(young_account_banner).child(
+                        Button::new("upgrade", "Upgrade to Pro")
+                            .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .full_width()
+                            .on_click(|_, _, cx| {
+                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                            }),
+                    )
+                } else if self.has_accepted_terms_of_service {
+                    this.text_sm()
+                        .child(subscription_text)
+                        .child(manage_subscription_buttons)
+                } else {
+                    this
+                }
+            })
+            .when(self.has_accepted_terms_of_service, |this| this)
     }
 }
 
@@ -1264,6 +1274,7 @@ impl Render for ConfigurationView {
             subscription_period: user_store.subscription_period(),
             eligible_for_trial: user_store.trial_started_at().is_none(),
             has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
+            account_too_young: user_store.account_too_young(),
             accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
             accept_terms_of_service_callback: self.accept_terms_of_service_callback.clone(),
             sign_in_callback: self.sign_in_callback.clone(),
@@ -1281,6 +1292,7 @@ impl Component for ZedAiConfiguration {
             is_connected: bool,
             plan: Option<proto::Plan>,
             eligible_for_trial: bool,
+            account_too_young: bool,
             has_accepted_terms_of_service: bool,
         ) -> AnyElement {
             ZedAiConfiguration {
@@ -1291,6 +1303,7 @@ impl Component for ZedAiConfiguration {
                     .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
                 eligible_for_trial,
                 has_accepted_terms_of_service,
+                account_too_young,
                 accept_terms_of_service_in_progress: false,
                 accept_terms_of_service_callback: Arc::new(|_, _| {}),
                 sign_in_callback: Arc::new(|_, _| {}),
@@ -1303,30 +1316,33 @@ impl Component for ZedAiConfiguration {
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example("Not connected", configuration(false, None, false, true)),
+                    single_example(
+                        "Not connected",
+                        configuration(false, None, false, false, true),
+                    ),
                     single_example(
                         "Accept Terms of Service",
-                        configuration(true, None, true, false),
+                        configuration(true, None, true, false, false),
                     ),
                     single_example(
                         "No Plan - Not eligible for trial",
-                        configuration(true, None, false, true),
+                        configuration(true, None, false, false, true),
                     ),
                     single_example(
                         "No Plan - Eligible for trial",
-                        configuration(true, None, true, true),
+                        configuration(true, None, true, false, true),
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(proto::Plan::Free), true, true),
+                        configuration(true, Some(proto::Plan::Free), true, false, true),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(proto::Plan::ZedProTrial), true, true),
+                        configuration(true, Some(proto::Plan::ZedProTrial), true, false, true),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(proto::Plan::ZedPro), true, true),
+                        configuration(true, Some(proto::Plan::ZedPro), true, false, true),
                     ),
                 ])
                 .into_any_element(),

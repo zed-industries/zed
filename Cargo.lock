@@ -195,6 +195,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "agentic-coding-protocol",
+ "ai_onboarding",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",
@@ -327,6 +328,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e60d3430d3a69478ad0993f19238d2df97c507009a52b3c10addcd7f6bcb916"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ai_onboarding"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "component",
+ "gpui",
+ "language_model",
+ "proto",
+ "serde",
+ "smallvec",
+ "ui",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -9066,6 +9083,7 @@ dependencies = [
 name = "language_models"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anthropic",
  "anyhow",
  "aws-config",
@@ -20510,6 +20528,7 @@ dependencies = [
 name = "zeta"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anyhow",
  "arrayvec",
  "call",
@@ -20517,6 +20536,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot",
  "ctor",
  "db",
  "editor",
@@ -20531,8 +20551,6 @@ dependencies = [
  "language_model",
  "log",
  "menu",
- "migrator",
- "paths",
  "postage",
  "project",
  "proto",

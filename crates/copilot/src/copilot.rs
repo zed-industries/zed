@@ -209,8 +209,14 @@ impl Status {
         matches!(self, Status::Authorized)
     }
 
-    pub fn is_disabled(&self) -> bool {
-        matches!(self, Status::Disabled)
+    pub fn is_configured(&self) -> bool {
+        matches!(
+            self,
+            Status::Starting { .. }
+                | Status::Error(_)
+                | Status::SigningIn { .. }
+                | Status::Authorized
+        )
     }
 }
 
