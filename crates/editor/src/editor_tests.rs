@@ -55,7 +55,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseInactiveItems, MoveItemToPaneInDirection, NavigationEntry,
+    CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
@@ -21463,7 +21463,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21499,7 +21499,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();
