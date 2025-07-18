@@ -67,35 +67,37 @@ impl AgentPanelOnboarding {
             "Configure Providers"
         };
 
-        let content = if has_existing_providers {
-            List::new()
-                    .child(BulletItem::new(
-                        "Or start now using API keys from your environment for the following providers:"
+        let configured_providers = h_flex().pl_6().gap_2().flex_wrap().children(
+            self.configured_providers
+                .iter()
+                .cloned()
+                .map(|(icon, name)| {
+                    h_flex()
+                        .gap_1p5()
+                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(Label::new(name))
+                }),
+        );
+
+        let content = List::new()
+            .map(|this| {
+                if has_existing_providers {
+                    this.child(BulletItem::new(
+                        "Or start now using API keys from your environment for the following providers:",
                     ))
-                    .child(
-                        h_flex()
-                            .px_5()
-                            .gap_2()
-                            .flex_wrap()
-                            .children(self.configured_providers.iter().cloned().map(|(icon, name)|
-                                h_flex()
-                                    .gap_1p5()
-                                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                                    .child(Label::new(name))
-                            ))
-                    )
-                    .child(BulletItem::new(
-                        "No need for any of the plans or even to sign in",
+                    .child(configured_providers)
+                } else {
+                    this.child(BulletItem::new(
+                        "You can also use AI in Zed by bringing your own API keys",
                     ))
-        } else {
-            List::new()
-                .child(BulletItem::new(
-                    "You can also use AI in Zed by bringing your own API keys",
-                ))
-                .child(BulletItem::new(
-                    "No need for any of the plans or even to sign in",
-                ))
-        };
+                }
+            })
+            .child(BulletItem::new(
+                "No need for any of the plans or even to sign in",
+            ))
+            .child(BulletItem::new(
+                "Add more LLM providers at any time via the panel settings",
+            ));
 
         v_flex()
             .mt_2()

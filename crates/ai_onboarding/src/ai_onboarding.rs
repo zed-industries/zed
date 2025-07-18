@@ -109,7 +109,6 @@ impl ZedAiOnboarding {
         v_flex()
             .mt_2()
             .gap_1()
-            .when(self.account_too_young, |this| this.opacity(0.4))
             .child(
                 h_flex()
                     .gap_2()
@@ -142,6 +141,16 @@ impl ZedAiOnboarding {
             )
     }
 
+    fn render_trial_content(&self) -> impl IntoElement {
+        List::new()
+            .child(BulletItem::new(
+                "150 prompts per month with the Claude models",
+            ))
+            .child(BulletItem::new(
+                "Unlimited accepted edit predictions using our open-source Zeta model",
+            ))
+    }
+
     fn render_pro_plan_section(&self, cx: &mut App) -> impl IntoElement {
         let (button_label, button_url) = if self.account_too_young {
             ("Start with Pro", zed_urls::upgrade_to_zed_pro_url(cx))
@@ -165,12 +174,13 @@ impl ZedAiOnboarding {
             )
             .child(
                 List::new()
-                    .child(BulletItem::new("500 prompts per month with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions"))
+                    // .child(BulletItem::new("500 prompts per month with Claude models"))
+                    // .child(BulletItem::new("Unlimited edit predictions"))
                     .when(!self.account_too_young, |this| {
-                        this.child(BulletItem::new(
-                            "Try it out for 14 days with no charge, no credit card required",
-                        ))
+                        this.child(self.render_trial_content())
+                            .child(BulletItem::new(
+                                "Try it out for 14 days with no charge, no credit card required",
+                            ))
                     }),
             )
             .child(
@@ -213,19 +223,17 @@ impl ZedAiOnboarding {
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
         const SIGN_IN_DISCLAIMER: &str =
-            "To start using AI in Zed with our hosted models, sign in and subscribe to a plan.";
+            "Sign in to start using AI in Zed with a free trial of Zed Pro, which includes:";
+
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
             .gap_2()
             .child(Headline::new("Welcome to Zed AI"))
             .child(div().w_full().child(Label::new(SIGN_IN_DISCLAIMER)))
+            .child(self.render_trial_content())
             .child(
-                Button::new("sign_in", "Sign In with GitHub")
-                    .icon(IconName::Github)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                Button::new("sign_in", "Sign in to Start Trial")
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -252,13 +260,15 @@ impl ZedAiOnboarding {
             .when(self.account_too_young, |this| {
                 this.child(young_account_banner)
             })
-            .child(self.render_free_plan_section(cx))
+            .when(!self.account_too_young, |this| {
+                this.child(self.render_free_plan_section(cx))
+            })
             .child(self.render_pro_plan_section(cx))
     }
 
     fn render_trial_onboarding(&self, _cx: &mut App) -> Div {
         v_flex()
-            .child(Headline::new("Welcome to the trial of Zed Pro"))
+            .child(Headline::new("Welcome to the Zed Pro free trial"))
             .child(
                 Label::new("Here's what you get for the next 14 days:")
                     .size(LabelSize::Small)
@@ -275,7 +285,7 @@ impl ZedAiOnboarding {
             .child(
                 Button::new("trial", "Start Trial")
                     .full_width()
-                    .style(ButtonStyle::Outlined)
+                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click({
                         let callback = self.continue_with_zed_ai.clone();
                         move |_, window, cx| callback(window, cx)
@@ -290,7 +300,7 @@ impl ZedAiOnboarding {
                 Label::new("Here's what you get:")
                     .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .mt_1(),
+                    .my_1(),
             )
             .child(
                 List::new()
