@@ -170,7 +170,7 @@ members = [
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
-    "crates/CodeOrbit",
+    "crates/codeorbit",
     "crates/codeorbit_actions",
     "crates/zeta",
     "crates/zlog",
@@ -198,7 +198,7 @@ members = [
     "tooling/workspace-hack",
     "tooling/xtask",
 ]
-default-members = ["crates/CodeOrbit"]
+default-members = ["crates/codeorbit"]
 
 [workspace.package]
 publish = false
@@ -378,7 +378,7 @@ web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
-CodeOrbit = { path = "crates/CodeOrbit" }
+codeorbit = { path = "crates/codeorbit" }
 codeorbit_actions = { path = "crates/codeorbit_actions" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
@@ -532,7 +532,7 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/CodeOrbit-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
+scap = { git = "https://github.com/codeorbit-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

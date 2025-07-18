@@ -15,7 +15,7 @@ settings.workspace = true
 regex.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-CodeOrbit.workspace = true
+codeorbit.workspace = true
 gpui.workspace = true
 command_palette.workspace = true
 
