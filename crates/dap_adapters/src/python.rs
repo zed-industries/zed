@@ -1,9 +1,9 @@
 use crate::*;
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::{AppContext, AsyncApp, SharedString};
+use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
-use language::{LanguageName, Toolchain};
+use language::LanguageName;
 use paths::debug_adapters_dir;
 use serde_json::Value;
 use smol::lock::OnceCell;
@@ -12,9 +12,7 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     path::{Path, PathBuf},
-    sync::OnceLock,
 };
-use util::ResultExt;
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
@@ -166,15 +164,15 @@ impl PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
-        toolchain: Option<Toolchain>,
+        python_from_toolchain: Option<String>,
         installed_in_venv: bool,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let python_path = if let Some(toolchain) = toolchain {
-            Some(toolchain.path.to_string())
+        let python_path = if let Some(toolchain) = python_from_toolchain {
+            Some(toolchain)
         } else {
             let mut name = None;
 
@@ -655,7 +653,7 @@ impl DebugAdapter for PythonDebugAdapter {
                             &config,
                             None,
                             user_args,
-                            Some(toolchain.clone()),
+                            Some(toolchain.path.to_string()),
                             true,
                         )
                         .await;
@@ -673,12 +671,7 @@ impl DebugAdapter for PythonDebugAdapter {
             &config,
             None,
             user_args,
-            Some(Toolchain {
-                name: SharedString::new_static("Zed-provided DebugPy"),
-                path: SharedString::from(toolchain.to_string_lossy().into_owned()),
-                language_name: LanguageName::new("Python"),
-                as_json: Value::Null,
-            }),
+            Some(toolchain.to_string_lossy().into_owned()),
             false,
         )
         .await
