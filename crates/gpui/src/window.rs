@@ -1159,21 +1159,9 @@ impl Window {
                     .log_err();
             })
         });
-        platform_window.on_merge_all_windows({
+        platform_window.on_tab_group_changed({
             let mut cx = cx.to_async();
-            Box::new(move || {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::merge_all_windows(cx, tab_group);
-                        }
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_move_tab_to_new_window({
-            let mut cx = cx.to_async();
-            Box::new(move || {
+            Box::new(move |_tab_group| {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         SystemWindowTabController::sync_system_window_tab_groups(cx, window);

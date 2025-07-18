@@ -508,8 +508,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn titlebar_double_click(&self) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_tab_group_changed(&self, _callback: Box<dyn FnMut(usize)>) {}
     fn merge_all_windows(&self) {}
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}

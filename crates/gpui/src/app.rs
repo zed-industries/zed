@@ -337,20 +337,6 @@ impl SystemWindowTabController {
         }
     }
 
-    /// Merge all windows to a single tab group.
-    pub fn merge_all_windows(cx: &mut App, tab_group: usize) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let mut all_windows = Vec::new();
-        for windows in controller.tabs.values() {
-            all_windows.extend(windows.iter().cloned());
-        }
-
-        controller.tabs.clear();
-        if !all_windows.is_empty() {
-            controller.tabs.insert(tab_group, all_windows);
-        }
-    }
-
     /// Sync the system window tab groups with the application's tab groups.
     pub fn sync_system_window_tab_groups(cx: &mut App, window: &Window) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
@@ -819,20 +805,6 @@ impl App {
                     cx.window_update_stack.pop();
                     window.root.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
-
-                    // TODO: Find a less hacky way to get the tab group after window creation,
-                    // without interfering with the automatic window tabbing.
-                    window
-                        .spawn(cx, async move |cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(200))
-                                .await;
-                            cx.update(|window, cx| {
-                                SystemWindowTabController::add_window(cx, window);
-                            })
-                        })
-                        .detach();
-
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
