@@ -16,7 +16,6 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
-command_palette.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
 feature_flags.workspace = true
@@ -25,10 +24,4 @@ gpui.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true

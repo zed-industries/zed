@@ -3,18 +3,17 @@ use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
-    Image, IntoElement, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
-    image_cache, img,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{SystemAppearance, ThemeMode, ThemeSettings};
+use theme::{ThemeMode, ThemeSettings};
 use ui::{
-    ActiveTheme as _, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider,
-    FluentBuilder, Headline, Icon, IconName, InteractiveElement, KeyBinding, Label, LabelCommon,
-    ParentElement as _, StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector,
-    VectorName, div, divider, h_flex, rems, v_container, v_flex,
+    ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider, FluentBuilder,
+    Headline, InteractiveElement, KeyBinding, Label, LabelCommon, ParentElement as _,
+    StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector, VectorName, div,
+    h_flex, rems, v_container, v_flex,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -220,11 +219,7 @@ impl Onboarding {
         }
     }
 
-    fn render_basics_page(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme_mode = read_theme_selection(cx);
 
         v_container().child(
@@ -263,20 +258,12 @@ impl Onboarding {
         )
     }
 
-    fn render_editing_page(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_editing_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // div().child("editing page")
         "Right"
     }
 
-    fn render_ai_setup_page(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().child("ai setup page")
     }
 }
