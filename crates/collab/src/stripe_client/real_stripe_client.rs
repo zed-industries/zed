@@ -174,7 +174,7 @@ impl StripeClient for RealStripeClient {
     ) -> Result<()> {
         let subscription_id = subscription_id.try_into()?;
 
-        let mut update_subscription = stripe::UpdateSubscription {
+        let update_subscription = stripe::UpdateSubscription {
             items: params.items.map(|items| {
                 items
                     .into_iter()
