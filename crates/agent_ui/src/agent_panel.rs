@@ -53,7 +53,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    ConfigurationError, LanguageModelProviderTosView, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -1347,6 +1348,19 @@ impl AgentPanel {
                 }
 
                 self.new_thread(&NewThread::default(), window, cx);
+                if let Some((thread, model)) =
+                    self.active_thread(cx).zip(provider.default_model(cx))
+                {
+                    thread.update(cx, |thread, cx| {
+                        thread.set_configured_model(
+                            Some(ConfiguredModel {
+                                provider: provider.clone(),
+                                model,
+                            }),
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
