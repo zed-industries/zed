@@ -59,7 +59,7 @@ impl TextDiffView {
                 first_selection.start..first_selection.end
             };
 
-            Some((buffer.clone(), selection_range))
+            Some((buffer, selection_range))
         });
 
         let Some((source_buffer, source_range)) = source_editor_buffer_and_range else {
@@ -67,16 +67,13 @@ impl TextDiffView {
             return None;
         };
 
-        let clipboard_text = diff_data.clipboard_text.clone();
-
         let clipboard_buffer = cx.new(|cx| {
-            let mut buffer = language::Buffer::local(clipboard_text.clone(), cx);
+            let clipboard_text = diff_data.clipboard_text.clone();
+            let mut buffer = language::Buffer::local(clipboard_text, cx);
             let source_language = source_buffer.read(cx).language().cloned();
             buffer.set_language(source_language, cx);
             buffer
         });
-        let clipboard_max_point = clipboard_buffer.read(cx).max_point();
-        let clipboard_range = Point::new(0, 0)..clipboard_max_point;
 
         let workspace = workspace.weak_handle();
 
@@ -85,7 +82,6 @@ impl TextDiffView {
 
             let buffer_diff = build_range_based_diff(
                 clipboard_buffer.clone(),
-                clipboard_range.clone(),
                 source_buffer.clone(),
                 source_range.clone(),
                 cx,
@@ -100,7 +96,7 @@ impl TextDiffView {
                         source_buffer,
                         source_range,
                         buffer_diff,
-                        project.clone(),
+                        project,
                         window,
                         cx,
                     )
@@ -133,7 +129,7 @@ impl TextDiffView {
 
             multibuffer.push_excerpts(
                 source_buffer.clone(),
-                [editor::ExcerptRange::new(source_range.clone())],
+                [editor::ExcerptRange::new(source_range)],
                 cx,
             );
 
@@ -141,8 +137,7 @@ impl TextDiffView {
             multibuffer
         });
         let diff_editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
+            let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
             editor.start_temporary_diff_override();
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
@@ -238,14 +233,11 @@ impl TextDiffView {
 
 async fn build_range_based_diff(
     old_buffer: Entity<Buffer>,
-    old_range: Range<Point>,
     new_buffer: Entity<Buffer>,
     new_range: Range<Point>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    let old_text = old_buffer.read_with(cx, |buffer, _| {
-        buffer.text_for_range(old_range.clone()).collect::<String>()
-    })?;
+    let old_text = old_buffer.read_with(cx, |buffer, _| buffer.text())?;
 
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
@@ -257,7 +249,7 @@ async fn build_range_based_diff(
 
             let range_start = new_buffer_snapshot.point_to_offset(new_range.start);
             let range_end = new_buffer_snapshot.point_to_offset(new_range.end);
-            buffer.edit([(range_start..range_end, old_text.clone())], None, cx);
+            buffer.edit([(range_start..range_end, old_text)], None, cx);
 
             buffer
         })
@@ -498,7 +490,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, ["/test".as_ref()], cx).await;
 
         let (workspace, mut cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -510,7 +502,7 @@ mod tests {
             .await
             .unwrap();
 
-        let language_registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         // language_registry.add(Arc::new(Language::new(
         //     LanguageConfig {
         //         name: "Markdown".into(),
@@ -533,7 +525,7 @@ mod tests {
         // });
 
         let editor = cx.new_window_entity(|window, cx| {
-            let mut editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+            let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_text("new line 1\nline 2\nnew line 3\nline 4\n", window, cx);
             editor.select_all(&actions::SelectAll, window, cx);
             editor
@@ -544,7 +536,7 @@ mod tests {
                 TextDiffView::open(
                     &DiffClipboardWithSelectionData {
                         clipboard_text: "old line 1\nline 2\nold line 3\nline 4\n".to_string(),
-                        editor: editor.clone(),
+                        editor,
                     },
                     workspace,
                     window,
