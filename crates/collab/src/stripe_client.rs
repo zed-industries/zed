@@ -73,6 +73,7 @@ pub enum StripeCancellationDetailsReason {
 pub struct StripeCreateSubscriptionParams {
     pub customer: StripeCustomerId,
     pub items: Vec<StripeCreateSubscriptionItems>,
+    pub automatic_tax: Option<StripeAutomaticTax>,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,7 @@ pub struct StripeCreateSubscriptionItems {
 pub struct UpdateSubscriptionParams {
     pub items: Option<Vec<UpdateSubscriptionItems>>,
     pub trial_settings: Option<StripeSubscriptionTrialSettings>,
+    pub automatic_tax: Option<StripeAutomaticTax>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -222,6 +224,26 @@ pub struct StripeCreateCheckoutSessionSubscriptionData {
 #[derive(Debug, PartialEq, Clone)]
 pub struct StripeTaxIdCollection {
     pub enabled: bool,
+}
+
+/// Automatic tax configuration for Stripe subscriptions.
+/// When enabled, Stripe automatically calculates taxes based on customer location
+/// and configured tax registrations.
+#[derive(Debug, Clone)]
+pub struct StripeAutomaticTax {
+    /// Whether automatic tax calculation is enabled for the subscription
+    pub enabled: bool,
+    /// Who is responsible for collecting and remitting the tax
+    pub liability: Option<StripeAutomaticTaxLiability>,
+}
+
+/// Represents who is responsible for collecting and remitting taxes
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeAutomaticTaxLiability {
+    /// The platform account is responsible for taxes
+    Account,
+    /// The connected account is responsible for taxes (Self is a reserved keyword, hence Self_)
+    Self_,
 }
 
 #[derive(Debug)]
