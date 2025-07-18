@@ -1532,9 +1532,7 @@ impl Thread {
     ) -> Option<PendingToolUse> {
         // Represent notification as a simulated `project_notifications` tool call
         let tool_name = Arc::from("project_notifications");
-        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            return None;
-        };
+        let tool = self.tools.read(cx).tool(&tool_name, cx)?;
 
         if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
             return None;
