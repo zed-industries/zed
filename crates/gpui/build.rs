@@ -243,6 +243,7 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod windows {
     use std::{
+        fs,
         io::Write,
         path::{Path, PathBuf},
         process::{self, Command},
@@ -269,6 +270,7 @@ mod windows {
         let lib_name = "amd_ags_x64_2022_MT";
         #[cfg(target_pointer_width = "32")]
         let lib_name = "amd_ags_x86_2022_MT";
+
         println!("cargo:rustc-link-lib=static={}", lib_name);
         println!("cargo:rustc-link-search=native={}", lib_dir.display());
         println!(
@@ -291,8 +293,6 @@ mod windows {
 
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn compile_shaders() {
-        use std::fs;
-
         let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
             .join("src/platform/windows/shaders.hlsl");
         let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -317,7 +317,7 @@ mod windows {
             fs::remove_file(&rust_binding_path)
                 .expect("Failed to remove existing Rust binding file");
         }
-        for module in &modules {
+        for module in modules {
             compile_shader_for_module(
                 module,
                 &out_dir,
@@ -328,6 +328,7 @@ mod windows {
         }
     }
 
+    /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
         // Try to find in PATH
         if let Ok(output) = std::process::Command::new("where").arg("fxc.exe").output() {
@@ -432,8 +433,7 @@ mod windows {
     }
 
     fn generate_rust_binding(const_name: &str, head_file: &str, output_path: &str) {
-        let header_content =
-            std::fs::read_to_string(head_file).expect("Failed to read header file");
+        let header_content = fs::read_to_string(head_file).expect("Failed to read header file");
         let const_definition = {
             let global_var_start = header_content.find("const BYTE").unwrap();
             let global_var = &header_content[global_var_start..];
@@ -445,7 +445,7 @@ mod windows {
             const_name,
             const_definition.replace('{', "[").replace('}', "]")
         );
-        let mut options = std::fs::OpenOptions::new()
+        let mut options = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
