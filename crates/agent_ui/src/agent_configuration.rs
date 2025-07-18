@@ -1,3 +1,4 @@
+mod add_llm_provider_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -36,7 +37,7 @@ use zed_actions::ExtensionCategoryFilter;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
-use crate::AddContextServer;
+use crate::{AddContextServer, agent_configuration::add_llm_provider_modal::AddLlmProviderModal};
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -303,14 +304,24 @@ impl AgentConfiguration {
                                     .label_size(LabelSize::Small),
                             )
                             .anchor(gpui::Corner::TopRight)
-                            .menu(move |window, cx| {
-                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                    menu.header("Compatible APIs").entry(
-                                        "OpenAI",
-                                        None,
-                                        |_window, _cx| {},
-                                    )
-                                }))
+                            .menu({
+                                let workspace = self.workspace.clone();
+                                move |window, cx| {
+                                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                        menu.header("Compatible APIs").entry("OpenAI", None, {
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                workspace
+                                                    .update(cx, |workspace, cx| {
+                                                        AddLlmProviderModal::toggle(
+                                                            workspace, window, cx,
+                                                        );
+                                                    })
+                                                    .log_err();
+                                            }
+                                        })
+                                    }))
+                                }
                             }),
                     ),
             )
