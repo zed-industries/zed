@@ -1,0 +1,30 @@
+[package]
+name = "onboarding"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/onboarding.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+db.workspace = true
+feature_flags.workspace = true
+gpui.workspace = true
+settings.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+# Uncomment other workspace dependencies as needed
+# assistant.workspace = true
+# client.workspace = true
+# project.workspace = true

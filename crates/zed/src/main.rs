@@ -24,6 +24,7 @@ use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use onboarding::show_onboarding_view;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
@@ -1039,6 +1040,9 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 );
             }
         }
+        // todo! make this false
+    } else if true {
+        cx.update(|cx| show_onboarding_view(app_state, cx))?.await?;
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
