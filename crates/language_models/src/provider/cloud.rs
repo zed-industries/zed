@@ -1159,7 +1159,9 @@ impl RenderOnce for ZedAiConfiguration {
                         Button::new("upgrade", "Upgrade to Pro")
                             .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
-                            .on_click(|_, _, cx| cx.open_url(ZED_UPGRADE_URL)),
+                            .on_click(|_, _, cx| {
+                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                            }),
                     )
                 } else if self.has_accepted_terms_of_service {
                     this.text_sm()
