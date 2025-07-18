@@ -10816,6 +10816,7 @@ dependencies = [
  "http_client",
  "inline_completion",
  "language",
+ "log",
  "project",
  "schemars",
  "serde",

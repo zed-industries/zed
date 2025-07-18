@@ -411,7 +411,14 @@ pub async fn generate(
     let serialized_request = serde_json::to_string(&request)?;
     let request = request_builder.body(AsyncBody::from(serialized_request))?;
 
-    let mut response = client.send(request).await?;
+    let mut response = match client.send(request).await {
+        Ok(response) => response,
+        Err(err) => {
+            log::warn!("Ollama server unavailable at {}: {}", api_url, err);
+            return Err(err);
+        }
+    };
+
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
