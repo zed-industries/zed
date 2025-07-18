@@ -67,6 +67,36 @@ impl AgentPanelOnboarding {
             "Configure Providers"
         };
 
+        let content = if has_existing_providers {
+            List::new()
+                    .child(BulletItem::new(
+                        "Or start now using API keys from your environment for the following providers:"
+                    ))
+                    .child(
+                        h_flex()
+                            .px_5()
+                            .gap_2()
+                            .flex_wrap()
+                            .children(self.configured_providers.iter().cloned().map(|(icon, name)|
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                                    .child(Label::new(name))
+                            ))
+                    )
+                    .child(BulletItem::new(
+                        "No need for any of the plans or even to sign in",
+                    ))
+        } else {
+            List::new()
+                .child(BulletItem::new(
+                    "You can also use AI in Zed by bringing your own API keys",
+                ))
+                .child(BulletItem::new(
+                    "No need for any of the plans or even to sign in",
+                ))
+        };
+
         v_flex()
             .mt_2()
             .gap_1()
@@ -81,32 +111,7 @@ impl AgentPanelOnboarding {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(
-                List::new()
-                    .child(BulletItem::new(
-                        "You can also use AI in Zed by bringing your own API keys",
-                    ))
-                    .child(BulletItem::new(
-                        "No need for any of the plans or even to sign in",
-                    ))
-                    .when(has_existing_providers, |this| {
-                        this.child(BulletItem::new(
-                            "Or start now using API keys from your environment for the following providers:"
-                        ))
-                        .child(
-                            h_flex()
-                                .px_5()
-                                .gap_2()
-                                .flex_wrap()
-                                .children(self.configured_providers.iter().cloned().map(|(icon, name)|
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                                        .child(Label::new(name))
-                                ))
-                        )
-                    }),
-            )
+            .child(content)
             .when(has_existing_providers, |this| {
                 this.child(
                     Button::new("pick-model", "Choose Model")
