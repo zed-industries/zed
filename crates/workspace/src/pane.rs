@@ -2456,6 +2456,9 @@ impl Pane {
             )
             .drag_over::<DraggedTab>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().terminal_ansi_bright_red)
+                    .border_0()
+                    .border_r_1()
             })
             .drag_over::<DraggedSelection>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
