@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
+use scap::Target;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
@@ -76,7 +77,7 @@ impl ScreenCaptureSource for ScapCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: Some(self.target.title.into()),
+            label: Some(self.target.title.clone().into()),
             is_main: None,
             id: self.target.id as u64,
         })
@@ -132,25 +133,35 @@ fn start_default_target_screen_capture(
                 .get_next_frame()
                 .context("Failed to get first frame of screenshare to get the size.")?;
             let size = frame_size(&first_frame);
-            Ok((capturer, size))
+            let target = capturer
+                .target()
+                .context("Unable to determine the target display.")?;
+            let target = target.clone();
+            Ok((capturer, size, target))
         });
 
         match start_result {
-            Err(e) => {
-                sources_tx.send(Err(e)).ok();
-            }
-            Ok((capturer, size)) => {
+            Ok((capturer, size, Target::Display(display))) => {
                 let (stream_call_tx, stream_rx) = std::sync::mpsc::sync_channel(1);
                 sources_tx
                     .send(Ok(vec![ScapDefaultTargetCaptureSource {
                         stream_call_tx,
                         size,
+                        target: display.clone(),
                     }]))
                     .ok();
                 let Ok((stream_tx, frame_callback)) = stream_rx.recv() else {
                     return;
                 };
-                run_capture(capturer, frame_callback, stream_tx);
+                run_capture(capturer, display, frame_callback, stream_tx);
+            }
+            Err(e) => {
+                sources_tx.send(Err(e)).ok();
+            }
+            _ => {
+                sources_tx
+                    .send(Err(anyhow!("The screen capture source is not a display")))
+                    .ok();
             }
         }
     });
@@ -242,7 +253,7 @@ impl ScreenCaptureStream for ScapStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: Some(self.display.title.into()),
+            label: Some(self.display.title.clone().into()),
             is_main: None,
             id: self.display.id as u64,
         })
