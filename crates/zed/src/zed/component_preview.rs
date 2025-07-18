@@ -382,7 +382,9 @@ impl ComponentPreview {
         for scope in scopes {
             if let Some(components) = scope_groups.remove(&scope) {
                 if !components.is_empty() {
+                    entries.push(PreviewEntry::Separator);
                     entries.push(PreviewEntry::SectionHeader(scope.to_string().into()));
+
                     let mut sorted_components = components;
                     sorted_components.sort_by_key(|(component, _)| component.sort_name());
 
@@ -565,12 +567,8 @@ impl ComponentPreview {
                     .into_any_element()
             }
             PreviewEntry::Separator => ListItem::new(ix)
-                .child(
-                    h_flex()
-                        .occlude()
-                        .pt_3()
-                        .child(Divider::horizontal_dashed()),
-                )
+                .disabled(true)
+                .child(div().w_full().py_2().child(Divider::horizontal()))
                 .into_any_element(),
         }
     }
