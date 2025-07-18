@@ -288,6 +288,7 @@ mod windows {
             .unwrap();
     }
 
+    /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn compile_shaders() {
         use std::fs;
         use std::process::{self, Command};
