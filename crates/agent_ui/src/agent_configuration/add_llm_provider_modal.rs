@@ -4,11 +4,12 @@ use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, Task};
+use language_model::LanguageModelRegistry;
 use language_models::{
     AllLanguageModelSettings, OpenAiCompatibleSettingsContent,
     provider::open_ai_compatible::AvailableModel,
 };
-use settings::{Settings, update_settings_file};
+use settings::update_settings_file;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use ui_input::SingleLineInput;
 use workspace::{ModalView, Workspace};
@@ -165,9 +166,11 @@ fn save_provider_to_settings(
     if provider_name.is_empty() {
         return Task::ready(Err("Provider Name cannot be empty".into()));
     }
-    if AllLanguageModelSettings::get_global(cx)
-        .openai_compatible
-        .contains_key(&provider_name)
+
+    if LanguageModelRegistry::read_global(cx)
+        .providers()
+        .iter()
+        .any(|provider| provider.name().0.as_ref() == provider_name.as_ref())
     {
         return Task::ready(Err(
             "Provider Name is already taken by another provider".into()
