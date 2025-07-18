@@ -233,17 +233,6 @@ pub struct StripeTaxIdCollection {
 pub struct StripeAutomaticTax {
     /// Whether automatic tax calculation is enabled for the subscription
     pub enabled: bool,
-    /// Who is responsible for collecting and remitting the tax
-    pub liability: Option<StripeAutomaticTaxLiability>,
-}
-
-/// Represents who is responsible for collecting and remitting taxes
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum StripeAutomaticTaxLiability {
-    /// The platform account is responsible for taxes
-    Account,
-    /// The connected account is responsible for taxes (Self is a reserved keyword, hence Self_)
-    Self_,
 }
 
 #[derive(Debug)]

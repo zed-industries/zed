@@ -200,7 +200,6 @@ impl StripeBilling {
                     }),
                     automatic_tax: Some(StripeAutomaticTax {
                         enabled: true,
-                        liability: None,
                     }),
                 },
             )
@@ -348,10 +347,7 @@ impl StripeBilling {
                 price: Some(zed_free_price_id),
                 quantity: Some(1),
             }],
-            automatic_tax: Some(StripeAutomaticTax {
-                enabled: true,
-                liability: None,
-            }),
+            automatic_tax: Some(StripeAutomaticTax { enabled: true }),
         };
 
         let subscription = self.client.create_subscription(params).await?;
