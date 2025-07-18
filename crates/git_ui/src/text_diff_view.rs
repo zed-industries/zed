@@ -284,32 +284,6 @@ async fn build_range_based_diff(
     })
 }
 
-pub async fn build_buffer_diff(
-    old_buffer: Entity<Buffer>,
-    new_buffer: Entity<Buffer>,
-    cx: &mut AsyncApp,
-) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-
-    let diff_snapshot = cx
-        .update(|cx| {
-            BufferDiffSnapshot::new_with_base_buffer(
-                new_buffer_snapshot.text.clone(),
-                Some(old_buffer_snapshot.text().into()),
-                old_buffer_snapshot,
-                cx,
-            )
-        })?
-        .await;
-
-    cx.new(|cx| {
-        let mut diff = BufferDiff::new(&new_buffer_snapshot.text, cx);
-        diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
-        diff
-    })
-}
-
 impl EventEmitter<EditorEvent> for TextDiffView {}
 
 impl Focusable for TextDiffView {
