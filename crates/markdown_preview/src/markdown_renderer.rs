@@ -1080,8 +1080,8 @@ impl MathWorld {
             FileId::new(None, VirtualPath::new("main.typ")),
             format!(
                 r#"#set page(width: auto, height: auto, margin: 2pt)
-#show math.equation: set text(font: "STIX Two Math", size: 18pt, fill: white)
-#set text(font: "STIX Two Math", size: 18pt, fill: white)
+#show math.equation: set text(font: "STIX Two Math", size: 14pt, fill: white)
+#set text(font: "STIX Two Math", size: 16pt, fill: white)
 $ {} $"#,
                 content
             ),
