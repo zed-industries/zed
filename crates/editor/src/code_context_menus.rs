@@ -1392,6 +1392,7 @@ impl CodeActionsMenu {
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+
         let list = uniform_list(
             "code_actions_menu",
             self.actions.len(),
@@ -1443,27 +1444,15 @@ impl CodeActionsMenu {
                                                     SharedString::new(format!("edit-{ix}")),
                                                     IconName::Pencil,
                                                 )
-                                                .on_click(cx.listener(
-                                                    move |editor, _, window, cx| {
+                                                .on_click(cx.listener({
+                                                    let scenario = scenario.clone();
+                                                    move |_, _, _window, cx| {
                                                         cx.stop_propagation();
-                                                        window.dispatch_action(
-                                                            zed_actions::OpenInDebugJson.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                        // if let Some(workspace) = editor.workspace()
-                                                        // {
-                                                        //     workspace.update(cx, |this, cx| {
-                                                        //         // if let Some(panel) = this.panel::<DebugPanel>(cx) {
-                                                        //         //     let kind = todo!();
-                                                        //         //     let id = todo!();
-                                                        //         //     panel.update_in(cx, |panel, window, cx| {
-                                                        //         //         panel.go_to_scenario_definition(kind, scenario, id, window, cx)
-                                                        //         //     })?
-                                                        //         // }
-                                                        //     })
-                                                        // }
-                                                    },
-                                                )),
+                                                        cx.emit(OpenInDebugJson {
+                                                            scenario: scenario.clone(),
+                                                        });
+                                                    }
+                                                })),
                                             )
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1509,4 +1498,9 @@ impl CodeActionsMenu {
 
         Popover::new().child(list).into_any_element()
     }
+}
+
+#[derive(Clone)]
+pub struct OpenInDebugJson {
+    pub scenario: DebugScenario,
 }

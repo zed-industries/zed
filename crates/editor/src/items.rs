@@ -1385,6 +1385,7 @@ fn clip_ranges<'a>(
 }
 
 impl EventEmitter<SearchEvent> for Editor {}
+impl EventEmitter<crate::code_context_menus::OpenInDebugJson> for Editor {}
 
 impl Editor {
     pub fn update_restoration_data(
