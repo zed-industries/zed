@@ -54,8 +54,9 @@ pub trait LinuxClient {
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(&self)
-    -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
