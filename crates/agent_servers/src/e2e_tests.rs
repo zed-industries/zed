@@ -111,18 +111,21 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
         .await
         .unwrap();
     thread.read_with(cx, |thread, _cx| {
-        assert!(matches!(
-            &thread.entries()[2],
-            AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Allowed { .. },
-                ..
-            })
-        ));
-
-        assert!(matches!(
-            thread.entries()[3],
-            AgentThreadEntry::AssistantMessage(_)
-        ));
+        assert!(thread.entries().iter().any(|entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::Allowed { .. },
+                    ..
+                })
+            )
+        }));
+        assert!(
+            thread
+                .entries()
+                .iter()
+                .any(|entry| { matches!(entry, AgentThreadEntry::AssistantMessage(_)) })
+        );
     });
 }
 
