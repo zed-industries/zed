@@ -76,7 +76,7 @@ impl ScreenCaptureSource for ScapCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: self.target.title.into(),
+            label: Some(self.target.title.into()),
             is_main: None,
             id: self.target.id as u64,
         })
@@ -242,7 +242,7 @@ impl ScreenCaptureStream for ScapStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: self.display.title.into(),
+            label: Some(self.display.title.into()),
             is_main: None,
             id: self.display.id as u64,
         })
