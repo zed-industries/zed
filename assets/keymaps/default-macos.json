@@ -975,7 +975,7 @@
     }
   },
   {
-    "context": "GitPanel > Editor",
+    "context": "CommitEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
