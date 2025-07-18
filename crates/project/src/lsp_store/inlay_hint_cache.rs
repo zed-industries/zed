@@ -48,7 +48,7 @@ impl InlayHintCache {
         range: Range<usize>,
         known_cache_version: Option<usize>,
         cx: &mut Context<Self>,
-    ) -> Option<Shared<Task<InlayHints>>> {
+    ) -> Option<(Range<BufferRow>, Shared<Task<InlayHints>>)> {
         todo!("TODO kb")
     }
     // we want to store the cache version outbound, so they can query with it: we can return nothing (`Option`) if the version matches
