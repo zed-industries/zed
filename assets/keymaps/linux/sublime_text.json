@@ -41,9 +41,9 @@
       // "ctrl-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f9": "editor::SortLinesCaseSensitive",
       "ctrl-f9": "editor::SortLinesCaseInsensitive",
-      "f12": "editor::GoToDefinition",
+      "f12": "editor::GoToDefinition", // lsp_symbol_definition
       "ctrl-f12": "editor::GoToDefinitionSplit",
-      "shift-f12": "editor::FindAllReferences",
+      "shift-f12": "editor::FindAllReferences", // lsp_symbol_references
       "ctrl-shift-f12": "editor::FindAllReferences",
       "ctrl-.": "editor::GoToHunk",
       "ctrl-,": "editor::GoToPreviousHunk",
@@ -61,7 +61,9 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "ctrl-r": "outline::Toggle"
+      "ctrl-alt-space": "editor::ShowSignatureHelp", // lsp_signature_help_show
+      "ctrl-shift-r": "project_symbols::Toggle", // lsp_workspace_symbols
+      "ctrl-r": "outline::Toggle" // lsp_document_symbols
     }
   },
   {
@@ -90,6 +92,7 @@
     "context": "Workspace",
     "bindings": {
       "ctrl-k ctrl-b": "workspace::ToggleLeftDock",
+      "ctrl-alt-m": "diagnostics::Deploy", // lsp_show_diagnostics_panel
       // "ctrl-0": "project_panel::ToggleFocus", // normally resets zoom
       "shift-ctrl-r": "project_symbols::Toggle"
     }
