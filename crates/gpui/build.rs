@@ -243,11 +243,18 @@ mod macos {
 
 #[cfg(target_os = "windows")]
 mod windows {
-    use std::path::PathBuf;
+    use std::{
+        io::Write,
+        path::{Path, PathBuf},
+        process::{self, Command},
+    };
 
     pub(super) fn build() {
         // Link the AMD AGS library
         link_amd_ags();
+
+        // Compile HLSL shaders
+        compile_shaders();
 
         // Embed the Windows manifest and resource file
         #[cfg(feature = "windows-manifest")]
@@ -280,5 +287,175 @@ mod windows {
         embed_resource::compile(rc_file, embed_resource::NONE)
             .manifest_required()
             .unwrap();
+    }
+
+    fn compile_shaders() {
+        use std::fs;
+        use std::process::{self, Command};
+
+        let shader_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("src/platform/windows/shaders.hlsl");
+        let out_dir = std::env::var("OUT_DIR").unwrap();
+
+        println!("cargo:rerun-if-changed={}", shader_path.display());
+
+        // Check if fxc.exe is available
+        let fxc_path = find_fxc_compiler();
+
+        // Define all modules
+        let modules = [
+            "quad",
+            "shadow",
+            "paths",
+            "underline",
+            "monochrome_sprite",
+            "polychrome_sprite",
+        ];
+
+        let rust_binding_path = format!("{}/shaders_bytes.rs", out_dir);
+        if Path::new(&rust_binding_path).exists() {
+            fs::remove_file(&rust_binding_path)
+                .expect("Failed to remove existing Rust binding file");
+        }
+        for module in &modules {
+            compile_shader_for_module(
+                module,
+                &out_dir,
+                &fxc_path,
+                shader_path.to_str().unwrap(),
+                &rust_binding_path,
+            );
+        }
+        println!(
+            "cargo:warning=Successfully compiled shaders. Output written to: {}",
+            rust_binding_path
+        );
+    }
+
+    fn find_fxc_compiler() -> String {
+        // Try to find in PATH
+        if let Ok(output) = std::process::Command::new("where").arg("fxc.exe").output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout);
+                return path.trim().to_string();
+            }
+        }
+
+        // Check the default path
+        if Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe")
+            .exists()
+        {
+            return r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe"
+                .to_string();
+        }
+
+        // Check environment variable
+        if let Ok(path) = std::env::var("GPUI_FXC_PATH") {
+            if Path::new(&path).exists() {
+                return path;
+            }
+        }
+
+        panic!("Failed to find fxc.exe");
+    }
+
+    fn compile_shader_for_module(
+        module: &str,
+        out_dir: &str,
+        fxc_path: &str,
+        shader_path: &str,
+        rust_binding_path: &str,
+    ) {
+        // Compile vertex shader
+        let output_file = format!("{}/{}_vs.h", out_dir, module);
+        let const_name = format!("{}_VERTEX_BYTES", module.to_uppercase());
+        compile_shader_impl(
+            fxc_path,
+            &format!("{module}_vertex"),
+            &output_file,
+            &const_name,
+            shader_path,
+            "vs_5_0",
+        );
+        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+
+        // Compile fragment shader
+        let output_file = format!("{}/{}_ps.h", out_dir, module);
+        let const_name = format!("{}_FRAGMENT_BYTES", module.to_uppercase());
+        compile_shader_impl(
+            fxc_path,
+            &format!("{module}_fragment"),
+            &output_file,
+            &const_name,
+            shader_path,
+            "ps_5_0",
+        );
+        generate_rust_binding(&const_name, &output_file, &rust_binding_path);
+    }
+
+    fn compile_shader_impl(
+        fxc_path: &str,
+        entry_point: &str,
+        output_path: &str,
+        var_name: &str,
+        shader_path: &str,
+        target: &str,
+    ) {
+        let output = Command::new(fxc_path)
+            .args([
+                "/T",
+                target,
+                "/E",
+                entry_point,
+                "/Fh",
+                output_path,
+                "/Vn",
+                var_name,
+                shader_path,
+            ])
+            .output();
+
+        match output {
+            Ok(result) => {
+                if result.status.success() {
+                    return;
+                }
+                eprintln!(
+                    "Pixel shader compilation failed for {}:\n{}",
+                    entry_point,
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Failed to run fxc for {}: {}", entry_point, e);
+                process::exit(1);
+            }
+        }
+    }
+
+    fn generate_rust_binding(const_name: &str, head_file: &str, output_path: &str) {
+        let header_content =
+            std::fs::read_to_string(head_file).expect("Failed to read header file");
+        let const_definition = {
+            let global_var_start = header_content.find("const BYTE").unwrap();
+            let global_var = &header_content[global_var_start..];
+            let equal = global_var.find('=').unwrap();
+            global_var[equal + 1..].trim()
+        };
+        let rust_binding = format!(
+            "const {}: &[u8] = &{}\n",
+            const_name,
+            const_definition.replace('{', "[").replace('}', "]")
+        );
+        let mut options = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(output_path)
+            .expect("Failed to open Rust binding file");
+        options
+            .write_all(rust_binding.as_bytes())
+            .expect("Failed to write Rust binding file");
     }
 }
