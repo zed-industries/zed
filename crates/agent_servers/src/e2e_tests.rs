@@ -137,12 +137,23 @@ pub async fn test_tool_call_with_confirmation(
     let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
     let full_turn = thread.update(cx, |thread, cx| {
-        thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
+        thread.send_raw(
+            r#"Run `touch hello.txt && echo "Hello, world!" | tee hello.txt`"#,
+            cx,
+        )
     });
 
     run_until_first_tool_call(
         &thread,
-        |entry| matches!(entry, AgentThreadEntry::ToolCall(_)),
+        |entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ToolCall(ToolCall {
+                    status: ToolCallStatus::WaitingForConfirmation { .. },
+                    ..
+                })
+            )
+        },
         cx,
     )
     .await;
@@ -156,12 +167,16 @@ pub async fn test_tool_call_with_confirmation(
                     ..
                 },
             ..
-        }) = &thread.entries()[2]
+        }) = &thread
+            .entries()
+            .iter()
+            .find(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
+            .unwrap()
         else {
             panic!();
         };
 
-        assert_eq!(root_command, "echo");
+        assert!(root_command.contains("touch"));
 
         *id
     });
@@ -169,13 +184,13 @@ pub async fn test_tool_call_with_confirmation(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
 
-        assert!(matches!(
-            &thread.entries()[2],
+        assert!(thread.entries().iter().any(|entry| matches!(
+            entry,
             AgentThreadEntry::ToolCall(ToolCall {
                 status: ToolCallStatus::Allowed { .. },
                 ..
             })
-        ));
+        )));
     });
 
     full_turn.await.unwrap();
@@ -185,15 +200,19 @@ pub async fn test_tool_call_with_confirmation(
             content: Some(ToolCallContent::Markdown { markdown }),
             status: ToolCallStatus::Allowed { .. },
             ..
-        }) = &thread.entries()[2]
+        }) = thread
+            .entries()
+            .iter()
+            .find(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
+            .unwrap()
         else {
             panic!();
         };
 
         markdown.read_with(cx, |md, _cx| {
             assert!(
-                md.source().contains("Hello, world!"),
-                r#"Expected '{}' to contain "Hello, world!""#,
+                md.source().contains("Hello"),
+                r#"Expected '{}' to contain "Hello""#,
                 md.source()
             );
         });

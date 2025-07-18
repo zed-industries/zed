@@ -770,8 +770,13 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
-        call.content = new_content
-            .map(|new_content| ToolCallContent::from_acp(new_content, language_registry, cx));
+        if let Some(new_content) = new_content {
+            call.content = Some(ToolCallContent::from_acp(
+                new_content,
+                language_registry,
+                cx,
+            ));
+        }
 
         match &mut call.status {
             ToolCallStatus::Allowed { status } => {
