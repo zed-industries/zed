@@ -126,6 +126,10 @@ pub enum ButtonStyle {
     /// coloring like an error or success button.
     Tinted(TintColor),
 
+    /// Usually used as a secondary action that should have more emphasis than
+    /// a fully transparent button.
+    Outlined,
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
@@ -180,6 +184,12 @@ impl ButtonStyle {
                 icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
+            ButtonStyle::Outlined => ButtonLikeStyles {
+                background: element_bg_from_elevation(elevation, cx),
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
@@ -219,6 +229,12 @@ impl ButtonStyle {
                 styles.background = theme.darken(styles.background, 0.05, 0.2);
                 styles
             }
+            ButtonStyle::Outlined => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_hover,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -251,6 +267,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::Outlined => ButtonLikeStyles {
+                background: cx.theme().colors().element_active,
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
@@ -275,6 +297,12 @@ impl ButtonStyle {
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::Outlined => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color: cx.theme().colors().border,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
@@ -307,6 +335,12 @@ impl ButtonStyle {
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
+            },
+            ButtonStyle::Outlined => ButtonLikeStyles {
+                background: cx.theme().colors().element_disabled,
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
@@ -525,6 +559,13 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
+            .when(
+                match self.style {
+                    ButtonStyle::Outlined => true,
+                    _ => false,
+                },
+                |this| this.border_1(),
+            )
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_sm(),
                 ButtonLikeRounding::Left => this.rounded_l_sm(),
@@ -538,6 +579,7 @@ impl RenderOnce for ButtonLike {
                 }
                 ButtonSize::None => this,
             })
+            .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| {
                 if self.cursor_style == CursorStyle::PointingHand {
