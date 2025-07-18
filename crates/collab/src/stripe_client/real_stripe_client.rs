@@ -17,10 +17,10 @@ use stripe::{
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeAutomaticTax, StripeAutomaticTaxLiability,
-    StripeBillingAddressCollection, StripeCancellationDetails, StripeCancellationDetailsReason,
-    StripeCheckoutSession, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
-    StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    CreateCustomerParams, StripeBillingAddressCollection, StripeCancellationDetails,
+    StripeCancellationDetailsReason, StripeCheckoutSession, StripeCheckoutSessionMode,
+    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
     StripeCustomerUpdateAddress, StripeCustomerUpdateName, StripeCustomerUpdateShipping,
