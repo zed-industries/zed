@@ -382,6 +382,7 @@ pub(crate) struct Vim {
 
     editor: WeakEntity<Editor>,
 
+    executing_normal_command: bool,
     last_command: Option<String>,
     running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -431,6 +432,7 @@ impl Vim {
             selected_register: None,
             search: SearchState::default(),
 
+            executing_normal_command: false,
             last_command: None,
             running_command: None,
 
