@@ -413,7 +413,7 @@ impl DirectXRenderer {
         };
         let driver_version = match desc.VendorId {
             0x10DE => nvidia::get_driver_version(),
-            0x1002 => Err(anyhow::anyhow!("AMD driver info not implemented yet")),
+            0x1002 => amd::get_driver_version(),
             0x8086 => intel::get_driver_version(&self.devices.adapter),
             _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
         }
@@ -1434,6 +1434,84 @@ mod nvidia {
                 minor,
                 branch_string.to_string_lossy()
             ))
+        }
+    }
+}
+
+mod amd {
+    use std::os::raw::{c_char, c_int, c_void};
+
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
+    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12) | 0;
+
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L204
+    // This is an opaque type, using struct to represent it properly for FFI
+    #[repr(C)]
+    struct AGSContext {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct AGSGPUInfo {
+        pub driver_version: *const c_char,
+        pub radeon_software_version: *const c_char,
+        pub num_devices: c_int,
+        pub devices: *mut c_void,
+    }
+
+    unsafe extern "C" {
+        fn agsInitialize(
+            version: c_int,
+            config: *const c_void,
+            context: *mut *mut AGSContext,
+            gpu_info: *mut AGSGPUInfo,
+        ) -> c_int;
+
+        fn agsDeInitialize(context: *mut AGSContext) -> c_int;
+    }
+
+    pub(super) fn get_driver_version() -> anyhow::Result<String> {
+        unsafe {
+            let mut context: *mut AGSContext = std::ptr::null_mut();
+            let mut gpu_info: AGSGPUInfo = AGSGPUInfo {
+                driver_version: std::ptr::null(),
+                radeon_software_version: std::ptr::null(),
+                num_devices: 0,
+                devices: std::ptr::null_mut(),
+            };
+
+            let result = agsInitialize(
+                AGS_CURRENT_VERSION,
+                std::ptr::null(),
+                &mut context,
+                &mut gpu_info,
+            );
+            if result != 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to initialize AGS, error code: {}",
+                    result
+                ));
+            }
+
+            // Vulkan acctually returns this as the driver version
+            let software_version = if !gpu_info.radeon_software_version.is_null() {
+                std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "Unknown Radeon Software Version".to_string()
+            };
+
+            let driver_version = if !gpu_info.driver_version.is_null() {
+                std::ffi::CStr::from_ptr(gpu_info.driver_version)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "Unknown Radeon Driver Version".to_string()
+            };
+
+            agsDeInitialize(context);
+            Ok(format!("{} ({})", software_version, driver_version))
         }
     }
 }
