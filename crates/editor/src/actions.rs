@@ -733,5 +733,6 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        UnwrapSyntaxNode
     ]
 );
