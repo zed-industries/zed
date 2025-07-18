@@ -283,16 +283,18 @@ impl AddLlmProviderModal {
     }
 
     fn render_model_section(&self, cx: &mut Context<Self>) -> Section {
-        Section::new().contained(true).child(
+        Section::new().child(
             v_flex()
                 .gap_2()
                 .child(
                     h_flex()
                         .justify_between()
-                        .child(Label::new("Models"))
+                        .child(Label::new("Models").size(LabelSize::Small))
                         .child(
                             Button::new("add-model", "Add Model")
                                 .icon(IconName::Plus)
+                                .icon_size(IconSize::XSmall)
+                                .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.input.add_model(window, cx);
                                     cx.notify();
@@ -314,6 +316,11 @@ impl AddLlmProviderModal {
         let model = &self.input.models[ix];
 
         v_flex()
+            .border_1()
+            .border_dashed()
+            .border_color(cx.theme().colors().border.opacity(0.6))
+            .rounded_sm()
+            .p_2()
             .gap_2()
             .child(model.name.clone())
             .child(
@@ -327,6 +334,8 @@ impl AddLlmProviderModal {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
                         .icon(IconName::Trash)
+                        .icon_size(IconSize::XSmall)
+                        .label_size(LabelSize::Small)
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.input.remove_model(ix);
                             cx.notify();
@@ -371,8 +380,12 @@ impl Render for AddLlmProviderModal {
                             Section::new().child(
                                 h_flex()
                                     .gap_2()
-                                    .child(Icon::new(IconName::Warning).color(Color::Warning))
-                                    .child(Label::new(error)),
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(Label::new(error).size(LabelSize::Small)),
                             ),
                         )
                     })
