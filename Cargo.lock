@@ -334,28 +334,15 @@ dependencies = [
 name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
- "agent",
- "agent_settings",
  "client",
  "component",
  "gpui",
- "inventory",
- "language",
  "language_model",
- "project",
  "proto",
- "schemars",
- "search",
  "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
  "smallvec",
- "telemetry",
- "telemetry_events",
- "theme",
  "ui",
- "workspace",
+ "workspace-hack",
  "zed_actions",
 ]
 
@@ -20564,8 +20551,6 @@ dependencies = [
  "language_model",
  "log",
  "menu",
- "migrator",
- "paths",
  "postage",
  "project",
  "proto",
