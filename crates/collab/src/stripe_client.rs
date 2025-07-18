@@ -86,7 +86,6 @@ pub struct StripeCreateSubscriptionItems {
 pub struct UpdateSubscriptionParams {
     pub items: Option<Vec<UpdateSubscriptionItems>>,
     pub trial_settings: Option<StripeSubscriptionTrialSettings>,
-    pub automatic_tax: Option<StripeAutomaticTax>,
 }
 
 #[derive(Debug, PartialEq, Clone)]

@@ -197,10 +197,7 @@ impl StripeBilling {
                         end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
                             missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
                         },
-                    }),
-                    automatic_tax: Some(StripeAutomaticTax {
-                        enabled: true,
-                    }),
+                    })
                 },
             )
             .await?;

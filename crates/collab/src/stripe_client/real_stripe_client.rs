@@ -12,8 +12,8 @@ use stripe::{
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
     CreateCustomer, CreateSubscriptionAutomaticTax, Customer, CustomerId, ListCustomers, Price,
     PriceId, Recurring, Subscription, SubscriptionId, SubscriptionItem, SubscriptionItemId,
-    UpdateCustomer, UpdateSubscriptionAutomaticTax, UpdateSubscriptionItems,
-    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
+    UpdateCustomer, UpdateSubscriptionItems, UpdateSubscriptionTrialSettings,
+    UpdateSubscriptionTrialSettingsEndBehavior,
     UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
 
@@ -180,7 +180,6 @@ impl StripeClient for RealStripeClient {
                         .collect()
                 }),
                 trial_settings: params.trial_settings.map(Into::into),
-                automatic_tax: params.automatic_tax.map(Into::into),
                 ..Default::default()
             },
         )
@@ -370,15 +369,6 @@ impl From<SubscriptionItem> for StripeSubscriptionItem {
 }
 
 impl From<StripeAutomaticTax> for CreateSubscriptionAutomaticTax {
-    fn from(value: StripeAutomaticTax) -> Self {
-        Self {
-            enabled: value.enabled,
-            liability: None,
-        }
-    }
-}
-
-impl From<StripeAutomaticTax> for UpdateSubscriptionAutomaticTax {
     fn from(value: StripeAutomaticTax) -> Self {
         Self {
             enabled: value.enabled,
