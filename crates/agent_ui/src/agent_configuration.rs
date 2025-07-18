@@ -37,7 +37,10 @@ use zed_actions::ExtensionCategoryFilter;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
-use crate::{AddContextServer, agent_configuration::add_llm_provider_modal::AddLlmProviderModal};
+use crate::{
+    AddContextServer,
+    agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+};
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -314,7 +317,10 @@ impl AgentConfiguration {
                                                 workspace
                                                     .update(cx, |workspace, cx| {
                                                         AddLlmProviderModal::toggle(
-                                                            workspace, window, cx,
+                                                            LlmCompatibleProvider::OpenAi,
+                                                            workspace,
+                                                            window,
+                                                            cx,
                                                         );
                                                     })
                                                     .log_err();

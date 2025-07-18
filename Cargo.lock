@@ -251,6 +251,7 @@ dependencies = [
  "time_format",
  "tree-sitter-md",
  "ui",
+ "ui_input",
  "unindent",
  "urlencoding",
  "util",
