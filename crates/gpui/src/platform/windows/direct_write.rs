@@ -831,9 +831,10 @@ impl DirectWriteState {
 
         let mut bitmap_data: Vec<u8>;
         if params.is_emoji {
-            bitmap_data = vec![0u8; texture_width as usize * texture_height as usize * 4];
+            // bitmap_data = vec![0u8; texture_width as usize * texture_height as usize * 4];
 
-            self.rasterize_color(
+            println!("trying to rasterize");
+            let res = self.rasterize_color(
                 &glyph_run,
                 rendering_mode,
                 measuring_mode,
@@ -1090,12 +1091,13 @@ impl DirectWriteState {
         bitmap_size: Size<DevicePixels>,
         texture_size: Size<u32>,
     ) -> Result<Vec<u8>> {
+        // todo: support formats other than COLR
         let color_enumerator = unsafe {
             self.components.factory.TranslateColorGlyphRun(
                 Vector2::new(baseline_origin.x, baseline_origin.y),
                 glyph_run,
                 None,
-                DWRITE_GLYPH_IMAGE_FORMATS_COLR | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+                DWRITE_GLYPH_IMAGE_FORMATS_COLR,
                 measuring_mode,
                 Some(transform),
                 0,
@@ -1106,57 +1108,60 @@ impl DirectWriteState {
         loop {
             let color_run = unsafe { color_enumerator.GetCurrentRun() }?;
             let color_run = unsafe { &*color_run };
-
-            let color_analysis = unsafe {
-                self.components.factory.CreateGlyphRunAnalysis(
-                    &color_run.Base.glyphRun as *const _,
-                    Some(transform),
-                    rendering_mode,
-                    measuring_mode,
-                    DWRITE_GRID_FIT_MODE_DEFAULT,
-                    DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
-                    baseline_origin.x,
-                    baseline_origin.y,
-                )
-            }?;
-
-            let color_bounds =
-                unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1) }?;
-
-            let color_size = size(
-                color_bounds.right - color_bounds.left,
-                color_bounds.bottom - color_bounds.top,
-            );
-            if color_size.width > 0 && color_size.height > 0 {
-                let mut alpha_data = vec![0u8; (color_size.width * color_size.height * 3) as usize];
-                unsafe {
-                    color_analysis.CreateAlphaTexture(
-                        DWRITE_TEXTURE_CLEARTYPE_3x1,
-                        &color_bounds,
-                        &mut alpha_data,
+            let image_format = color_run.glyphImageFormat & !DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE;
+            if image_format == DWRITE_GLYPH_IMAGE_FORMATS_COLR {
+                let color_analysis = unsafe {
+                    self.components.factory.CreateGlyphRunAnalysis(
+                        &color_run.Base.glyphRun as *const _,
+                        Some(transform),
+                        rendering_mode,
+                        measuring_mode,
+                        DWRITE_GRID_FIT_MODE_DEFAULT,
+                        DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                        baseline_origin.x,
+                        baseline_origin.y,
                     )
                 }?;
 
-                let run_color = {
-                    let run_color = color_run.Base.runColor;
-                    Rgba {
-                        r: run_color.r,
-                        g: run_color.g,
-                        b: run_color.b,
-                        a: run_color.a,
-                    }
-                };
-                let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
-                let alpha_data = alpha_data
-                    .chunks_exact(3)
-                    .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
-                    .collect::<Vec<_>>();
-                glyph_layers.push(GlyphLayerTexture::new(
-                    &self.gpu_state,
-                    run_color,
-                    bounds,
-                    &alpha_data,
-                )?);
+                let color_bounds =
+                    unsafe { color_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1) }?;
+
+                let color_size = size(
+                    color_bounds.right - color_bounds.left,
+                    color_bounds.bottom - color_bounds.top,
+                );
+                if color_size.width > 0 && color_size.height > 0 {
+                    let mut alpha_data =
+                        vec![0u8; (color_size.width * color_size.height * 3) as usize];
+                    unsafe {
+                        color_analysis.CreateAlphaTexture(
+                            DWRITE_TEXTURE_CLEARTYPE_3x1,
+                            &color_bounds,
+                            &mut alpha_data,
+                        )
+                    }?;
+
+                    let run_color = {
+                        let run_color = color_run.Base.runColor;
+                        Rgba {
+                            r: run_color.r,
+                            g: run_color.g,
+                            b: run_color.b,
+                            a: run_color.a,
+                        }
+                    };
+                    let bounds = bounds(point(color_bounds.left, color_bounds.top), color_size);
+                    let alpha_data = alpha_data
+                        .chunks_exact(3)
+                        .flat_map(|chunk| [chunk[0], chunk[1], chunk[2], 255])
+                        .collect::<Vec<_>>();
+                    glyph_layers.push(GlyphLayerTexture::new(
+                        &self.gpu_state,
+                        run_color,
+                        bounds,
+                        &alpha_data,
+                    )?);
+                }
             }
 
             let has_next = unsafe { color_enumerator.MoveNext() }
@@ -1218,7 +1223,7 @@ impl DirectWriteState {
                 },
                 Usage: D3D11_USAGE_DEFAULT,
                 BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
-                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                CPUAccessFlags: 0,
                 MiscFlags: 0,
             };
             unsafe {
@@ -1246,6 +1251,31 @@ impl DirectWriteState {
                 )
             }?;
             [rtv]
+        };
+
+        let staging_texture = {
+            let mut texture = None;
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: bitmap_size.width.0 as u32,
+                Height: bitmap_size.height.0 as u32,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: 0,
+            };
+            unsafe {
+                self.gpu_state
+                    .device
+                    .CreateTexture2D(&desc, None, Some(&mut texture))
+            }?;
+            texture.unwrap()
         };
 
         let blend_state = {
@@ -1373,6 +1403,37 @@ impl DirectWriteState {
             unsafe { device_context.Draw(4, 0) };
         }
 
+        unsafe { device_context.CopyResource(&staging_texture, &render_target_texture) };
+
+        let mapped_data = {
+            let mut mapped_data = D3D11_MAPPED_SUBRESOURCE::default();
+            unsafe {
+                device_context.Map(
+                    &staging_texture,
+                    0,
+                    D3D11_MAP_READ,
+                    0,
+                    Some(&mut mapped_data),
+                )
+            }?;
+            mapped_data
+        };
+        let mut rasterized =
+            vec![0u8; (bitmap_size.width.0 as u32 * bitmap_size.height.0 as u32 * 4) as usize];
+
+        for y in 0..bitmap_size.height.0 as usize {
+            let width = bitmap_size.width.0 as usize;
+            unsafe {
+                std::ptr::copy_nonoverlapping::<u8>(
+                    (mapped_data.pData as *const u8).byte_add(mapped_data.RowPitch as usize * y),
+                    rasterized
+                        .as_mut_ptr()
+                        .byte_add(width * y * std::mem::size_of::<u32>()),
+                    width * std::mem::size_of::<u32>(),
+                )
+            };
+        }
+
         #[cfg(feature = "enable-renderdoc")]
         self.renderdoc
             .0
@@ -1381,7 +1442,7 @@ impl DirectWriteState {
 
         println!("render finished");
 
-        Ok(Vec::new())
+        Ok(rasterized)
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
