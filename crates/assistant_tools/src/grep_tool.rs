@@ -173,7 +173,17 @@ impl Tool for GrepTool {
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            let mut any_file_matched_pattern = false;
+            'outer: while let Some(result) = results.next().await {
+                let (buffer, ranges) = match result {
+                    SearchResult::Buffer { buffer, ranges } => {
+                        (buffer,ranges)
+                    }
+                    SearchResult::Finished { any_file_matched_pattern: matched, .. } => {
+                        any_file_matched_pattern = matched;
+                        break 'outer;
+                    }
+                };
                 if ranges.is_empty() {
                     continue;
                 }
@@ -294,7 +304,10 @@ impl Tool for GrepTool {
                 }
             }
 
-            if matches_found == 0 {
+            if !any_file_matched_pattern && input.include_pattern.is_some() {
+                assert_eq!(matches_found, 0, "no matches must be found if any file didn't match");
+                Ok("No files found matching the include pattern".to_string().into())
+            } else if matches_found == 0 {
                 Ok("No matches found".to_string().into())
             } else if has_more_matches {
                 Ok(format!(

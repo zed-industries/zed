@@ -329,8 +329,11 @@ impl ProjectSearch {
                         project::search::SearchResult::Buffer { buffer, ranges } => {
                             buffers_with_ranges.push((buffer, ranges));
                         }
-                        project::search::SearchResult::LimitReached => {
-                            limit_reached = true;
+                        project::search::SearchResult::Finished {
+                            limit_reached: reached,
+                            ..
+                        } => {
+                            limit_reached = reached;
                         }
                     }
                 }

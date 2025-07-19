@@ -222,6 +222,13 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
+        let SearchResult::Finished {
+            limit_reached: false,
+            any_file_matched_pattern: true,
+        } = receiver.recv().await.unwrap()
+        else {
+            panic!("invalid finisher");
+        };
         assert!(receiver.recv().await.is_err());
         buffer
     }
