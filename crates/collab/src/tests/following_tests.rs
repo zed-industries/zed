@@ -456,7 +456,13 @@ async fn test_basic_following(
             .await
             .unwrap();
         cx_b.set_screen_capture_sources(vec![display]);
-        let source = cx_b.read(|cx| cx.screen_capture_sources().next().unwrap());
+        let source = cx_b
+            .read(|cx| cx.screen_capture_sources())
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
         active_call_b
             .update(cx_b, |call, cx| {
                 call.room()
