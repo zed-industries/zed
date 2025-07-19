@@ -569,6 +569,17 @@ impl Vim {
                     });
                 });
             });
+        } else if self.mode == Mode::HelixNormal {
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        // In helix normal mode, move cursor to start of selection and collapse
+                        if !selection.is_empty() {
+                            selection.collapse_to(selection.start, SelectionGoal::None);
+                        }
+                    });
+                });
+            });
         }
         self.switch_mode(Mode::Insert, false, window, cx);
     }
