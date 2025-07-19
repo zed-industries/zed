@@ -12,6 +12,7 @@ use editor::{
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
     actions::{Backtab, Tab},
 };
+use fancy_regex::Regex;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -45,6 +46,15 @@ pub use registrar::DivRegistrar;
 use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+
+/// Array of supported pattern items and their corresponding search options and
+/// value.
+/// When any of the patterns is present in the search query, the corresponding
+/// search option, and value, is applied.
+static PATTERN_ITEMS: [(&str, &SearchOptions, bool); 2] = [
+    ("\\c", &SearchOptions::CASE_SENSITIVE, false),
+    ("\\C", &SearchOptions::CASE_SENSITIVE, true),
+];
 
 /// Opens the buffer search interface with the specified configuration.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
@@ -122,6 +132,7 @@ pub struct BufferSearchBar {
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
     regex_language: Option<Arc<Language>>,
+    pattern_items_regex: Regex,
 }
 
 impl BufferSearchBar {
@@ -735,6 +746,15 @@ impl BufferSearchBar {
             .detach_and_log_err(cx);
         }
 
+        let pattern_items_regex = Regex::new(
+            &PATTERN_ITEMS
+                .iter()
+                .map(|(pattern, _, _)| fancy_regex::escape(pattern))
+                .collect::<Vec<_>>()
+                .join("|"),
+        )
+        .unwrap();
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -762,6 +782,7 @@ impl BufferSearchBar {
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
             regex_language: None,
+            pattern_items_regex,
         }
     }
 
@@ -903,8 +924,16 @@ impl BufferSearchBar {
         });
     }
 
-    pub fn query(&self, cx: &App) -> String {
+    /// Returns the raw query string without any of the pattern items removed.
+    pub fn raw_query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
+    }
+
+    /// Returns the sanitized query string with pattern items removed.
+    pub fn query(&self, cx: &App) -> String {
+        self.pattern_items_regex
+            .replace_all(&self.raw_query(cx), "")
+            .into_owned()
     }
 
     pub fn replacement(&self, cx: &mut App) -> String {
@@ -1008,6 +1037,17 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) {
         if !self.search_options.contains(search_option) {
+            self.toggle_search_option(search_option, window, cx)
+        }
+    }
+
+    pub fn disable_search_option(
+        &mut self,
+        search_option: SearchOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search_options.contains(search_option) {
             self.toggle_search_option(search_option, window, cx)
         }
     }
@@ -1140,6 +1180,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
+                self.apply_pattern_items(cx);
                 self.clear_matches(window, cx);
                 let search = self.update_matches(false, window, cx);
 
@@ -1550,6 +1591,28 @@ impl BufferSearchBar {
                 }
             }
         }
+    }
+
+    // Determines which pattern items are present in the search query and
+    // updates the search options accordingly.
+    fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
+        // Start from the default search options to ensure that any search
+        // option that is not to be updated does not changed.
+        // For example, if `\c` was present in the query and the case
+        // sensitivity was initially enabled, removing `\c` from the query
+        // should re-enable case sensitivity.
+        let mut search_options = self.default_options.clone();
+        let query = self.raw_query(cx);
+
+        for (pattern, search_option, value) in PATTERN_ITEMS {
+            match (query.contains(pattern), value) {
+                (true, true) => search_options.set(*search_option, value),
+                (true, false) => search_options.set(*search_option, value),
+                (false, _) => (),
+            }
+        }
+
+        self.set_search_options(search_options, cx);
     }
 
     fn adjust_query_regex_language(&self, cx: &mut App) {
@@ -2927,6 +2990,105 @@ mod tests {
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
                 "After hiding and showing the search bar, default options should be used"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pattern_items(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        update_search_settings(
+            SearchSettings {
+                button: true,
+                whole_word: false,
+                case_sensitive: false,
+                include_ignored: false,
+                regex: false,
+            },
+            cx,
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no search options enabled by default"
+            );
+
+            // Update the search query's text to `test\C` to check if the
+            // search option is correctly applied.
+            let query = "test\\C";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\C pattern item is present"
+            );
+
+            // Remove `\\C` from the query to check if the search option is
+            // correctly reverted to its default state.
+            let query = "test";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have case sensitivity disable when \\C pattern item is removed"
+            );
+
+            search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled by default"
+            );
+
+            // Update the search query's text to `test\c` to check if the
+            // case sensitivity search option is correctly disabled.
+            let query = "test\\c";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::NONE,
+                "Should have no case sensitivity enabled when \\c pattern item is present"
+            );
+
+            // Remove `\\c` from the query to check if the search option is
+            // correctly reverted to its default state.
+            let query = "test";
+            search_bar.query_editor.update(cx, |query_editor, cx| {
+                query_editor.buffer().update(cx, |query_buffer, cx| {
+                    let len = query_buffer.len(cx);
+                    query_buffer.edit([(0..len, query)], None, cx);
+                });
+            });
+
+            search_bar.apply_pattern_items(cx);
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\c pattern item is removed"
             );
         });
     }
