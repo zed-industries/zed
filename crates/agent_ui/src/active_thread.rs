@@ -2623,8 +2623,20 @@ impl ActiveThread {
                     .mb_1p5()
                     .child(
                         h_flex()
+                            .id(("thinking-header-pending", message_id.as_usize() * 1000 + ix))
                             .group("disclosure-header")
                             .justify_between()
+                            .cursor_pointer()
+                            .on_click(cx.listener({
+                                move |this, _event, _window, _cx| {
+                                    let is_open = this
+                                        .expanded_thinking_segments
+                                        .entry((message_id, ix))
+                                        .or_insert(false);
+
+                                    *is_open = !*is_open;
+                                }
+                            }))
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -2642,17 +2654,7 @@ impl ActiveThread {
                                         div().visible_on_hover("disclosure-header").child(
                                             Disclosure::new("thinking-disclosure", is_open)
                                                 .opened_icon(IconName::ChevronUp)
-                                                .closed_icon(IconName::ChevronDown)
-                                                .on_click(cx.listener({
-                                                    move |this, _event, _window, _cx| {
-                                                        let is_open = this
-                                                            .expanded_thinking_segments
-                                                            .entry((message_id, ix))
-                                                            .or_insert(false);
-
-                                                        *is_open = !*is_open;
-                                                    }
-                                                })),
+                                                .closed_icon(IconName::ChevronDown),
                                         ),
                                     )
                                     .child({
@@ -2746,11 +2748,26 @@ impl ActiveThread {
                     .mt_neg_2()
                     .child(
                         h_flex()
+                            .id((
+                                "thinking-header-completed",
+                                message_id.as_usize() * 1000 + ix,
+                            ))
                             .group("disclosure-header")
                             .pr_1()
                             .justify_between()
                             .opacity(0.8)
                             .hover(|style| style.opacity(1.))
+                            .cursor_pointer()
+                            .on_click(cx.listener({
+                                move |this, _event, _window, _cx| {
+                                    let is_open = this
+                                        .expanded_thinking_segments
+                                        .entry((message_id, ix))
+                                        .or_insert(false);
+
+                                    *is_open = !*is_open;
+                                }
+                            }))
                             .child(
                                 h_flex()
                                     .gap_1p5()
@@ -2765,17 +2782,7 @@ impl ActiveThread {
                                 div().visible_on_hover("disclosure-header").child(
                                     Disclosure::new("thinking-disclosure", is_open)
                                         .opened_icon(IconName::ChevronUp)
-                                        .closed_icon(IconName::ChevronDown)
-                                        .on_click(cx.listener({
-                                            move |this, _event, _window, _cx| {
-                                                let is_open = this
-                                                    .expanded_thinking_segments
-                                                    .entry((message_id, ix))
-                                                    .or_insert(false);
-
-                                                *is_open = !*is_open;
-                                            }
-                                        })),
+                                        .closed_icon(IconName::ChevronDown),
                                 ),
                             ),
                     )
@@ -3028,13 +3035,26 @@ impl ActiveThread {
                     v_flex()
                         .child(
                             h_flex()
+                                .id(SharedString::from(format!("tool-use-header-{}", tool_use.id)))
                                 .group("disclosure-header")
                                 .relative()
                                 .gap_1p5()
                                 .justify_between()
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
+                                .cursor_pointer()
                                 .when(!is_status_finished, |this| this.pr_2())
+                                .on_click(cx.listener({
+                                    let tool_use_id = tool_use.id.clone();
+                                    move |this, _event, _window, _cx| {
+                                        let is_open = this
+                                            .expanded_tool_uses
+                                            .entry(tool_use_id.clone())
+                                            .or_insert(false);
+
+                                        *is_open = !*is_open;
+                                    }
+                                }))
                                 .child(
                                     h_flex()
                                         .id("tool-label-container")
@@ -3061,18 +3081,7 @@ impl ActiveThread {
                                             div().visible_on_hover("disclosure-header").child(
                                                 Disclosure::new("tool-use-disclosure", is_open)
                                                     .opened_icon(IconName::ChevronUp)
-                                                    .closed_icon(IconName::ChevronDown)
-                                                    .on_click(cx.listener({
-                                                        let tool_use_id = tool_use.id.clone();
-                                                        move |this, _event, _window, _cx| {
-                                                            let is_open = this
-                                                                .expanded_tool_uses
-                                                                .entry(tool_use_id.clone())
-                                                                .or_insert(false);
-
-                                                            *is_open = !*is_open;
-                                                        }
-                                                    })),
+                                                    .closed_icon(IconName::ChevronDown),
                                             ),
                                         )
                                         .child(status_icons),
@@ -3104,10 +3113,12 @@ impl ActiveThread {
                     .overflow_hidden()
                     .child(
                         h_flex()
+                            .id(SharedString::from(format!("tool-use-header-2-{}", tool_use.id)))
                             .group("disclosure-header")
                             .relative()
                             .justify_between()
                             .py_1()
+                            .cursor_pointer()
                             .map(|element| {
                                 if is_status_finished {
                                     element.pl_2().pr_0p5()
@@ -3126,6 +3137,17 @@ impl ActiveThread {
                                 }
                             })
                             .border_color(self.tool_card_border_color(cx))
+                            .on_click(cx.listener({
+                                let tool_use_id = tool_use.id.clone();
+                                move |this, _event, _window, _cx| {
+                                    let is_open = this
+                                        .expanded_tool_uses
+                                        .entry(tool_use_id.clone())
+                                        .or_insert(false);
+
+                                    *is_open = !*is_open;
+                                }
+                            }))
                             .child(
                                 h_flex()
                                     .id("tool-label-container")
@@ -3152,18 +3174,7 @@ impl ActiveThread {
                                         div().visible_on_hover("disclosure-header").child(
                                             Disclosure::new("tool-use-disclosure", is_open)
                                                 .opened_icon(IconName::ChevronUp)
-                                                .closed_icon(IconName::ChevronDown)
-                                                .on_click(cx.listener({
-                                                    let tool_use_id = tool_use.id.clone();
-                                                    move |this, _event, _window, _cx| {
-                                                        let is_open = this
-                                                            .expanded_tool_uses
-                                                            .entry(tool_use_id.clone())
-                                                            .or_insert(false);
-
-                                                        *is_open = !*is_open;
-                                                    }
-                                                })),
+                                                .closed_icon(IconName::ChevronDown),
                                         ),
                                     )
                                     .child(status_icons),
