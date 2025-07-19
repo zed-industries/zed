@@ -16892,7 +16892,7 @@ impl Editor {
         now: Instant,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<TransactionId> {
         self.end_selection(window, cx);
         if let Some(tx_id) = self
             .buffer
@@ -16902,7 +16902,10 @@ impl Editor {
                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
-            })
+            });
+            Some(tx_id)
+        } else {
+            None
         }
     }
 

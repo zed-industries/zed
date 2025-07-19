@@ -198,23 +198,28 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
         let times = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
+        vim.prepare_normal_command_undo(window, cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, window, cx);
             }
         });
+        vim.postpare_normal_command_undo(window, cx);
     });
     Vim::action(editor, cx, |vim, _: &Redo, window, cx| {
         let times = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
+        vim.prepare_normal_command_undo(window, cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, window, cx);
             }
         });
+        vim.postpare_normal_command_undo(window, cx);
     });
     Vim::action(editor, cx, |vim, _: &UndoLastLine, window, cx| {
         Vim::take_forced_motion(cx);
+        vim.prepare_normal_command_undo(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let Some(last_change) = editor.change_list.last_before_grouping() else {
@@ -326,6 +331,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 })
             });
         });
+        vim.postpare_normal_command_undo(window, cx);
     });
 
     repeat::register(editor, cx);
@@ -973,6 +979,26 @@ impl Vim {
     fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
+        }
+    }
+
+    fn prepare_normal_command_undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.executing_normal_command {
+            self.update_editor(window, cx, |_, editor, _, cx| {
+                editor
+                    .buffer()
+                    .update(cx, |multi, cx| multi.end_transaction(cx))
+            });
+        }
+    }
+
+    fn postpare_normal_command_undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.executing_normal_command {
+            self.update_editor(window, cx, |_, editor, _, cx| {
+                editor
+                    .buffer()
+                    .update(cx, |multi, cx| multi.start_transaction(cx))
+            });
         }
     }
 }
