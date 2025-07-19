@@ -9772,6 +9772,10 @@ impl Editor {
             self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             return;
         }
+        if self.has_active_inline_completion() {
+            self.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+            return;
+        }
         if self.read_only(cx) {
             return;
         }
