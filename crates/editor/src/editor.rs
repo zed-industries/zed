@@ -6542,12 +6542,11 @@ impl Editor {
             return;
         };
 
-        // TODO: Place the popover in a more sensible place
         let anchor = self.selections.newest_anchor().head();
         let position = self.to_pixel_point(anchor, &snapshot, window);
-        if let Some(position) = position {
-            self.show_blame_popover(&blame_entry, position, true, cx);
-        }
+        if let (Some(position), Some(last_bounds)) = (position, self.last_bounds) {
+            self.show_blame_popover(&blame_entry, position + last_bounds.origin, true, cx);
+        };
     }
 
     fn show_blame_popover(
