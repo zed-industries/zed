@@ -4,13 +4,11 @@ use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolRunArgs, ToolUseStatus,
 };
 use futures::{Future, FutureExt, TryFutureExt};
-use gpui::{
-    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
-};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use gpui::{App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window};
+use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,16 +54,7 @@ impl Tool for WebSearchTool {
         "Searching the Web".to_string()
     }
 
-    fn run(
-        self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        _project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
-        cx: &mut App,
-    ) -> ToolResult {
+    fn run(self: Arc<Self>, ToolRunArgs { input, .. }: ToolRunArgs, cx: &mut App) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),

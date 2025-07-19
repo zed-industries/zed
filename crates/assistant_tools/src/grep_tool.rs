@@ -1,12 +1,12 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
 use futures::StreamExt;
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use gpui::{App, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use language_model::LanguageModelToolSchemaFormat;
 use project::{
-    Project, WorktreeSettings,
+    WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
@@ -100,12 +100,7 @@ impl Tool for GrepTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs { input, project, .. }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
@@ -313,8 +308,8 @@ impl Tool for GrepTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_tool::Tool;
-    use gpui::{AppContext, TestAppContext, UpdateGlobal};
+    use assistant_tool::{ActionLog, Tool};
+    use gpui::{AppContext, Entity, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project, WorktreeSettings};
@@ -781,8 +776,19 @@ mod tests {
         let tool = Arc::new(GrepTool);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let task =
-            cx.update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx));
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolRunArgs {
+                    input,
+                    request: Arc::default(),
+                    project,
+                    action_log,
+                    model,
+                    window: None,
+                },
+                cx,
+            )
+        });
 
         match task.output.await {
             Ok(result) => {
@@ -881,12 +887,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -907,12 +915,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -933,12 +943,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -958,12 +970,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -984,12 +998,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1009,12 +1025,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1034,12 +1052,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1060,12 +1080,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1087,12 +1109,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1191,12 +1215,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1256,12 +1282,14 @@ mod tests {
                 });
                 Arc::new(GrepTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output

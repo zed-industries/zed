@@ -1,9 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::Result;
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::Project;
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
+use gpui::{App, Task};
+use language_model::LanguageModelToolSchemaFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, sync::Arc};
@@ -43,12 +42,7 @@ impl Tool for ProjectNotificationsTool {
 
     fn run(
         self: Arc<Self>,
-        _input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        _project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs { action_log, .. }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let Some(user_edits_diff) =
@@ -155,10 +149,12 @@ fn compress_patch(patch: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_tool::ToolResultContent;
+    use assistant_tool::{ActionLog, ToolResultContent};
     use gpui::{AppContext, TestAppContext};
     use indoc::indoc;
-    use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModelProvider};
+    use language_model::{
+        LanguageModel, LanguageModelRequest, fake_provider::FakeLanguageModelProvider,
+    };
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -207,12 +203,14 @@ mod tests {
 
         let result = cx.update(|cx| {
             tool.clone().run(
-                tool_input.clone(),
-                request.clone(),
-                project.clone(),
-                action_log.clone(),
-                model.clone(),
-                None,
+                ToolRunArgs {
+                    input: tool_input.clone(),
+                    request: request.clone(),
+                    project: project.clone(),
+                    action_log: action_log.clone(),
+                    model: model.clone(),
+                    window: None,
+                },
                 cx,
             )
         });
@@ -238,12 +236,14 @@ mod tests {
         // Run the tool again
         let result = cx.update(|cx| {
             tool.clone().run(
-                tool_input.clone(),
-                request.clone(),
-                project.clone(),
-                action_log.clone(),
-                model.clone(),
-                None,
+                ToolRunArgs {
+                    input: tool_input.clone(),
+                    request: request.clone(),
+                    project: project.clone(),
+                    action_log: action_log.clone(),
+                    model: model.clone(),
+                    window: None,
+                },
                 cx,
             )
         });
@@ -268,12 +268,14 @@ mod tests {
         // Run the tool once more without any changes - should get no new notifications
         let result = cx.update(|cx| {
             tool.run(
-                tool_input.clone(),
-                request.clone(),
-                project.clone(),
-                action_log,
-                model.clone(),
-                None,
+                ToolRunArgs {
+                    input: tool_input.clone(),
+                    request: request.clone(),
+                    project: project.clone(),
+                    action_log,
+                    model: model.clone(),
+                    window: None,
+                },
                 cx,
             )
         });

@@ -201,11 +201,9 @@ fn resolve_context_server_tool_name_conflicts(
 }
 #[cfg(test)]
 mod tests {
-    use gpui::{AnyWindowHandle, Entity, Task, TestAppContext};
-    use language_model::{LanguageModel, LanguageModelRequest};
-    use project::Project;
+    use gpui::{Task, TestAppContext};
 
-    use crate::{ActionLog, ToolResult};
+    use crate::{ToolResult, ToolRunArgs};
 
     use super::*;
 
@@ -391,16 +389,7 @@ mod tests {
             "Test tool".to_string()
         }
 
-        fn run(
-            self: Arc<Self>,
-            _input: serde_json::Value,
-            _request: Arc<LanguageModelRequest>,
-            _project: Entity<Project>,
-            _action_log: Entity<ActionLog>,
-            _model: Arc<dyn LanguageModel>,
-            _window: Option<AnyWindowHandle>,
-            _cx: &mut App,
-        ) -> ToolResult {
+        fn run(self: Arc<Self>, _: ToolRunArgs, _cx: &mut App) -> ToolResult {
             ToolResult {
                 output: Task::ready(Err(anyhow::anyhow!("No content"))),
                 card: None,

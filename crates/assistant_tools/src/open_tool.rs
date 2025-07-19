@@ -1,8 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
+use gpui::{App, AppContext, Entity, Task};
+use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,12 +50,7 @@ impl Tool for OpenTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs { input, project, .. }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input: OpenToolInput = match serde_json::from_value(input) {

@@ -2,7 +2,7 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use assistant_tool::{Tool as _, ToolResultContent};
+use assistant_tool::{Tool as _, ToolResultContent, ToolRunArgs};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -1736,12 +1736,14 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let exists_result = cx.update(|cx| {
         ReadFileTool::run(
             Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
+            ToolRunArgs {
+                input: serde_json::to_value(input).unwrap(),
+                request: request.clone(),
+                project: project.clone(),
+                action_log: action_log.clone(),
+                model: model.clone(),
+                window: None,
+            },
             cx,
         )
     });
@@ -1756,12 +1758,14 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     let does_not_exist_result = cx.update(|cx| {
         ReadFileTool::run(
             Arc::new(ReadFileTool),
-            serde_json::to_value(input).unwrap(),
-            request.clone(),
-            project.clone(),
-            action_log.clone(),
-            model.clone(),
-            None,
+            ToolRunArgs {
+                input: serde_json::to_value(input).unwrap(),
+                request: request.clone(),
+                project: project.clone(),
+                action_log: action_log.clone(),
+                model: model.clone(),
+                window: None,
+            },
             cx,
         )
     });

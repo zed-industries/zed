@@ -4,14 +4,14 @@ use crate::{
 };
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{Tool, ToolCard, ToolResult, ToolRunArgs, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
-    TextStyleRefinement, Transformation, WeakEntity, Window, percentage,
+    Animation, AnimationExt, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
+    Transformation, WeakEntity, Window, percentage,
 };
 use language::LineEnding;
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use language_model::LanguageModelToolSchemaFormat;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
@@ -120,12 +120,12 @@ impl Tool for TerminalTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        window: Option<AnyWindowHandle>,
+        ToolRunArgs {
+            input,
+            project,
+            window,
+            ..
+        }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input: TerminalToolInput = match serde_json::from_value(input) {
@@ -716,6 +716,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
 #[cfg(test)]
 mod tests {
+    use assistant_tool::ActionLog;
     use editor::EditorSettings;
     use fs::RealFs;
     use gpui::{BackgroundExecutor, TestAppContext};
@@ -774,12 +775,14 @@ mod tests {
         let result = cx.update(|cx| {
             TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
-                serde_json::to_value(input).unwrap(),
-                Arc::default(),
-                project.clone(),
-                action_log.clone(),
-                model,
-                None,
+                ToolRunArgs {
+                    input: serde_json::to_value(input).unwrap(),
+                    request: Arc::default(),
+                    project: project.clone(),
+                    action_log: action_log.clone(),
+                    model,
+                    window: None,
+                },
                 cx,
             )
         });
@@ -809,12 +812,14 @@ mod tests {
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
-                serde_json::to_value(input).unwrap(),
-                Arc::default(),
-                project.clone(),
-                action_log.clone(),
-                model.clone(),
-                None,
+                ToolRunArgs {
+                    input: serde_json::to_value(input).unwrap(),
+                    request: Arc::default(),
+                    project: project.clone(),
+                    action_log: action_log.clone(),
+                    model: model.clone(),
+                    window: None,
+                },
                 cx,
             );
             cx.spawn(async move |_| {

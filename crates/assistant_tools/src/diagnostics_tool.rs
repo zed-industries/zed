@@ -1,10 +1,9 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
+use gpui::{App, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::Project;
+use language_model::LanguageModelToolSchemaFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
@@ -82,12 +81,12 @@ impl Tool for DiagnosticsTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs {
+            input,
+            project,
+            action_log,
+            ..
+        }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)

@@ -4,13 +4,12 @@ use std::{borrow::Cow, cell::RefCell};
 
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
 use futures::AsyncReadExt as _;
-use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::Project;
+use language_model::LanguageModelToolSchemaFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
@@ -143,16 +142,7 @@ impl Tool for FetchTool {
         }
     }
 
-    fn run(
-        self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        _project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
-        cx: &mut App,
-    ) -> ToolResult {
+    fn run(self: Arc<Self>, ToolRunArgs { input, .. }: ToolRunArgs, cx: &mut App) -> ToolResult {
         let input = match serde_json::from_value::<FetchToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),

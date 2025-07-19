@@ -1,9 +1,9 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::{Project, WorktreeSettings};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
+use gpui::{App, Task};
+use language_model::LanguageModelToolSchemaFormat;
+use project::WorktreeSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -77,12 +77,7 @@ impl Tool for ListDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs { input, project, .. }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
@@ -225,7 +220,7 @@ impl Tool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_tool::Tool;
+    use assistant_tool::{ActionLog, Tool};
     use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
@@ -292,12 +287,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -327,12 +324,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -362,12 +361,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -404,7 +405,19 @@ mod tests {
         });
 
         let result = cx
-            .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
+            .update(|cx| {
+                tool.run(
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project,
+                        action_log,
+                        model,
+                        window: None,
+                    },
+                    cx,
+                )
+            })
             .output
             .await
             .unwrap();
@@ -439,12 +452,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -460,7 +475,19 @@ mod tests {
         });
 
         let result = cx
-            .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
+            .update(|cx| {
+                tool.run(
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project,
+                        action_log,
+                        model,
+                        window: None,
+                    },
+                    cx,
+                )
+            })
             .output
             .await;
 
@@ -534,12 +561,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -575,12 +604,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -607,12 +638,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -727,12 +760,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -759,12 +794,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -787,12 +824,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -819,12 +858,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -847,12 +888,14 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })

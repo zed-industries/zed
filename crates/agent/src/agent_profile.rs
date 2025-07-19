@@ -108,7 +108,7 @@ impl AgentProfile {
 #[cfg(test)]
 mod tests {
     use agent_settings::ContextServerPreset;
-    use assistant_tool::ToolRegistry;
+    use assistant_tool::{ToolRegistry, ToolRunArgs};
     use collections::IndexMap;
     use gpui::SharedString;
     use gpui::{AppContext, TestAppContext};
@@ -316,16 +316,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn run(
-            self: Arc<Self>,
-            _input: serde_json::Value,
-            _request: Arc<language_model::LanguageModelRequest>,
-            _project: Entity<Project>,
-            _action_log: Entity<assistant_tool::ActionLog>,
-            _model: Arc<dyn language_model::LanguageModel>,
-            _window: Option<gpui::AnyWindowHandle>,
-            _cx: &mut App,
-        ) -> assistant_tool::ToolResult {
+        fn run(self: Arc<Self>, _: ToolRunArgs, _cx: &mut App) -> assistant_tool::ToolResult {
             unimplemented!()
         }
 
