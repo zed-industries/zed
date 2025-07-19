@@ -13,11 +13,15 @@ use gpui::{
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     pulsating_between,
 };
+
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use language_models::AllLanguageModelSettings;
+
+use paths;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
@@ -356,6 +360,41 @@ impl Render for InlineCompletionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(false);
+                let icon = if enabled {
+                    IconName::AiOllama
+                } else {
+                    IconName::AiOllama // Could add disabled variant
+                };
+
+                let this = cx.entity().clone();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            Some(
+                                this.update(cx, |this, cx| {
+                                    this.build_ollama_context_menu(window, cx)
+                                }),
+                            )
+                        })
+                        .trigger(
+                            IconButton::new("ollama-completion", icon)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "Ollama Completion",
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
         }
     }
 }
@@ -377,7 +416,7 @@ impl InlineCompletionButton {
         Self {
             editor_subscription: None,
             editor_enabled: None,
-            editor_show_predictions: true,
+            editor_show_predictions: false,
             editor_focus_handle: None,
             language: None,
             file: None,
@@ -479,7 +518,10 @@ impl InlineCompletionButton {
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(
+            provider,
+            EditPredictionProvider::Zed | EditPredictionProvider::Ollama
+        ) {
             menu = menu
                 .separator()
                 .header("Display Modes")
@@ -798,6 +840,161 @@ impl InlineCompletionButton {
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
         })
+    }
+
+    /// Builds a simplified context menu for Ollama with essential features:
+    /// - API URL configuration that opens settings at the correct location
+    /// - Model selection from available models
+    /// - Common language settings (buffer/language/global toggles, privacy settings)
+    ///
+    /// The menu focuses on core functionality without connection status or external links.
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            // Clone needed values to avoid borrowing issues
+            let available_models = ollama_settings.available_models.clone();
+
+            // API URL configuration - only show if Ollama settings exist in the user's config
+            let menu = if Self::ollama_settings_exist(cx) {
+                menu.entry("Configure API URL", None, {
+                    let fs = fs.clone();
+                    move |window, cx| {
+                        Self::open_ollama_settings(fs.clone(), window, cx);
+                    }
+                })
+            } else {
+                menu
+            };
+
+            // Model selection section
+            let menu = if !available_models.is_empty() {
+                let menu = menu.separator().header("Available Models");
+
+                // Add each available model as a menu entry
+                available_models.iter().fold(menu, |menu, model| {
+                    let model_name = model.display_name.as_ref().unwrap_or(&model.name);
+                    let is_current = available_models
+                        .first()
+                        .map(|m| &m.name == &model.name)
+                        .unwrap_or(false);
+
+                    menu.toggleable_entry(
+                        model_name.clone(),
+                        is_current,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let model_name = model.name.clone();
+                            let fs = fs.clone();
+                            move |_window, cx| {
+                                Self::switch_ollama_model(fs.clone(), model_name.clone(), cx);
+                            }
+                        },
+                    )
+                })
+            } else {
+                menu.separator()
+                    .header("No Models Configured")
+                    .entry("Configure Models", None, {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            Self::open_ollama_settings(fs.clone(), window, cx);
+                        }
+                    })
+            };
+
+            // Use the common language settings menu
+            self.build_language_settings_menu(menu, window, cx)
+        })
+    }
+
+    /// Opens Zed settings and navigates directly to the Ollama models configuration.
+    /// Uses improved regex patterns to locate the exact setting in the JSON structure.
+    fn open_ollama_settings(_fs: Arc<dyn Fs>, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = window.root::<Workspace>().flatten() {
+            let workspace = workspace.downgrade();
+            window
+                .spawn(cx, async move |cx| {
+                    let settings_editor = workspace
+                        .update_in(cx, |_, window, cx| {
+                            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                                settings::initial_user_settings_content().as_ref().into()
+                            })
+                        })?
+                        .await?
+                        .downcast::<Editor>()
+                        .unwrap();
+
+                    let _ = settings_editor
+                        .downgrade()
+                        .update_in(cx, |item, window, cx| {
+                            let text = item.buffer().read(cx).snapshot(cx).text();
+
+                            // Look for language_models.ollama section with precise pattern
+                            // This matches the full nested structure to avoid false matches
+                            let ollama_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"available_models"\s*:\s*\[\s*\]"#;
+                            let regex = regex::Regex::new(ollama_pattern).unwrap();
+
+                            if let Some(captures) = regex.captures(&text) {
+                                let full_match = captures.get(0).unwrap();
+
+                                // Position cursor after the opening bracket of available_models array
+                                let bracket_pos = full_match.as_str().rfind('[').unwrap();
+                                let cursor_pos = full_match.start() + bracket_pos + 1;
+
+                                // Place cursor inside the available_models array
+                                item.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::newest()),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        selections.select_ranges(vec![cursor_pos..cursor_pos]);
+                                    },
+                                );
+                                return Ok::<(), anyhow::Error>(());
+                            }
+
+                            Ok::<(), anyhow::Error>(())
+                        })?;
+
+                    Ok::<(), anyhow::Error>(())
+                })
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn ollama_settings_exist(_cx: &mut App) -> bool {
+        // Check if there's an ollama section in the settings file
+        let settings_content = std::fs::read_to_string(paths::settings_file()).unwrap_or_default();
+        Self::ollama_settings_exist_in_content(&settings_content)
+    }
+
+    fn ollama_settings_exist_in_content(content: &str) -> bool {
+        let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
+        let regex = regex::Regex::new(api_url_pattern).unwrap();
+        regex.is_match(content)
+    }
+
+    fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _cx| {
+            // Move the selected model to the front of the list to make it the active model
+            // The Ollama provider uses the first model in the available_models list
+            if let Some(ollama_settings) = &mut settings.ollama {
+                if let Some(models) = &mut ollama_settings.available_models {
+                    if let Some(index) = models.iter().position(|m| m.name == model_name) {
+                        let selected_model = models.remove(index);
+                        models.insert(0, selected_model);
+                    }
+                }
+            }
+        });
     }
 
     pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
