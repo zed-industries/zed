@@ -200,8 +200,8 @@ impl SearchQuery {
                 message.case_sensitive,
                 message.include_ignored,
                 false,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
+                PathMatcher::new(message.files_to_include)?,
+                PathMatcher::new(message.files_to_exclude)?,
                 message.match_full_paths,
                 None, // search opened only don't need search remote
             )
@@ -211,8 +211,8 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
+                PathMatcher::new(message.files_to_include)?,
+                PathMatcher::new(message.files_to_exclude)?,
                 false,
                 None, // search opened only don't need search remote
             )
@@ -242,8 +242,8 @@ impl SearchQuery {
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
+            files_to_include: self.files_to_include().sources().to_vec(),
+            files_to_exclude: self.files_to_exclude().sources().to_vec(),
             match_full_paths: self.match_full_paths(),
         }
     }
