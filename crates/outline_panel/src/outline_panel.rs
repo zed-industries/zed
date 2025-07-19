@@ -809,7 +809,10 @@ impl OutlinePanel {
                         outline_panel_settings = *new_settings;
 
                         if old_expansion_depth != new_settings.expand_outlines_with_depth {
-                            outline_panel.collapsed_entries.clear();
+                            let old_collapsed_entries = outline_panel.collapsed_entries.clone();
+                            outline_panel
+                                .collapsed_entries
+                                .retain(|entry| !matches!(entry, CollapsedEntry::Outline(..)));
 
                             let new_depth = new_settings.expand_outlines_with_depth;
 
@@ -848,7 +851,10 @@ impl OutlinePanel {
                                 }
                             }
 
-                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                            if old_collapsed_entries != outline_panel.collapsed_entries {
+                                outline_panel
+                                    .update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                            }
                         } else {
                             cx.notify();
                         }
@@ -2572,11 +2578,15 @@ impl OutlinePanel {
                     }
                     let change_focus = event.down.click_count > 1;
 
-                    let is_already_selected = outline_panel
-                        .selected_entry()
-                        .is_some_and(|selected| selected == &clicked_entry);
+                    if outline_panel.is_singleton_active(cx) {
+                        let is_already_selected = outline_panel
+                            .selected_entry()
+                            .is_some_and(|selected| selected == &clicked_entry);
 
-                    if is_already_selected && outline_panel.can_toggle(&clicked_entry, cx) {
+                        if is_already_selected && outline_panel.can_toggle(&clicked_entry, cx) {
+                            outline_panel.toggle_expanded(&clicked_entry, window, cx);
+                        }
+                    } else {
                         outline_panel.toggle_expanded(&clicked_entry, window, cx);
                     }
 
