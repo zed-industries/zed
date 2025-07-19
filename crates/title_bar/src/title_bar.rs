@@ -137,7 +137,9 @@ impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title_bar_settings = *TitleBarSettings::get_global(cx);
 
-        let show_menus = show_menus(cx);
+        let mut render_project_items =
+            title_bar_settings.show_branch_name || title_bar_settings.show_project_items;
+        let show_separate_menus = show_menus(cx) && render_project_items;
 
         let mut children = Vec::new();
 
@@ -145,14 +147,14 @@ impl Render for TitleBar {
             h_flex()
                 .gap_1()
                 .map(|title_bar| {
-                    let mut render_project_items = title_bar_settings.show_branch_name
-                        || title_bar_settings.show_project_items;
                     title_bar
                         .when_some(
-                            self.application_menu.clone().filter(|_| !show_menus),
+                            self.application_menu
+                                .clone()
+                                .filter(|_| !show_separate_menus),
                             |title_bar, menu| {
                                 render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                                    !menu.read_with(cx, |menu, cx| menu.all_menus_shown(cx));
                                 title_bar.child(menu)
                             },
                         )
@@ -200,7 +202,7 @@ impl Render for TitleBar {
                 .into_any_element(),
         );
 
-        if show_menus {
+        if show_separate_menus {
             self.platform_titlebar.update(cx, |this, _| {
                 this.set_children(
                     self.application_menu
