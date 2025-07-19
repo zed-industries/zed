@@ -439,7 +439,7 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    // #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
@@ -459,6 +459,7 @@ async fn test_basic_following(
         let source = cx_b
             .read(|cx| cx.screen_capture_sources())
             .await
+            .unwrap()
             .unwrap()
             .into_iter()
             .next()
