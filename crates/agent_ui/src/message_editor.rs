@@ -65,6 +65,9 @@ use agent::{
     thread_store::{TextThreadStore, ThreadStore},
 };
 
+pub const MIN_EDITOR_LINES: usize = 4;
+pub const MAX_EDITOR_LINES: usize = 8;
+
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -87,9 +90,6 @@ pub struct MessageEditor {
     update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
-
-const MIN_EDITOR_LINES: usize = 4;
-const MAX_EDITOR_LINES: usize = 8;
 
 pub(crate) fn create_editor(
     workspace: WeakEntity<Workspace>,
@@ -711,11 +711,11 @@ impl MessageEditor {
                 cx.listener(|this, _: &RejectAll, window, cx| this.handle_reject_all(window, cx)),
             )
             .capture_action(cx.listener(Self::paste))
-            .gap_2()
             .p_2()
-            .bg(editor_bg_color)
+            .gap_2()
             .border_t_1()
             .border_color(cx.theme().colors().border)
+            .bg(editor_bg_color)
             .child(
                 h_flex()
                     .justify_between()

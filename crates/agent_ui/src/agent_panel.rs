@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::NewExternalAgentThread;
 use crate::agent_diff::AgentDiffThread;
+use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
 use crate::{
     AddContextServer, AgentDiffPane, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
@@ -960,6 +961,8 @@ impl AgentPanel {
                         workspace.clone(),
                         project,
                         message_history,
+                        MIN_EDITOR_LINES,
+                        Some(MAX_EDITOR_LINES),
                         window,
                         cx,
                     )

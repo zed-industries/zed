@@ -45,7 +45,8 @@ use ::acp_thread::{
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
-use crate::{AgentDiffPane, Follow, KeepAll, OpenAgentDiff, RejectAll};
+use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
+use crate::{AgentDiffPane, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -65,6 +66,7 @@ pub struct AcpThreadView {
     expanded_tool_calls: HashSet<ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
+    editor_is_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
 }
 
@@ -94,6 +96,8 @@ impl AcpThreadView {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
+        min_lines: usize,
+        max_lines: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -113,8 +117,8 @@ impl AcpThreadView {
 
             let mut editor = Editor::new(
                 editor::EditorMode::AutoHeight {
-                    min_lines: 4,
-                    max_lines: None,
+                    min_lines,
+                    max_lines: max_lines,
                 },
                 buffer,
                 None,
@@ -182,6 +186,7 @@ impl AcpThreadView {
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             edits_expanded: false,
+            editor_is_expanded: false,
             message_history,
         }
     }
@@ -321,6 +326,35 @@ impl AcpThreadView {
         }
     }
 
+    pub fn expand_message_editor(
+        &mut self,
+        _: &ExpandMessageEditor,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_editor_is_expanded(!self.editor_is_expanded, cx);
+        cx.notify();
+    }
+
+    fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
+        self.editor_is_expanded = is_expanded;
+        self.message_editor.update(cx, |editor, _| {
+            if self.editor_is_expanded {
+                editor.set_mode(EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sized_by_content: false,
+                })
+            } else {
+                editor.set_mode(EditorMode::AutoHeight {
+                    min_lines: MIN_EDITOR_LINES,
+                    max_lines: Some(MAX_EDITOR_LINES),
+                })
+            }
+        });
+        cx.notify();
+    }
+
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
         self.last_error.take();
 
@@ -381,6 +415,7 @@ impl AcpThreadView {
 
         let mention_set = self.mention_set.clone();
 
+        self.set_editor_is_expanded(false, cx);
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
             editor.remove_creases(mention_set.lock().drain(), cx)
@@ -1793,34 +1828,96 @@ impl AcpThreadView {
         ))
     }
 
-    fn render_message_editor(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let settings = ThemeSettings::get_global(cx);
-        let font_size = TextSize::Small
-            .rems(cx)
-            .to_pixels(settings.agent_font_size(cx));
-        let line_height = settings.buffer_line_height.value() * font_size;
-
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.buffer_font.family.clone(),
-            font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_features: settings.buffer_font.features.clone(),
-            font_size: font_size.into(),
-            line_height: line_height.into(),
-            ..Default::default()
+    fn render_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let (expand_icon, expand_tooltip) = if self.editor_is_expanded {
+            (IconName::Minimize, "Minimize Message Editor")
+        } else {
+            (IconName::Maximize, "Expand Message Editor")
         };
 
-        EditorElement::new(
-            &self.message_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                syntax: cx.theme().syntax().clone(),
-                ..Default::default()
-            },
-        )
-        .into_any()
+        v_flex()
+            .on_action(cx.listener(Self::expand_message_editor))
+            .p_2()
+            .gap_2()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .bg(editor_bg_color)
+            .when(self.editor_is_expanded, |this| {
+                this.h(vh(0.8, window)).size_full().justify_between()
+            })
+            .child(
+                v_flex()
+                    .relative()
+                    .size_full()
+                    .pt_1()
+                    .pr_2p5()
+                    .child(div().flex_1().child({
+                        let settings = ThemeSettings::get_global(cx);
+                        let font_size = TextSize::Small
+                            .rems(cx)
+                            .to_pixels(settings.agent_font_size(cx));
+                        let line_height = settings.buffer_line_height.value() * font_size;
+
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_features: settings.buffer_font.features.clone(),
+                            font_size: font_size.into(),
+                            line_height: line_height.into(),
+                            ..Default::default()
+                        };
+
+                        EditorElement::new(
+                            &self.message_editor,
+                            EditorStyle {
+                                background: editor_bg_color,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                syntax: cx.theme().syntax().clone(),
+                                ..Default::default()
+                            },
+                        )
+                    }))
+                    .child(
+                        h_flex()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .opacity(0.5)
+                            .hover(|this| this.opacity(1.0))
+                            .child(
+                                IconButton::new("toggle-height", expand_icon)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                expand_tooltip,
+                                                &ExpandMessageEditor,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .flex_none()
+                    .justify_between()
+                    .child(self.render_follow_toggle(cx))
+                    .child(self.render_send_button(cx)),
+            )
+            .into_any()
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -2132,7 +2229,6 @@ impl Render for AcpThreadView {
                                 .px(RESPONSE_PADDING_X)
                                 .opacity(0.4)
                                 .hover(|style| style.opacity(1.))
-                                .gap_1()
                                 .flex_wrap()
                                 .justify_end()
                                 .child(open_as_markdown)
@@ -2166,22 +2262,7 @@ impl Render for AcpThreadView {
                         ),
                 )
             })
-            .child(
-                v_flex()
-                    .p_2()
-                    .pt_3()
-                    .gap_1()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(self.render_message_editor(cx))
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(self.render_follow_toggle(cx))
-                            .child(self.render_send_button(cx)),
-                    ),
-            )
+            .child(self.render_message_editor(window, cx))
     }
 }
 
