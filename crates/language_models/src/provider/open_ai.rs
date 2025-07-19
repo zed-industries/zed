@@ -822,7 +822,7 @@ impl ConfigurationView {
     fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.api_url_editor.update(cx, |input, cx| {
             input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
+                editor.set_text(open_ai::OPEN_AI_API_URL, window, cx);
             });
         });
         let fs = <dyn Fs>::global(cx);
