@@ -1,6 +1,10 @@
-use collections::HashMap;
 use git::status::GitSummary;
-use std::{ops::Deref, path::Path};
+use std::{
+    collections::BTreeMap,
+    ops::{Deref, Range},
+    path::Path,
+    sync::Arc,
+};
 use sum_tree::Cursor;
 use text::Bias;
 use worktree::{Entry, PathProgress, PathTarget, Traversal};
@@ -11,18 +15,18 @@ use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+    snapshots_by_abs_path: &'a BTreeMap<Arc<Path>, RepositorySnapshot>,
     repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
 impl<'a> GitTraversal<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+        snapshots_by_abs_path: &'a BTreeMap<Arc<Path>, RepositorySnapshot>,
         traversal: Traversal<'a>,
     ) -> GitTraversal<'a> {
         let mut this = GitTraversal {
             traversal,
-            repo_snapshots,
+            snapshots_by_abs_path,
             current_entry_summary: None,
             repo_location: None,
         };
@@ -42,14 +46,15 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Some((repo, repo_path)) = self
-            .repo_snapshots
-            .values()
-            .filter_map(|repo_snapshot| {
-                let repo_path = repo_snapshot.abs_path_to_repo_path(&abs_path)?;
-                Some((repo_snapshot, repo_path))
-            })
-            .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
+        let range: Range<Arc<Path>> = Arc::from("".as_ref())..Arc::from(abs_path.as_ref());
+        let Some((repo, repo_path)) =
+            self.snapshots_by_abs_path
+                .range(range)
+                .last()
+                .and_then(|(_, repo)| {
+                    let repo_path = repo.abs_path_to_repo_path(&abs_path)?;
+                    Some((repo, repo_path))
+                })
         else {
             self.repo_location = None;
             return;
@@ -145,12 +150,12 @@ pub struct ChildEntriesGitIter<'a> {
 
 impl<'a> ChildEntriesGitIter<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+        snapshots_by_abs_path: &'a BTreeMap<Arc<Path>, RepositorySnapshot>,
         worktree_snapshot: &'a worktree::Snapshot,
         parent_path: &'a Path,
     ) -> Self {
         let mut traversal = GitTraversal::new(
-            repo_snapshots,
+            snapshots_by_abs_path,
             worktree_snapshot.traverse_from_path(true, true, true, parent_path),
         );
         traversal.advance();
@@ -310,7 +315,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store().read(cx).repo_snapshots_by_path(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -385,7 +390,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store().read(cx).repo_snapshots_by_path(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -511,7 +516,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store().read(cx).repo_snapshots_by_path(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -620,7 +625,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store().read(cx).repo_snapshots_by_path(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -748,7 +753,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(cx),
+                project.git_store().read(cx).repo_snapshots_by_path(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -766,7 +771,7 @@ mod tests {
 
     #[track_caller]
     fn check_git_statuses(
-        repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,
+        repo_snapshots: &std::collections::BTreeMap<Arc<Path>, RepositorySnapshot>,
         worktree_snapshot: &worktree::Snapshot,
         expected_statuses: &[(&Path, GitSummary)],
     ) {
