@@ -437,12 +437,12 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    pub fn as_mut<'a, 'b, C: AppContext>(&'a self, cx: &'b mut C) -> C::Result<GpuiBorrow<'b, T>> {
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
         cx.as_mut(self)
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    pub fn write<'a, 'b, C: AppContext>(&'a self, cx: &'b mut C, value: T) -> C::Result<()> {
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
         self.update(cx, |entity, cx| {
             *entity = value;
             cx.notify();

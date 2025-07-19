@@ -64,7 +64,7 @@ impl AppContext for TestAppContext {
         app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, 'b, T>(&'a mut self, _: &'b Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
     where
         T: 'static,
     {
@@ -928,10 +928,7 @@ impl AppContext for VisualTestContext {
         self.cx.update_entity(handle, update)
     }
 
-    fn as_mut<'a, 'b, T>(
-        &'a mut self,
-        handle: &'b Entity<T>,
-    ) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
     where
         T: 'static,
     {

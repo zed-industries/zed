@@ -58,10 +58,7 @@ impl AppContext for AsyncApp {
         Ok(app.update_entity(handle, update))
     }
 
-    fn as_mut<'a, 'b, T>(
-        &'a mut self,
-        _handle: &'b Entity<T>,
-    ) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, _handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
     where
         T: 'static,
     {
@@ -376,7 +373,7 @@ impl AppContext for AsyncWindowContext {
             .update(self, |_, _, cx| cx.update_entity(handle, update))
     }
 
-    fn as_mut<'a, 'b, T>(&'a mut self, _: &'b Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
     where
         T: 'static,
     {

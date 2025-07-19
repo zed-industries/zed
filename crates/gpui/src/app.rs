@@ -1826,7 +1826,7 @@ impl AppContext for App {
         })
     }
 
-    fn as_mut<'a, 'b, T>(&'a mut self, handle: &'b Entity<T>) -> GpuiBorrow<'a, T>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
     where
         T: 'static,
     {

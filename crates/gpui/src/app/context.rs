@@ -726,10 +726,7 @@ impl<T> AppContext for Context<'_, T> {
         self.app.update_entity(handle, update)
     }
 
-    fn as_mut<'a, 'b, E>(
-        &'a mut self,
-        handle: &'b Entity<E>,
-    ) -> Self::Result<super::GpuiBorrow<'a, E>>
+    fn as_mut<'a, E>(&'a mut self, handle: &Entity<E>) -> Self::Result<super::GpuiBorrow<'a, E>>
     where
         E: 'static,
     {
