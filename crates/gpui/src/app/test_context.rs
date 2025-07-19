@@ -145,24 +145,7 @@ impl TestAppContext {
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
         let dispatcher = TestDispatcher::new(StdRng::from_entropy());
-        let arc_dispatcher = Arc::new(dispatcher.clone());
-        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
-        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
-        let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
-
-        Self {
-            app: App::new_app(platform.clone(), asset_source, http_client),
-            background_executor,
-            foreground_executor,
-            dispatcher: dispatcher.clone(),
-            test_platform: platform,
-            text_system,
-            fn_name: None,
-            on_quit: Rc::new(RefCell::new(Vec::default())),
-        }
+        Self::build(dispatcher, None)
     }
 
     /// The name of the test function that created this `TestAppContext`
