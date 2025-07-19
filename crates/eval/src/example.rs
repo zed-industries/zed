@@ -422,6 +422,16 @@ impl AppContext for ExampleContext {
         self.app.update_entity(handle, update)
     }
 
+    fn as_mut<'a, 'b, T>(
+        &'a mut self,
+        handle: &'b Entity<T>,
+    ) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.app.as_mut(handle)
+    }
+
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,

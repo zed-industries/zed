@@ -2448,9 +2448,14 @@ impl Window {
         })
     }
 
+    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
+    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_global_id(id.into(), |_, window| f(window))
+    }
+
     /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
     ///
-    /// NOTE: This method uses the location of the caller to generate an element ID for this state.
+    /// NOTE: This method uses the location of the caller to generate an ID for this state.
     ///       If this is not sufficient to identify your state (e.g. you're rendering a list item),
     ///       you can provide a custom ElementID using the `use_keyed_state` method.
     #[track_caller]

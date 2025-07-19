@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
+use rand::{SeedableRng, rngs::StdRng};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -61,6 +62,13 @@ impl AppContext for TestAppContext {
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, 'b, T>(&'a mut self, _: &'b Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        panic!("Cannot use as_mut with a test app context. Try calling update() first")
     }
 
     fn read_entity<T, R>(
@@ -130,6 +138,29 @@ impl TestAppContext {
             test_platform: platform,
             text_system,
             fn_name,
+            on_quit: Rc::new(RefCell::new(Vec::default())),
+        }
+    }
+
+    /// Create a single TestAppContext, for non-multi-client tests
+    pub fn single() -> Self {
+        let dispatcher = TestDispatcher::new(StdRng::from_entropy());
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        let asset_source = Arc::new(());
+        let http_client = http_client::FakeHttpClient::with_404_response();
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+
+        Self {
+            app: App::new_app(platform.clone(), asset_source, http_client),
+            background_executor,
+            foreground_executor,
+            dispatcher: dispatcher.clone(),
+            test_platform: platform,
+            text_system,
+            fn_name: None,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
     }
@@ -912,6 +943,16 @@ impl AppContext for VisualTestContext {
         T: 'static,
     {
         self.cx.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, 'b, T>(
+        &'a mut self,
+        handle: &'b Entity<T>,
+    ) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.cx.as_mut(handle)
     }
 
     fn read_entity<T, R>(
