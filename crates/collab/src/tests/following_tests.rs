@@ -456,11 +456,12 @@ async fn test_basic_following(
             .await
             .unwrap();
         cx_b.set_screen_capture_sources(vec![display]);
+        let source = cx_b.screen_capture_sources().next().unwrap();
         active_call_b
             .update(cx_b, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
+                    .update(cx, |room, cx| room.share_screen(source, cx))
             })
             .await
             .unwrap();
