@@ -495,6 +495,7 @@ impl Vim {
                     self.replace_with_register_object(object, around, window, cx)
                 }
                 Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
+                Some(Operator::HelixMatch) => self.select_object(object, around, window, cx),
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
