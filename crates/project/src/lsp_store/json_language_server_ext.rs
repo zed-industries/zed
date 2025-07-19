@@ -1,82 +1,15 @@
-use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
 use collections::HashMap;
-use gpui::{App, Entity, WeakEntity};
-use language::Buffer;
-use language::{File as _, LocalFile as _};
-use lsp::{DidCloseTextDocumentParams, DidOpenTextDocumentParams, LanguageServer};
-use util::ResultExt as _;
+use gpui::WeakEntity;
+use lsp::LanguageServer;
 
-use crate::{LspStore, Project};
-
-// https://github.com/microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#schema-associations-notification
-struct SchemaAssociationsNotification {}
-
-/// interface ISchemaAssociation {
-///   /**
-///    * The URI of the schema, which is also the identifier of the schema.
-///    */
-///   uri: string;
+use crate::LspStore;
+/// https://github.com/Microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#schema-content-request
 ///
-///   /**
-///    * A list of file path patterns that are associated to the schema. The '*' wildcard can be used. Exclusion patterns starting with '!'.
-///    * For example '*.schema.json', 'package.json', '!foo*.schema.json'.
-///    * A match succeeds when there is at least one pattern matching and last matching pattern does not start with '!'.
-///    */
-///   fileMatch: string[];
-///   /**
-///    * If provided, the association is only used if the validated document is located in the given folder (directly or in a subfolder)
-///    */
-///   folderUri?: string;
-///   /*
-///    * The schema for the given URI.
-///    * If no schema is provided, the schema will be fetched with the schema request service (if available).
-///    */
-///   schema?: JSONSchema;
-/// }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SchemaAssociation {
-    pub uri: String,
-    pub file_match: Vec<String>,
-    pub folder_uri: Option<String>,
-    pub schema: Option<serde_json::Value>,
-}
-
-impl lsp::notification::Notification for SchemaAssociationsNotification {
-    type Params = Vec<SchemaAssociation>;
-    const METHOD: &'static str = "json/schemaAssociations";
-}
-
-pub fn send_schema_associations_notification(
-    project: Entity<Project>,
-    buffer: Entity<Buffer>,
-    schema_associations: &Vec<SchemaAssociation>,
-    cx: &mut App,
-) {
-    let lsp_store = project.read(cx).lsp_store();
-    lsp_store.update(cx, |lsp_store, cx| {
-        let Some(local) = lsp_store.as_local_mut() else {
-            return;
-        };
-        buffer.update(cx, |buffer, cx| {
-            for (cached_adapter, server) in local
-                .language_servers_for_buffer(buffer, cx)
-                .map(|(a, b)| (a.clone(), b.clone()))
-                .collect::<Vec<_>>()
-            {
-                if !cached_adapter.adapter.is_primary_zed_json_schema_adapter() {
-                    continue;
-                }
-
-                server
-                    .notify::<SchemaAssociationsNotification>(schema_associations)
-                    .log_err(); // todo! don't ignore error
-            }
-        })
-    })
-}
-
+/// Represents a "JSON language server-specific, non-standardized, extension to the LSP" with which the vscode-json-language-server
+/// can request the contents of a schema that is associated with a uri scheme it does not support.
+/// In our case, we provide the uris for actions on server startup under the `zed://schemas/action/{normalize_action_name}` scheme.
+/// We can then respond to this request with the schema content on demand, thereby greatly reducing the total size of the JSON we send to the server on startup
 struct SchemaContentRequest {}
 
 impl lsp::request::Request for SchemaContentRequest {
@@ -87,35 +20,51 @@ impl lsp::request::Request for SchemaContentRequest {
     const METHOD: &'static str = "vscode/content";
 }
 
-pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
+pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     language_server
         .on_request::<SchemaContentRequest, _, _>(|params, cx| {
             let mut generator = settings::KeymapFile::action_schema_generator();
             let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
             async move {
                 let all_schemas = all_schemas?;
-                eprintln!("Received request for schema {:?}", params);
                 let Some(uri) = params.get(0) else {
                     anyhow::bail!("No URI");
                 };
-                let action_name = uri
+                let normalized_action_name = uri
                     .strip_prefix("zed://schemas/action/")
                     .context("Invalid URI")?;
-                let action_name = action_name.replace("__", "::");
+                let action_name = denormalize_action_name(normalized_action_name);
                 let schema = root_schema_from_action_schema(
                     all_schemas
                         .get(action_name.as_str())
-                        .context("No schema found")?
-                        .as_ref(),
+                        .map(Option::as_ref)
+                        .flatten(),
                     &mut generator,
                 )
-                .to_value()
-                .to_string();
+                .to_value();
 
-                Ok(schema)
+                serde_json::to_string(&schema).context("Failed to serialize schema")
             }
         })
         .detach();
+}
+
+pub fn normalize_action_name(action_name: &str) -> String {
+    action_name.replace("::", "__")
+}
+
+pub fn denormalize_action_name(action_name: &str) -> String {
+    action_name.replace("__", "::")
+}
+
+pub fn url_schema_for_action(action_name: &str) -> serde_json::Value {
+    let mut file_name = normalize_action_name(action_name);
+    let name_len = file_name.len();
+    file_name.push_str(".json");
+    serde_json::json!({
+        "fileMatch": [file_name],
+        "url": format!("zed://schemas/action/{}", &file_name[..name_len])
+    })
 }
 
 fn root_schema_from_action_schema(

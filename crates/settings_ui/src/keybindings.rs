@@ -2204,19 +2204,6 @@ impl ActionArgumentsEditor {
                 buffer.set_language(Some(json_language), cx);
             })?;
 
-            let schema_association = project::lsp_store::json_language_server_ext::SchemaAssociation {
-                uri: "lol://some.uri".into(),
-                file_match: vec![file_name],
-                folder_uri: None,
-                schema: Some(Self::root_schema_from_action_schema(&schema, &mut KeymapFile::action_schema_generator()).to_value()),
-            };
-
-            if let Some(project) = project.upgrade() {
-                cx.update(|_, cx| {
-                    project::lsp_store::json_language_server_ext::send_schema_associations_notification(project, buffer.clone(), &vec![schema_association.clone()], cx);
-                })?;
-            }
-
             let open_lsp_handle = project.update(cx, |project, cx| {
                 project.register_buffer_with_language_servers(&buffer, cx)
             })?;
@@ -2304,28 +2291,6 @@ impl ActionArgumentsEditor {
         .await
         .context("Failed to create temporary file")?;
         Ok((path, sub_temp_dir))
-    }
-
-    fn root_schema_from_action_schema(
-        action_schema: &schemars::Schema,
-        generator: &mut schemars::SchemaGenerator,
-    ) -> schemars::Schema {
-        let meta_schema = generator
-            .settings()
-            .meta_schema
-            .as_ref()
-            .expect("meta_schema should be present in schemars settings")
-            .to_string();
-        let defs = generator.definitions();
-        let mut schema = schemars::json_schema!({
-            "$schema": meta_schema,
-            "allowTrailingCommas": true,
-            "$defs": defs,
-        });
-        schema
-            .ensure_object()
-            .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
-        schema
     }
 }
 
