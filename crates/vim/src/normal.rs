@@ -545,12 +545,30 @@ impl Vim {
 
     fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
-        self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
+        if self.mode == Mode::HelixNormal {
+            self.switch_mode(Mode::Insert, false, window, cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let point = if selection.is_empty() {
+                            right(map, selection.head(), 1)
+                        } else {
+                            selection.end
+                        };
+                        selection.collapse_to(point, SelectionGoal::None);
+                    });
+                });
             });
-        });
+        } else {
+            self.switch_mode(Mode::Insert, false, window, cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_cursors_with(|map, cursor, _| {
+                        (right(map, cursor, 1), SelectionGoal::None)
+                    });
+                });
+            });
+        }
     }
 
     fn insert_before(&mut self, _: &InsertBefore, window: &mut Window, cx: &mut Context<Self>) {
@@ -565,6 +583,17 @@ impl Vim {
                             selection.collapse_to(start_of_line, SelectionGoal::None)
                         } else {
                             selection.collapse_to(selection.start, SelectionGoal::None)
+                        }
+                    });
+                });
+            });
+        } else if self.mode == Mode::HelixNormal {
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        // In helix normal mode, move cursor to start of selection and collapse
+                        if !selection.is_empty() {
+                            selection.collapse_to(selection.start, SelectionGoal::None);
                         }
                     });
                 });
