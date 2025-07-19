@@ -76,6 +76,7 @@ struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
     maximized: bool,
+    resizing: bool,
     tiling: Tiling,
 }
 
@@ -107,6 +108,7 @@ pub struct WaylandWindowState {
     active: bool,
     hovered: bool,
     in_progress_configure: Option<InProgressConfigure>,
+    resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     inset: Option<Pixels>,
@@ -176,6 +178,7 @@ impl WaylandWindowState {
             tiling: Tiling::default(),
             window_bounds: options.bounds,
             in_progress_configure: None,
+            resize_throttle: false,
             client,
             appearance,
             handle,
@@ -335,6 +338,7 @@ impl WaylandWindowStatePtr {
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
+        state.resize_throttle = false;
         drop(state);
 
         let mut cb = self.callbacks.borrow_mut();
@@ -366,6 +370,12 @@ impl WaylandWindowStatePtr {
                         state.fullscreen = configure.fullscreen;
                         state.maximized = configure.maximized;
                         state.tiling = configure.tiling;
+                        // Limit interactive resizes to once per vblank
+                        if configure.resizing && state.resize_throttle {
+                            return;
+                        } else if configure.resizing {
+                            state.resize_throttle = true;
+                        }
                         if !configure.fullscreen && !configure.maximized {
                             configure.size = if got_unmaximized {
                                 Some(state.window_bounds.size)
@@ -472,6 +482,7 @@ impl WaylandWindowStatePtr {
                 let mut tiling = Tiling::default();
                 let mut fullscreen = false;
                 let mut maximized = false;
+                let mut resizing = false;
 
                 for state in states {
                     match state {
@@ -481,6 +492,7 @@ impl WaylandWindowStatePtr {
                         xdg_toplevel::State::Fullscreen => {
                             fullscreen = true;
                         }
+                        xdg_toplevel::State::Resizing => resizing = true,
                         xdg_toplevel::State::TiledTop => {
                             tiling.top = true;
                         }
@@ -508,6 +520,7 @@ impl WaylandWindowStatePtr {
                     size,
                     fullscreen,
                     maximized,
+                    resizing,
                     tiling,
                 });
 
