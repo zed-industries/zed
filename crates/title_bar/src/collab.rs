@@ -11,7 +11,7 @@ use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{
-    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuEntry, Facepile, PopoverMenu,
+    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Facepile, PopoverMenu,
     SplitButton, TintColor, Tooltip, prelude::*,
 };
 use util::maybe;
@@ -39,7 +39,8 @@ fn toggle_screen_sharing(
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let toggle_screen_sharing = room.update(cx, |room, cx| {
-            let unshare_current_screen = room.is_sharing_screen().then(|| {
+            let is_sharing = room.is_sharing_screen();
+            let unshare_current_screen = is_sharing.then(|| {
                 telemetry::event!(
                     "Screen Share Disabled",
                     room_id = room.id(),
@@ -48,15 +49,21 @@ fn toggle_screen_sharing(
                 room.unshare_screen(cx)
             });
             if let Some(screen) = screen {
-                telemetry::event!(
-                    "Screen Share Enabled",
-                    room_id = room.id(),
-                    channel_id = room.channel_id(),
-                );
+                if !is_sharing {
+                    telemetry::event!(
+                        "Screen Share Enabled",
+                        room_id = room.id(),
+                        channel_id = room.channel_id(),
+                    );
+                }
                 cx.spawn(async move |room, cx| {
-                    unshare_current_screen.transpose()?;
-                    room.update(cx, |room, cx| room.share_screen(screen, cx))?
-                        .await
+                    let should_share = unshare_current_screen.transpose()?.is_none();
+                    if should_share {
+                        room.update(cx, |room, cx| room.share_screen(screen, cx))?
+                            .await
+                    } else {
+                        Ok(())
+                    }
                 })
             } else {
                 Task::ready(Ok(()))
@@ -494,6 +501,7 @@ impl TitleBar {
 
     fn render_screen_list(&self) -> impl IntoElement {
         PopoverMenu::new("screen-share-screen-list")
+            .with_handle(self.screen_share_popover_handle.clone())
             .trigger(
                 ui::ButtonLike::new_rounded_right("screen-share-screen-list-trigger")
                     .layer(ui::ElevationIndex::ModalSurface)
@@ -502,9 +510,10 @@ impl TitleBar {
                         div()
                             .px_1()
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
-                    ),
+                    )
+                    .toggle_state(self.screen_share_popover_handle.is_deployed()),
             )
-            .menu(move |window, cx| {
+            .menu(|window, cx| {
                 let screens = cx.screen_capture_sources();
                 Some(ContextMenu::build(window, cx, |context_menu, _, cx| {
                     cx.spawn(async move |this: WeakEntity<ContextMenu>, cx| {
@@ -518,21 +527,37 @@ impl TitleBar {
                                 let Ok(meta) = screen.metadata() else {
                                     continue;
                                 };
+
                                 let label = meta
                                     .label
                                     .clone()
                                     .unwrap_or_else(|| SharedString::from("Unknown screen"));
-
-                                this.push_item(
-                                    ContextMenuEntry::new(label)
-                                        .icon(IconName::Screen)
-                                        .handler(move |window, cx| {
-                                            toggle_screen_sharing(Some(screen.clone()), window, cx);
-                                        })
-                                        .when(active_screenshare_id == Some(meta.id), |this| {
-                                            this.icon_color(Color::Accent)
-                                        }),
-                                );
+                                let resolution = SharedString::from(format!(
+                                    "{} × {}",
+                                    meta.resolution.width.0, meta.resolution.height.0
+                                ));
+                                this.push_item(ContextMenuItem::CustomEntry {
+                                    entry_render: Box::new(move |_, _| {
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::Screen).when(
+                                                active_screenshare_id == Some(meta.id),
+                                                |this| this.color(Color::Accent),
+                                            ))
+                                            .child(Label::new(label.clone()))
+                                            .child(
+                                                Label::new(resolution.clone())
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .into_any()
+                                    }),
+                                    selectable: true,
+                                    documentation_aside: None,
+                                    handler: Rc::new(move |_, window, cx| {
+                                        toggle_screen_sharing(Some(screen.clone()), window, cx);
+                                    }),
+                                });
                             }
                         })
                     })
