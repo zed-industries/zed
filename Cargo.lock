@@ -16946,8 +16946,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-css"
 version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad6489794d41350d12a7fbe520e5199f688618f43aace5443980d1ddcf1b29e"
+source = "git+https://github.com/mantou132/tree-sitter-css?rev=62bb39a376ee8aa0ceb6cab27474b7c7136913b9#62bb39a376ee8aa0ceb6cab27474b7c7136913b9"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -17032,8 +17031,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-html"
 version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "261b708e5d92061ede329babaaa427b819329a9d427a1d710abb0f67bbef63ee"
+source = "git+https://github.com/mantou132/tree-sitter-html?rev=755c2e2d664ecf6f663106544517bb578beba6a8#755c2e2d664ecf6f663106544517bb578beba6a8"
 dependencies = [
  "cc",
  "tree-sitter-language",
