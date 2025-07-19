@@ -10984,6 +10984,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette_hooks",
+ "db",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20222,6 +20238,7 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "onboarding",
  "outline",
  "outline_panel",
  "parking_lot",
