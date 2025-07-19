@@ -852,8 +852,11 @@ impl OutlinePanel {
                             }
 
                             if old_collapsed_entries != outline_panel.collapsed_entries {
-                                outline_panel
-                                    .update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                                outline_panel.update_cached_entries(
+                                    Some(UPDATE_DEBOUNCE),
+                                    window,
+                                    cx,
+                                );
                             }
                         } else {
                             cx.notify();
@@ -3383,17 +3386,18 @@ impl OutlinePanel {
                                             == buffer_snapshot.language_at(outline.range.start)
                                 });
 
-                                let mut outlines_with_children = HashSet::default();
-                                for i in 0..outlines.len() {
-                                    if let Some(next_outline) = outlines.get(i + 1) {
-                                        if next_outline.depth > outlines[i].depth {
-                                            outlines_with_children.insert((
-                                                outlines[i].range.clone(),
-                                                outlines[i].depth,
-                                            ));
+                                let outlines_with_children = outlines
+                                    .windows(2)
+                                    .filter_map(|window| {
+                                        let current = &window[0];
+                                        let next = &window[1];
+                                        if next.depth > current.depth {
+                                            Some((current.range.clone(), current.depth))
+                                        } else {
+                                            None
                                         }
-                                    }
-                                }
+                                    })
+                                    .collect::<HashSet<_>>();
 
                                 (outlines, outlines_with_children)
                             })
@@ -3413,8 +3417,6 @@ impl OutlinePanel {
                                         Some(UPDATE_DEBOUNCE)
                                     };
 
-                                let mut outlines_to_check = Vec::new();
-
                                 if let Some(excerpt) = outline_panel
                                     .excerpts
                                     .entry(buffer_id)
@@ -3427,42 +3429,31 @@ impl OutlinePanel {
                                         if let ExcerptOutlines::Outlines(outlines) =
                                             &excerpt.outlines
                                         {
-                                            if default_depth == 0 {
-                                                outlines_to_check.extend(outlines.clone());
-                                            } else {
-                                                outlines_to_check.extend(
-                                                    outlines
-                                                        .iter()
-                                                        .filter(|outline| {
-                                                            outline.depth >= default_depth
-                                                        })
-                                                        .cloned(),
-                                                );
-                                            }
+                                            outlines
+                                                .iter()
+                                                .filter(|outline| {
+                                                    (default_depth == 0
+                                                        || outline.depth >= default_depth)
+                                                        && outlines_with_children.contains(&(
+                                                            outline.range.clone(),
+                                                            outline.depth,
+                                                        ))
+                                                })
+                                                .for_each(|outline| {
+                                                    outline_panel.collapsed_entries.insert(
+                                                        CollapsedEntry::Outline(
+                                                            buffer_id,
+                                                            excerpt_id,
+                                                            outline.range.clone(),
+                                                        ),
+                                                    );
+                                                });
                                         }
                                     }
 
-                                    if !outlines_to_check.is_empty() {
-                                        for outline in &outlines_to_check {
-                                            let outline_key =
-                                                (outline.range.clone(), outline.depth);
-                                            if outlines_with_children.contains(&outline_key) {
-                                                outline_panel.collapsed_entries.insert(
-                                                    CollapsedEntry::Outline(
-                                                        buffer_id,
-                                                        excerpt_id,
-                                                        outline.range.clone(),
-                                                    ),
-                                                );
-                                            }
-                                        }
-
-                                        outline_panel.update_cached_entries(debounce, window, cx);
-                                    } else {
-                                        // Even if no outlines to check, we still need to update cached entries
-                                        // to show the outline entries that were just fetched
-                                        outline_panel.update_cached_entries(debounce, window, cx);
-                                    }
+                                    // Even if no outlines to check, we still need to update cached entries
+                                    // to show the outline entries that were just fetched
+                                    outline_panel.update_cached_entries(debounce, window, cx);
                                 }
                             })
                             .ok();
