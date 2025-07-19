@@ -68,6 +68,7 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
+use util::paths::PathMatcher;
 
 use rpc::{
     AnyProtoClient,
@@ -7136,16 +7137,36 @@ impl LspStore {
 
     pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
-        for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {
+        for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, None, cx) {
             summary.error_count += path_summary.error_count;
             summary.warning_count += path_summary.warning_count;
         }
         summary
     }
 
+    /// Returns a summary of all diagnostics for files that match the given path matcher.
+    pub fn diagnostic_summary_for_paths(
+        &self,
+        path_matcher: &PathMatcher,
+        include_ignored: bool,
+        cx: &App,
+    ) -> DiagnosticSummary {
+        let mut summary = DiagnosticSummary::default();
+        for (_, _, path_summary) in
+            self.diagnostic_summaries(include_ignored, Some(path_matcher), cx)
+        {
+            summary.error_count += path_summary.error_count;
+            summary.warning_count += path_summary.warning_count;
+        }
+        summary
+    }
+
+    /// When `path_matcher` is provided, only diagnostics for matching paths
+    /// will be included.
     pub fn diagnostic_summaries<'a>(
         &'a self,
         include_ignored: bool,
+        path_matcher: Option<&'a PathMatcher>,
         cx: &'a App,
     ) -> impl Iterator<Item = (ProjectPath, LanguageServerId, DiagnosticSummary)> + 'a {
         self.worktree_store
@@ -7160,10 +7181,14 @@ impl LspStore {
                 summaries
                     .iter()
                     .filter(move |(path, _)| {
-                        include_ignored
-                            || worktree
-                                .entry_for_path(path.as_ref())
-                                .map_or(false, |entry| !entry.is_ignored)
+                        if let Some(path_matcher) = path_matcher {
+                            (*path_matcher).is_match((*path).clone())
+                        } else {
+                            include_ignored
+                                || worktree
+                                    .entry_for_path(path.as_ref())
+                                    .map_or(false, |entry| !entry.is_ignored)
+                        }
                     })
                     .flat_map(move |(path, summaries)| {
                         summaries.iter().map(move |(server_id, summary)| {

@@ -113,7 +113,15 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view while there are already diagnostics.
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -344,7 +352,15 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -453,7 +469,15 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let workspace = window.root(cx).unwrap();
 
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
@@ -663,7 +687,15 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -773,7 +805,15 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
 
     log::info!("constructing reference diagnostics view");
     let reference_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     cx.executor()
         .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
@@ -826,7 +866,15 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
     let workspace = window.root(cx).unwrap();
 
     let mutated_diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
@@ -1421,7 +1469,15 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
 
     // Open the project diagnostics view
     let diagnostics = window.build_entity(cx, |window, cx| {
-        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+        ProjectDiagnosticsEditor::new(
+            true,
+            Default::default(),
+            false,
+            project.clone(),
+            workspace.downgrade(),
+            window,
+            cx,
+        )
     });
     let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
