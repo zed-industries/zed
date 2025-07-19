@@ -34,4 +34,6 @@ pub enum LocalSettingsKind {
     Editorconfig,
     #[sea_orm(string_value = "debug")]
     Debug,
+    #[sea_orm(string_value = "devcontainer")]
+    Devcontainer,
 }

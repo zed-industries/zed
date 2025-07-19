@@ -149,4 +149,5 @@ enum LocalSettingsKind {
     Tasks = 1;
     Editorconfig = 2;
     Debug = 3;
+    Devcontainer = 4;
 }
