@@ -1,8 +1,8 @@
 mod editable_setting_control;
-mod json_schema;
 mod key_equivalents;
 mod keymap_file;
 mod settings_file;
+mod settings_json;
 mod settings_store;
 mod vscode_import;
 
@@ -12,16 +12,16 @@ use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use editable_setting_control::*;
-pub use json_schema::*;
 pub use key_equivalents::*;
 pub use keymap_file::{
-    KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeymapFile,
-    KeymapFileLoadResult,
+    KeyBindingValidator, KeyBindingValidatorRegistration, KeybindSource, KeybindUpdateOperation,
+    KeybindUpdateTarget, KeymapFile, KeymapFileLoadResult,
 };
 pub use settings_file::*;
+pub use settings_json::*;
 pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, parse_json_with_comments,
+    SettingsStore,
 };
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 

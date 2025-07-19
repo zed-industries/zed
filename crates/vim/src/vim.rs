@@ -22,7 +22,8 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
+    ToPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -133,55 +134,105 @@ struct PushLiteral {
 actions!(
     vim,
     [
+        /// Switches to normal mode.
         SwitchToNormalMode,
+        /// Switches to insert mode.
         SwitchToInsertMode,
+        /// Switches to replace mode.
         SwitchToReplaceMode,
+        /// Switches to visual mode.
         SwitchToVisualMode,
+        /// Switches to visual line mode.
         SwitchToVisualLineMode,
+        /// Switches to visual block mode.
         SwitchToVisualBlockMode,
+        /// Switches to Helix-style normal mode.
         SwitchToHelixNormalMode,
+        /// Clears any pending operators.
         ClearOperators,
+        /// Clears the exchange register.
         ClearExchange,
+        /// Inserts a tab character.
         Tab,
+        /// Inserts a newline.
         Enter,
+        /// Selects inner text object.
         InnerObject,
+        /// Maximizes the current pane.
         MaximizePane,
+        /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Resets all pane sizes to default.
         ResetPaneSizes,
+        /// Resizes the pane to the right.
         ResizePaneRight,
+        /// Resizes the pane to the left.
         ResizePaneLeft,
+        /// Resizes the pane upward.
         ResizePaneUp,
+        /// Resizes the pane downward.
         ResizePaneDown,
+        /// Starts a change operation.
         PushChange,
+        /// Starts a delete operation.
         PushDelete,
+        /// Exchanges text regions.
         Exchange,
+        /// Starts a yank operation.
         PushYank,
+        /// Starts a replace operation.
         PushReplace,
+        /// Deletes surrounding characters.
         PushDeleteSurrounds,
+        /// Sets a mark at the current position.
         PushMark,
+        /// Toggles the marks view.
         ToggleMarksView,
+        /// Starts a forced motion.
         PushForcedMotion,
+        /// Starts an indent operation.
         PushIndent,
+        /// Starts an outdent operation.
         PushOutdent,
+        /// Starts an auto-indent operation.
         PushAutoIndent,
+        /// Starts a rewrap operation.
         PushRewrap,
+        /// Starts a shell command operation.
         PushShellCommand,
+        /// Converts to lowercase.
         PushLowercase,
+        /// Converts to uppercase.
         PushUppercase,
+        /// Toggles case.
         PushOppositeCase,
+        /// Applies ROT13 encoding.
         PushRot13,
+        /// Applies ROT47 encoding.
         PushRot47,
+        /// Toggles the registers view.
         ToggleRegistersView,
+        /// Selects a register.
         PushRegister,
+        /// Starts recording to a register.
         PushRecordRegister,
+        /// Replays a register.
         PushReplayRegister,
+        /// Replaces with register contents.
         PushReplaceWithRegister,
+        /// Toggles comments.
         PushToggleComments,
     ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode,]);
+actions!(
+    workspace,
+    [
+        /// Toggles Vim mode on or off.
+        ToggleVimMode,
+    ]
+);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
@@ -963,7 +1014,7 @@ impl Vim {
                 }
             }
 
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
@@ -1163,7 +1214,7 @@ impl Vim {
             } else {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
@@ -1438,27 +1489,29 @@ impl Vim {
             Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
                 self.update_editor(window, cx, |vim, editor, window, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
-                    editor.change_selections(None, window, cx, |s| match original_mode {
-                        Some(Mode::VisualLine) => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.prev_line_boundary(selection.start.to_point(map)).1,
-                                    SelectionGoal::None,
-                                )
-                            });
-                        }
-                        Some(Mode::VisualBlock) => {
-                            let mut first = s.first_anchor();
-                            first.collapse_to(first.start, first.goal);
-                            s.select_anchors(vec![first]);
-                        }
-                        _ => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.clip_at_line_end(selection.start),
-                                    selection.goal,
-                                );
-                            });
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        match original_mode {
+                            Some(Mode::VisualLine) => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.prev_line_boundary(selection.start.to_point(map)).1,
+                                        SelectionGoal::None,
+                                    )
+                                });
+                            }
+                            Some(Mode::VisualBlock) => {
+                                let mut first = s.first_anchor();
+                                first.collapse_to(first.start, first.goal);
+                                s.select_anchors(vec![first]);
+                            }
+                            _ => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.clip_at_line_end(selection.start),
+                                        selection.goal,
+                                    );
+                                });
+                            }
                         }
                     });
                 });
@@ -1466,7 +1519,7 @@ impl Vim {
             }
             Mode::Normal => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)

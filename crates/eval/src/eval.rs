@@ -63,7 +63,7 @@ struct Args {
 }
 
 fn main() {
-    dotenv::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
+    dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
 
     env_logger::init();
 

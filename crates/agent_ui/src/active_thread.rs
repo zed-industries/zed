@@ -19,7 +19,7 @@ use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, SelectionEffects};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
@@ -47,8 +47,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize, Tooltip,
-    prelude::*,
+    Banner, Disclosure, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -58,6 +58,7 @@ use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
+const RESPONSE_PADDING_X: Pixels = px(19.);
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -204,7 +205,7 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
     MarkdownStyle {
         base_text_style: text_style.clone(),
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         code_block_overflow_x_scroll: true,
         table_overflow_x_scroll: true,
         heading_level_styles: Some(HeadingLevelStyles {
@@ -301,7 +302,7 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
     MarkdownStyle {
         base_text_style: text_style,
         syntax: cx.theme().syntax().clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         code_block_overflow_x_scroll: false,
         code_block: StyleRefinement {
             margin: EdgesRefinement::default(),
@@ -689,9 +690,12 @@ fn open_markdown_link(
                             })
                             .context("Could not find matching symbol")?;
 
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_anchor_ranges([symbol_range.start..symbol_range.start])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_anchor_ranges([symbol_range.start..symbol_range.start]),
+                        );
                         anyhow::Ok(())
                     })
                 })
@@ -708,10 +712,15 @@ fn open_markdown_link(
                         .downcast::<Editor>()
                         .context("Item is not an editor")?;
                     active_editor.update_in(cx, |editor, window, cx| {
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_ranges([Point::new(line_range.start as u32, 0)
-                                ..Point::new(line_range.start as u32, 0)])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| {
+                                s.select_ranges([Point::new(line_range.start as u32, 0)
+                                    ..Point::new(line_range.start as u32, 0)])
+                            },
+                        );
                         anyhow::Ok(())
                     })
                 })
@@ -1866,9 +1875,6 @@ impl ActiveThread {
                 this.scroll_to_top(cx);
             }));
 
-        // For all items that should be aligned with the LLM's response.
-        const RESPONSE_PADDING_X: Pixels = px(19.);
-
         let show_feedback = thread.is_turn_end(ix);
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -2529,34 +2535,18 @@ impl ActiveThread {
         ix: usize,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let colors = cx.theme().colors();
-        div().id(("message-container", ix)).py_1().px_2().child(
-            v_flex()
-                .w_full()
-                .bg(colors.editor_background)
-                .rounded_sm()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .p_2()
-                        .gap_2()
-                        .child(
-                            div().flex_none().child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            ),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .text_size(TextSize::Small.rems(cx))
-                                .text_color(cx.theme().colors().text_muted)
-                                .children(message_content),
-                        ),
-                ),
-        )
+        let message = div()
+            .flex_1()
+            .min_w_0()
+            .text_size(TextSize::XSmall.rems(cx))
+            .text_color(cx.theme().colors().text_muted)
+            .children(message_content);
+
+        div()
+            .id(("message-container", ix))
+            .py_1()
+            .px_2p5()
+            .child(Banner::new().severity(ui::Severity::Warning).child(message))
     }
 
     fn render_message_thinking_segment(

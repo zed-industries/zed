@@ -107,7 +107,7 @@ CREATE INDEX "index_worktree_entries_on_project_id" ON "worktree_entries" ("proj
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
 CREATE TABLE "project_repositories" (
-    "project_id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "abs_path" VARCHAR,
     "id" INTEGER NOT NULL,
     "entry_ids" VARCHAR,
@@ -124,7 +124,7 @@ CREATE TABLE "project_repositories" (
 CREATE INDEX "index_project_repositories_on_project_id" ON "project_repositories" ("project_id");
 
 CREATE TABLE "project_repository_statuses" (
-    "project_id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "repository_id" INTEGER NOT NULL,
     "repo_path" VARCHAR NOT NULL,
     "status" INT8 NOT NULL,

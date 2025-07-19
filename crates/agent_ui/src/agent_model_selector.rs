@@ -11,7 +11,7 @@ use language_model::{ConfiguredModel, LanguageModelRegistry};
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
 
 pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
@@ -94,20 +94,35 @@ impl Render for AgentModelSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.selector.read(cx).delegate.active_model(cx);
         let model_name = model
+            .as_ref()
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
+        let provider_icon = model
+            .as_ref()
+            .map(|model| model.provider.icon())
+            .unwrap_or_else(|| IconName::Ai);
 
         let focus_handle = self.focus_handle.clone();
 
         PickerPopoverMenu::new(
             self.selector.clone(),
-            Button::new("active-model", model_name)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .icon(IconName::ChevronDown)
-                .icon_size(IconSize::XSmall)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted),
+            ButtonLike::new("active-model")
+                .child(
+                    Icon::new(provider_icon)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                )
+                .child(
+                    Label::new(model_name)
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .ml_0p5(),
+                )
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .color(Color::Muted)
+                        .size(IconSize::XSmall),
+                ),
             move |window, cx| {
                 Tooltip::for_action_in(
                     "Change Model",

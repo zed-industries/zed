@@ -1,8 +1,8 @@
 use crate::{
+    burn_mode_tooltip::BurnModeTooltip,
     language_model_selector::{
         LanguageModelSelector, ToggleModelSelector, language_model_selector,
     },
-    max_mode_tooltip::MaxModeTooltip,
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
@@ -21,7 +21,6 @@ use editor::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
     },
-    scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
@@ -69,7 +68,7 @@ use workspace::{
     searchable::{Direction, SearchableItemHandle},
 };
 use workspace::{
-    Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    Save, Toast, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane,
@@ -86,16 +85,24 @@ use assistant_context::{
 actions!(
     assistant,
     [
+        /// Sends the current message to the assistant.
         Assist,
+        /// Confirms and executes the entered slash command.
         ConfirmCommand,
+        /// Copies code from the assistant's response to the clipboard.
         CopyCode,
+        /// Cycles between user and assistant message roles.
         CycleMessageRole,
+        /// Inserts the selected text into the active editor.
         InsertIntoEditor,
+        /// Quotes the current selection in the assistant conversation.
         QuoteSelection,
+        /// Splits the conversation at the current cursor position.
         Split,
     ]
 );
 
+/// Inserts files that were dragged and dropped into the assistant conversation.
 #[derive(PartialEq, Clone, Action)]
 #[action(namespace = assistant, no_json, no_register)]
 pub enum InsertDraggedFiles {
@@ -389,7 +396,7 @@ impl TextThreadEditor {
                 cursor..cursor
             };
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
                     selections.select_ranges([new_selection])
                 });
             });
@@ -449,8 +456,7 @@ impl TextThreadEditor {
         if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
-                    editor
-                        .change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel());
+                    editor.change_selections(Default::default(), window, cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor.selections.newest::<Point>(cx).head();
                     if newest_cursor.column > 0
@@ -1583,7 +1589,7 @@ impl TextThreadEditor {
 
             self.editor.update(cx, |editor, cx| {
                 editor.transact(window, cx, |this, window, cx| {
-                    this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    this.change_selections(Default::default(), window, cx, |s| {
                         s.select(selections);
                     });
                     this.insert("", window, cx);
@@ -2075,12 +2081,12 @@ impl TextThreadEditor {
         )
     }
 
-    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let context = self.context().read(cx);
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model)?;
-        if !active_model.supports_max_mode() {
+        if !active_model.supports_burn_mode() {
             return None;
         }
 
@@ -2107,7 +2113,7 @@ impl TextThreadEditor {
                     });
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
@@ -2122,11 +2128,20 @@ impl TextThreadEditor {
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model);
-        let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
             Some(model) => model.name().0,
             None => SharedString::from("No model selected"),
         };
+
+        let active_provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
+        let provider_icon = match active_provider {
+            Some(provider) => provider.icon(),
+            None => IconName::Ai,
+        };
+
+        let focus_handle = self.editor().focus_handle(cx).clone();
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
@@ -2136,9 +2151,15 @@ impl TextThreadEditor {
                     h_flex()
                         .gap_0p5()
                         .child(
+                            Icon::new(provider_icon)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        )
+                        .child(
                             Label::new(model_name)
+                                .color(Color::Muted)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .ml_0p5(),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
@@ -2575,7 +2596,7 @@ impl Render for TextThreadEditor {
         };
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
-        let max_mode_toggle = self.render_max_mode_toggle(cx);
+        let burn_mode_toggle = self.render_burn_mode_toggle(cx);
 
         v_flex()
             .key_context("ContextEditor")
@@ -2630,7 +2651,7 @@ impl Render for TextThreadEditor {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_inject_context_menu(cx))
-                            .when_some(max_mode_toggle, |this, element| this.child(element)),
+                            .when_some(burn_mode_toggle, |this, element| this.child(element)),
                     )
                     .child(
                         h_flex()
@@ -2924,13 +2945,6 @@ impl FollowableItem for TextThreadEditor {
     }
 }
 
-pub struct ContextEditorToolbarItem {
-    active_context_editor: Option<WeakEntity<TextThreadEditor>>,
-    model_summary_editor: Entity<Editor>,
-}
-
-impl ContextEditorToolbarItem {}
-
 pub fn render_remaining_tokens(
     context_editor: &Entity<TextThreadEditor>,
     cx: &App,
@@ -2982,98 +2996,6 @@ pub fn render_remaining_tokens(
             }),
     )
 }
-
-impl Render for ContextEditorToolbarItem {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left_side = h_flex()
-            .group("chat-title-group")
-            .gap_1()
-            .items_center()
-            .flex_grow()
-            .child(
-                div()
-                    .w_full()
-                    .when(self.active_context_editor.is_some(), |left_side| {
-                        left_side.child(self.model_summary_editor.clone())
-                    }),
-            )
-            .child(
-                div().visible_on_hover("chat-title-group").child(
-                    IconButton::new("regenerate-context", IconName::RefreshTitle)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Regenerate Title"))
-                        .on_click(cx.listener(move |_, _, _window, cx| {
-                            cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                        })),
-                ),
-            );
-
-        let right_side = h_flex()
-            .gap_2()
-            // TODO display this in a nicer way, once we have a design for it.
-            // .children({
-            //     let project = self
-            //         .workspace
-            //         .upgrade()
-            //         .map(|workspace| workspace.read(cx).project().downgrade());
-            //
-            //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
-            //         project.and_then(|project| db.remaining_summaries(&project, cx))
-            //     });
-            //     scan_items_remaining
-            //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
-            // })
-            .children(
-                self.active_context_editor
-                    .as_ref()
-                    .and_then(|editor| editor.upgrade())
-                    .and_then(|editor| render_remaining_tokens(&editor, cx)),
-            );
-
-        h_flex()
-            .px_0p5()
-            .size_full()
-            .gap_2()
-            .justify_between()
-            .child(left_side)
-            .child(right_side)
-    }
-}
-
-impl ToolbarItemView for ContextEditorToolbarItem {
-    fn set_active_pane_item(
-        &mut self,
-        active_pane_item: Option<&dyn ItemHandle>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ToolbarItemLocation {
-        self.active_context_editor = active_pane_item
-            .and_then(|item| item.act_as::<TextThreadEditor>(cx))
-            .map(|editor| editor.downgrade());
-        cx.notify();
-        if self.active_context_editor.is_none() {
-            ToolbarItemLocation::Hidden
-        } else {
-            ToolbarItemLocation::PrimaryRight
-        }
-    }
-
-    fn pane_focus_update(
-        &mut self,
-        _pane_focused: bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.notify();
-    }
-}
-
-impl EventEmitter<ToolbarItemEvent> for ContextEditorToolbarItem {}
-
-pub enum ContextEditorToolbarItemEvent {
-    RegenerateSummary,
-}
-impl EventEmitter<ContextEditorToolbarItemEvent> for ContextEditorToolbarItem {}
 
 enum PendingSlashCommand {}
 
@@ -3240,6 +3162,7 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor::SelectionEffects;
     use fs::FakeFs;
     use gpui::{App, TestAppContext, VisualTestContext};
     use indoc::indoc;
@@ -3465,7 +3388,9 @@ mod tests {
     ) {
         context_editor.update_in(cx, |context_editor, window, cx| {
             context_editor.editor.update(cx, |editor, cx| {
-                editor.change_selections(None, window, cx, |s| s.select_ranges([range]));
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([range])
+                });
             });
 
             context_editor.copy(&Default::default(), window, cx);
