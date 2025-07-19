@@ -1306,7 +1306,6 @@ dependencies = [
  "smol",
  "tempfile",
  "which 6.0.3",
- "workspace",
  "workspace-hack",
 ]
 
@@ -1315,6 +1314,7 @@ name = "auto_update_helper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "log",
  "simplelog",
  "windows 0.61.1",
@@ -19565,6 +19565,7 @@ dependencies = [
  "any_vec",
  "anyhow",
  "async-recursion 1.1.1",
+ "auto_update",
  "bincode",
  "call",
  "client",

@@ -15,6 +15,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 log.workspace = true
 simplelog.workspace = true
 workspace-hack.workspace = true
