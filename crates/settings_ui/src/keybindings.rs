@@ -17,7 +17,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
-use project::{Project, lsp_store::OpenLspBufferHandle};
+use project::Project;
 use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
 
 use util::ResultExt;
@@ -533,10 +533,10 @@ impl KeymapEditor {
             HashSet::from_iter(cx.all_action_names().into_iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
-        let action_schema = HashMap::from_iter(
+        let actions_with_schemas = HashSet::from_iter(
             cx.action_schemas(&mut generator)
                 .into_iter()
-                .filter_map(|(name, schema)| schema.map(|schema| (name, schema))),
+                .filter_map(|(name, schema)| schema.is_some().then_some(name)),
         );
 
         let mut processed_bindings = Vec::new();
@@ -578,7 +578,7 @@ impl KeymapEditor {
                 action_name,
                 action_arguments,
                 action_docs,
-                action_schema: action_schema.get(action_name).cloned(),
+                has_schema: actions_with_schemas.contains(action_name),
                 context: Some(context),
                 source,
             });
@@ -595,7 +595,7 @@ impl KeymapEditor {
                 action_name,
                 action_arguments: None,
                 action_docs: action_documentation.get(action_name).copied(),
-                action_schema: action_schema.get(action_name).cloned(),
+                has_schema: actions_with_schemas.contains(action_name),
                 context: None,
                 source: None,
             });
@@ -1072,7 +1072,7 @@ struct ProcessedKeybinding {
     action_name: &'static str,
     action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
-    action_schema: Option<schemars::Schema>,
+    has_schema: bool,
     context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -1432,7 +1432,7 @@ impl Render for KeymapEditor {
                                     let action_arguments = match binding.action_arguments.clone() {
                                         Some(arguments) => arguments.into_any_element(),
                                         None => {
-                                            if binding.action_schema.is_some() {
+                                            if binding.has_schema {
                                                 muted_styled_text(NO_ACTION_ARGUMENTS_TEXT, cx)
                                                     .into_any_element()
                                             } else {
@@ -1716,14 +1716,13 @@ impl KeybindingEditorModal {
             input
         });
 
-        let action_arguments_editor = editing_keybind.action_schema.clone().map(|schema| {
+        let action_arguments_editor = editing_keybind.has_schema.then(|| {
             let arguments = editing_keybind
                 .action_arguments
                 .as_ref()
                 .map(|args| args.text.clone());
             cx.new(|cx| {
                 ActionArgumentsEditor::new(
-                    schema,
                     editing_keybind.action_name,
                     arguments,
                     workspace.clone(),
@@ -1863,11 +1862,11 @@ impl KeybindingEditorModal {
 
             let warning_message = match conflicting_action_name {
                 Some(name) => {
-                    let confliction_action_amount = conflicting_indices.len() - 1;
-                    if confliction_action_amount > 0 {
+                    let conflicting_action_count = conflicting_indices.len() - 1;
+                    if conflicting_action_count > 0 {
                         format!(
                             "Your keybind would conflict with the \"{}\" action and {} other bindings",
-                            name, confliction_action_amount
+                            name, conflicting_action_count
                         )
                     } else {
                         format!("Your keybind would conflict with the \"{}\" action", name)
@@ -2143,7 +2142,6 @@ struct ActionArgumentsEditor {
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
     is_loading: bool,
-    open_lsp_handle: Option<OpenLspBufferHandle>,
     temp_dir: Option<tempfile::TempDir>,
 }
 
@@ -2155,7 +2153,6 @@ impl Focusable for ActionArgumentsEditor {
 
 impl ActionArgumentsEditor {
     fn new(
-        schema: schemars::Schema,
         action_name: &'static str,
         arguments: Option<SharedString>,
         workspace: WeakEntity<Workspace>,
@@ -2165,91 +2162,89 @@ impl ActionArgumentsEditor {
         let focus_handle = cx.focus_handle();
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height_unbounded(1, window, cx);
-            let workspace = workspace.clone();
-
-            if let Some(arguments) = arguments.clone() {
-                editor.set_text(arguments, window, cx);
-            } else {
-                // TODO: default value from schema?
-                editor.set_placeholder_text("Action Arguments", cx);
-            }
+            Self::set_editor_text(&mut editor, arguments.clone(), window, cx);
             editor.set_read_only(true);
             editor
         });
         cx.spawn_in(window, async move |this, cx| {
-            let json_language = load_json_language(workspace.clone(), cx).await;
-            this.update(cx, |this, cx| {
-                this.editor.update(cx, |editor, cx| {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.set_language(Some(json_language.clone()), cx)
-                        });
-                    }
-                })
-                // .context("Failed to load JSON language for editing keybinding action arguments input")
-            })?;
+            let result = async {
+                let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
+                    (
+                        workspace.project().downgrade(),
+                        workspace.app_state().fs.clone(),
+                    )
+                })?;
 
-            let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
-                (
-                    workspace.project().downgrade(),
-                    workspace.app_state().fs.clone(),
-                )
-            })?;
+                let file_name = {
+                    let mut file_name = project::lsp_store::json_language_server_ext::normalize_action_name(action_name);
+                    file_name.push_str(".json");
+                    file_name
+                };
 
-            let file_name = Self::file_name_from_action_name(action_name);
+                let (buffer, temp_dir) = Self::create_temp_buffer(file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action arguments. Auto-complete will not work")
+                    ?;
 
-            let (buffer, temp_dir) = Self::create_temp_buffer(file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action argumetns. Auto-complete will not work")
-                ?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_language(Some(json_language), cx);
-            })?;
+                let editor = cx.new_window_entity(|window, cx| {
+                    let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
+                    let mut editor = Editor::new(editor::EditorMode::Full { scale_ui_elements_with_buffer_font_size: true, show_active_line_background: false, sized_by_content: true },multi_buffer, project.upgrade(), window, cx);
+                    editor.set_show_line_numbers(false, cx);
+                    editor.set_searchable(false);
+                    editor.set_show_scrollbars(false, cx);
+                    editor.set_show_breakpoints(false, cx);
+                    editor.set_show_edit_predictions(Some(false), window, cx);
+                    editor.set_show_runnables(false, cx);
+                    editor.set_show_gutter(false, cx);
+                    Self::set_editor_text(&mut editor, arguments, window, cx);
+                    editor
+                })?;
 
-            let open_lsp_handle = project.update(cx, |project, cx| {
-                project.register_buffer_with_language_servers(&buffer, cx)
-            })?;
+                this.update(cx, |this, _cx| {
+                    this.editor = editor;
+                    this.temp_dir = Some(temp_dir);
+                    this.is_loading = false;
+                })?;
 
-            let editor = cx.new_window_entity(|window, cx| {
-                let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
-                let mut editor = Editor::new(editor::EditorMode::Full { scale_ui_elements_with_buffer_font_size: true, show_active_line_background: false, sized_by_content: true },multi_buffer, project.upgrade(), window, cx);
-                editor.set_show_line_numbers(false, cx);
-                editor.set_searchable(false);
-                editor.set_show_scrollbars(false, cx);
-                editor.set_show_breakpoints(false, cx);
-                editor.set_show_edit_predictions(Some(false), window, cx);
-                editor.set_show_runnables(false, cx);
-                editor.set_show_gutter(false, cx);
-                if let Some(arguments) = arguments {
-                    editor.set_text(arguments, window, cx);
-                } else {
-                    // TODO: default value from schema?
-                    editor.set_placeholder_text("Action Arguments", cx);
-                }
-                editor
-            })?;
-
-            this.update(cx, |this, _cx| {
-                this.editor = editor;
-                this.open_lsp_handle = Some(open_lsp_handle);
-                this.temp_dir = Some(temp_dir);
-                this.is_loading = false;
-            })?;
-
-            anyhow::Ok(())
+                anyhow::Ok(())
+            }.await;
+            if result.is_err() {
+                let json_language = load_json_language(workspace.clone(), cx).await;
+                this.update(cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(json_language.clone()), cx)
+                            });
+                        }
+                    })
+                    // .context("Failed to load JSON language for editing keybinding action arguments input")
+                }).ok();
+                this.update(cx, |this, _cx| {
+                    this.is_loading = false;
+                }).ok();
+            }
+            return result;
         })
         .detach_and_log_err(cx);
         Self {
             editor,
             focus_handle,
             is_loading: true,
-            open_lsp_handle: None,
             temp_dir: None,
         }
     }
 
-    fn file_name_from_action_name(action_name: &'static str) -> String {
-        let mut file_name = action_name.replace("::", "__");
-        file_name.push_str(".json");
-        file_name
+    fn set_editor_text(
+        editor: &mut Editor,
+        arguments: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if let Some(arguments) = arguments {
+            editor.set_text(arguments, window, cx);
+        } else {
+            // TODO: default value from schema?
+            editor.set_placeholder_text("Action Arguments", cx);
+        }
     }
 
     async fn create_temp_buffer(
@@ -2258,9 +2253,28 @@ impl ActionArgumentsEditor {
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<(Entity<language::Buffer>, tempfile::TempDir)> {
-        let (temp_file_path, temp_dir) = Self::create_temp_file(file_name.clone(), fs)
-            .await
-            .context("Failed to create backing file")?;
+        let (temp_file_path, temp_dir) = {
+            let file_name = file_name.clone();
+            async move {
+                let temp_dir = paths::temp_dir();
+                let sub_temp_dir = tempfile::Builder::new()
+                    .tempdir_in(temp_dir)
+                    .context("Failed to create temporary directory")?;
+                let path = sub_temp_dir.path().join(file_name);
+                fs.create_file(
+                    &path,
+                    fs::CreateOptions {
+                        ignore_if_exists: true,
+                        overwrite: false,
+                    },
+                )
+                .await
+                .context("Failed to create temporary file")?;
+                anyhow::Ok((path, sub_temp_dir))
+            }
+        }
+        .await
+        .context("Failed to create backing file")?;
 
         project
             .update(cx, |project, cx| {
@@ -2270,32 +2284,10 @@ impl ActionArgumentsEditor {
             .context("Failed to create buffer")
             .map(|buffer| (buffer, temp_dir))
     }
-
-    async fn create_temp_file(
-        file_name: String,
-        fs: Arc<dyn Fs>,
-    ) -> anyhow::Result<(std::path::PathBuf, tempfile::TempDir)> {
-        let temp_dir = paths::temp_dir();
-        let sub_temp_dir = tempfile::Builder::new()
-            .tempdir_in(temp_dir)
-            .context("Failed to create temporary directory")?;
-
-        let path = sub_temp_dir.path().join(file_name);
-        fs.create_file(
-            &path,
-            fs::CreateOptions {
-                ignore_if_exists: true,
-                overwrite: false,
-            },
-        )
-        .await
-        .context("Failed to create temporary file")?;
-        Ok((path, sub_temp_dir))
-    }
 }
 
 impl Render for ActionArgumentsEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut style = self.editor.update(cx, |editor, cx| editor.editor_style(cx));
         if self.is_loading {
             let theme_color = cx.theme().colors();
