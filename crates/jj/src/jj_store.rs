@@ -16,7 +16,9 @@ pub struct JujutsuStore {
 
 impl JujutsuStore {
     pub fn init_global(cx: &mut App) {
-        let Some(repository) = RealJujutsuRepository::new(&Path::new(".")).ok() else {
+        let Some(repository) =
+            RealJujutsuRepository::new(&Path::new("."), cx.background_executor().clone()).ok()
+        else {
             return;
         };
 
