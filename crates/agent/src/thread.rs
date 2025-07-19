@@ -10,7 +10,7 @@ use crate::{
 };
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolRunArgs, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use collections::HashMap;
@@ -1603,12 +1603,14 @@ impl Thread {
         let request = Arc::new(LanguageModelRequest::default()); // unused
         let window = None;
         let tool_result = tool.run(
-            input,
-            request,
-            self.project.clone(),
-            self.action_log.clone(),
-            model.clone(),
-            window,
+            ToolRunArgs {
+                input,
+                request,
+                project: self.project.clone(),
+                action_log: self.action_log.clone(),
+                model: model.clone(),
+                window,
+            },
             cx,
         );
 
@@ -2671,12 +2673,14 @@ impl Thread {
         let tool_name: Arc<str> = tool.name().into();
 
         let tool_result = tool.run(
-            input,
-            request,
-            self.project.clone(),
-            self.action_log.clone(),
-            model,
-            window,
+            ToolRunArgs {
+                input,
+                request,
+                project: self.project.clone(),
+                action_log: self.action_log.clone(),
+                model,
+                window,
+            },
             cx,
         );
 

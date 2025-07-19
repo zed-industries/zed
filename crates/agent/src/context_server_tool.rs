@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs, ToolSource};
 use context_server::{ContextServerId, types};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use gpui::{App, Entity, Task};
 use icons::IconName;
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::{Project, context_server_store::ContextServerStore};
+use language_model::LanguageModelToolSchemaFormat;
+use project::context_server_store::ContextServerStore;
 
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
@@ -73,16 +73,7 @@ impl Tool for ContextServerTool {
         format!("Run MCP tool `{}`", self.tool.name)
     }
 
-    fn run(
-        self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        _project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
-        cx: &mut App,
-    ) -> ToolResult {
+    fn run(self: Arc<Self>, ToolRunArgs { input, .. }: ToolRunArgs, cx: &mut App) -> ToolResult {
         if let Some(server) = self.store.read(cx).get_running_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();

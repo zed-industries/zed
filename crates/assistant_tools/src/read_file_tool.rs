@@ -1,18 +1,16 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
 use assistant_tool::{ToolResultContent, outline};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use gpui::{App, Entity, Task};
 use project::{ImageItem, image_store};
 
 use assistant_tool::ToolResultOutput;
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{
-    LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
-};
-use project::{AgentLocation, Project, WorktreeSettings};
+use language_model::{LanguageModelImage, LanguageModelToolSchemaFormat};
+use project::{AgentLocation, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -100,12 +98,13 @@ impl Tool for ReadFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs {
+            input,
+            project,
+            action_log,
+            model,
+            ..
+        }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -286,7 +285,7 @@ impl Tool for ReadFileTool {
                         Using the line numbers in this outline, you can call this tool again
                         while specifying the start_line and end_line fields to see the
                         implementations of symbols in the outline.
-                        
+
                         Alternatively, you can fall back to the `grep` tool (if available)
                         to search the file for specific content."
                     }
@@ -301,6 +300,7 @@ impl Tool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
+    use assistant_tool::ActionLog;
     use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
@@ -325,12 +325,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -364,12 +366,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -406,12 +410,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -439,12 +445,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -496,12 +504,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -539,12 +549,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -562,12 +574,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -585,12 +599,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -711,12 +727,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -735,12 +753,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -759,12 +779,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -782,12 +804,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -806,12 +830,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -829,12 +855,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -852,12 +880,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -876,12 +906,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -901,12 +933,14 @@ mod test {
                 });
                 Arc::new(ReadFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1000,12 +1034,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1026,12 +1062,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1055,12 +1093,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1084,12 +1124,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1110,12 +1152,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1139,12 +1183,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })
@@ -1169,12 +1215,14 @@ mod test {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    input,
-                    Arc::default(),
-                    project.clone(),
-                    action_log.clone(),
-                    model.clone(),
-                    None,
+                    ToolRunArgs {
+                        input,
+                        request: Arc::default(),
+                        project: project.clone(),
+                        action_log: action_log.clone(),
+                        model: model.clone(),
+                        window: None,
+                    },
                     cx,
                 )
             })

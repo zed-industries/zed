@@ -125,6 +125,16 @@ pub struct ToolResult {
     pub card: Option<AnyToolCard>,
 }
 
+/// Arguments passed to Tool::run method
+pub struct ToolRunArgs {
+    pub input: serde_json::Value,
+    pub request: Arc<LanguageModelRequest>,
+    pub project: Entity<Project>,
+    pub action_log: Entity<ActionLog>,
+    pub model: Arc<dyn LanguageModel>,
+    pub window: Option<AnyWindowHandle>,
+}
+
 pub trait ToolCard: 'static + Sized {
     fn render(
         &mut self,
@@ -236,16 +246,7 @@ pub trait Tool: 'static + Send + Sync {
     }
 
     /// Runs the tool with the provided input.
-    fn run(
-        self: Arc<Self>,
-        input: serde_json::Value,
-        request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        model: Arc<dyn LanguageModel>,
-        window: Option<AnyWindowHandle>,
-        cx: &mut App,
-    ) -> ToolResult;
+    fn run(self: Arc<Self>, args: ToolRunArgs, cx: &mut App) -> ToolResult;
 
     fn deserialize_card(
         self: Arc<Self>,

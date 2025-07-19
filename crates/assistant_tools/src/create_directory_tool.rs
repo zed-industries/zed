@@ -1,10 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::AnyWindowHandle;
-use gpui::{App, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::Project;
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
+use gpui::{App, Task};
+use language_model::LanguageModelToolSchemaFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -64,12 +62,7 @@ impl Tool for CreateDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs { input, project, .. }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {

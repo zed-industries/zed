@@ -7,15 +7,15 @@ use crate::{
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolRunArgs,
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, Transformation, WeakEntity, percentage, pulsating_between, px,
+    Animation, AnimationExt, App, AppContext, AsyncApp, Entity, Task, TextStyleRefinement,
+    Transformation, WeakEntity, percentage, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -23,7 +23,7 @@ use language::{
     TextBuffer,
     language_settings::{self, FormatOnSave, SoftWrap},
 };
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use language_model::LanguageModelToolSchemaFormat;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use project::{
     Project, ProjectPath,
@@ -171,12 +171,14 @@ impl Tool for EditFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        model: Arc<dyn LanguageModel>,
-        window: Option<AnyWindowHandle>,
+        ToolRunArgs {
+            input,
+            request,
+            project,
+            action_log,
+            model,
+            window,
+        }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<EditFileToolInput>(input) {
@@ -1172,6 +1174,7 @@ async fn build_buffer_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assistant_tool::ActionLog;
     use client::TelemetrySettings;
     use fs::{FakeFs, Fs};
     use gpui::{TestAppContext, UpdateGlobal};
@@ -1199,12 +1202,14 @@ mod tests {
                 .unwrap();
                 Arc::new(EditFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log,
-                        model,
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log,
+                            model,
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1487,12 +1492,14 @@ mod tests {
                 .unwrap();
                 Arc::new(EditFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1551,12 +1558,14 @@ mod tests {
                 .unwrap();
                 Arc::new(EditFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1630,12 +1639,14 @@ mod tests {
                 .unwrap();
                 Arc::new(EditFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output
@@ -1687,12 +1698,14 @@ mod tests {
                 .unwrap();
                 Arc::new(EditFileTool)
                     .run(
-                        input,
-                        Arc::default(),
-                        project.clone(),
-                        action_log.clone(),
-                        model.clone(),
-                        None,
+                        ToolRunArgs {
+                            input,
+                            request: Arc::default(),
+                            project: project.clone(),
+                            action_log: action_log.clone(),
+                            model: model.clone(),
+                            window: None,
+                        },
                         cx,
                     )
                     .output

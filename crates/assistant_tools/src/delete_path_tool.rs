@@ -1,10 +1,10 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult, ToolRunArgs};
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::{Project, ProjectPath};
+use gpui::{App, AppContext, Task};
+use language_model::LanguageModelToolSchemaFormat;
+use project::ProjectPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -62,12 +62,12 @@ impl Tool for DeletePathTool {
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        ToolRunArgs {
+            input,
+            project,
+            action_log,
+            ..
+        }: ToolRunArgs,
         cx: &mut App,
     ) -> ToolResult {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
