@@ -55,6 +55,10 @@ actions!(
         StageAll,
         /// Unstages all changes in the repository.
         UnstageAll,
+        /// Stashes all changes in the repository, including untracked files.
+        StashAll,
+        /// Pops the most recent stash.
+        StashPop,
         /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
         /// Moves all untracked files to trash.
