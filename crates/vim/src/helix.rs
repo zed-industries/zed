@@ -10,12 +10,15 @@ actions!(
     vim,
     [
         /// Switches to normal mode after the cursor (Helix-style).
-        HelixNormalAfter
+        HelixNormalAfter,
+        /// Inserts at the beginning of the selection.
+        HelixInsert,
     ]
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
+    Vim::action(editor, cx, Vim::helix_insert);
 }
 
 impl Vim {
@@ -299,6 +302,21 @@ impl Vim {
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }
+
+    fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_recording(cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|_map, selection| {
+                    // In helix normal mode, move cursor to start of selection and collapse
+                    if !selection.is_empty() {
+                        selection.collapse_to(selection.start, SelectionGoal::None);
+                    }
+                });
+            });
+        });
+        self.switch_mode(Mode::Insert, false, window, cx);
+    }
 }
 
 #[cfg(test)]
@@ -496,5 +514,27 @@ mod test {
         cx.simulate_keystroke("b");
 
         cx.assert_state("«ˇaa»\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_selected(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+            «The ˇ»quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("i");
+
+        cx.assert_state(
+            indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Insert,
+        );
     }
 }
