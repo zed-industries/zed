@@ -104,6 +104,19 @@ impl<T: Copy + Ord> Selection<T> {
         self.goal = new_goal;
     }
 
+    pub fn set_tail_head(&mut self, tail: T, head: T, new_goal: SelectionGoal) {
+        if tail > head {
+            self.start = head;
+            self.end = tail;
+            self.reversed = true;
+        } else {
+            self.start = tail;
+            self.end = head;
+            self.reversed = false;
+        }
+        self.goal = new_goal;
+    }
+
     pub fn swap_head_tail(&mut self) {
         if self.reversed {
             self.reversed = false;

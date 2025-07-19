@@ -87,6 +87,22 @@ struct PushFindBackward {
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
+/// Selects the next object.
+struct PushHelixNext {
+    around: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+/// Selects the previous object.
+struct PushHelixPrevious {
+    around: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
 struct PushSneak {
     first_char: Option<char>,
 }
@@ -767,6 +783,26 @@ impl Vim {
             });
             Vim::action(editor, cx, |vim, _: &PushHelixMatch, window, cx| {
                 vim.push_operator(Operator::HelixMatch, window, cx)
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixNext, window, cx| {
+                vim.push_operator(Operator::SelectNext, window, cx);
+                vim.push_operator(
+                    Operator::Object {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixPrevious, window, cx| {
+                vim.push_operator(Operator::SelectPrevious, window, cx);
+                vim.push_operator(
+                    Operator::Object {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                );
             });
 
             normal::register(editor, cx);

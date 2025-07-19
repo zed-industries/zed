@@ -1,3 +1,4 @@
+mod boundary;
 mod object;
 mod select;
 

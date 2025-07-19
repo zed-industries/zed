@@ -376,9 +376,11 @@
   {
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
-      "m": "vim::PushHelixMatch",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
+      "m": "vim::PushHelixMatch",
+      "]": ["vim::PushHelixNext", { "around": true }],
+      "[": ["vim::PushHelixPrevious", { "around": true }],
       "left": "vim::WrappingLeft",
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
@@ -454,6 +456,12 @@
       "c": "vim::Substitute",
       "shift-c": "editor::AddSelectionBelow",
       "alt-shift-c": "editor::AddSelectionAbove"
+    }
+  },
+  {
+    "context": "vim_operator == helix_m",
+    "bindings": {
+      "m": "vim::Matching"
     }
   },
   {
@@ -551,12 +559,6 @@
       "f": "vim::Method",
       "c": "vim::Class",
       "e": "vim::EntireFile"
-    }
-  },
-  {
-    "context": "vim_operator == helix_m",
-    "bindings": {
-      "m": "vim::Matching"
     }
   },
   {

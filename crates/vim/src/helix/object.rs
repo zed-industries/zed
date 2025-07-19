@@ -1,20 +1,16 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use editor::{
     DisplayPoint,
     display_map::DisplaySnapshot,
-    movement::{self, FindRange},
+    movement::{self},
 };
-use language::CharKind;
-use text::{Bias, Selection};
+use text::Selection;
 
-use crate::{
-    motion::right,
-    object::{Object, expand_to_include_whitespace},
-};
+use crate::{helix::boundary::UnboundedErr, object::Object};
 
 impl Object {
-    /// Returns
+    /// Returns the range of the object the cursor is over.
     /// Follows helix convention.
     pub fn helix_range(
         self,
@@ -23,65 +19,204 @@ impl Object {
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
-        match self {
-            Object::Word { ignore_punctuation } => {
-                if around {
-                    helix_around_word(map, relative_to, ignore_punctuation)
-                } else {
-                    helix_in_word(map, relative_to, ignore_punctuation)
-                }
+        if let Ok(selection) = self.current_bounded_object(map, relative_to) {
+            if around {
+                selection.map(|s| self.surround(map, s).unwrap())
+            } else {
+                selection
             }
-            _ => self.range(map, selection, around, None),
+        } else {
+            let head = selection.head();
+            let range = self.range(map, selection, around, None)?;
+
+            if range.start > head {
+                None
+            } else {
+                Some(range)
+            }
         }
     }
-}
 
-/// Returns a range that surrounds the word `relative_to` is in.
-///
-/// If `relative_to` is between words, return `None`.
-fn helix_in_word(
-    map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
-    ignore_punctuation: bool,
-) -> Option<Range<DisplayPoint>> {
-    // Use motion::right so that we consider the character under the cursor when looking for the start
-    let classifier = map
-        .buffer_snapshot
-        .char_classifier_at(relative_to.to_point(map))
-        .ignore_punctuation(ignore_punctuation);
-    let char = map
-        .buffer_chars_at(relative_to.to_offset(map, Bias::Left))
-        .next()?
-        .0;
+    /// Returns the range of the next object the cursor is not over.
+    /// Follows helix convention.
+    pub fn helix_next_range(
+        self,
+        map: &DisplaySnapshot,
+        selection: Selection<DisplayPoint>,
+        around: bool,
+    ) -> Option<Range<DisplayPoint>> {
+        let relative_to = selection.head();
+        if let Ok(selection) = self.next_bounded_object(map, relative_to) {
+            if around {
+                selection.map(|s| self.surround(map, s).unwrap())
+            } else {
+                selection
+            }
+        } else {
+            let head = selection.head();
+            let range = self.range(map, selection, around, None)?;
 
-    if classifier.kind(char) == CharKind::Whitespace {
-        return None;
+            if range.start > head {
+                Some(range)
+            } else {
+                None
+            }
+        }
     }
 
-    let start = movement::find_preceding_boundary_display_point(
-        map,
-        right(map, relative_to, 1),
-        movement::FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
-    );
+    /// Returns the range of the previous object the cursor is not over.
+    /// Follows helix convention.
+    pub fn helix_previous_range(
+        self,
+        map: &DisplaySnapshot,
+        selection: Selection<DisplayPoint>,
+        around: bool,
+    ) -> Option<Range<DisplayPoint>> {
+        let relative_to = selection.head();
+        if let Ok(selection) = self.previous_bounded_object(map, relative_to) {
+            if around {
+                selection.map(|s| self.surround(map, s).unwrap())
+            } else {
+                selection
+            }
+        } else {
+            None
+        }
+    }
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        classifier.kind(left) != classifier.kind(right)
-    });
+    /// Returns the range of the object the cursor is over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    fn current_bounded_object(
+        self,
+        map: &DisplaySnapshot,
+        relative_to: DisplayPoint,
+    ) -> Result<Option<Range<DisplayPoint>>, UnboundedErr> {
+        let maybe_prev_end = self.helix_previous_end(map, relative_to)?;
+        let Some(prev_start) = self.helix_previous_start(map, relative_to)? else {
+            return Ok(None);
+        };
+        let Some(next_end) = self.helix_next_end(map, movement::right(map, relative_to))? else {
+            return Ok(None);
+        };
+        let maybe_next_start = self.helix_next_start(map, movement::right(map, relative_to))?;
 
-    Some(start..end)
-}
+        if let Some(next_start) = maybe_next_start {
+            match next_start.cmp(&next_end) {
+                Ordering::Less => return Ok(None),
+                Ordering::Equal if self.can_be_zero_width() => return Ok(None),
+                _ => (),
+            }
+        }
+        if let Some(prev_end) = maybe_prev_end {
+            if prev_start == prev_end && self.can_be_zero_width() {
+                return Ok(None);
+            }
+            debug_assert!(prev_end <= prev_start)
+        }
 
-/// Returns the range of the word the cursor is over and all the whitespace on one side.
-/// If there is whitespace after that is included, otherwise it's whitespace before the word if any.
-fn helix_around_word(
-    map: &DisplaySnapshot,
-    relative_to: DisplayPoint,
-    ignore_punctuation: bool,
-) -> Option<Range<DisplayPoint>> {
-    let word_range = helix_in_word(map, relative_to, ignore_punctuation)?;
+        Ok(Some(prev_start..next_end))
+    }
 
-    Some(expand_to_include_whitespace(map, word_range, true))
+    /// Returns the range of the next object the cursor is not over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    fn next_bounded_object(
+        self,
+        map: &DisplaySnapshot,
+        relative_to: DisplayPoint,
+    ) -> Result<Option<Range<DisplayPoint>>, UnboundedErr> {
+        let Some(next_start) = self.helix_next_start(map, movement::right(map, relative_to))?
+        else {
+            return Ok(None);
+        };
+        let search_start = if self.can_be_zero_width() {
+            next_start
+        } else {
+            movement::right(map, next_start)
+        };
+        let Some(end) = self.helix_next_end(map, search_start)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(next_start..end))
+    }
+
+    /// Returns the previous range of the object the cursor not is over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    fn previous_bounded_object(
+        self,
+        map: &DisplaySnapshot,
+        relative_to: DisplayPoint,
+    ) -> Result<Option<Range<DisplayPoint>>, UnboundedErr> {
+        let Some(prev_end) = self.helix_previous_end(map, relative_to)? else {
+            return Ok(None);
+        };
+        let search_start = if self.can_be_zero_width() {
+            prev_end
+        } else {
+            movement::left(map, prev_end)
+        };
+        let Some(start) = self.helix_previous_start(map, search_start)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(start..prev_end))
+    }
+
+    /// Switches from an 'mi' range to an 'ma' range. Follows helix convention.
+    fn surround(
+        self,
+        map: &DisplaySnapshot,
+        selection: Range<DisplayPoint>,
+    ) -> Result<Range<DisplayPoint>, UnboundedErr> {
+        match self {
+            Self::Word { .. } | Self::Subword { .. } => {
+                let row = selection.end.row();
+                let line_start = DisplayPoint::new(row, 0);
+                let line_end = DisplayPoint::new(row, map.line_len(row));
+                let next_start = self
+                    .helix_next_start(map, selection.end)
+                    .unwrap()
+                    .unwrap()
+                    .min(line_end);
+                let prev_end = self
+                    .helix_previous_end(map, selection.start)
+                    .unwrap()
+                    .unwrap()
+                    .max(line_start);
+                if next_start > selection.end {
+                    Ok(selection.start..next_start)
+                } else {
+                    Ok(prev_end..selection.end)
+                }
+            }
+            Self::AngleBrackets
+            | Self::BackQuotes
+            | Self::CurlyBrackets
+            | Self::DoubleQuotes
+            | Self::Parentheses
+            | Self::SquareBrackets
+            | Self::VerticalBars => {
+                Ok(movement::left(map, selection.start)..movement::right(map, selection.end))
+            }
+            _ => Err(UnboundedErr),
+        }
+    }
+
+    const fn can_be_zero_width(&self) -> bool {
+        match self {
+            Self::AngleBrackets
+            | Self::AnyBrackets
+            | Self::AnyQuotes
+            | Self::BackQuotes
+            | Self::CurlyBrackets
+            | Self::DoubleQuotes
+            | Self::EntireFile
+            | Self::MiniBrackets
+            | Self::MiniQuotes
+            | Self::Parentheses
+            | Self::Quotes
+            | Self::SquareBrackets
+            | Self::VerticalBars => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]

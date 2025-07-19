@@ -133,6 +133,8 @@ pub enum Operator {
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
+    SelectNext,
+    SelectPrevious,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1026,6 +1028,8 @@ impl Operator {
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
             Operator::HelixMatch => "helix_m",
+            Operator::SelectNext { .. } => "helix_]",
+            Operator::SelectPrevious { .. } => "helix_[",
         }
     }
 
@@ -1079,7 +1083,9 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
             | Operator::ToggleComments
-            | Operator::HelixMatch => false,
+            | Operator::HelixMatch
+            | Operator::SelectNext { .. }
+            | Operator::SelectPrevious { .. } => false,
         }
     }
 
@@ -1103,7 +1109,9 @@ impl Operator {
             | Operator::AddSurrounds { target: None }
             | Operator::ChangeSurrounds { target: None }
             | Operator::DeleteSurrounds
-            | Operator::Exchange => true,
+            | Operator::Exchange
+            | Operator::SelectNext { .. }
+            | Operator::SelectPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }

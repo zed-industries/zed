@@ -479,7 +479,13 @@ impl Vim {
                     self.replace_with_register_object(object, around, window, cx)
                 }
                 Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
-                Some(Operator::HelixMatch) => self.select_object(object, around, window, cx),
+                Some(Operator::HelixMatch) => {
+                    self.select_current_object(object, around, window, cx)
+                }
+                Some(Operator::SelectNext) => self.select_next_object(object, around, window, cx),
+                Some(Operator::SelectPrevious) => {
+                    self.select_previous_object(object, around, window, cx)
+                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
