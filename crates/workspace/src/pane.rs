@@ -2409,7 +2409,6 @@ impl Pane {
         let is_last_item = ix == self.items.len() - 1;
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
-        let should_show_left_border = !is_last_item;
 
         let tab = Tab::new(ix)
             .position(if is_first_item {
@@ -2455,18 +2454,18 @@ impl Pane {
                 },
                 |tab, _, _, cx| cx.new(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(move |tab, _, _, cx| {
-                let will_drop_to_left = should_show_left_border;
-                let mut styled_tab = tab.bg(cx.theme().colors().drop_target_background)
-                    .border_color(cx.theme().colors().terminal_ansi_bright_red)
+            .drag_over::<DraggedTab>(move |tab, dragged_tab: &DraggedTab, _, cx| {
+                let mut styled_tab = tab
+                    .bg(cx.theme().colors().drop_target_background)
+                    .border_color(cx.theme().colors().text)
                     .border_0();
-                
-                if will_drop_to_left {
-                    styled_tab = styled_tab.border_l_1();
-                } else {
-                    styled_tab = styled_tab.border_r_1();
+
+                if ix < dragged_tab.ix {
+                    styled_tab = styled_tab.border_l_2();
+                } else if ix > dragged_tab.ix {
+                    styled_tab = styled_tab.border_r_2();
                 }
-                
+
                 styled_tab
             })
             .drag_over::<DraggedSelection>(|tab, _, _, cx| {
