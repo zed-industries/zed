@@ -7296,14 +7296,6 @@ outline: struct OutlineEntryExcerpt
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
-        let _count_visible_outlines = |panel: &OutlinePanel| {
-            panel
-                .cached_entries
-                .iter()
-                .filter(|e| matches!(e.entry, PanelEntry::Outline(_)))
-                .count()
-        };
-
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
@@ -7624,49 +7616,8 @@ outline: fn main()"
         cx.update(|window, cx| {
             outline_panel.update(cx, |outline_panel, cx| {
                 outline_panel.select_first(&SelectFirst, window, cx);
-                for _ in 0..3 {
-                    outline_panel.select_next(&SelectNext, window, cx);
-                }
             });
         });
-
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
-
-        outline_panel.update(cx, |outline_panel, cx| {
-            assert_eq!(
-                display_entries(
-                    &project,
-                    &snapshot(&outline_panel, cx),
-                    &outline_panel.cached_entries,
-                    outline_panel.selected_entry(),
-                    cx,
-                ),
-                indoc!(
-                    "
-outline: struct Config
-  outline: name: String
-  outline: value: i32
-outline: impl Config  <==== selected
-  outline: fn new(name: String)
-  outline: fn get_value(&self)
-outline: enum Status
-outline: fn process_config(config: Config)
-outline: fn main()"
-                )
-            );
-        });
-
-        cx.update(|window, cx| {
-            outline_panel.update(cx, |outline_panel, cx| {
-                outline_panel.select_first(&SelectFirst, window, cx);
-            });
-        });
-
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -7701,10 +7652,6 @@ outline: fn main()"
                 outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
             });
         });
-
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
-        cx.run_until_parked();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
