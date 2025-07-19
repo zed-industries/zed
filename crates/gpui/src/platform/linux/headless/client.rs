@@ -73,7 +73,7 @@ impl LinuxClient for HeadlessClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
     {
         let (mut tx, rx) = futures::channel::oneshot::channel();
         tx.send(Err(anyhow::anyhow!(

@@ -672,7 +672,7 @@ impl LinuxClient for WaylandClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>
+    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>
     {
         // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
         // be tricky.

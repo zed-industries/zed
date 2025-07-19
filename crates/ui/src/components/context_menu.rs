@@ -139,6 +139,8 @@ impl ContextMenuEntry {
     }
 }
 
+impl FluentBuilder for ContextMenuEntry {}
+
 impl From<ContextMenuEntry> for ContextMenuItem {
     fn from(entry: ContextMenuEntry) -> Self {
         ContextMenuItem::Entry(entry)
@@ -351,6 +353,10 @@ impl ContextMenu {
     pub fn item(mut self, item: impl Into<ContextMenuItem>) -> Self {
         self.items.push(item.into());
         self
+    }
+
+    pub fn push_item(&mut self, item: impl Into<ContextMenuItem>) {
+        self.items.push(item.into());
     }
 
     pub fn entry(

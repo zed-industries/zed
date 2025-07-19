@@ -14185,7 +14185,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=270538dc780f5240723233ff901e1054641ed318#270538dc780f5240723233ff901e1054641ed318"
+source = "git+https://github.com/zed-industries/scap?rev=18024ed6f61fb893afcf99cb3c9714d165c4e1a8#18024ed6f61fb893afcf99cb3c9714d165c4e1a8"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -16483,6 +16483,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "title_bar"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "auto_update",
  "call",
  "chrono",
