@@ -201,51 +201,48 @@ impl TableInteractionState {
     ) -> AnyElement {
         let spacers = column_widths
             .iter()
-            .map(|width| base_cell_style(Some(*width)));
+            .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
         let dividers = intersperse_with(spacers, || {
-            let hovered =
-                window
-                    .use_keyed_state(("resize-hover", column_ix as u32), cx, |_window, _cx| false);
+            window.with_id(column_ix, |window| {
+                let hovered = window.use_state(cx, |_window, _cx| false);
 
-            let div = div()
-                .relative()
-                .top_0()
-                .w_0p5()
-                .h_full()
-                .bg(cx.theme().colors().border_variant.opacity(0.5))
-                .when(*hovered.read(cx), |div| {
-                    div.bg(cx.theme().colors().border_focused)
-                })
-                .child(
-                    div()
-                        .id(("column-resize-handle", column_ix as u32))
-                        .absolute()
-                        .left_neg_0p5()
-                        .w_1p5()
-                        .h_full()
-                        .on_hover(move |&was_hovered, _, cx| {
-                            hovered.update(cx, |hovered, _| {
-                                *hovered = was_hovered;
-                            })
-                        })
-                        .cursor_col_resize()
-                        .on_mouse_down(MouseButton::Left, {
-                            let column_idx = column_ix;
-                            move |_event, _window, _cx| {
-                                // TODO: Emit resize event to parent
-                                eprintln!("Start resizing column {}", column_idx);
-                            }
-                        }),
-                );
+                let div = div()
+                    // This is required because this is evaluated at a different time than the use_state call above
+                    .id(column_ix)
+                    .relative()
+                    .top_0()
+                    .w_0p5()
+                    .h_full()
+                    .bg(cx.theme().colors().border_variant.opacity(0.5))
+                    .when(*hovered.read(cx), |div| {
+                        div.bg(cx.theme().colors().border_focused)
+                    })
+                    .child(
+                        div()
+                            .id("column-resize-handle")
+                            .absolute()
+                            .left_neg_0p5()
+                            .w_1p5()
+                            .h_full()
+                            .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                            .cursor_col_resize()
+                            .on_mouse_down(MouseButton::Left, {
+                                let column_idx = column_ix;
+                                move |_event, _window, _cx| {
+                                    eprintln!("Start resizing column {}", column_idx);
+                                }
+                            }),
+                    );
 
-            column_ix += 1;
-            div
+                column_ix += 1;
+                div.into_any_element()
+            })
         });
 
         div()
-            .id("id")
+            .id("resize-handles")
             .h_flex()
             .absolute()
             .w_full()
