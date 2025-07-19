@@ -124,6 +124,7 @@
       "g r a": "editor::ToggleCodeActions",
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
+      "g B": "editor::BlameHover",
       "g t": "pane::ActivateNextItem",
       "g shift-t": "pane::ActivatePreviousItem",
       "g d": "editor::GoToDefinition",

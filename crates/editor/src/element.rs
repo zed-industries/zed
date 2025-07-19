@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(editor, window, Editor::newline_above);
         register_action(editor, window, Editor::newline_below);
         register_action(editor, window, Editor::backspace);
+        register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
         register_action(editor, window, Editor::backtab);
@@ -1143,10 +1144,14 @@ impl EditorElement {
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
                 .map_or(false, |bounds| bounds.contains(&event.position));
+            let keyboard_grace = editor
+                .inline_blame_popover
+                .as_ref()
+                .map_or(false, |state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, event.position, cx);
-            } else {
+                editor.show_blame_popover(&blame_entry, event.position, false, cx);
+            } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
         } else {
