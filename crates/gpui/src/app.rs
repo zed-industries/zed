@@ -2062,7 +2062,6 @@ impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
 impl<'a, T> Drop for GpuiBorrow<'a, T> {
     fn drop(&mut self) {
         let lease = self.inner.take().unwrap();
-        dbg!("notifying gpui borrow");
         self.app.notify(lease.id);
         self.app.entities.end_lease(lease);
         self.app.finish_update();
