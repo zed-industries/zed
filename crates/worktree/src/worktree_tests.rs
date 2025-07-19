@@ -1985,6 +1985,58 @@ fn test_unrelativize() {
 }
 
 #[gpui::test]
+async fn test_gitignore_with_git_info_exclude(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // Test that .git/info/exclude entries are properly recognized
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "excluded_file.txt\n",
+                },
+            },
+            ".gitignore": "local_ignored.txt\n",
+            "normal_file.txt": "normal file content",
+            "local_ignored.txt": "locally ignored content",
+            "excluded_file.txt": "excluded content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        check_worktree_entries(
+            tree,
+            &[],
+            &[
+                "local_ignored.txt", // Ignored by .gitignore
+                "excluded_file.txt", // Ignored by .git/info/exclude
+            ],
+            &[
+                "normal_file.txt", // Not ignored
+                ".gitignore",      // Not ignored
+            ],
+            &[],
+        )
+    });
+}
+
+#[gpui::test]
 async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -2025,7 +2077,6 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
-    eprintln!(">>>>>>>>>> touch");
     fs.touch_path(path!("/root/subproject")).await;
     worktree
         .update(cx, |worktree, _| {
@@ -2044,6 +2095,53 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
+async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/home/zed"),
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\n/bar\nbaz\n"
+                }
+            },
+            "project": {
+                ".git": {},
+                ".gitignore": "!baz",
+                "foo": "",
+                "bar": "",
+                "sub": {
+                    "bar": ""
+                },
+                "baz": ""
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        path!("/home/zed/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(worktree, &[], &["foo", "bar"], &["sub/bar", "baz"], &[]);
+    })
 }
 
 #[track_caller]
