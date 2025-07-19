@@ -5559,6 +5559,10 @@ impl Panel for ProjectPanel {
     }
 
     fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        if !ProjectPanelSettings::get_global(cx).auto_open {
+            return false;
+        }
+
         let project = &self.project.read(cx);
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)
