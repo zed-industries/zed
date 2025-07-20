@@ -13,7 +13,8 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
+    anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -2289,12 +2290,9 @@ impl ActionArgumentsEditor {
                 let editor = cx.new_window_entity(|window, cx| {
                     let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
                     let mut editor = Editor::new(editor::EditorMode::Full { scale_ui_elements_with_buffer_font_size: true, show_active_line_background: false, sized_by_content: true },multi_buffer, project.upgrade(), window, cx);
-                    editor.set_show_line_numbers(false, cx);
                     editor.set_searchable(false);
-                    editor.set_show_scrollbars(false, cx);
-                    editor.set_show_breakpoints(false, cx);
+                    editor.disable_scrollbars_and_minimap(window, cx);
                     editor.set_show_edit_predictions(Some(false), window, cx);
-                    editor.set_show_runnables(false, cx);
                     editor.set_show_gutter(false, cx);
                     Self::set_editor_text(&mut editor, arguments, window, cx);
                     editor
@@ -2406,18 +2404,29 @@ impl ActionArgumentsEditor {
 
 impl Render for ActionArgumentsEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut style = self.editor.update(cx, |editor, cx| editor.editor_style(cx));
-        if self.is_loading {
-            let theme_color = cx.theme().colors();
-            style.text.color = theme_color.text_disabled;
-        }
-        let settings = theme::ThemeSettings::get_global(cx);
-        style.text.font_size = rems(0.875).into();
-        style.text.font_weight = settings.buffer_font.weight;
-        style.text.line_height = relative(1.2);
-        style.text.font_style = gpui::FontStyle::Normal;
+        let background_color;
+        let border_color;
+        let text_style = {
+            let colors = cx.theme().colors();
+            let settings = theme::ThemeSettings::get_global(cx);
+            background_color = colors.editor_background;
+            border_color = if self.is_loading {
+                colors.border_disabled
+            } else {
+                colors.border_variant
+            };
+            TextStyleRefinement {
+                font_size: Some(rems(0.875).into()),
+                font_weight: Some(settings.buffer_font.weight),
+                line_height: Some(relative(1.2)),
+                font_style: Some(gpui::FontStyle::Normal),
+                color: self.is_loading.then_some(colors.text_disabled),
+                ..Default::default()
+            }
+        };
 
-        let colors = cx.theme().colors();
+        self.editor
+            .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
 
         return v_flex().w_full().child(
             h_flex()
@@ -2427,15 +2436,11 @@ impl Render for ActionArgumentsEditor {
                 .py_1p5()
                 .flex_grow()
                 .rounded_lg()
-                .bg(colors.editor_background)
+                .bg(background_color)
                 .border_1()
-                .border_color(if self.is_loading {
-                    colors.border_disabled
-                } else {
-                    colors.border_variant
-                })
+                .border_color(border_color)
                 .track_focus(&self.focus_handle)
-                .child(EditorElement::new(&self.editor, style)),
+                .child(self.editor.clone()),
         );
     }
 }
