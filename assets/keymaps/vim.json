@@ -245,6 +245,10 @@
       "g q": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
       // tree-sitter related commands
+      "alt-o": "vim::SelectLargerSyntaxNode",
+      "alt-i": "vim::SelectSmallerSyntaxNode",
+      "alt-n": "vim::SelectNextSyntaxNode",
+      "alt-p": "vim::SelectPrevSyntaxNode",
       "[ x": "vim::SelectLargerSyntaxNode",
       "] x": "vim::SelectSmallerSyntaxNode",
       "] d": "editor::GoToDiagnostic",
@@ -315,7 +319,11 @@
       "\"": "vim::PushRegister",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode"
+      "] x": "editor::SelectSmallerSyntaxNode",
+      "alt-o": "editor::SelectLargerSyntaxNode",
+      "alt-i": "editor::SelectSmallerSyntaxNode",
+      "alt-n": "editor::SelectNextSyntaxNode",
+      "alt-p": "editor::SelectPrevSyntaxNode"
     }
   },
   {
