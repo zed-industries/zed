@@ -992,13 +992,17 @@ impl KeybindSource {
     }
 
     pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
-        match index {
+        Self::try_from_meta(index).unwrap()
+    }
+
+    pub fn try_from_meta(index: KeyBindingMetaIndex) -> Result<Self> {
+        Ok(match index {
             Self::USER => KeybindSource::User,
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
-            _ => unreachable!(),
-        }
+            _ => anyhow::bail!("Invalid keybind source {:?}", index),
+        })
     }
 }
 
@@ -1617,6 +1621,46 @@ mod tests {
                 }
             ]"#
             .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_keymap_remove() {
+        zlog::init_test();
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
         );
     }
 }

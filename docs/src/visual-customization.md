@@ -448,7 +448,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
-    // Default cursor shape for the terminal (block, bar, underline, hollow)
+    // Default cursor shape for the terminal cursor (block, bar, underline, hollow)
     "cursor_shape": "block",
 
     // Environment variables to add to terminal's process environment

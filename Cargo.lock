@@ -158,6 +158,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "strum 0.27.1",
  "tempfile",
  "ui",
  "util",
@@ -194,6 +195,7 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "agentic-coding-protocol",
+ "ai_onboarding",
  "anyhow",
  "assistant_context",
  "assistant_slash_command",
@@ -326,6 +328,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e60d3430d3a69478ad0993f19238d2df97c507009a52b3c10addcd7f6bcb916"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ai_onboarding"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "component",
+ "gpui",
+ "language_model",
+ "proto",
+ "serde",
+ "smallvec",
+ "ui",
+ "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -2161,7 +2179,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.6.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "ash",
  "ash-window",
@@ -2194,7 +2212,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2204,7 +2222,7 @@ dependencies = [
 [[package]]
 name = "blade-util"
 version = "0.2.0"
-source = "git+https://github.com/kvark/blade?rev=416375211bb0b5826b3584dccdb6a43369e499ad#416375211bb0b5826b3584dccdb6a43369e499ad"
+source = "git+https://github.com/kvark/blade?rev=e0ec4e720957edd51b945b64dd85605ea54bcfe5#e0ec4e720957edd51b945b64dd85605ea54bcfe5"
 dependencies = [
  "blade-graphics",
  "bytemuck",
@@ -4247,6 +4265,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
+ "smol",
  "task",
  "util",
  "workspace-hack",
@@ -4427,6 +4446,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -9063,6 +9083,7 @@ dependencies = [
 name = "language_models"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anthropic",
  "anyhow",
  "aws-config",
@@ -20508,6 +20529,7 @@ dependencies = [
 name = "zeta"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anyhow",
  "arrayvec",
  "call",
@@ -20515,6 +20537,7 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "copilot",
  "ctor",
  "db",
  "editor",
@@ -20529,8 +20552,6 @@ dependencies = [
  "language_model",
  "log",
  "menu",
- "migrator",
- "paths",
  "postage",
  "project",
  "proto",
