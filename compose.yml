@@ -60,7 +60,7 @@ services:
       - postgres
 
   stripe-mock:
-    image: stripe/stripe-mock:v0.184.0
+    image: stripe/stripe-mock:v0.178.0
     ports:
       - 12111:12111
       - 12112:12112
