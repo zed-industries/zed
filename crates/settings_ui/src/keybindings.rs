@@ -302,13 +302,18 @@ impl EventEmitter<()> for KeymapEditor {}
 
 impl Focusable for KeymapEditor {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        return self.filter_editor.focus_handle(cx);
+        if self.selected_index.is_some() {
+            self.focus_handle.clone()
+        } else {
+            self.filter_editor.focus_handle(cx)
+        }
     }
 }
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(Self::on_keymap_changed);
+        let _keymap_subscription =
+            cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = TableInteractionState::new(window, cx);
 
         let keystroke_editor = cx.new(|cx| {
@@ -390,7 +395,7 @@ impl KeymapEditor {
             action_args_temp_dir_worktree: None,
         };
 
-        this.on_keymap_changed(cx);
+        this.on_keymap_changed(window, cx);
 
         this
     }
@@ -633,9 +638,9 @@ impl KeymapEditor {
         (processed_bindings, string_match_candidates)
     }
 
-    fn on_keymap_changed(&mut self, cx: &mut Context<KeymapEditor>) {
+    fn on_keymap_changed(&mut self, window: &mut Window, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let json_language = load_json_language(workspace.clone(), cx).await;
             let zed_keybind_context_language =
                 load_keybind_context_language(workspace.clone(), cx).await;
@@ -670,7 +675,7 @@ impl KeymapEditor {
             })?;
             // calls cx.notify
             Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if let Some(previous_edit) = this.previous_edit.take() {
                     match previous_edit {
                         // should remove scroll from process_query
@@ -698,8 +703,12 @@ impl KeymapEditor {
                                 });
 
                             if let Some(scroll_position) = scroll_position {
-                                this.scroll_to_item(scroll_position, ScrollStrategy::Top, cx);
-                                this.selected_index = Some(scroll_position);
+                                this.select_index(
+                                    scroll_position,
+                                    Some(ScrollStrategy::Top),
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 this.table_interaction_state.update(cx, |table, _| {
                                     table.set_scrollbar_offset(Axis::Vertical, fallback)
@@ -765,9 +774,19 @@ impl KeymapEditor {
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
     }
 
-    fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn select_index(
+        &mut self,
+        index: usize,
+        scroll: Option<ScrollStrategy>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.selected_index != Some(index) {
             self.selected_index = Some(index);
+            if let Some(scroll_strategy) = scroll {
+                self.scroll_to_item(index, scroll_strategy, cx);
+            }
+            window.focus(&self.focus_handle);
             cx.notify();
         }
     }
@@ -862,9 +881,7 @@ impl KeymapEditor {
             if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
-                self.selected_index = Some(selected);
-                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
-                cx.notify();
+                self.select_index(selected, Some(ScrollStrategy::Center), window, cx);
             }
         } else {
             self.select_first(&Default::default(), window, cx);
@@ -888,36 +905,25 @@ impl KeymapEditor {
             if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
-                self.selected_index = Some(selected);
-                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
-                cx.notify();
+                self.select_index(selected, Some(ScrollStrategy::Center), window, cx);
             }
         } else {
             self.select_last(&Default::default(), window, cx);
         }
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hover_menus = false;
         if self.matches.get(0).is_some() {
-            self.selected_index = Some(0);
-            self.scroll_to_item(0, ScrollStrategy::Center, cx);
-            cx.notify();
+            self.select_index(0, Some(ScrollStrategy::Center), window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hover_menus = false;
         if self.matches.last().is_some() {
             let index = self.matches.len() - 1;
-            self.selected_index = Some(index);
-            self.scroll_to_item(index, ScrollStrategy::Center, cx);
-            cx.notify();
+            self.select_index(index, Some(ScrollStrategy::Center), window, cx);
         }
     }
 
@@ -1384,7 +1390,7 @@ impl Render for KeymapEditor {
                                                             cx,
                                                         );
                                                     } else {
-                                                        this.select_index(index, cx);
+                                                        this.select_index(index, None, window, cx);
                                                         this.open_edit_keybinding_modal(
                                                             false, window, cx,
                                                         );
@@ -1414,7 +1420,7 @@ impl Render for KeymapEditor {
                                                 },
                                             )
                                             .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.select_index(index, cx);
+                                                this.select_index(index, None, window, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
                                                 cx.stop_propagation();
                                             }))
@@ -1528,7 +1534,7 @@ impl Render for KeymapEditor {
                                           cx| {
                                         match mouse_down_event.button {
                                             MouseButton::Right => {
-                                                this.select_index(row_index, cx);
+                                                this.select_index(row_index, None, window, cx);
                                                 this.create_context_menu(
                                                     mouse_down_event.position,
                                                     window,
@@ -1541,7 +1547,7 @@ impl Render for KeymapEditor {
                                 ))
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        this.select_index(row_index, cx);
+                                        this.select_index(row_index, None, window, cx);
                                         if event.up.click_count == 2 {
                                             this.open_edit_keybinding_modal(false, window, cx);
                                         }

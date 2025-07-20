@@ -23,6 +23,7 @@ impl lsp::request::Request for SchemaContentRequest {
 pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     language_server
         .on_request::<SchemaContentRequest, _, _>(|params, cx| {
+            // PERF: Use a cache (`OnceLock`?) to avoid recomputing the action schemas
             let mut generator = settings::KeymapFile::action_schema_generator();
             let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
             async move {
