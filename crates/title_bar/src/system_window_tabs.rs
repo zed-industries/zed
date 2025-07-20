@@ -358,7 +358,7 @@ impl Render for SystemWindowTabs {
             })
             .collect::<Vec<_>>();
 
-        if number_of_tabs < 2 {
+        if !window.tab_bar_visible() {
             return h_flex().into_any_element();
         }
 

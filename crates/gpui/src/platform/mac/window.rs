@@ -365,7 +365,11 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             select_previous_tab as extern "C" fn(&Object, Sel, id),
         );
 
-        // Add this to your window class
+        decl.add_method(
+            sel!(toggleTabBar:),
+            toggle_tab_bar as extern "C" fn(&Object, Sel, id),
+        );
+
         decl.add_method(
             sel!(observeValueForKeyPath:ofObject:change:context:),
             observe_value_for_key_path as extern "C" fn(&Object, Sel, id, id, id, *mut c_void),
@@ -1353,6 +1357,18 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn get_tab_bar_visible(&self) -> bool {
+        unsafe {
+            let tab_group: id = msg_send![self.0.lock().native_window, tabGroup];
+            if tab_group.is_null() {
+                false
+            } else {
+                let tab_bar_visible: BOOL = msg_send![tab_group, isTabBarVisible];
+                tab_bar_visible == YES
+            }
+        }
+    }
+
     fn on_select_next_tab(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().select_next_tab_callback = Some(callback);
     }
@@ -1891,9 +1907,6 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
-            if is_active {
-                lock.move_traffic_light();
-            }
 
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
@@ -2295,22 +2308,6 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
     );
 }
 
-extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
-    unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
-        let accessory_view: id = msg_send![view_controller, view];
-
-        // Hide the native tab bar and set its height to 0, since we render our own.
-        let _: () = msg_send![accessory_view, setHidden: YES];
-        let mut frame: NSRect = msg_send![accessory_view, frame];
-        frame.size.height = 0.0;
-        let _: () = msg_send![accessory_view, setFrame: frame];
-
-        let window_state = get_window_state(this);
-        window_state.as_ref().lock().move_traffic_light();
-    }
-}
-
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
@@ -2447,6 +2444,19 @@ unsafe fn remove_layer_background(layer: id) {
     }
 }
 
+extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view_controller: id) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), addTitlebarAccessoryViewController: view_controller];
+
+        // Hide the native tab bar and set its height to 0, since we render our own.
+        let accessory_view: id = msg_send![view_controller, view];
+        let _: () = msg_send![accessory_view, setHidden: YES];
+        let mut frame: NSRect = msg_send![accessory_view, frame];
+        frame.size.height = 0.0;
+        let _: () = msg_send![accessory_view, setFrame: frame];
+    }
+}
+
 extern "C" fn select_next_tab(this: &Object, _sel: Sel, _id: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -2464,6 +2474,15 @@ extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
         drop(lock);
         callback();
         window_state.lock().select_previous_tab_callback = Some(callback);
+    }
+}
+
+extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), toggleTabBar:nil];
+
+        let window_state = get_window_state(this);
+        window_state.as_ref().lock().move_traffic_light();
     }
 }
 
