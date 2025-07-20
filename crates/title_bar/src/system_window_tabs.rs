@@ -47,32 +47,6 @@ impl SystemWindowTabs {
         let window_id = window.window_handle().window_id();
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.observe_new(
-            |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-                workspace
-                    .register_action(|_, _: &ShowNextWindowTab, window, cx| {
-                        let window_id = window.window_handle().window_id();
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
-                        }
-                    })
-                    .register_action(|_, _: &ShowPreviousWindowTab, window, cx| {
-                        let window_id = window.window_handle().window_id();
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::select_previous_tab(
-                                cx, tab_group, window_id,
-                            );
-                        }
-                    })
-                    .register_action(|_, _: &MergeAllWindows, window, _cx| {
-                        window.merge_all_windows();
-                    })
-                    .register_action(|_, _: &MoveTabToNewWindow, window, _cx| {
-                        window.move_tab_to_new_window();
-                    });
-            },
-        ));
-
         subscriptions.push(
             cx.observe_global::<SystemWindowTabController>(move |this, cx| {
                 let controller = cx.global::<SystemWindowTabController>();
@@ -134,6 +108,31 @@ impl SystemWindowTabs {
             measured_tab_width: window.bounds().size.width,
             _subscriptions: subscriptions,
         }
+    }
+
+    pub fn init(cx: &mut App) {
+        cx.observe_new(|workspace: &mut Workspace, _, _| {
+            workspace
+                .register_action(|_, _: &ShowNextWindowTab, window, cx| {
+                    let window_id = window.window_handle().window_id();
+                    if let Some(tab_group) = window.tab_group() {
+                        SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
+                    }
+                })
+                .register_action(|_, _: &ShowPreviousWindowTab, window, cx| {
+                    let window_id = window.window_handle().window_id();
+                    if let Some(tab_group) = window.tab_group() {
+                        SystemWindowTabController::select_previous_tab(cx, tab_group, window_id);
+                    }
+                })
+                .register_action(|_, _: &MergeAllWindows, window, _cx| {
+                    window.merge_all_windows();
+                })
+                .register_action(|_, _: &MoveTabToNewWindow, window, _cx| {
+                    window.move_tab_to_new_window();
+                });
+        })
+        .detach();
     }
 
     fn render_tab(
