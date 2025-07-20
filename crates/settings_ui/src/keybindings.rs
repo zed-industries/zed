@@ -1612,28 +1612,24 @@ impl RenderOnce for SyntaxHighlightedText {
 }
 
 #[derive(PartialEq)]
-enum InputError {
-    Warning(SharedString),
-    Error(SharedString),
+struct InputError {
+    severity: ui::Severity,
+    content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
-        Self::Warning(message.into())
-    }
-
-    fn error(message: impl Into<SharedString>) -> Self {
-        Self::Error(message.into())
-    }
-
-    fn content(&self) -> &SharedString {
-        match self {
-            InputError::Warning(content) | InputError::Error(content) => content,
+        Self {
+            severity: ui::Severity::Warning,
+            content: message.into(),
         }
     }
 
-    fn is_warning(&self) -> bool {
-        matches!(self, InputError::Warning(_))
+    fn error(message: impl Into<SharedString>) -> Self {
+        Self {
+            severity: ui::Severity::Error,
+            content: message.into(),
+        }
     }
 }
 
@@ -1756,11 +1752,9 @@ impl KeybindingEditorModal {
     }
 
     fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
-        if self
-            .error
-            .as_ref()
-            .is_some_and(|old_error| old_error.is_warning() && *old_error == error)
-        {
+        if self.error.as_ref().is_some_and(|old_error| {
+            old_error.severity == ui::Severity::Warning && *old_error == error
+        }) {
             false
         } else {
             self.error = Some(error);
@@ -2044,21 +2038,14 @@ impl Render for KeybindingEditorModal {
                                 .when_some(self.error.as_ref(), |this, error| {
                                     this.child(
                                         Banner::new()
-                                            .map(|banner| match error {
-                                                InputError::Error(_) => {
-                                                    banner.severity(ui::Severity::Error)
-                                                }
-                                                InputError::Warning(_) => {
-                                                    banner.severity(ui::Severity::Warning)
-                                                }
-                                            })
+                                            .severity(error.severity)
                                             // For some reason, the div overflows its container to the
                                             //right. The padding accounts for that.
                                             .child(
                                                 div()
                                                     .size_full()
                                                     .pr_2()
-                                                    .child(Label::new(error.content())),
+                                                    .child(Label::new(error.content.clone())),
                                             ),
                                     )
                                 }),
