@@ -58,13 +58,21 @@ pub fn denormalize_action_name(action_name: &str) -> String {
     action_name.replace("__", "::")
 }
 
+pub fn normalized_action_file_name(action_name: &str) -> String {
+    normalized_action_name_to_file_name(normalize_action_name(action_name))
+}
+
+pub fn normalized_action_name_to_file_name(mut normalized_action_name: String) -> String {
+    normalized_action_name.push_str(".json");
+    normalized_action_name
+}
+
 pub fn url_schema_for_action(action_name: &str) -> serde_json::Value {
-    let mut file_name = normalize_action_name(action_name);
-    let name_len = file_name.len();
-    file_name.push_str(".json");
+    let normalized_name = normalize_action_name(action_name);
+    let file_name = normalized_action_name_to_file_name(normalized_name.clone());
     serde_json::json!({
         "fileMatch": [file_name],
-        "url": format!("zed://schemas/action/{}", &file_name[..name_len])
+        "url": format!("zed://schemas/action/{}", normalized_name)
     })
 }
 

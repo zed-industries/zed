@@ -2281,11 +2281,7 @@ impl ActionArgumentsEditor {
                     )
                 })?;
 
-                let file_name = {
-                    let mut file_name = project::lsp_store::json_language_server_ext::normalize_action_name(action_name);
-                    file_name.push_str(".json");
-                    file_name
-                };
+                let file_name = project::lsp_store::json_language_server_ext::normalized_action_file_name(action_name);
 
                 let (buffer, backup_temp_dir) = Self::create_temp_buffer(temp_dir, file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action arguments. Auto-complete will not work")
                     ?;
