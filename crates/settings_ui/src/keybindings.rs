@@ -13,8 +13,8 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
-    anchored, deferred, div,
+    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -1434,6 +1434,7 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.08),
                     ])
                     .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
+                    .resizable_columns([false, true, true, true, true, true])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,

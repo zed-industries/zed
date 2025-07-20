@@ -196,6 +196,7 @@ impl TableInteractionState {
     fn render_resize_handles<const COLS: usize>(
         &self,
         column_widths: &[Length; COLS],
+        resizable_columns: &[bool; COLS],
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -204,40 +205,43 @@ impl TableInteractionState {
             .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
+        let mut resizable_columns = resizable_columns.into_iter();
         let dividers = intersperse_with(spacers, || {
             window.with_id(column_ix, |window| {
-                let hovered = window.use_state(cx, |_window, _cx| false);
-
-                let div = div()
+                let mut resize_divider = div()
                     // This is required because this is evaluated at a different time than the use_state call above
                     .id(column_ix)
                     .relative()
                     .top_0()
                     .w_0p5()
                     .h_full()
-                    .bg(cx.theme().colors().border_variant.opacity(0.5))
-                    .when(*hovered.read(cx), |div| {
+                    .bg(cx.theme().colors().border.opacity(0.5));
+
+                let mut resize_handle = div()
+                    .id("column-resize-handle")
+                    .absolute()
+                    .left_neg_0p5()
+                    .w(px(5.0))
+                    .h_full();
+
+                if Some(&true) == resizable_columns.next() {
+                    let hovered = window.use_state(cx, |_window, _cx| false);
+                    resize_divider = resize_divider.when(*hovered.read(cx), |div| {
                         div.bg(cx.theme().colors().border_focused)
-                    })
-                    .child(
-                        div()
-                            .id("column-resize-handle")
-                            .absolute()
-                            .left_neg_0p5()
-                            .w_1p5()
-                            .h_full()
-                            .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
-                            .cursor_col_resize()
-                            .on_mouse_down(MouseButton::Left, {
-                                let column_idx = column_ix;
-                                move |_event, _window, _cx| {
-                                    eprintln!("Start resizing column {}", column_idx);
-                                }
-                            }),
-                    );
+                    });
+                    resize_handle = resize_handle
+                        .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                        .cursor_col_resize()
+                        .on_mouse_down(MouseButton::Left, {
+                            let column_idx = column_ix;
+                            move |_event, _window, _cx| {
+                                eprintln!("Start resizing column {}", column_idx);
+                            }
+                        })
+                }
 
                 column_ix += 1;
-                div.into_any_element()
+                resize_divider.child(resize_handle).into_any_element()
             })
         });
 
@@ -438,7 +442,8 @@ pub struct Table<const COLS: usize = 3> {
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
     column_widths: Option<[Length; COLS]>,
-    map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
+    resizable_columns: Option<[bool; COLS]>,
+    map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
@@ -454,6 +459,7 @@ impl<const COLS: usize> Table<COLS> {
             column_widths: None,
             map_row: None,
             empty_table_callback: None,
+            resizable_columns: None,
         }
     }
 
@@ -519,8 +525,8 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn resizable_columns(mut self) -> Self {
-        self.resizable_columns = true;
+    pub fn resizable_columns(mut self, resizable: [impl Into<bool>; COLS]) -> Self {
+        self.resizable_columns = Some(resizable.map(Into::into));
         self
     }
 
@@ -732,10 +738,15 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         self.column_widths
                             .as_ref()
                             .zip(interaction_state.as_ref())
-                            .filter(|_| self.resizable_columns),
-                        |parent, (column_widths, state)| {
+                            .zip(self.resizable_columns.as_ref()),
+                        |parent, ((column_widths, state), resizable_columns)| {
                             parent.child(state.update(cx, |state, cx| {
-                                state.render_resize_handles(column_widths, window, cx)
+                                state.render_resize_handles(
+                                    column_widths,
+                                    resizable_columns,
+                                    window,
+                                    cx,
+                                )
                             }))
                         },
                     )
