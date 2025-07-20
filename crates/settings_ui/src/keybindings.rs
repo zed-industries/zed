@@ -13,11 +13,13 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
+    anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
-use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
+use project::Project;
+use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 
 use util::ResultExt;
 
@@ -283,6 +285,14 @@ struct KeymapEditor {
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
     show_hover_menus: bool,
+    /// In order for the JSON LSP to run in the actions arguments editor, we
+    /// require a backing file In order to avoid issues (primarily log spam)
+    /// with drop order between the buffer, file, worktree, etc, we create a
+    /// temporary directory for these backing files in the keymap editor struct
+    /// instead of here. This has the added benefit of only having to create a
+    /// worktree and directory once, although the perf improvement is negligible.
+    action_args_temp_dir_worktree: Option<Entity<project::Worktree>>,
+    action_args_temp_dir: Option<tempfile::TempDir>,
 }
 
 enum PreviousEdit {
@@ -307,13 +317,18 @@ impl EventEmitter<()> for KeymapEditor {}
 
 impl Focusable for KeymapEditor {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        return self.filter_editor.focus_handle(cx);
+        if self.selected_index.is_some() {
+            self.focus_handle.clone()
+        } else {
+            self.filter_editor.focus_handle(cx)
+        }
     }
 }
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(Self::on_keymap_changed);
+        let _keymap_subscription =
+            cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = TableInteractionState::new(window, cx);
 
         let keystroke_editor = cx.new(|cx| {
@@ -346,6 +361,24 @@ impl KeymapEditor {
         })
         .detach();
 
+        cx.spawn({
+            let workspace = workspace.clone();
+            async move |this, cx| {
+                let temp_dir = tempfile::tempdir_in(paths::temp_dir())?;
+                let worktree = workspace
+                    .update(cx, |ws, cx| {
+                        ws.project()
+                            .update(cx, |p, cx| p.create_worktree(temp_dir.path(), false, cx))
+                    })?
+                    .await?;
+                this.update(cx, |this, _| {
+                    this.action_args_temp_dir = Some(temp_dir);
+                    this.action_args_temp_dir_worktree = Some(worktree);
+                })
+            }
+        })
+        .detach();
+
         let mut this = Self {
             workspace,
             keybindings: vec![],
@@ -365,9 +398,11 @@ impl KeymapEditor {
             search_query_debounce: None,
             humanized_action_names: HumanizedActionNameCache::new(cx),
             show_hover_menus: true,
+            action_args_temp_dir: None,
+            action_args_temp_dir_worktree: None,
         };
 
-        this.on_keymap_changed(cx);
+        this.on_keymap_changed(window, cx);
 
         this
     }
@@ -557,10 +592,10 @@ impl KeymapEditor {
             HashSet::from_iter(cx.all_action_names().into_iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
-        let action_schema = HashMap::from_iter(
+        let actions_with_schemas = HashSet::from_iter(
             cx.action_schemas(&mut generator)
                 .into_iter()
-                .filter_map(|(name, schema)| schema.map(|schema| (name, schema))),
+                .filter_map(|(name, schema)| schema.is_some().then_some(name)),
         );
 
         let mut processed_bindings = Vec::new();
@@ -607,7 +642,7 @@ impl KeymapEditor {
                 action_arguments,
                 humanized_action_name,
                 action_docs,
-                action_schema: action_schema.get(action_name).cloned(),
+                has_schema: actions_with_schemas.contains(action_name),
                 context: Some(context),
                 source,
             });
@@ -626,7 +661,7 @@ impl KeymapEditor {
                 action_arguments: None,
                 humanized_action_name,
                 action_docs: action_documentation.get(action_name).copied(),
-                action_schema: action_schema.get(action_name).cloned(),
+                has_schema: actions_with_schemas.contains(action_name),
                 context: None,
                 source: None,
             });
@@ -636,9 +671,9 @@ impl KeymapEditor {
         (processed_bindings, string_match_candidates)
     }
 
-    fn on_keymap_changed(&mut self, cx: &mut Context<KeymapEditor>) {
+    fn on_keymap_changed(&mut self, window: &mut Window, cx: &mut Context<KeymapEditor>) {
         let workspace = self.workspace.clone();
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let json_language = load_json_language(workspace.clone(), cx).await;
             let zed_keybind_context_language =
                 load_keybind_context_language(workspace.clone(), cx).await;
@@ -673,7 +708,7 @@ impl KeymapEditor {
             })?;
             // calls cx.notify
             Self::update_matches(this.clone(), action_query, keystroke_query, cx).await?;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if let Some(previous_edit) = this.previous_edit.take() {
                     match previous_edit {
                         // should remove scroll from process_query
@@ -701,8 +736,12 @@ impl KeymapEditor {
                                 });
 
                             if let Some(scroll_position) = scroll_position {
-                                this.scroll_to_item(scroll_position, ScrollStrategy::Top, cx);
-                                this.selected_index = Some(scroll_position);
+                                this.select_index(
+                                    scroll_position,
+                                    Some(ScrollStrategy::Top),
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 this.table_interaction_state.update(cx, |table, _| {
                                     table.set_scrollbar_offset(Axis::Vertical, fallback)
@@ -768,9 +807,19 @@ impl KeymapEditor {
             .and_then(|keybind_index| self.keybindings.get(keybind_index))
     }
 
-    fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn select_index(
+        &mut self,
+        index: usize,
+        scroll: Option<ScrollStrategy>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.selected_index != Some(index) {
             self.selected_index = Some(index);
+            if let Some(scroll_strategy) = scroll {
+                self.scroll_to_item(index, scroll_strategy, cx);
+            }
+            window.focus(&self.focus_handle);
             cx.notify();
         }
     }
@@ -872,9 +921,7 @@ impl KeymapEditor {
             if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
-                self.selected_index = Some(selected);
-                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
-                cx.notify();
+                self.select_index(selected, Some(ScrollStrategy::Center), window, cx);
             }
         } else {
             self.select_first(&Default::default(), window, cx);
@@ -898,36 +945,25 @@ impl KeymapEditor {
             if selected >= self.matches.len() {
                 self.select_last(&Default::default(), window, cx);
             } else {
-                self.selected_index = Some(selected);
-                self.scroll_to_item(selected, ScrollStrategy::Center, cx);
-                cx.notify();
+                self.select_index(selected, Some(ScrollStrategy::Center), window, cx);
             }
         } else {
             self.select_last(&Default::default(), window, cx);
         }
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hover_menus = false;
         if self.matches.get(0).is_some() {
-            self.selected_index = Some(0);
-            self.scroll_to_item(0, ScrollStrategy::Center, cx);
-            cx.notify();
+            self.select_index(0, Some(ScrollStrategy::Center), window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         self.show_hover_menus = false;
         if self.matches.last().is_some() {
             let index = self.matches.len() - 1;
-            self.selected_index = Some(index);
-            self.scroll_to_item(index, ScrollStrategy::Center, cx);
-            cx.notify();
+            self.select_index(index, Some(ScrollStrategy::Center), window, cx);
         }
     }
 
@@ -963,6 +999,8 @@ impl KeymapEditor {
             arguments = arguments,
         );
 
+        let temp_dir = self.action_args_temp_dir.as_ref().map(|dir| dir.path());
+
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
@@ -973,6 +1011,7 @@ impl KeymapEditor {
                         keybind,
                         keybind_index,
                         keymap_editor,
+                        temp_dir,
                         workspace_weak,
                         fs,
                         window,
@@ -1134,7 +1173,7 @@ struct ProcessedKeybinding {
     humanized_action_name: SharedString,
     action_arguments: Option<SyntaxHighlightedText>,
     action_docs: Option<&'static str>,
-    action_schema: Option<schemars::Schema>,
+    has_schema: bool,
     context: Option<KeybindContextString>,
     source: Option<(KeybindSource, SharedString)>,
 }
@@ -1428,7 +1467,7 @@ impl Render for KeymapEditor {
                                                             cx,
                                                         );
                                                     } else {
-                                                        this.select_index(index, cx);
+                                                        this.select_index(index, None, window, cx);
                                                         this.open_edit_keybinding_modal(
                                                             false, window, cx,
                                                         );
@@ -1458,7 +1497,7 @@ impl Render for KeymapEditor {
                                                 },
                                             )
                                             .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.select_index(index, cx);
+                                                this.select_index(index, None, window, cx);
                                                 this.open_edit_keybinding_modal(false, window, cx);
                                                 cx.stop_propagation();
                                             }))
@@ -1506,7 +1545,7 @@ impl Render for KeymapEditor {
                                     let action_arguments = match binding.action_arguments.clone() {
                                         Some(arguments) => arguments.into_any_element(),
                                         None => {
-                                            if binding.action_schema.is_some() {
+                                            if binding.has_schema {
                                                 muted_styled_text(NO_ACTION_ARGUMENTS_TEXT, cx)
                                                     .into_any_element()
                                             } else {
@@ -1571,7 +1610,7 @@ impl Render for KeymapEditor {
                                           cx| {
                                         match mouse_down_event.button {
                                             MouseButton::Right => {
-                                                this.select_index(row_index, cx);
+                                                this.select_index(row_index, None, window, cx);
                                                 this.create_context_menu(
                                                     mouse_down_event.position,
                                                     window,
@@ -1584,7 +1623,7 @@ impl Render for KeymapEditor {
                                 ))
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        this.select_index(row_index, cx);
+                                        this.select_index(row_index, None, window, cx);
                                         if event.up.click_count == 2 {
                                             this.open_edit_keybinding_modal(false, window, cx);
                                         }
@@ -1686,23 +1725,23 @@ impl RenderOnce for SyntaxHighlightedText {
 }
 
 #[derive(PartialEq)]
-enum InputError {
-    Warning(SharedString),
-    Error(SharedString),
+struct InputError {
+    severity: ui::Severity,
+    content: SharedString,
 }
 
 impl InputError {
     fn warning(message: impl Into<SharedString>) -> Self {
-        Self::Warning(message.into())
+        Self {
+            severity: ui::Severity::Warning,
+            content: message.into(),
+        }
     }
 
-    fn error(error: anyhow::Error) -> Self {
-        Self::Error(error.to_string().into())
-    }
-
-    fn content(&self) -> &SharedString {
-        match self {
-            InputError::Warning(content) | InputError::Error(content) => content,
+    fn error(message: anyhow::Error) -> Self {
+        Self {
+            severity: ui::Severity::Error,
+            content: message.to_string().into(),
         }
     }
 }
@@ -1713,7 +1752,7 @@ struct KeybindingEditorModal {
     editing_keybind_idx: usize,
     keybind_editor: Entity<KeystrokeInput>,
     context_editor: Entity<SingleLineInput>,
-    action_arguments_editor: Option<Entity<Editor>>,
+    action_arguments_editor: Option<Entity<ActionArgumentsEditor>>,
     fs: Arc<dyn Fs>,
     error: Option<InputError>,
     keymap_editor: Entity<KeymapEditor>,
@@ -1737,6 +1776,7 @@ impl KeybindingEditorModal {
         editing_keybind: ProcessedKeybinding,
         editing_keybind_idx: usize,
         keymap_editor: Entity<KeymapEditor>,
+        action_args_temp_dir: Option<&std::path::Path>,
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -1786,40 +1826,29 @@ impl KeybindingEditorModal {
             input
         });
 
-        let action_arguments_editor = editing_keybind.action_schema.clone().map(|_schema| {
+        let action_arguments_editor = editing_keybind.has_schema.then(|| {
+            let arguments = editing_keybind
+                .action_arguments
+                .as_ref()
+                .map(|args| args.text.clone());
             cx.new(|cx| {
-                let mut editor = Editor::auto_height_unbounded(1, window, cx);
-                let workspace = workspace.clone();
-
-                if let Some(arguments) = editing_keybind.action_arguments.clone() {
-                    editor.set_text(arguments.text, window, cx);
-                } else {
-                    // TODO: default value from schema?
-                    editor.set_placeholder_text("Action Arguments", cx);
-                }
-                cx.spawn(async |editor, cx| {
-                    let json_language = load_json_language(workspace, cx).await;
-                    editor
-                        .update(cx, |editor, cx| {
-                            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                                buffer.update(cx, |buffer, cx| {
-                                    buffer.set_language(Some(json_language), cx)
-                                });
-                            }
-                        })
-                        .context("Failed to load JSON language for editing keybinding action arguments input")
-                })
-                .detach_and_log_err(cx);
-                editor
+                ActionArgumentsEditor::new(
+                    editing_keybind.action_name,
+                    arguments,
+                    action_args_temp_dir,
+                    workspace.clone(),
+                    window,
+                    cx,
+                )
             })
         });
 
         let focus_state = KeybindingEditorModalFocusState::new(
-            keybind_editor.read_with(cx, |keybind_editor, cx| keybind_editor.focus_handle(cx)),
-            action_arguments_editor.as_ref().map(|args_editor| {
-                args_editor.read_with(cx, |args_editor, cx| args_editor.focus_handle(cx))
-            }),
-            context_editor.read_with(cx, |context_editor, cx| context_editor.focus_handle(cx)),
+            keybind_editor.focus_handle(cx),
+            action_arguments_editor
+                .as_ref()
+                .map(|args_editor| args_editor.focus_handle(cx)),
+            context_editor.focus_handle(cx),
         );
 
         Self {
@@ -1837,14 +1866,15 @@ impl KeybindingEditorModal {
         }
     }
 
-    fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) {
-        if self
-            .error
-            .as_ref()
-            .is_none_or(|old_error| *old_error != error)
-        {
+    fn set_error(&mut self, error: InputError, cx: &mut Context<Self>) -> bool {
+        if self.error.as_ref().is_some_and(|old_error| {
+            old_error.severity == ui::Severity::Warning && *old_error == error
+        }) {
+            false
+        } else {
             self.error = Some(error);
             cx.notify();
+            true
         }
     }
 
@@ -1852,7 +1882,7 @@ impl KeybindingEditorModal {
         let action_arguments = self
             .action_arguments_editor
             .as_ref()
-            .map(|editor| editor.read(cx).text(cx));
+            .map(|editor| editor.read(cx).editor.read(cx).text(cx));
 
         let value = action_arguments
             .as_ref()
@@ -1938,7 +1968,7 @@ impl KeybindingEditorModal {
 
             let warning_message = match conflicting_action_name {
                 Some(name) => {
-                    if remaining_conflict_amount > 0 {
+                     if remaining_conflict_amount > 0 {
                         format!(
                             "Your keybind would conflict with the \"{}\" action and {} other bindings",
                             name, remaining_conflict_amount
@@ -2108,38 +2138,21 @@ impl Render for KeybindingEditorModal {
                                             .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .py_1()
-                                                    .px_1p5()
-                                                    .rounded_lg()
-                                                    .bg(theme.editor_background)
-                                                    .border_1()
-                                                    .border_color(theme.border_variant)
-                                                    .child(editor),
-                                            ),
+                                            .child(editor),
                                     )
                                 })
                                 .child(self.context_editor.clone())
                                 .when_some(self.error.as_ref(), |this, error| {
                                     this.child(
                                         Banner::new()
-                                            .map(|banner| match error {
-                                                InputError::Error(_) => {
-                                                    banner.severity(ui::Severity::Error)
-                                                }
-                                                InputError::Warning(_) => {
-                                                    banner.severity(ui::Severity::Warning)
-                                                }
-                                            })
+                                            .severity(error.severity)
                                             // For some reason, the div overflows its container to the
                                             //right. The padding accounts for that.
                                             .child(
                                                 div()
                                                     .size_full()
                                                     .pr_2()
-                                                    .child(Label::new(error.content())),
+                                                    .child(Label::new(error.content.clone())),
                                             ),
                                     )
                                 }),
@@ -2216,6 +2229,219 @@ impl KeybindingEditorModalFocusState {
             self.handles.len() as i32 - 1
         };
         self.focus_index(index_to_focus, window);
+    }
+}
+
+struct ActionArgumentsEditor {
+    editor: Entity<Editor>,
+    focus_handle: FocusHandle,
+    is_loading: bool,
+    /// See documentation in `KeymapEditor` for why a temp dir is needed.
+    /// This field exists because the keymap editor temp dir creation may fail,
+    /// and rather than implement a complicated retry mechanism, we simply
+    /// fallback to trying to create a temporary directory in this editor on
+    /// demand. Of note is that the TempDir struct will remove the directory
+    /// when dropped.
+    backup_temp_dir: Option<tempfile::TempDir>,
+}
+
+impl Focusable for ActionArgumentsEditor {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl ActionArgumentsEditor {
+    fn new(
+        action_name: &'static str,
+        arguments: Option<SharedString>,
+        temp_dir: Option<&std::path::Path>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            this.editor.focus_handle(cx).focus(window);
+        })
+        .detach();
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height_unbounded(1, window, cx);
+            Self::set_editor_text(&mut editor, arguments.clone(), window, cx);
+            editor.set_read_only(true);
+            editor
+        });
+
+        let temp_dir = temp_dir.map(|path| path.to_owned());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
+                    (
+                        workspace.project().downgrade(),
+                        workspace.app_state().fs.clone(),
+                    )
+                })?;
+
+                let file_name = project::lsp_store::json_language_server_ext::normalized_action_file_name(action_name);
+
+                let (buffer, backup_temp_dir) = Self::create_temp_buffer(temp_dir, file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action arguments. Auto-complete will not work")
+                    ?;
+
+                let editor = cx.new_window_entity(|window, cx| {
+                    let multi_buffer = cx.new(|cx| editor::MultiBuffer::singleton(buffer, cx));
+                    let mut editor = Editor::new(editor::EditorMode::Full { scale_ui_elements_with_buffer_font_size: true, show_active_line_background: false, sized_by_content: true },multi_buffer, project.upgrade(), window, cx);
+                    editor.set_searchable(false);
+                    editor.disable_scrollbars_and_minimap(window, cx);
+                    editor.set_show_edit_predictions(Some(false), window, cx);
+                    editor.set_show_gutter(false, cx);
+                    Self::set_editor_text(&mut editor, arguments, window, cx);
+                    editor
+                })?;
+
+                this.update_in(cx, |this, window, cx| {
+                    if this.editor.focus_handle(cx).is_focused(window) {
+                        editor.focus_handle(cx).focus(window);
+                    }
+                    this.editor = editor;
+                    this.backup_temp_dir = backup_temp_dir;
+                    this.is_loading = false;
+                })?;
+
+                anyhow::Ok(())
+            }.await;
+            if result.is_err() {
+                let json_language = load_json_language(workspace.clone(), cx).await;
+                this.update(cx, |this, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.set_language(Some(json_language.clone()), cx)
+                            });
+                        }
+                    })
+                    // .context("Failed to load JSON language for editing keybinding action arguments input")
+                }).ok();
+                this.update(cx, |this, _cx| {
+                    this.is_loading = false;
+                }).ok();
+            }
+            return result;
+        })
+        .detach_and_log_err(cx);
+        Self {
+            editor,
+            focus_handle,
+            is_loading: true,
+            backup_temp_dir: None,
+        }
+    }
+
+    fn set_editor_text(
+        editor: &mut Editor,
+        arguments: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if let Some(arguments) = arguments {
+            editor.set_text(arguments, window, cx);
+        } else {
+            // TODO: default value from schema?
+            editor.set_placeholder_text("Action Arguments", cx);
+        }
+    }
+
+    async fn create_temp_buffer(
+        temp_dir: Option<std::path::PathBuf>,
+        file_name: String,
+        project: WeakEntity<Project>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<(Entity<language::Buffer>, Option<tempfile::TempDir>)> {
+        let (temp_file_path, temp_dir) = {
+            let file_name = file_name.clone();
+            async move {
+                let temp_dir_backup = match temp_dir.as_ref() {
+                    Some(_) => None,
+                    None => {
+                        let temp_dir = paths::temp_dir();
+                        let sub_temp_dir = tempfile::Builder::new()
+                            .tempdir_in(temp_dir)
+                            .context("Failed to create temporary directory")?;
+                        Some(sub_temp_dir)
+                    }
+                };
+                let dir_path = temp_dir.as_deref().unwrap_or_else(|| {
+                    temp_dir_backup
+                        .as_ref()
+                        .expect("created backup tempdir")
+                        .path()
+                });
+                let path = dir_path.join(file_name);
+                fs.create_file(
+                    &path,
+                    fs::CreateOptions {
+                        ignore_if_exists: true,
+                        overwrite: true,
+                    },
+                )
+                .await
+                .context("Failed to create temporary file")?;
+                anyhow::Ok((path, temp_dir_backup))
+            }
+        }
+        .await
+        .context("Failed to create backing file")?;
+
+        project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(temp_file_path, cx)
+            })?
+            .await
+            .context("Failed to create buffer")
+            .map(|buffer| (buffer, temp_dir))
+    }
+}
+
+impl Render for ActionArgumentsEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let background_color;
+        let border_color;
+        let text_style = {
+            let colors = cx.theme().colors();
+            let settings = theme::ThemeSettings::get_global(cx);
+            background_color = colors.editor_background;
+            border_color = if self.is_loading {
+                colors.border_disabled
+            } else {
+                colors.border_variant
+            };
+            TextStyleRefinement {
+                font_size: Some(rems(0.875).into()),
+                font_weight: Some(settings.buffer_font.weight),
+                line_height: Some(relative(1.2)),
+                font_style: Some(gpui::FontStyle::Normal),
+                color: self.is_loading.then_some(colors.text_disabled),
+                ..Default::default()
+            }
+        };
+
+        self.editor
+            .update(cx, |editor, _| editor.set_text_style_refinement(text_style));
+
+        return v_flex().w_full().child(
+            h_flex()
+                .min_h_8()
+                .min_w_48()
+                .px_2()
+                .py_1p5()
+                .flex_grow()
+                .rounded_lg()
+                .bg(background_color)
+                .border_1()
+                .border_color(border_color)
+                .track_focus(&self.focus_handle)
+                .child(self.editor.clone()),
+        );
     }
 }
 
@@ -2643,6 +2869,11 @@ impl KeystrokeInput {
             {
                 if self.search {
                     last.key = keystroke.key.clone();
+                    if close_keystroke_result == CloseKeystrokeResult::Partial
+                        && self.close_keystrokes_start.is_none()
+                    {
+                        self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
+                    }
                     self.keystrokes_changed(cx);
                     cx.stop_propagation();
                     return;
