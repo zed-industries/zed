@@ -25252,6 +25252,75 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        fn test() {
+            let a = 1;
+            let b = 2;
+            let c = 3;
+        }
+    "#;
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    // Wait for parsing to complete
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        // Select "let a = 1;" statement completely
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 12)..DisplayPoint::new(DisplayRow(2), 22)
+            ]);
+        });
+
+        let initial_selection = editor.selections.display_ranges(cx);
+        assert_eq!(initial_selection.len(), 1, "Should have one selection");
+
+        // Test select next sibling - should move to a different statement
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+        let next_selection = editor.selections.display_ranges(cx);
+
+        // Should have a selection and it should be different from the initial
+        assert_eq!(
+            next_selection.len(),
+            1,
+            "Should have one selection after next"
+        );
+        assert_ne!(
+            next_selection[0], initial_selection[0],
+            "Next sibling selection should be different"
+        );
+
+        // Test select previous sibling - should move to a different statement
+        editor.select_prev_syntax_node(&SelectPrevSyntaxNode, window, cx);
+        let prev_selection = editor.selections.display_ranges(cx);
+
+        // Should have a selection and it should be different from next selection
+        assert_eq!(
+            prev_selection.len(),
+            1,
+            "Should have one selection after prev"
+        );
+        assert_ne!(
+            prev_selection[0], next_selection[0],
+            "Previous sibling selection should be different from next"
+        );
+    });
+}
+
 #[track_caller]
 fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
     editor

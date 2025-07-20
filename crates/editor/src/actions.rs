@@ -640,6 +640,10 @@ actions!(
         SelectEnclosingSymbol,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPrevSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.

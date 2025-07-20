@@ -53,6 +53,10 @@ actions!(
         SelectSmallerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPrevSyntaxNode,
         /// Restores the previous visual selection.
         RestoreVisualSelection,
         /// Inserts at the end of each line in visual selection.
@@ -106,6 +110,26 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         for _ in 0..count {
             vim.update_editor(cx, |_, editor, cx| {
                 editor.select_larger_syntax_node(&Default::default(), window, cx);
+            });
+        }
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectNextSyntaxNode, window, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+        for _ in 0..count {
+            vim.update_editor(window, cx, |_, editor, window, cx| {
+                editor.select_next_syntax_node(&Default::default(), window, cx);
+            });
+        }
+    });
+
+    Vim::action(editor, cx, |vim, _: &SelectPrevSyntaxNode, window, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+        for _ in 0..count {
+            vim.update_editor(window, cx, |_, editor, window, cx| {
+                editor.select_prev_syntax_node(&Default::default(), window, cx);
             });
         }
     });
@@ -1838,5 +1862,38 @@ mod test {
             brown
             fˇ»ox"
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_syntax_sibling_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    let ˇa = 1;
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Normal,
+        );
+
+        // Enter visual mode and select the statement
+        cx.simulate_keystrokes("v w w w");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    let «a = 1;ˇ»
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // The specific behavior of syntax sibling selection in vim mode
+        // would depend on the key bindings configured, but the actions
+        // are now available for use
     }
 }

@@ -3511,6 +3511,122 @@ impl BufferSnapshot {
         result
     }
 
+    /// Find the previous sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that immediately precedes the node containing
+    /// the given range at the same level in the syntax tree. It works by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Moving to its previous sibling at the same tree level
+    ///
+    /// Returns `None` if there is no previous sibling or if no containing node is found.
+    pub fn syntax_prev_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            // Descend to the first leaf that touches the start of the range.
+            while cursor.goto_first_child_for_byte(range.start).is_some() {
+                if !range.is_empty() && cursor.node().end_byte() == range.start {
+                    cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
+                }
+            }
+
+            // Find the node that contains the range
+            loop {
+                let node_range = cursor.node().byte_range();
+                if node_range.start <= range.start && node_range.end >= range.end {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    continue 'outer;
+                }
+            }
+
+            // Look for the previous sibling
+            if cursor.goto_previous_sibling() {
+                let layer_result = cursor.node();
+
+                if let Some(previous_result) = &result {
+                    if previous_result.byte_range().end < layer_result.byte_range().end {
+                        continue;
+                    }
+                }
+                result = Some(layer_result);
+            }
+        }
+
+        result
+    }
+
+    /// Find the next sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that immediately follows the node containing
+    /// the given range at the same level in the syntax tree. It works by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Moving to its next sibling at the same tree level
+    ///
+    /// Returns `None` if there is no next sibling or if no containing node is found.
+    pub fn syntax_next_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            // Descend to the first leaf that touches the start of the range.
+            while cursor.goto_first_child_for_byte(range.start).is_some() {
+                if !range.is_empty() && cursor.node().end_byte() == range.start {
+                    cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
+                }
+            }
+
+            // Find the node that contains the range
+            loop {
+                let node_range = cursor.node().byte_range();
+                if node_range.start <= range.start && node_range.end >= range.end {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    continue 'outer;
+                }
+            }
+
+            // Look for the next sibling
+            if cursor.goto_next_sibling() {
+                let layer_result = cursor.node();
+
+                if let Some(previous_result) = &result {
+                    if previous_result.byte_range().start > layer_result.byte_range().start {
+                        continue;
+                    }
+                }
+                result = Some(layer_result);
+            }
+        }
+
+        result
+    }
+
     /// Returns the root syntax node within the given row
     pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node<'_>> {
         let start_offset = position.to_offset(self);
