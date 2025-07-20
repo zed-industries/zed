@@ -17,6 +17,9 @@ use ui::{
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
+#[derive(Debug)]
+struct DraggedColumn(usize);
+
 struct UniformListData<const COLS: usize> {
     render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
     element_id: ElementId,
@@ -232,11 +235,13 @@ impl TableInteractionState {
                     resize_handle = resize_handle
                         .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                         .cursor_col_resize()
-                        .on_mouse_down(MouseButton::Left, {
-                            let column_idx = column_ix;
-                            move |_event, _window, _cx| {
-                                eprintln!("Start resizing column {}", column_idx);
-                            }
+                        .on_drag(DraggedColumn(column_ix), |ix, _offset, _window, cx| {
+                            eprintln!("Start resizing column {:?}", ix);
+                            cx.new(|_cx| gpui::Empty)
+                        })
+                        .on_drag_move::<DraggedColumn>(|e, _window, cx| {
+                            eprintln!("Resizing column {:?}", e.drag(cx));
+                            // Do something here
                         })
                 }
 
