@@ -145,7 +145,7 @@ pub fn init(cx: &mut App) {
                 window.defer(cx, move |_window, cx| {
                     room.update(cx, |room, cx| {
                         if room.is_sharing_screen() {
-                            room.unshare_screen(cx).ok();
+                            room.unshare_screen(true, cx).ok();
                         } else {
                             let sources = cx.screen_capture_sources();
 

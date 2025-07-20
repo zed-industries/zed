@@ -1496,7 +1496,7 @@ impl Room {
         }
     }
 
-    pub fn unshare_screen(&mut self, cx: &mut Context<Self>) -> Result<()> {
+    pub fn unshare_screen(&mut self, play_sound: bool, cx: &mut Context<Self>) -> Result<()> {
         anyhow::ensure!(!self.status.is_offline(), "room is offline");
 
         let live_kit = self
@@ -1520,7 +1520,10 @@ impl Room {
                     cx.notify();
                 }
 
-                Audio::play_sound(Sound::StopScreenshare, cx);
+                if play_sound {
+                    Audio::play_sound(Sound::StopScreenshare, cx);
+                }
+
                 Ok(())
             }
         }
