@@ -375,7 +375,7 @@ pub async fn new_test_thread(
         .unwrap();
 
     thread
-        .update(cx, |thread, _| thread.initialize())
+        .update(cx, |thread, cx| thread.initialize(cx))
         .await
         .unwrap();
     thread

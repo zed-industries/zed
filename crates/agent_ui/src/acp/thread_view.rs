@@ -216,7 +216,7 @@ impl AcpThreadView {
 
             let init_response = async {
                 let resp = thread
-                    .read_with(cx, |thread, _cx| thread.initialize())?
+                    .update(cx, |thread, cx| thread.initialize(cx))?
                     .await?;
                 anyhow::Ok(resp)
             };

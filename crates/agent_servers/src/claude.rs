@@ -65,6 +65,22 @@ impl AgentServer for ClaudeCode {
         let project = project.clone();
         let root_dir = root_dir.to_path_buf();
         let title = self.name().into();
+        let context_server_store = project.read(cx).context_server_store().read(cx);
+        let mut mcp_servers = HashMap::default();
+        for id in context_server_store.all_server_ids() {
+            let Some(configuration) = context_server_store.configuration_for_server(&id) else {
+                continue;
+            };
+            let command = configuration.command();
+            mcp_servers.insert(
+                id.0.to_string(),
+                McpServerConfig {
+                    command: command.path.clone(),
+                    args: command.args.clone(),
+                    env: command.env.clone(),
+                },
+            );
+        }
         cx.spawn(async move |cx| {
             let (mut delegate_tx, delegate_rx) = watch::channel(None);
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
@@ -72,11 +88,11 @@ impl AgentServer for ClaudeCode {
             let permission_mcp_server =
                 ClaudeMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
 
-            let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
                 mcp_server::SERVER_NAME.to_string(),
                 permission_mcp_server.server_config()?,
             );
+            dbg!(&mcp_servers);
             let mcp_config = McpConfig { mcp_servers };
 
             let mcp_config_file = tempfile::NamedTempFile::new()?;
@@ -567,7 +583,7 @@ struct McpConfig {
     mcp_servers: HashMap<String, McpServerConfig>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct McpServerConfig {
     command: String,

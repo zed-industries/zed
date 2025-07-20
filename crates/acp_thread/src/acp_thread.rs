@@ -869,9 +869,34 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+    pub fn initialize(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+        let context_server_store = self.project.read(cx).context_server_store().read(cx);
+        let mut context_servers = HashMap::new();
+        for id in context_server_store.all_server_ids() {
+            let Some(configuration) = context_server_store.configuration_for_server(&id) else {
+                continue;
+            };
+            let command = configuration.command();
+            context_servers.insert(
+                id.0.to_string(),
+                acp::ContextServer::Stdio {
+                    command: command.path.clone(),
+                    args: command.args.clone(),
+                    env: command
+                        .env
+                        .iter()
+                        .flatten()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                },
+            );
+        }
         self.request(acp::InitializeParams {
             protocol_version: ProtocolVersion::latest(),
+            context_servers,
         })
     }
 
@@ -1184,6 +1209,13 @@ impl acp::Client for AcpClientDelegate {
                 .ok();
         })?;
 
+        Ok(())
+    }
+
+    async fn update_plan(
+        &self,
+        _request: agentic_coding_protocol::UpdatePlanParams,
+    ) -> Result<(), acp::Error> {
         Ok(())
     }
 

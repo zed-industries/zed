@@ -279,9 +279,9 @@ dependencies = [
 
 [[package]]
 name = "agentic-coding-protocol"
-version = "0.0.9"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e276b798eddd02562a339340a96919d90bbfcf78de118fdddc932524646fac7"
+checksum = "48322590276f36cf49197898cde1c54645991c96c0c83722ef321da7f2b0ae42"
 dependencies = [
  "anyhow",
  "chrono",
