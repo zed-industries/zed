@@ -3513,12 +3513,13 @@ impl BufferSnapshot {
 
     /// Find the previous sibling syntax node at the given range.
     ///
-    /// This function locates the syntax node that immediately precedes the node containing
-    /// the given range at the same level in the syntax tree. It works by:
+    /// This function locates the syntax node that precedes the node containing
+    /// the given range. It searches hierarchically by:
     /// 1. Finding the node that contains the given range
-    /// 2. Moving to its previous sibling at the same tree level
+    /// 2. Looking for the previous sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
     ///
-    /// Returns `None` if there is no previous sibling or if no containing node is found.
+    /// Returns `None` if there is no previous sibling at any ancestor level.
     pub fn syntax_prev_sibling<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -3553,16 +3554,24 @@ impl BufferSnapshot {
                 }
             }
 
-            // Look for the previous sibling
-            if cursor.goto_previous_sibling() {
-                let layer_result = cursor.node();
+            // Look for the previous sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_previous_sibling() {
+                    let layer_result = cursor.node();
 
-                if let Some(previous_result) = &result {
-                    if previous_result.byte_range().end < layer_result.byte_range().end {
-                        continue;
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().end < layer_result.byte_range().end {
+                            continue;
+                        }
                     }
+                    result = Some(layer_result);
+                    break;
                 }
-                result = Some(layer_result);
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
             }
         }
 
@@ -3571,12 +3580,13 @@ impl BufferSnapshot {
 
     /// Find the next sibling syntax node at the given range.
     ///
-    /// This function locates the syntax node that immediately follows the node containing
-    /// the given range at the same level in the syntax tree. It works by:
+    /// This function locates the syntax node that follows the node containing
+    /// the given range. It searches hierarchically by:
     /// 1. Finding the node that contains the given range
-    /// 2. Moving to its next sibling at the same tree level
+    /// 2. Looking for the next sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
     ///
-    /// Returns `None` if there is no next sibling or if no containing node is found.
+    /// Returns `None` if there is no next sibling at any ancestor level.
     pub fn syntax_next_sibling<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -3611,16 +3621,24 @@ impl BufferSnapshot {
                 }
             }
 
-            // Look for the next sibling
-            if cursor.goto_next_sibling() {
-                let layer_result = cursor.node();
+            // Look for the next sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_next_sibling() {
+                    let layer_result = cursor.node();
 
-                if let Some(previous_result) = &result {
-                    if previous_result.byte_range().start > layer_result.byte_range().start {
-                        continue;
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().start > layer_result.byte_range().start {
+                            continue;
+                        }
                     }
+                    result = Some(layer_result);
+                    break;
                 }
-                result = Some(layer_result);
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
             }
         }
 

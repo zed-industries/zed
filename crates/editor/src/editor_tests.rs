@@ -25261,10 +25261,16 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
         Some(tree_sitter_rust::LANGUAGE.into()),
     ));
 
+    // Test hierarchical sibling navigation
     let text = r#"
-        fn test() {
-            let a = 1;
+        fn outer() {
+            if condition {
+                let a = 1;
+            }
             let b = 2;
+        }
+
+        fn another() {
             let c = 3;
         }
     "#;
@@ -25279,17 +25285,19 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
         .await;
 
     editor.update_in(cx, |editor, window, cx| {
-        // Select "let a = 1;" statement completely
+        // Start by selecting "let a = 1;" inside the if block
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(2), 12)..DisplayPoint::new(DisplayRow(2), 22)
+                DisplayPoint::new(DisplayRow(3), 16)..DisplayPoint::new(DisplayRow(3), 26)
             ]);
         });
 
         let initial_selection = editor.selections.display_ranges(cx);
         assert_eq!(initial_selection.len(), 1, "Should have one selection");
 
-        // Test select next sibling - should move to a different statement
+        // Test select next sibling - should move up levels to find the next sibling
+        // Since "let a = 1;" has no siblings in the if block, it should move up
+        // to find "let b = 2;" which is a sibling of the if block
         editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
         let next_selection = editor.selections.display_ranges(cx);
 
@@ -25304,18 +25312,36 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
             "Next sibling selection should be different"
         );
 
-        // Test select previous sibling - should move to a different statement
+        // Test hierarchical navigation by going to the end of the current function
+        // and trying to navigate to the next function
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(5), 12)..DisplayPoint::new(DisplayRow(5), 22)
+            ]);
+        });
+
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+        let function_next_selection = editor.selections.display_ranges(cx);
+
+        // Should move to the next function
+        assert_eq!(
+            function_next_selection.len(),
+            1,
+            "Should have one selection after function next"
+        );
+
+        // Test select previous sibling navigation
         editor.select_prev_syntax_node(&SelectPrevSyntaxNode, window, cx);
         let prev_selection = editor.selections.display_ranges(cx);
 
-        // Should have a selection and it should be different from next selection
+        // Should have a selection and it should be different
         assert_eq!(
             prev_selection.len(),
             1,
             "Should have one selection after prev"
         );
         assert_ne!(
-            prev_selection[0], next_selection[0],
+            prev_selection[0], function_next_selection[0],
             "Previous sibling selection should be different from next"
         );
     });
