@@ -339,16 +339,18 @@ impl Component for ZedAiOnboarding {
             plan: Option<proto::Plan>,
             account_too_young: bool,
         ) -> AnyElement {
-            ZedAiOnboarding {
-                sign_in_status,
-                has_accepted_terms_of_service,
-                plan,
-                account_too_young,
-                continue_with_zed_ai: Arc::new(|_, _| {}),
-                sign_in: Arc::new(|_, _| {}),
-                accept_terms_of_service: Arc::new(|_, _| {}),
-            }
-            .into_any_element()
+            div()
+                .w(px(800.))
+                .child(ZedAiOnboarding {
+                    sign_in_status,
+                    has_accepted_terms_of_service,
+                    plan,
+                    account_too_young,
+                    continue_with_zed_ai: Arc::new(|_, _| {}),
+                    sign_in: Arc::new(|_, _| {}),
+                    accept_terms_of_service: Arc::new(|_, _| {}),
+                })
+                .into_any_element()
         }
 
         Some(
@@ -366,7 +368,7 @@ impl Component for ZedAiOnboarding {
                     ),
                     single_example(
                         "Account too young",
-                        onboarding(SignInStatus::SignedIn, false, None, true),
+                        onboarding(SignInStatus::SignedIn, true, None, true),
                     ),
                     single_example(
                         "Free Plan",
