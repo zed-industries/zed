@@ -1,4 +1,5 @@
 pub mod clangd_ext;
+pub mod json_language_server_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
@@ -1034,6 +1035,7 @@ impl LocalLspStore {
             })
             .detach();
 
+        json_language_server_ext::register_requests(this.clone(), language_server);
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
     }
