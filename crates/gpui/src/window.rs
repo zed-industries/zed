@@ -4191,6 +4191,12 @@ impl Window {
         self.platform_window.get_title()
     }
 
+    /// Gets the visibility of the tab bar at the platform level.
+    /// This is macOS specific.
+    pub fn tab_bar_visible(&self) -> bool {
+        self.platform_window.get_tab_bar_visible()
+    }
+
     /// Returns the tab group pointer of the window.
     /// This is macOS specific.
     pub fn tab_group(&self) -> Option<usize> {
