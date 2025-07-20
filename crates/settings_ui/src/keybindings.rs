@@ -36,7 +36,7 @@ use workspace::{
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
-    ui_components::table::{Table, TableInteractionState},
+    ui_components::table::{ColumnWidths, Table, TableInteractionState},
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
@@ -284,6 +284,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
+    current_widths: Entity<ColumnWidths<6>>,
     show_hover_menus: bool,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
@@ -400,6 +401,7 @@ impl KeymapEditor {
             show_hover_menus: true,
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
+            current_widths: cx.new(|cx| ColumnWidths::new(cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1434,7 +1436,10 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.08),
                     ])
                     .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
-                    .resizable_columns([false, true, true, true, true, true])
+                    .resizable_columns(
+                        [false, true, true, true, true, true],
+                        self.current_widths.clone(),
+                    )
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,

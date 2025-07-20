@@ -433,6 +433,18 @@ impl TableInteractionState {
     }
 }
 
+pub struct ColumnWidths<const COLS: usize> {
+    widths: [Pixels; COLS],
+}
+
+impl<const COLS: usize> ColumnWidths<COLS> {
+    pub fn new(_: &mut App) -> Self {
+        Self {
+            widths: [px(0.0); COLS],
+        }
+    }
+}
+
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table<const COLS: usize = 3> {
@@ -441,7 +453,8 @@ pub struct Table<const COLS: usize = 3> {
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    column_widths: Option<[Length; COLS]>,
+    initial_widths: Option<[Length; COLS]>,
+    current_widths: Option<Entity<ColumnWidths<COLS>>>,
     resizable_columns: Option<[bool; COLS]>,
     map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
     empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
@@ -456,7 +469,8 @@ impl<const COLS: usize> Table<COLS> {
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
-            column_widths: None,
+            initial_widths: None,
+            current_widths: None,
             map_row: None,
             empty_table_callback: None,
             resizable_columns: None,
@@ -521,12 +535,17 @@ impl<const COLS: usize> Table<COLS> {
     }
 
     pub fn column_widths(mut self, widths: [impl Into<Length>; COLS]) -> Self {
-        self.column_widths = Some(widths.map(Into::into));
+        self.initial_widths = Some(widths.map(Into::into));
         self
     }
 
-    pub fn resizable_columns(mut self, resizable: [impl Into<bool>; COLS]) -> Self {
+    pub fn resizable_columns(
+        mut self,
+        resizable: [impl Into<bool>; COLS],
+        current_widths: Entity<ColumnWidths<COLS>>,
+    ) -> Self {
         self.resizable_columns = Some(resizable.map(Into::into));
+        self.current_widths = Some(current_widths);
         self
     }
 
@@ -648,7 +667,7 @@ impl<const COLS: usize> TableRenderContext<COLS> {
         Self {
             striped: table.striped,
             total_row_count: table.rows.len(),
-            column_widths: table.column_widths,
+            column_widths: table.initial_widths,
             map_row: table.map_row.clone(),
         }
     }
@@ -735,7 +754,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         ),
                     })
                     .when_some(
-                        self.column_widths
+                        self.initial_widths
                             .as_ref()
                             .zip(interaction_state.as_ref())
                             .zip(self.resizable_columns.as_ref()),
