@@ -24,7 +24,7 @@ workspace-members = [
 third-party = [
     { name = "reqwest", version = "0.11.27" },
     # build of remote_server should not include scap / its x11 dependency
-    { name = "scap", git = "https://github.com/zed-industries/scap", rev = "18024ed6f61fb893afcf99cb3c9714d165c4e1a8" },
+    { name = "scap", git = "https://github.com/zed-industries/scap", rev = "3c545feba61764c0e8e7d63626ea5a86e7582853" },
 ]
 
 [final-excludes]
