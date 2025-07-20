@@ -4,11 +4,10 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::{JsonSchema, JsonSchema_repr, json_schema};
+use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use std::borrow::Cow;
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
