@@ -85,45 +85,44 @@ impl SystemWindowTabs {
 
                 if let Some(tab_group) = tab_group {
                     let all_tab_groups = controller.tabs();
-                    let all_tabs = controller.windows(tab_group);
-                    if let Some(tabs) = all_tabs {
-                        let show_merge_all_windows = all_tab_groups.len() > 1;
-                        let show_other_tab_actions = tabs.len() > 1;
-
+                    let tabs = controller.windows(tab_group);
+                    let show_merge_all_windows = all_tab_groups.len() > 1;
+                    let show_other_tab_actions = if let Some(tabs) = tabs {
                         this.tabs = tabs.clone();
-                        cx.notify();
+                        tabs.len() > 1
+                    } else {
+                        false
+                    };
 
-                        let merge_all_windows_action = TypeId::of::<MergeAllWindows>();
-                        let other_tab_actions = vec![
-                            TypeId::of::<ShowNextWindowTab>(),
-                            TypeId::of::<ShowPreviousWindowTab>(),
-                            TypeId::of::<MoveTabToNewWindow>(),
-                        ];
+                    let merge_all_windows_action = TypeId::of::<MergeAllWindows>();
+                    let other_tab_actions = vec![
+                        TypeId::of::<ShowNextWindowTab>(),
+                        TypeId::of::<ShowPreviousWindowTab>(),
+                        TypeId::of::<MoveTabToNewWindow>(),
+                    ];
 
-                        if show_merge_all_windows && show_other_tab_actions {
-                            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                                let mut all_actions = vec![merge_all_windows_action];
-                                all_actions.extend(other_tab_actions.iter().cloned());
-                                filter.show_action_types(all_actions.iter());
-                            });
-                        } else if show_merge_all_windows {
-                            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                                filter
-                                    .show_action_types(std::iter::once(&merge_all_windows_action));
-                                filter.hide_action_types(&other_tab_actions);
-                            });
-                        } else if show_other_tab_actions {
-                            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                                filter.show_action_types(other_tab_actions.iter());
-                                filter.hide_action_types(&[merge_all_windows_action]);
-                            });
-                        } else {
-                            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                                let mut all_actions = vec![merge_all_windows_action];
-                                all_actions.extend(other_tab_actions.iter().cloned());
-                                filter.hide_action_types(&all_actions);
-                            });
-                        }
+                    if show_merge_all_windows && show_other_tab_actions {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            let mut all_actions = vec![merge_all_windows_action];
+                            all_actions.extend(other_tab_actions.iter().cloned());
+                            filter.show_action_types(all_actions.iter());
+                        });
+                    } else if show_merge_all_windows {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            filter.show_action_types(std::iter::once(&merge_all_windows_action));
+                            filter.hide_action_types(&other_tab_actions);
+                        });
+                    } else if show_other_tab_actions {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            filter.show_action_types(other_tab_actions.iter());
+                            filter.hide_action_types(&[merge_all_windows_action]);
+                        });
+                    } else {
+                        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                            let mut all_actions = vec![merge_all_windows_action];
+                            all_actions.extend(other_tab_actions.iter().cloned());
+                            filter.hide_action_types(&all_actions);
+                        });
                     }
                 }
             }),
