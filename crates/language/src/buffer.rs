@@ -3429,46 +3429,66 @@ impl BufferSnapshot {
     }
 
     /// Returns the closest syntax node enclosing the given range.
+    /// Positions a tree cursor at the leaf node that contains or touches the given range.
+    /// This is shared logic used by syntax navigation methods.
+    fn position_cursor_at_range(cursor: &mut tree_sitter::TreeCursor, range: &Range<usize>) {
+        // Descend to the first leaf that touches the start of the range.
+        //
+        // If the range is non-empty and the current node ends exactly at the start,
+        // move to the next sibling to find a node that extends beyond the start.
+        //
+        // If the range is empty and the current node starts after the range position,
+        // move to the previous sibling to find the node that contains the position.
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+            if range.is_empty() && cursor.node().start_byte() > range.start {
+                cursor.goto_previous_sibling();
+            }
+        }
+    }
+
+    /// Moves the cursor to find a node that contains the given range.
+    /// Returns true if such a node is found, false otherwise.
+    /// This is shared logic used by syntax navigation methods.
+    fn find_containing_node(
+        cursor: &mut tree_sitter::TreeCursor,
+        range: &Range<usize>,
+        strict: bool,
+    ) -> bool {
+        loop {
+            let node_range = cursor.node().byte_range();
+
+            if node_range.start <= range.start
+                && node_range.end >= range.end
+                && (!strict || node_range.len() > range.len())
+            {
+                return true;
+            }
+            if !cursor.goto_parent() {
+                return false;
+            }
+        }
+    }
+
     pub fn syntax_ancestor<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range.
-            //
-            // If the range is non-empty and the current node ends exactly at the start,
-            // move to the next sibling to find a node that extends beyond the start.
-            //
-            // If the range is empty and the current node starts after the range position,
-            // move to the previous sibling to find the node that contains the position.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
-            }
+            Self::position_cursor_at_range(&mut cursor, &range);
 
             // Ascend to the smallest ancestor that strictly contains the range.
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start
-                    && node_range.end >= range.end
-                    && node_range.len() > range.len()
-                {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
+            if !Self::find_containing_node(&mut cursor, &range, true) {
+                continue;
             }
 
             let left_node = cursor.node();
@@ -3527,31 +3547,17 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
 
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
-            }
+            Self::position_cursor_at_range(&mut cursor, &range);
 
             // Find the node that contains the range
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start && node_range.end >= range.end {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
+            if !Self::find_containing_node(&mut cursor, &range, false) {
+                continue;
             }
 
             // Look for the previous sibling, moving up ancestor levels if needed
@@ -3594,31 +3600,17 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
 
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
-            }
+            Self::position_cursor_at_range(&mut cursor, &range);
 
             // Find the node that contains the range
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start && node_range.end >= range.end {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
+            if !Self::find_containing_node(&mut cursor, &range, false) {
+                continue;
             }
 
             // Look for the next sibling, moving up ancestor levels if needed
