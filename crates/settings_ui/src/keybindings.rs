@@ -270,6 +270,14 @@ struct KeymapEditor {
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HashMap<&'static str, SharedString>,
     show_hover_menus: bool,
+    /// In order for the JSON LSP to run in the actions arguments editor, we
+    /// require a backing file In order to avoid issues (primarily log spam)
+    /// with drop order between the buffer, file, worktree, etc, we create a
+    /// temporary directory for these backing files in the keymap editor struct
+    /// instead of here. This has the added benefit of only having to create a
+    /// worktree and directory once, although the perf improvement is negligible.
+    action_args_temp_dir_worktree: Option<Entity<project::Worktree>>,
+    action_args_temp_dir: Option<tempfile::TempDir>,
 }
 
 enum PreviousEdit {
@@ -341,6 +349,24 @@ impl KeymapEditor {
                 )
             }));
 
+        cx.spawn({
+            let workspace = workspace.clone();
+            async move |this, cx| {
+                let temp_dir = tempfile::tempdir_in(paths::temp_dir())?;
+                let worktree = workspace
+                    .update(cx, |ws, cx| {
+                        ws.project()
+                            .update(cx, |p, cx| p.create_worktree(temp_dir.path(), false, cx))
+                    })?
+                    .await?;
+                this.update(cx, |this, _| {
+                    this.action_args_temp_dir = Some(temp_dir);
+                    this.action_args_temp_dir_worktree = Some(worktree);
+                })
+            }
+        })
+        .detach();
+
         let mut this = Self {
             workspace,
             keybindings: vec![],
@@ -360,6 +386,8 @@ impl KeymapEditor {
             humanized_action_names,
             search_query_debounce: None,
             show_hover_menus: true,
+            action_args_temp_dir: None,
+            action_args_temp_dir_worktree: None,
         };
 
         this.on_keymap_changed(cx);
@@ -925,6 +953,8 @@ impl KeymapEditor {
             arguments = arguments,
         );
 
+        let temp_dir = self.action_args_temp_dir.as_ref().map(|dir| dir.path());
+
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
@@ -935,6 +965,7 @@ impl KeymapEditor {
                         keybind,
                         keybind_index,
                         keymap_editor,
+                        temp_dir,
                         workspace_weak,
                         fs,
                         window,
@@ -1663,6 +1694,7 @@ impl KeybindingEditorModal {
         editing_keybind: ProcessedKeybinding,
         editing_keybind_idx: usize,
         keymap_editor: Entity<KeymapEditor>,
+        action_args_temp_dir: Option<&std::path::Path>,
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -1721,6 +1753,7 @@ impl KeybindingEditorModal {
                 ActionArgumentsEditor::new(
                     editing_keybind.action_name,
                     arguments,
+                    action_args_temp_dir,
                     workspace.clone(),
                     window,
                     cx,
@@ -2021,17 +2054,7 @@ impl Render for KeybindingEditorModal {
                                             .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .py_1()
-                                                    .px_1p5()
-                                                    .rounded_lg()
-                                                    .bg(theme.editor_background)
-                                                    .border_1()
-                                                    .border_color(theme.border_variant)
-                                                    .child(editor),
-                                            ),
+                                            .child(editor),
                                     )
                                 })
                                 .child(self.context_editor.clone())
@@ -2129,7 +2152,13 @@ struct ActionArgumentsEditor {
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
     is_loading: bool,
-    temp_dir: Option<tempfile::TempDir>,
+    /// See documentation in `KeymapEditor` for why a temp dir is needed.
+    /// This field exists because the keymap editor temp dir creation may fail,
+    /// and rather than implement a complicated retry mechanism, we simply
+    /// fallback to trying to create a temporary directory in this editor on
+    /// demand. Of note is that the TempDir struct will remove the directory
+    /// when dropped.
+    backup_temp_dir: Option<tempfile::TempDir>,
 }
 
 impl Focusable for ActionArgumentsEditor {
@@ -2142,6 +2171,7 @@ impl ActionArgumentsEditor {
     fn new(
         action_name: &'static str,
         arguments: Option<SharedString>,
+        temp_dir: Option<&std::path::Path>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2157,6 +2187,8 @@ impl ActionArgumentsEditor {
             editor.set_read_only(true);
             editor
         });
+
+        let temp_dir = temp_dir.map(|path| path.to_owned());
         cx.spawn_in(window, async move |this, cx| {
             let result = async {
                 let (project, fs) = workspace.read_with(cx, |workspace, _cx| {
@@ -2172,7 +2204,7 @@ impl ActionArgumentsEditor {
                     file_name
                 };
 
-                let (buffer, temp_dir) = Self::create_temp_buffer(file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action arguments. Auto-complete will not work")
+                let (buffer, backup_temp_dir) = Self::create_temp_buffer(temp_dir, file_name.clone(), project.clone(), fs, cx).await.context("Failed to create temporary buffer for action arguments. Auto-complete will not work")
                     ?;
 
                 let editor = cx.new_window_entity(|window, cx| {
@@ -2194,7 +2226,7 @@ impl ActionArgumentsEditor {
                         editor.focus_handle(cx).focus(window);
                     }
                     this.editor = editor;
-                    this.temp_dir = Some(temp_dir);
+                    this.backup_temp_dir = backup_temp_dir;
                     this.is_loading = false;
                 })?;
 
@@ -2223,7 +2255,7 @@ impl ActionArgumentsEditor {
             editor,
             focus_handle,
             is_loading: true,
-            temp_dir: None,
+            backup_temp_dir: None,
         }
     }
 
@@ -2242,29 +2274,42 @@ impl ActionArgumentsEditor {
     }
 
     async fn create_temp_buffer(
+        temp_dir: Option<std::path::PathBuf>,
         file_name: String,
         project: WeakEntity<Project>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<(Entity<language::Buffer>, tempfile::TempDir)> {
+    ) -> anyhow::Result<(Entity<language::Buffer>, Option<tempfile::TempDir>)> {
         let (temp_file_path, temp_dir) = {
             let file_name = file_name.clone();
             async move {
-                let temp_dir = paths::temp_dir();
-                let sub_temp_dir = tempfile::Builder::new()
-                    .tempdir_in(temp_dir)
-                    .context("Failed to create temporary directory")?;
-                let path = sub_temp_dir.path().join(file_name);
+                let temp_dir_backup = match temp_dir.as_ref() {
+                    Some(_) => None,
+                    None => {
+                        let temp_dir = paths::temp_dir();
+                        let sub_temp_dir = tempfile::Builder::new()
+                            .tempdir_in(temp_dir)
+                            .context("Failed to create temporary directory")?;
+                        Some(sub_temp_dir)
+                    }
+                };
+                let dir_path = temp_dir.as_deref().unwrap_or_else(|| {
+                    temp_dir_backup
+                        .as_ref()
+                        .expect("created backup tempdir")
+                        .path()
+                });
+                let path = dir_path.join(file_name);
                 fs.create_file(
                     &path,
                     fs::CreateOptions {
                         ignore_if_exists: true,
-                        overwrite: false,
+                        overwrite: true,
                     },
                 )
                 .await
                 .context("Failed to create temporary file")?;
-                anyhow::Ok((path, sub_temp_dir))
+                anyhow::Ok((path, temp_dir_backup))
             }
         }
         .await
@@ -2293,10 +2338,26 @@ impl Render for ActionArgumentsEditor {
         style.text.line_height = relative(1.2);
         style.text.font_style = gpui::FontStyle::Normal;
 
-        return v_flex()
-            .min_h_8()
-            .track_focus(&self.focus_handle)
-            .child(EditorElement::new(&self.editor, style));
+        let colors = cx.theme().colors();
+
+        return v_flex().w_full().child(
+            h_flex()
+                .min_h_8()
+                .min_w_48()
+                .px_2()
+                .py_1p5()
+                .flex_grow()
+                .rounded_lg()
+                .bg(colors.editor_background)
+                .border_1()
+                .border_color(if self.is_loading {
+                    colors.border_disabled
+                } else {
+                    colors.border_variant
+                })
+                .track_focus(&self.focus_handle)
+                .child(EditorElement::new(&self.editor, style)),
+        );
     }
 }
 
