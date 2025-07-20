@@ -83,6 +83,12 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+#[derive(PartialEq)]
+pub enum UserTabbingPreference {
+    Never,
+    Always,
+    InFullScreen,
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -567,6 +573,13 @@ impl MacWindow {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
+            let allows_automatic_window_tabbing = tabbing_identifier.is_some();
+            if allows_automatic_window_tabbing {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
+            } else {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+            }
+
             let mut style_mask;
             if let Some(titlebar) = titlebar.as_ref() {
                 style_mask = NSWindowStyleMask::NSClosableWindowMask
@@ -699,15 +712,6 @@ impl MacWindow {
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
 
-            if let Some(tabbing_identifier) = tabbing_identifier {
-                let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
-                let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
-                let _: () = msg_send![native_window, setTabbingMode: 0];
-                init_tab_group_observer(native_window)
-            } else {
-                let _: () = msg_send![native_window, setTabbingMode: 1];
-            }
-
             if let Some(title) = titlebar
                 .as_ref()
                 .and_then(|t| t.title.as_ref().map(AsRef::as_ref))
@@ -750,6 +754,11 @@ impl MacWindow {
                 WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
+
+                    if let Some(tabbing_identifier) = tabbing_identifier.clone() {
+                        let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                        let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                    }
                 }
                 WindowKind::PopUp => {
                     // Use a tracking area to allow receiving MouseMoved events even when
@@ -775,6 +784,34 @@ impl MacWindow {
                         NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces |
                         NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
                     );
+                }
+            }
+
+            init_tab_group_observer(native_window);
+            let app = NSApplication::sharedApplication(nil);
+            let main_window: id = msg_send![app, mainWindow];
+            if allows_automatic_window_tabbing
+                && !main_window.is_null()
+                && main_window != native_window
+            {
+                let main_window_is_fullscreen = main_window
+                    .styleMask()
+                    .contains(NSWindowStyleMask::NSFullScreenWindowMask);
+                let user_tabbing_preference = Self::get_user_tabbing_preference()
+                    .unwrap_or(UserTabbingPreference::InFullScreen);
+                let should_add_as_tab = user_tabbing_preference == UserTabbingPreference::Always
+                    || user_tabbing_preference == UserTabbingPreference::InFullScreen
+                        && main_window_is_fullscreen;
+
+                if should_add_as_tab {
+                    let main_window_can_tab: BOOL =
+                        msg_send![main_window, respondsToSelector: sel!(addTabbedWindow:ordered:)];
+                    let main_window_visible: BOOL = msg_send![main_window, isVisible];
+
+                    if main_window_can_tab == YES && main_window_visible == YES {
+                        let _: () = msg_send![main_window, addTabbedWindow: native_window ordered: NSWindowOrderingMode::NSWindowAbove];
+                        let _: () = msg_send![native_window, orderFront: nil];
+                    }
                 }
             }
 
@@ -830,6 +867,33 @@ impl MacWindow {
             }
 
             window_handles
+        }
+    }
+
+    pub fn get_user_tabbing_preference() -> Option<UserTabbingPreference> {
+        unsafe {
+            let defaults: id = NSUserDefaults::standardUserDefaults();
+            let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
+            let key = NSString::alloc(nil).init_str("AppleWindowTabbingMode");
+
+            let dict: id = msg_send![defaults, persistentDomainForName: domain];
+            let value: id = if !dict.is_null() {
+                msg_send![dict, objectForKey: key]
+            } else {
+                nil
+            };
+
+            let value_str = if !value.is_null() {
+                CStr::from_ptr(NSString::UTF8String(value)).to_string_lossy()
+            } else {
+                "".into()
+            };
+
+            match value_str.as_ref() {
+                "manual" => Some(UserTabbingPreference::Never),
+                "always" => Some(UserTabbingPreference::Always),
+                _ => Some(UserTabbingPreference::InFullScreen),
+            }
         }
     }
 }
@@ -2432,14 +2496,14 @@ extern "C" fn observe_value_for_key_path(
 ) {
     unsafe {
         if key_path.isEqualToString("tabGroup") {
-            let tabgroup_id = change as *const Object as usize;
+            let tabgroup_id: id = msg_send![change, objectForKey: ns_string("new")];
             let window_state = get_window_state(this);
             let queue: id = msg_send![class!(NSOperationQueue), mainQueue];
             let block = ConcreteBlock::new(move || {
                 let mut lock = window_state.as_ref().lock();
                 if let Some(mut callback) = lock.tab_group_changed_callback.take() {
                     drop(lock);
-                    callback(tabgroup_id);
+                    callback(tabgroup_id as usize);
                     window_state.lock().tab_group_changed_callback = Some(callback);
                 }
             })

@@ -1161,10 +1161,10 @@ impl Window {
         });
         platform_window.on_tab_group_changed({
             let mut cx = cx.to_async();
-            Box::new(move |_tab_group| {
+            Box::new(move |tab_group| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        SystemWindowTabController::sync_system_window_tab_groups(cx, window);
+                        SystemWindowTabController::insert_window(cx, window, tab_group);
                     })
                     .log_err();
             })

@@ -247,8 +247,12 @@ pub struct SystemWindowTab {
 
 impl SystemWindowTab {
     /// Create a new instance of the window tab.
-    pub fn new(id: WindowId, title: SharedString, handle: AnyWindowHandle) -> Self {
-        Self { id, title, handle }
+    pub fn new(title: SharedString, handle: AnyWindowHandle) -> Self {
+        Self {
+            id: handle.id,
+            title,
+            handle,
+        }
     }
 }
 
@@ -283,20 +287,24 @@ impl SystemWindowTabController {
         self.tabs.get(&tab_group)
     }
 
-    /// Add a window to a tab group.
-    pub fn add_window(cx: &mut App, window: &Window) {
+    /// Insert a window into a tab group.
+    pub fn insert_window(cx: &mut App, window: &Window, tab_group: usize) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
 
-        let tab_group = window.tab_group();
         let title = SharedString::from(window.window_title());
         let handle = window.window_handle();
-        let id = handle.id;
 
-        if let Some(tab_group) = tab_group {
-            let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
-            if !windows.iter().any(|tab| tab.id == id) {
-                windows.push(SystemWindowTab::new(id, title, handle));
+        for windows in controller.tabs.values_mut() {
+            if let Some(pos) = windows.iter().position(|tab| tab.id == handle.id) {
+                windows.remove(pos);
             }
+        }
+
+        controller.tabs.retain(|_, windows| !windows.is_empty());
+
+        let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
+        if !windows.iter().any(|tab| tab.id == handle.id) {
+            windows.push(SystemWindowTab::new(title, handle));
         }
     }
 
@@ -327,29 +335,23 @@ impl SystemWindowTabController {
 
     /// Update the title of a window.
     pub fn update_window_title(cx: &mut App, id: WindowId, title: SharedString) {
+        let controller = cx.global::<SystemWindowTabController>();
+        let tab = controller
+            .tabs
+            .values()
+            .flat_map(|windows| windows.iter())
+            .find(|tab| tab.id == id);
+
+        if tab.map_or(true, |t| t.title == title) {
+            return;
+        }
+
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         for windows in controller.tabs.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
                     tab.title = title.clone();
                 }
-            }
-        }
-    }
-
-    /// Sync the system window tab groups with the application's tab groups.
-    pub fn sync_system_window_tab_groups(cx: &mut App, window: &Window) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        controller.tabs.clear();
-
-        let windows = cx.windows();
-        for w in windows {
-            if w.id == window.window_handle().id {
-                SystemWindowTabController::add_window(cx, &window);
-            } else {
-                let _ = w.update(cx, |_, window, cx| {
-                    SystemWindowTabController::add_window(cx, &window);
-                });
             }
         }
     }
@@ -368,26 +370,18 @@ impl SystemWindowTabController {
 
     /// Selects the previous tab in the tab group in the leading direction.
     pub fn select_previous_tab(cx: &mut App, tab_group: usize, id: WindowId) {
-        log::info!("select_previous_tab");
         let mut controller = cx.global_mut::<SystemWindowTabController>();
         let windows = controller.tabs.get_mut(&tab_group).unwrap();
         let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
-        log::info!("current_index: {}", current_index);
         let previous_index = if current_index == 0 {
             windows.len() - 1
         } else {
             current_index - 1
         };
-        log::info!("previous_index: {}", previous_index);
 
-        let result = &windows[previous_index].handle.update(cx, |_, window, _| {
-            log::info!("activate_window");
+        let _ = &windows[previous_index].handle.update(cx, |_, window, _| {
             window.activate_window();
         });
-
-        if let Err(err) = result {
-            log::info!("Error activating window: {}", err);
-        }
     }
 }
 
