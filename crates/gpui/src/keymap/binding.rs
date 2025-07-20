@@ -96,6 +96,21 @@ impl KeyBinding {
         Some(self.keystrokes.len() > typed.len())
     }
 
+    /// Check if the given keystrokes could lead to this binding given more input.
+    pub fn match_start_keystrokes(&self, typed: &[Keystroke]) -> bool {
+        if typed.len() >= self.keystrokes.len() {
+            return false;
+        }
+
+        for (target, typed) in typed.iter().zip(self.keystrokes.iter()) {
+            if !typed.should_match(target) {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Get the keystrokes associated with this binding
     pub fn keystrokes(&self) -> &[Keystroke] {
         self.keystrokes.as_slice()

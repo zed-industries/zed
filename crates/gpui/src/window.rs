@@ -3685,28 +3685,30 @@ impl Window {
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
             currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                cx.background_executor.timer(Duration::from_secs(1)).await;
-                cx.update(move |window, cx| {
-                    let Some(currently_pending) = window
-                        .pending_input
-                        .take()
-                        .filter(|pending| pending.focus == window.focus)
-                    else {
-                        return;
-                    };
+                // TODO: This resets the current pending inputs after 1s. This doesn't really work with a which-key system.
+                //
+                // cx.background_executor.timer(Duration::from_secs(1)).await;
+                // cx.update(move |window, cx| {
+                //     let Some(currently_pending) = window
+                //         .pending_input
+                //         .take()
+                //         .filter(|pending| pending.focus == window.focus)
+                //     else {
+                //         return;
+                //     };
 
-                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
-                    let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
+                //     let node_id = window.focus_node_id_in_rendered_frame(window.focus);
+                //     let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-                    let to_replay = window
-                        .rendered_frame
-                        .dispatch_tree
-                        .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                //     let to_replay = window
+                //         .rendered_frame
+                //         .dispatch_tree
+                //         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
-                    window.pending_input_changed(cx);
-                    window.replay_pending_input(to_replay, cx)
-                })
-                .log_err();
+                //     window.pending_input_changed(cx);
+                //     window.replay_pending_input(to_replay, cx)
+                // })
+                // .log_err();
             }));
             self.pending_input = Some(currently_pending);
             self.pending_input_changed(cx);
@@ -4169,6 +4171,13 @@ impl Window {
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
         let context_stack = self.context_stack_for_focus_handle(focus_handle)?;
         dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
+    /// Find the bindings that can follow the current input sequence for the current context stack.
+    pub fn possible_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .possible_next_bindings_for_input(input, &self.context_stack())
     }
 
     fn context_stack_for_focus_handle(

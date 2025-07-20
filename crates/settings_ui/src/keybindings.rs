@@ -14,7 +14,7 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
     ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
-    anchored, deferred, div,
+    anchored, deferred, div, humanize_action_name,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -1148,12 +1148,11 @@ struct HumanizedActionNameCache {
 
 impl HumanizedActionNameCache {
     fn new(cx: &App) -> Self {
-        let cache = HashMap::from_iter(cx.all_action_names().into_iter().map(|&action_name| {
-            (
-                action_name,
-                command_palette::humanize_action_name(action_name).into(),
-            )
-        }));
+        let cache = HashMap::from_iter(
+            cx.all_action_names()
+                .into_iter()
+                .map(|&action_name| (action_name, humanize_action_name(action_name).into())),
+        );
         Self { cache }
     }
 

@@ -13,6 +13,7 @@ pub mod tasks;
 mod theme_preview;
 mod toast_layer;
 mod toolbar;
+mod which_key_layer;
 mod workspace_settings;
 
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -103,6 +104,7 @@ pub use ui;
 use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
+pub use which_key_layer::*;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
@@ -1059,6 +1061,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
+    which_key_layer: Entity<WhichKeyLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
@@ -1283,6 +1286,7 @@ impl Workspace {
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
         let modal_layer = cx.new(|_| ModalLayer::new());
         let toast_layer = cx.new(|_| ToastLayer::new());
+        let which_key_layer = cx.new(|ctx| WhichKeyLayer::new(weak_handle.clone(), window, ctx));
         cx.subscribe(
             &modal_layer,
             |_, _, _: &modal_layer::ModalOpenedEvent, cx| {
@@ -1385,6 +1389,7 @@ impl Workspace {
             status_bar,
             modal_layer,
             toast_layer,
+            which_key_layer,
             titlebar_item: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
@@ -6591,7 +6596,8 @@ impl Render for Workspace {
                         )
                         .child(self.status_bar.clone())
                         .child(self.modal_layer.clone())
-                        .child(self.toast_layer.clone()),
+                        .child(self.toast_layer.clone())
+                        .child(self.which_key_layer.clone()),
                 ),
             window,
             cx,

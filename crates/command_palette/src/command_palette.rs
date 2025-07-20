@@ -15,7 +15,7 @@ use command_palette_hooks::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    ParentElement, Render, Styled, Task, WeakEntity, Window, humanize_action_name,
 };
 use persistence::COMMAND_PALETTE_HISTORY;
 use picker::{Picker, PickerDelegate};
@@ -437,30 +437,6 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 }
 
-pub fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
-    let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
-        if char == ':' {
-            if result.ends_with(':') {
-                result.push(' ');
-            } else {
-                result.push(':');
-            }
-        } else if char == '_' {
-            result.push(' ');
-        } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
-            }
-            result.extend(char.to_lowercase());
-        } else {
-            result.push(char);
-        }
-    }
-    result
-}
-
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Command")
@@ -481,22 +457,6 @@ mod tests {
     use project::Project;
     use settings::KeymapFile;
     use workspace::{AppState, Workspace};
-
-    #[test]
-    fn test_humanize_action_name() {
-        assert_eq!(
-            humanize_action_name("editor::GoToDefinition"),
-            "editor: go to definition"
-        );
-        assert_eq!(
-            humanize_action_name("editor::Backspace"),
-            "editor: backspace"
-        );
-        assert_eq!(
-            humanize_action_name("go_to_line::Deploy"),
-            "go to line: deploy"
-        );
-    }
 
     #[test]
     fn test_normalize_query() {
