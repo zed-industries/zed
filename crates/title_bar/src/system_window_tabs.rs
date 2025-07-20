@@ -241,26 +241,63 @@ impl SystemWindowTabs {
             )
             .into_any();
 
+        let tabs = self.tabs.clone();
         let menu = right_click_menu(ix)
             .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let focus_handle = cx.focus_handle();
+                let tabs = tabs.clone();
+                let other_tabs = tabs.clone();
+                let move_tabs = tabs.clone();
+                let merge_tabs = tabs.clone();
 
                 ContextMenu::build(window, cx, move |mut menu, _window_, _cx| {
-                    menu = menu.entry("Close Tab", None, move |_window, _cx| {
-                        // window.dispatch_action(Box::new(CloseWindow), cx);
+                    menu = menu.entry("Close Tab", None, move |window, cx| {
+                        Self::handle_right_click_action(
+                            cx,
+                            window,
+                            &tabs,
+                            |tab| tab.id == item.id,
+                            |window, cx| {
+                                window.dispatch_action(Box::new(CloseWindow), cx);
+                            },
+                        );
                     });
 
-                    menu = menu.entry("Close Other Tabs", None, move |_window, _cx| {
-                        // window.dispatch_action(Box::new(CloseWindow), cx);
+                    menu = menu.entry("Close Other Tabs", None, move |window, cx| {
+                        Self::handle_right_click_action(
+                            cx,
+                            window,
+                            &other_tabs,
+                            |tab| tab.id != item.id,
+                            |window, cx| {
+                                window.dispatch_action(Box::new(CloseWindow), cx);
+                            },
+                        );
                     });
 
-                    menu = menu.entry("Move Tab to New Window", None, move |_window, _cx| {
-                        // window.move_tab_to_new_window();
+                    menu = menu.entry("Move Tab to New Window", None, move |window, cx| {
+                        Self::handle_right_click_action(
+                            cx,
+                            window,
+                            &move_tabs,
+                            |tab| tab.id == item.id,
+                            |window, _cx| {
+                                window.move_tab_to_new_window();
+                            },
+                        );
                     });
 
-                    menu = menu.entry("Show All Tabs", None, move |_window, _cx| {
-                        // window.toggle_window_tab_overview();
+                    menu = menu.entry("Show All Tabs", None, move |window, cx| {
+                        Self::handle_right_click_action(
+                            cx,
+                            window,
+                            &merge_tabs,
+                            |tab| tab.id == item.id,
+                            |window, _cx| {
+                                window.toggle_window_tab_overview();
+                            },
+                        );
                     });
 
                     menu.context(focus_handle.clone())
@@ -272,6 +309,29 @@ impl SystemWindowTabs {
 
     fn handle_tab_drop(dragged_tab: &DraggedWindowTab, ix: usize, cx: &mut Context<Self>) {
         SystemWindowTabController::update_window_position(cx, dragged_tab.id, ix);
+    }
+
+    fn handle_right_click_action<F, P>(
+        cx: &mut App,
+        window: &mut Window,
+        tabs: &Vec<SystemWindowTab>,
+        predicate: P,
+        mut action: F,
+    ) where
+        P: Fn(&SystemWindowTab) -> bool,
+        F: FnMut(&mut Window, &mut App),
+    {
+        for tab in tabs {
+            if predicate(tab) {
+                if tab.id == window.window_handle().window_id() {
+                    action(window, cx);
+                } else {
+                    let _ = tab.handle.update(cx, |_view, window, cx| {
+                        action(window, cx);
+                    });
+                }
+            }
+        }
     }
 }
 
