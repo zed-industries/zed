@@ -814,7 +814,12 @@ impl MacWindow {
 
                     if main_window_can_tab == YES && main_window_visible == YES {
                         let _: () = msg_send![main_window, addTabbedWindow: native_window ordered: NSWindowOrderingMode::NSWindowAbove];
-                        let _: () = msg_send![native_window, orderFront: nil];
+
+                        // Ensure the window is visible immediately after adding the tab, since the tab bar is updated with a new entry at this point.
+                        // Note: Calling orderFront here can break fullscreen mode (makes fullscreen windows exit fullscreen), so only do this if the main window is not fullscreen.
+                        if !main_window_is_fullscreen {
+                            let _: () = msg_send![native_window, orderFront: nil];
+                        }
                     }
                 }
             }
@@ -1907,6 +1912,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     executor
         .spawn(async move {
             let mut lock = window_state.as_ref().lock();
+            if is_active {
+                lock.move_traffic_light();
+            }
 
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
