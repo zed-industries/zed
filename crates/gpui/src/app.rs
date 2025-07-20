@@ -1370,7 +1370,9 @@ impl App {
         self.keymap.clone()
     }
 
-    /// Register a global listener for actions invoked via the keyboard.
+    /// Register a global handler for actions invoked via the keyboard. These handlers are run at
+    /// the end of the bubble phase for actions, and so will only be invoked if there are no other
+    /// handlers or if they called `cx.propagate()`.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())

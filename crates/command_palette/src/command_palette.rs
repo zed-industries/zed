@@ -242,7 +242,7 @@ impl CommandPaletteDelegate {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
-    ///
+
     /// Hit count for each command in the palette.
     /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
     /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
