@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow};
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, Editor, EditorElement, EditorEvent};
+use editor::{CompletionProvider, Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{

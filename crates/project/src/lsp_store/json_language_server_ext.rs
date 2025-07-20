@@ -38,8 +38,7 @@ pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &Lan
                 let schema = root_schema_from_action_schema(
                     all_schemas
                         .get(action_name.as_str())
-                        .map(Option::as_ref)
-                        .flatten(),
+                        .and_then(Option::as_ref),
                     &mut generator,
                 )
                 .to_value();
@@ -97,6 +96,6 @@ fn root_schema_from_action_schema(
     });
     schema
         .ensure_object()
-        .extend(std::mem::take(action_schema.clone().ensure_object()).into_iter());
+        .extend(std::mem::take(action_schema.clone().ensure_object()));
     schema
 }
