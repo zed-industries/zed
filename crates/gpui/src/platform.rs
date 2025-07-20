@@ -480,9 +480,24 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     // macOS specific methods
+    fn get_title(&self) -> String {
+        String::new()
+    }
+    fn get_tab_bar_visible(&self) -> bool {
+        false
+    }
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
+    fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_tab_group_changed(&self, _callback: Box<dyn FnMut(usize)>) {}
+    fn merge_all_windows(&self) {}
+    fn move_tab_to_new_window(&self) {}
+    fn toggle_window_tab_overview(&self) {}
+    fn tab_group(&self) -> Option<usize> {
+        None
+    }
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -1086,6 +1101,9 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
+    pub tabbing_identifier: Option<String>,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1125,6 +1143,7 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+    pub tabbing_identifier: Option<String>,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1175,6 +1194,7 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            tabbing_identifier: None,
         }
     }
 }

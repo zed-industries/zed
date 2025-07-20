@@ -12,10 +12,11 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTabController,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -898,6 +899,7 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            tabbing_identifier,
         } = options;
 
         let bounds = window_bounds
@@ -914,6 +916,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                tabbing_identifier,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -945,9 +948,13 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
+            let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
+                let _ = cx.update(|cx| {
+                    SystemWindowTabController::remove_window(cx, window_id);
+                });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -1036,6 +1043,8 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
+
+                        window.bounds_changed(cx);
                         window.refresh();
                     })
                     .log_err();
@@ -1075,6 +1084,44 @@ impl Window {
                     })
                     .log_err()
                     .unwrap_or(None)
+            })
+        });
+        platform_window.on_select_next_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let window_id = handle.window_id();
+                        if let Some(tab_group) = window.tab_group() {
+                            SystemWindowTabController::select_previous_tab(
+                                cx, tab_group, window_id,
+                            );
+                        }
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_tab_group_changed({
+            let mut cx = cx.to_async();
+            Box::new(move |tab_group| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        SystemWindowTabController::insert_window(cx, window, tab_group);
+                    })
+                    .log_err();
             })
         });
 
@@ -4180,9 +4227,45 @@ impl Window {
     }
 
     /// Perform titlebar double-click action.
-    /// This is MacOS specific.
+    /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
         self.platform_window.titlebar_double_click();
+    }
+
+    /// Gets the window's title at the platform level.
+    /// This is macOS specific.
+    pub fn window_title(&self) -> String {
+        self.platform_window.get_title()
+    }
+
+    /// Gets the visibility of the tab bar at the platform level.
+    /// This is macOS specific.
+    pub fn tab_bar_visible(&self) -> bool {
+        self.platform_window.get_tab_bar_visible()
+    }
+
+    /// Returns the tab group pointer of the window.
+    /// This is macOS specific.
+    pub fn tab_group(&self) -> Option<usize> {
+        self.platform_window.tab_group()
+    }
+
+    /// Merges all open windows into a single tabbed window.
+    /// This is macOS specific.
+    pub fn merge_all_windows(&self) {
+        self.platform_window.merge_all_windows()
+    }
+
+    /// Moves the tab to a new containing window.
+    /// This is macOS specific.
+    pub fn move_tab_to_new_window(&self) {
+        self.platform_window.move_tab_to_new_window()
+    }
+
+    /// Shows or hides the window tab overview.
+    /// This is macOS specific.
+    pub fn toggle_window_tab_overview(&self) {
+        self.platform_window.toggle_window_tab_overview()
     }
 
     /// Toggles the inspector mode on this window.

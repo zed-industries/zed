@@ -16489,6 +16489,7 @@ dependencies = [
  "chrono",
  "client",
  "collections",
+ "command_palette_hooks",
  "db",
  "gpui",
  "http_client",

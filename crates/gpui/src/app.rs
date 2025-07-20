@@ -39,8 +39,8 @@ use crate::{
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -237,6 +237,154 @@ type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct SystemWindowTab {
+    pub id: WindowId,
+    pub title: SharedString,
+    pub handle: AnyWindowHandle,
+}
+
+impl SystemWindowTab {
+    /// Create a new instance of the window tab.
+    pub fn new(title: SharedString, handle: AnyWindowHandle) -> Self {
+        Self {
+            id: handle.id,
+            title,
+            handle,
+        }
+    }
+}
+
+/// A controller for managing window tabs.
+#[derive(Default)]
+pub struct SystemWindowTabController {
+    tabs: FxHashMap<usize, Vec<SystemWindowTab>>,
+}
+
+impl Global for SystemWindowTabController {}
+
+impl SystemWindowTabController {
+    /// Create a new instance of the window tab controller.
+    pub fn new() -> Self {
+        Self {
+            tabs: FxHashMap::default(),
+        }
+    }
+
+    /// Initialize the global window tab controller.
+    pub fn init(cx: &mut App) {
+        cx.set_global(SystemWindowTabController::new());
+    }
+
+    /// Get all tabs.
+    pub fn tabs(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
+        &self.tabs
+    }
+
+    /// Get all windows in a tab.
+    pub fn windows(&self, tab_group: usize) -> Option<&Vec<SystemWindowTab>> {
+        self.tabs.get(&tab_group)
+    }
+
+    /// Insert a window into a tab group.
+    pub fn insert_window(cx: &mut App, window: &Window, tab_group: usize) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+
+        let title = SharedString::from(window.window_title());
+        let handle = window.window_handle();
+
+        for windows in controller.tabs.values_mut() {
+            if let Some(pos) = windows.iter().position(|tab| tab.id == handle.id) {
+                windows.remove(pos);
+            }
+        }
+
+        controller.tabs.retain(|_, windows| !windows.is_empty());
+
+        let windows = controller.tabs.entry(tab_group).or_insert_with(Vec::new);
+        if !windows.iter().any(|tab| tab.id == handle.id) {
+            windows.push(SystemWindowTab::new(title, handle));
+        }
+    }
+
+    /// Remove a window from a tab group.
+    pub fn remove_window(cx: &mut App, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.tabs.retain(|_, windows| {
+            if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
+                windows.remove(pos);
+            }
+            !windows.is_empty()
+        });
+    }
+
+    /// Move window to a new position within the same tab group.
+    pub fn update_window_position(cx: &mut App, id: WindowId, ix: usize) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for (_, windows) in controller.tabs.iter_mut() {
+            if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
+                if ix < windows.len() && current_pos != ix {
+                    let window_tab = windows.remove(current_pos);
+                    windows.insert(ix, window_tab);
+                }
+                break;
+            }
+        }
+    }
+
+    /// Update the title of a window.
+    pub fn update_window_title(cx: &mut App, id: WindowId, title: SharedString) {
+        let controller = cx.global::<SystemWindowTabController>();
+        let tab = controller
+            .tabs
+            .values()
+            .flat_map(|windows| windows.iter())
+            .find(|tab| tab.id == id);
+
+        if tab.map_or(true, |t| t.title == title) {
+            return;
+        }
+
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        for windows in controller.tabs.values_mut() {
+            for tab in windows.iter_mut() {
+                if tab.id == id {
+                    tab.title = title.clone();
+                }
+            }
+        }
+    }
+
+    /// Selects the next tab in the tab group in the trailing direction.
+    pub fn select_next_tab(cx: &mut App, tab_group: usize, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        let next_index = (current_index + 1) % windows.len();
+
+        let _ = &windows[next_index].handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
+    }
+
+    /// Selects the previous tab in the tab group in the leading direction.
+    pub fn select_previous_tab(cx: &mut App, tab_group: usize, id: WindowId) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let windows = controller.tabs.get_mut(&tab_group).unwrap();
+        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        let previous_index = if current_index == 0 {
+            windows.len() - 1
+        } else {
+            current_index - 1
+        };
+
+        let _ = &windows[previous_index].handle.update(cx, |_, window, _| {
+            window.activate_window();
+        });
+    }
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other [Context] derefs to this type.
 /// You need a reference to an `App` to access the state of a [Entity].
@@ -365,6 +513,7 @@ impl App {
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+        SystemWindowTabController::init(&mut app.borrow_mut());
 
         platform.on_keyboard_layout_change(Box::new({
             let app = Rc::downgrade(&app);
