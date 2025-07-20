@@ -2792,6 +2792,11 @@ impl KeystrokeInput {
             {
                 if self.search {
                     last.key = keystroke.key.clone();
+                    if close_keystroke_result == CloseKeystrokeResult::Partial
+                        && self.close_keystrokes_start.is_none()
+                    {
+                        self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
+                    }
                     self.keystrokes_changed(cx);
                     cx.stop_propagation();
                     return;
