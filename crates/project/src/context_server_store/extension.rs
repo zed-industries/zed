@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::path::Path;
 
 use anyhow::Result;
 use context_server::ContextServerCommand;
@@ -66,11 +67,67 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
                 .to_string_lossy()
                 .to_string();
 
+            // Only resolve relative paths through the extension.
+            // This fixes a Windows issue where absolute paths (e.g., "C:\Users\...")
+            // were being incorrectly joined with the extension's work directory,
+            // resulting in invalid paths like "C:\C:\Users\...".
+            let command_path = Path::new(&command.command);
+            command.command = if command_path.is_absolute() {
+                command.command
+            } else {
+                extension
+                    .path_from_extension(command_path)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            // Process arguments to resolve any paths.
+            // Some extensions return Unix-style paths (e.g., "/C:/Users/...")
+            // which need to be converted to proper Windows paths.
+            let args: Vec<String> = command
+                .args
+                .iter()
+                .map(|arg| {
+                    // Check if the argument looks like a path
+                    let arg_path = Path::new(arg);
+
+                    // Handle Unix-style absolute paths on Windows (e.g., "/C:/...")
+                    if cfg!(windows) && arg.starts_with('/') && arg.len() > 2 && arg.chars().nth(2) == Some(':') {
+                        // Remove the leading slash for Windows absolute paths
+                        let cleaned_arg = &arg[1..];
+                        let cleaned_path = Path::new(cleaned_arg);
+
+                        if cleaned_path.is_absolute() {
+                            // Convert forward slashes to backslashes for Windows
+                            cleaned_arg.replace('/', "\\")
+                        } else {
+                            extension
+                                .path_from_extension(cleaned_path)
+                                .to_string_lossy()
+                                .replace('/', "\\")
+                        }
+                    } else if arg_path.is_absolute() {
+                        // Already an absolute path, use as-is
+                        arg.to_string()
+                    } else if arg.contains('/') || arg.contains('\\') {
+                        // Looks like a relative path, resolve it
+                        extension
+                            .path_from_extension(arg_path)
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        // Not a path, just a regular argument
+                        arg.to_string()
+                    }
+                })
+                .collect();
+
             log::info!("loaded command for context server {id}: {command:?}");
 
             Ok(ContextServerCommand {
                 path: command.command,
                 args: command.args,
+                args,
                 env: Some(command.env.into_iter().collect()),
             })
         })
