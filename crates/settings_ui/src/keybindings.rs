@@ -18,7 +18,7 @@ use gpui::{
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
-use settings::{BaseKeymap, KeybindSource, KeymapFile, SettingsAssets};
+use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 
 use util::ResultExt;
 
@@ -1733,11 +1733,11 @@ impl KeybindingEditorModal {
         });
 
         let focus_state = KeybindingEditorModalFocusState::new(
-            keybind_editor.read_with(cx, |keybind_editor, cx| keybind_editor.focus_handle(cx)),
-            action_arguments_editor.as_ref().map(|args_editor| {
-                args_editor.read_with(cx, |args_editor, cx| args_editor.focus_handle(cx))
-            }),
-            context_editor.read_with(cx, |context_editor, cx| context_editor.focus_handle(cx)),
+            keybind_editor.focus_handle(cx),
+            action_arguments_editor
+                .as_ref()
+                .map(|args_editor| args_editor.focus_handle(cx)),
+            context_editor.focus_handle(cx),
         );
 
         Self {
@@ -2160,6 +2160,10 @@ impl ActionArgumentsEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        cx.on_focus_in(&focus_handle, window, |this, window, cx| {
+            this.editor.focus_handle(cx).focus(window);
+        })
+        .detach();
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height_unbounded(1, window, cx);
             Self::set_editor_text(&mut editor, arguments.clone(), window, cx);
@@ -2198,7 +2202,10 @@ impl ActionArgumentsEditor {
                     editor
                 })?;
 
-                this.update(cx, |this, _cx| {
+                this.update_in(cx, |this, window, cx| {
+                    if this.editor.focus_handle(cx).is_focused(window) {
+                        editor.focus_handle(cx).focus(window);
+                    }
                     this.editor = editor;
                     this.temp_dir = Some(temp_dir);
                     this.is_loading = false;
@@ -2293,7 +2300,16 @@ impl Render for ActionArgumentsEditor {
             let theme_color = cx.theme().colors();
             style.text.color = theme_color.text_disabled;
         }
-        return EditorElement::new(&self.editor, style);
+        let settings = theme::ThemeSettings::get_global(cx);
+        style.text.font_size = rems(0.875).into();
+        style.text.font_weight = settings.buffer_font.weight;
+        style.text.line_height = relative(1.2);
+        style.text.font_style = gpui::FontStyle::Normal;
+
+        return v_flex()
+            .min_h_8()
+            .track_focus(&self.focus_handle)
+            .child(EditorElement::new(&self.editor, style));
     }
 }
 
