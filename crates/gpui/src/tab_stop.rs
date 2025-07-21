@@ -44,12 +44,12 @@ impl TabHandles {
                 return Box::new(
                     self.handles
                         .iter()
-                        .filter(|h| h.group_id == handle.group_id),
+                        .filter(|h| h.tab_group == handle.tab_group),
                 );
             }
         }
 
-        Box::new(self.handles.iter().filter(|h| h.group_id.is_none()))
+        Box::new(self.handles.iter().filter(|h| h.tab_group.is_none()))
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {

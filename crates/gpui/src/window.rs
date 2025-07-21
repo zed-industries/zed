@@ -228,7 +228,7 @@ pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
     pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
-    pub(crate) group_id: Option<TabGroupId>,
+    pub(crate) tab_group: Option<TabGroupId>,
 }
 
 impl FocusId {
@@ -264,21 +264,21 @@ impl FocusId {
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
     pub(crate) id: FocusId,
-    pub(crate) group_id: Option<TabGroupId>,
     handles: Arc<FocusMap>,
     /// The index of this element in the tab order.
     pub tab_index: isize,
     /// The group of this element in the tab order, if any the tab navigation should cycle within.
     /// Whether this element can be focused by tab navigation.
     pub tab_stop: bool,
+    pub(crate) tab_group: Option<TabGroupId>,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.group_id.is_some() {
+        if self.tab_group.is_some() {
             f.write_fmt(format_args!(
                 "FocusHandle({:?}, {:?})",
-                self.group_id, self.id
+                self.tab_group, self.id
             ))
         } else {
             f.write_fmt(format_args!("FocusHandle({:?})", self.id))
@@ -292,12 +292,12 @@ impl FocusHandle {
             ref_count: AtomicUsize::new(1),
             tab_index: 0,
             tab_stop: false,
-            group_id: None,
+            tab_group: None,
         });
 
         Self {
             id,
-            group_id: None,
+            tab_group: None,
             tab_index: 0,
             tab_stop: false,
             handles: handles.clone(),
@@ -312,7 +312,7 @@ impl FocusHandle {
         }
         Some(Self {
             id,
-            group_id: focus.group_id.clone(),
+            tab_group: focus.tab_group.clone(),
             tab_index: focus.tab_index,
             tab_stop: focus.tab_stop,
             handles: handles.clone(),
@@ -342,10 +342,10 @@ impl FocusHandle {
     /// Set the tab group of this focus handle.
     ///
     /// If set, the focus cycle will loop in same group.
-    pub(crate) fn tab_group(mut self, group_id: &TabGroupId) -> Self {
-        self.group_id = Some(group_id.clone());
+    pub(crate) fn tab_group(mut self, tab_group: &TabGroupId) -> Self {
+        self.tab_group = Some(tab_group.clone());
         if let Some(focus) = self.handles.write().get_mut(self.id) {
-            focus.group_id = Some(group_id.clone());
+            focus.tab_group = Some(tab_group.clone());
         }
         self
     }
