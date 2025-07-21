@@ -33,6 +33,12 @@ pub struct InlayHints {
     pub hints: Vec<InlayHint>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum HintFetchStrategy {
+    IgnoreCache,
+    UseCache { known_cache_version: Option<usize> },
+}
+
 impl InlayHintCache {
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) -> bool {
         let removed = self.hints.remove(&for_server).is_some();
@@ -45,8 +51,8 @@ impl InlayHintCache {
     pub fn hints(
         &self,
         buffer: BufferId,
-        range: Range<usize>,
-        known_cache_version: Option<usize>,
+        strategy: HintFetchStrategy,
+        range: impl text::ToOffset,
         cx: &mut Context<Self>,
     ) -> Option<(Range<BufferRow>, Shared<Task<InlayHints>>)> {
         todo!("TODO kb")
