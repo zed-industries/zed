@@ -77,15 +77,6 @@ impl Keymap {
         &'a self,
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
-        self.bindings_for_action_with_indices(action)
-            .map(|(_, binding)| binding)
-    }
-
-    /// Like `bindings_for_action_with_indices`, but also returns the binding indices.
-    pub fn bindings_for_action_with_indices<'a>(
-        &'a self,
-        action: &'a dyn Action,
-    ) -> impl 'a + DoubleEndedIterator<Item = (BindingIndex, &'a KeyBinding)> {
         let action_id = action.type_id();
         let binding_indices = self
             .binding_indices_by_action_id
@@ -118,7 +109,7 @@ impl Keymap {
                 }
             }
 
-            Some((BindingIndex(*ix), binding))
+            Some(binding)
         })
     }
 
@@ -153,22 +144,8 @@ impl Keymap {
         input: &[Keystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let (bindings, pending) = self.bindings_for_input_with_indices(input, context_stack);
-        let bindings = bindings
-            .into_iter()
-            .map(|(_, binding)| binding)
-            .collect::<SmallVec<[KeyBinding; 1]>>();
-        (bindings, pending)
-    }
-
-    /// Like `bindings_for_input`, but also returns the binding indices.
-    pub fn bindings_for_input_with_indices(
-        &self,
-        input: &[Keystroke],
-        context_stack: &[KeyContext],
-    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
-        let mut bindings: SmallVec<[(usize, BindingIndex, &KeyBinding); 1]> = SmallVec::new();
-        let mut pending_bindings: SmallVec<[(BindingIndex, &KeyBinding); 1]> = SmallVec::new();
+        let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
+        let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
         for (ix, binding) in self.bindings().enumerate().rev() {
             let Some(depth) = self.binding_enabled(binding, &context_stack) else {
@@ -179,26 +156,30 @@ impl Keymap {
             };
 
             if !pending {
-                bindings.push((depth, BindingIndex(ix), binding))
+                matched_bindings.push((depth, BindingIndex(ix), binding));
             } else {
-                pending_bindings.push((BindingIndex(ix), binding))
+                pending_bindings.push((BindingIndex(ix), binding));
             }
         }
 
-        bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+        matched_bindings.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
             depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
         });
 
-        let bindings: SmallVec<[_; 1]> = bindings
-            .into_iter()
-            .take_while(|(_, _, binding)| !is_no_action(&*binding.action))
-            .map(|(_, ix, binding)| (ix, binding.clone()))
-            .collect();
+        let mut bindings: SmallVec<[_; 1]> = SmallVec::new();
+        let mut first_binding_index = None;
+        for (_, ix, binding) in matched_bindings {
+            if is_no_action(&*binding.action) {
+                break;
+            }
+            bindings.push(binding.clone());
+            first_binding_index.get_or_insert(ix);
+        }
 
         let mut pending = HashSet::default();
         for (ix, binding) in pending_bindings.into_iter().rev() {
-            if let Some((binding_ix, _)) = bindings.first()
-                && *binding_ix > ix
+            if let Some(binding_ix) = first_binding_index
+                && binding_ix > ix
             {
                 continue;
             }
