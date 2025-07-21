@@ -1,10 +1,13 @@
 use std::time::Duration;
 
-use gpui::{AvailableSpace, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name};
+use gpui::{
+    AvailableSpace, FontWeight, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
 use util::ResultExt;
+use which_key::WhichKeySettings;
 
 use crate::Workspace;
 
@@ -51,9 +54,12 @@ impl WhichKeyLayer {
             return;
         }
 
+        let which_key_settings = WhichKeySettings::get_global(cx);
+        let delay_ms = which_key_settings.delay_ms;
+
         self.timer = Some(cx.spawn(async move |handle, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(600))
+                .timer(Duration::from_millis(delay_ms))
                 .await;
             handle
                 .update(cx, |which_key_layer, cx| {
@@ -67,14 +73,11 @@ impl WhichKeyLayer {
 
 impl Render for WhichKeyLayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.show {
+        let which_key_settings = WhichKeySettings::get_global(cx);
+        if !which_key_settings.enabled || !self.show {
             return div();
         }
-        let Some(pending_keys) = &self.pending_keys else {
-            return div();
-        };
-
-        let Some(bindings) = &self.bindings else {
+        let (Some(pending_keys), Some(bindings)) = (&self.pending_keys, &self.bindings) else {
             return div();
         };
         if bindings.is_empty() {
@@ -108,11 +111,71 @@ impl Render for WhichKeyLayer {
             }) {
             margins
         } else {
-            (px(0.0), px(0.0), px(0.0))
+            (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
         };
 
-        let margin = DynamicSpacing::Base08.px(cx);
-        let padding = DynamicSpacing::Base20.px(cx);
+        let margin = DynamicSpacing::Base12.px(cx);
+        let padding = DynamicSpacing::Base16.px(cx);
+
+        let binding_data: Vec<_> = bindings
+            .iter()
+            .map(|binding| {
+                let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
+                let action_name = humanize_action_name(binding.action().name());
+                (remaining_keystrokes, action_name)
+            })
+            .collect();
+
+        // Find the longest text width
+        let longest_text = binding_data
+            .iter()
+            .map(|(remaining_keystrokes, action_name)| {
+                create_binding_element(remaining_keystrokes, action_name, cx)
+                    .into_any_element()
+                    .layout_as_root(AvailableSpace::min_size(), window, cx)
+                    .width
+            })
+            .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+            .unwrap_or(Pixels::ZERO);
+
+        // Calculate available width (window width minus padding)
+        let window_width = window.viewport_size().width;
+        let available_width =
+            window_width - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
+
+        // Calculate number of columns that can fit
+        let gap_width = DynamicSpacing::Base20.px(cx);
+        let columns = ((available_width + gap_width) / (longest_text + gap_width))
+            .floor()
+            .max(1.0) as usize;
+
+        // Create rows for grid
+        let chunks = binding_data.chunks(columns);
+        let mut largest_chunk = 0;
+        let mut rows = Vec::new();
+        for chunk in chunks {
+            let mut row = h_flex().gap(gap_width).children(chunk.iter().map(
+                |(remaining_keystrokes, action_name)| {
+                    div()
+                        .child(create_binding_element(
+                            remaining_keystrokes,
+                            action_name,
+                            cx,
+                        ))
+                        .min_w(longest_text)
+                },
+            ));
+
+            if chunk.len() > largest_chunk {
+                largest_chunk = chunk.len();
+            }
+            // Ensure all rows have equal number of children
+            for _ in 0..(largest_chunk - chunk.len()) {
+                row = row.child(div().min_w(longest_text));
+            }
+
+            rows.push(row);
+        }
 
         div()
             .occlude()
@@ -124,59 +187,22 @@ impl Render for WhichKeyLayer {
             .p(padding)
             .child(
                 v_flex()
-                    .gap_2()
-                    .child(Label::new(text_for_keystrokes(pending_keys, cx)))
-                    .child({
-                        // Calculate the longest item text to determine column width
-                        let binding_texts: Vec<String> = bindings
-                            .iter()
-                            .map(|binding| {
-                                let remaining_keystrokes =
-                                    &binding.keystrokes()[pending_keys.len()..];
-                                format!(
-                                    "{}: {}",
-                                    text_for_keystrokes(remaining_keystrokes, cx),
-                                    humanize_action_name(binding.action().name()),
-                                )
-                            })
-                            .collect();
-
-                        // Find the longest text
-                        let longest_text = binding_texts
-                            .iter()
-                            .max_by_key(|text| text.len())
-                            .cloned()
-                            .unwrap_or_default();
-
-                        // Create a temporary label to measure the width
-                        let mut temp_label = Label::new(longest_text.clone()).into_any_element();
-                        let measured_size =
-                            temp_label.layout_as_root(AvailableSpace::min_size(), window, cx);
-                        let item_width = measured_size.width;
-
-                        // Calculate available width (window width minus padding)
-                        let window_width = window.viewport_size().width;
-                        let available_width = window_width
-                            - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
-
-                        // Calculate number of columns that can fit
-                        let gap_width = DynamicSpacing::Base03.px(cx);
-                        let columns = ((available_width + gap_width) / (item_width + gap_width))
-                            .floor()
-                            .max(1.0) as usize;
-
-                        // Create grid
-                        v_flex().gap(gap_width).children({
-                            let mut rows = Vec::new();
-                            for chunk in binding_texts.chunks(columns) {
-                                let row = h_flex().gap_2().children(chunk.iter().map(|text| {
-                                    div().child(Label::new(text.clone())).min_w(item_width)
-                                }));
-                                rows.push(row);
-                            }
-                            rows
-                        })
-                    }),
+                    .gap_3()
+                    .child(
+                        Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
+                    )
+                    .child(v_flex().gap_2().children(rows)),
             )
     }
+}
+
+fn create_binding_element(
+    remaining_keystrokes: &[Keystroke],
+    action_name: &str,
+    cx: &Context<WhichKeyLayer>,
+) -> impl IntoElement {
+    h_flex().children([
+        Label::new(text_for_keystrokes(remaining_keystrokes, cx)).weight(FontWeight::BOLD),
+        Label::new(format!(": {}", action_name)),
+    ])
 }
