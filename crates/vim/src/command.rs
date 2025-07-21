@@ -28,8 +28,8 @@ use std::{
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::notifications::DetachAndPromptErr;
 use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
+use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
@@ -44,18 +44,21 @@ use crate::{
     visual::VisualDeleteLine,
 };
 
+/// Goes to the specified line number in the editor.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct GoToLine {
     range: CommandRange,
 }
 
+/// Yanks (copies) text based on the specified range.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct YankCommand {
     range: CommandRange,
 }
 
+/// Executes a command with the specified range.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct WithRange {
@@ -64,6 +67,7 @@ pub struct WithRange {
     action: WrappedAction,
 }
 
+/// Executes a command with the specified count.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct WithCount {
@@ -155,16 +159,26 @@ impl VimOption {
     }
 }
 
+/// Sets vim options and configuration values.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct VimSet {
     options: Vec<VimOption>,
 }
 
+/// Saves the current file with optional save intent.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 struct VimSave {
     pub save_intent: Option<SaveIntent>,
+    pub filename: String,
+}
+
+/// Deletes the specified marks from the editor.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = vim, no_json, no_register)]
+struct VimSplit {
+    pub vertical: bool,
     pub filename: String,
 }
 
@@ -177,8 +191,18 @@ enum DeleteMarks {
 
 actions!(
     vim,
-    [VisualCommand, CountCommand, ShellCommand, ArgumentRequired]
+    [
+        /// Executes a command in visual mode.
+        VisualCommand,
+        /// Executes a command with a count prefix.
+        CountCommand,
+        /// Executes a shell command.
+        ShellCommand,
+        /// Indicates that an argument is required for the command.
+        ArgumentRequired
+    ]
 );
+/// Opens the specified file for editing.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 struct VimEdit {
@@ -304,6 +328,33 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
             }
         });
+    });
+
+    Vim::action(editor, cx, |vim, action: &VimSplit, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().clone();
+            let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                return;
+            };
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: Arc::from(Path::new(&action.filename)),
+            };
+
+            let direction = if action.vertical {
+                SplitDirection::vertical(cx)
+            } else {
+                SplitDirection::horizontal(cx)
+            };
+
+            workspace
+                .split_path_preview(project_path, false, Some(direction), window, cx)
+                .detach_and_log_err(cx);
+        })
     });
 
     Vim::action(editor, cx, |vim, action: &DeleteMarks, window, cx| {
@@ -981,8 +1032,24 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             save_intent: Some(SaveIntent::Overwrite),
         }),
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
-        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal),
-        VimCommand::new(("vs", "plit"), workspace::SplitVertical),
+        VimCommand::new(("sp", "lit"), workspace::SplitHorizontal).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: false,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
+        VimCommand::new(("vs", "plit"), workspace::SplitVertical).args(|_, args| {
+            Some(
+                VimSplit {
+                    vertical: true,
+                    filename: args,
+                }
+                .boxed_clone(),
+            )
+        }),
         VimCommand::new(
             ("bd", "elete"),
             workspace::CloseActiveItem {
@@ -1018,12 +1085,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         ),
         VimCommand::new(
             ("tabo", "nly"),
-            workspace::CloseInactiveItems {
+            workspace::CloseOtherItems {
                 save_intent: Some(SaveIntent::Close),
                 close_pinned: false,
             },
         )
-        .bang(workspace::CloseInactiveItems {
+        .bang(workspace::CloseOtherItems {
             save_intent: Some(SaveIntent::Skip),
             close_pinned: false,
         }),
@@ -1039,13 +1106,28 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("cl", "ist"), "diagnostics::Deploy"),
         VimCommand::new(("cc", ""), editor::actions::Hover),
         VimCommand::new(("ll", ""), editor::actions::Hover),
-        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic).range(wrap_count),
-        VimCommand::new(("cp", "revious"), editor::actions::GoToPreviousDiagnostic)
+        VimCommand::new(("cn", "ext"), editor::actions::GoToDiagnostic::default())
             .range(wrap_count),
-        VimCommand::new(("cN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
-        VimCommand::new(("lp", "revious"), editor::actions::GoToPreviousDiagnostic)
-            .range(wrap_count),
-        VimCommand::new(("lN", "ext"), editor::actions::GoToPreviousDiagnostic).range(wrap_count),
+        VimCommand::new(
+            ("cp", "revious"),
+            editor::actions::GoToPreviousDiagnostic::default(),
+        )
+        .range(wrap_count),
+        VimCommand::new(
+            ("cN", "ext"),
+            editor::actions::GoToPreviousDiagnostic::default(),
+        )
+        .range(wrap_count),
+        VimCommand::new(
+            ("lp", "revious"),
+            editor::actions::GoToPreviousDiagnostic::default(),
+        )
+        .range(wrap_count),
+        VimCommand::new(
+            ("lN", "ext"),
+            editor::actions::GoToPreviousDiagnostic::default(),
+        )
+        .range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
@@ -1282,6 +1364,7 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     positions
 }
 
+/// Applies a command to all lines matching a pattern.
 #[derive(Debug, PartialEq, Clone, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub(crate) struct OnMatchingLines {
@@ -1480,6 +1563,7 @@ impl OnMatchingLines {
     }
 }
 
+/// Executes a shell command and returns the output.
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = vim, no_json, no_register)]
 pub struct ShellExec {
@@ -1669,7 +1753,7 @@ impl ShellExec {
                     id: TaskId("vim".to_string()),
                     full_label: command.clone(),
                     label: command.clone(),
-                    command: command.clone(),
+                    command: Some(command.clone()),
                     args: Vec::new(),
                     command_label: command.clone(),
                     cwd,

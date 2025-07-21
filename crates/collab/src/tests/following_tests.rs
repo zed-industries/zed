@@ -439,7 +439,7 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    // #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
@@ -456,11 +456,19 @@ async fn test_basic_following(
             .await
             .unwrap();
         cx_b.set_screen_capture_sources(vec![display]);
+        let source = cx_b
+            .read(|cx| cx.screen_capture_sources())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
         active_call_b
             .update(cx_b, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
+                    .update(cx, |room, cx| room.share_screen(source, cx))
             })
             .await
             .unwrap();
@@ -1013,7 +1021,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // and some of which were originally opened by client B.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.close_inactive_items(&Default::default(), window, cx)
+            pane.close_other_items(&Default::default(), None, window, cx)
                 .detach();
         });
     });

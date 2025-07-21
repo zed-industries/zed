@@ -255,21 +255,18 @@ impl Render for QuickActionBar {
                             .action("Go to Symbol", Box::new(ToggleOutline))
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))
                             .separator()
-                            .action("Next Problem", Box::new(GoToDiagnostic))
-                            .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
+                            .action("Next Problem", Box::new(GoToDiagnostic::default()))
+                            .action(
+                                "Previous Problem",
+                                Box::new(GoToPreviousDiagnostic::default()),
+                            )
                             .separator()
-                            .map(|menu| {
-                                if has_diff_hunks {
-                                    menu.action("Next Hunk", Box::new(GoToHunk))
-                                        .action("Previous Hunk", Box::new(GoToPreviousHunk))
-                                } else {
-                                    menu.disabled_action("Next Hunk", Box::new(GoToHunk))
-                                        .disabled_action(
-                                            "Previous Hunk",
-                                            Box::new(GoToPreviousHunk),
-                                        )
-                                }
-                            })
+                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                "Previous Hunk",
+                                Box::new(GoToPreviousHunk),
+                            )
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
@@ -344,52 +341,6 @@ impl Render for QuickActionBar {
                                 );
                             }
 
-                            if supports_diagnostics {
-                                menu = menu.toggleable_entry(
-                                    "Diagnostics",
-                                    diagnostics_enabled,
-                                    IconPosition::Start,
-                                    Some(ToggleDiagnostics.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_diagnostics(
-                                                        &ToggleDiagnostics,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-
-                                if supports_inline_diagnostics {
-                                    menu = menu.toggleable_entry(
-                                        "Inline Diagnostics",
-                                        inline_diagnostics_enabled,
-                                        IconPosition::Start,
-                                        Some(ToggleInlineDiagnostics.boxed_clone()),
-                                        {
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.toggle_inline_diagnostics(
-                                                            &ToggleInlineDiagnostics,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    );
-                                }
-                            }
-
                             if supports_minimap {
                                 menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
                                     let editor = editor.clone();
@@ -437,6 +388,55 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.separator();
+
+                            if supports_diagnostics {
+                                menu = menu.toggleable_entry(
+                                    "Diagnostics",
+                                    diagnostics_enabled,
+                                    IconPosition::Start,
+                                    Some(ToggleDiagnostics.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_diagnostics(
+                                                        &ToggleDiagnostics,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+
+                                if supports_inline_diagnostics {
+                                    let mut inline_diagnostics_item = ContextMenuEntry::new("Inline Diagnostics")
+                                        .toggleable(IconPosition::Start, diagnostics_enabled && inline_diagnostics_enabled)
+                                        .action(ToggleInlineDiagnostics.boxed_clone())
+                                        .handler({
+                                            let editor = editor.clone();
+                                            move |window, cx| {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_inline_diagnostics(
+                                                            &ToggleInlineDiagnostics,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        });
+                                    if !diagnostics_enabled {
+                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
+                                    }
+                                    menu = menu.item(inline_diagnostics_item)
+                                }
+
+                                menu = menu.separator();
+                            }
 
                             menu = menu.toggleable_entry(
                                 "Line Numbers",

@@ -2140,7 +2140,8 @@ impl AssistantContext {
                                         );
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) |
-                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
+                                    LanguageModelCompletionEvent::ToolUseJsonParseError { .. } |
+                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
 
@@ -2292,6 +2293,7 @@ impl AssistantContext {
             tool_choice: None,
             stop: Vec::new(),
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
+            thinking_allowed: true,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

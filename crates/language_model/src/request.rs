@@ -391,6 +391,7 @@ pub struct LanguageModelRequest {
     pub tool_choice: Option<LanguageModelToolChoice>,
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
+    pub thinking_allowed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

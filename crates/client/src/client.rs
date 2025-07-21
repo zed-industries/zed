@@ -81,7 +81,17 @@ pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-actions!(client, [SignIn, SignOut, Reconnect]);
+actions!(
+    client,
+    [
+        /// Signs in to Zed account.
+        SignIn,
+        /// Signs out of Zed account.
+        SignOut,
+        /// Reconnects to the collaboration server.
+        Reconnect
+    ]
+);
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ClientSettingsContent {
@@ -289,6 +299,13 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn is_signing_in(&self) -> bool {
+        matches!(
+            self,
+            Self::Authenticating | Self::Reauthenticating | Self::Connecting | Self::Reconnecting
+        )
     }
 
     pub fn is_signed_out(&self) -> bool {

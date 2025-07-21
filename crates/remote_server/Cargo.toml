@@ -37,6 +37,7 @@ fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
+git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
@@ -85,7 +86,7 @@ node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
-lsp = { workspace = true, features=["test-support"] }
+lsp = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 serde_json.workspace = true
 zlog.workspace = true
@@ -95,4 +96,4 @@ cargo_toml.workspace = true
 toml.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["rust-embed", "paths"]
+ignored = ["git2", "rust-embed", "paths"]

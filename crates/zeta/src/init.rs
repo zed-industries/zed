@@ -10,7 +10,15 @@ use workspace::Workspace;
 
 use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
 
-actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
+actions!(
+    edit_prediction,
+    [
+        /// Resets the edit prediction onboarding state.
+        ResetOnboarding,
+        /// Opens the rate completions modal.
+        RateCompletions
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
@@ -26,7 +34,6 @@ pub fn init(cx: &mut App) {
                     workspace,
                     workspace.user_store().clone(),
                     workspace.client().clone(),
-                    workspace.app_state().fs.clone(),
                     window,
                     cx,
                 )

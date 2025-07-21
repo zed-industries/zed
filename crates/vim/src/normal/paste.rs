@@ -14,6 +14,7 @@ use crate::{
     state::{Mode, Register},
 };
 
+/// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -711,7 +712,7 @@ mod test {
         );
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),

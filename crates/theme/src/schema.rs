@@ -4,9 +4,7 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
+use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -1487,7 +1485,7 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,
@@ -1499,34 +1497,6 @@ pub enum FontWeightContent {
     Bold = 700,
     ExtraBold = 800,
     Black = 900,
-}
-
-impl JsonSchema for FontWeightContent {
-    fn schema_name() -> String {
-        "FontWeightContent".to_owned()
-    }
-
-    fn is_referenceable() -> bool {
-        false
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            enum_values: Some(vec![
-                100.into(),
-                200.into(),
-                300.into(),
-                400.into(),
-                500.into(),
-                600.into(),
-                700.into(),
-                800.into(),
-                900.into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
-    }
 }
 
 impl From<FontWeightContent> for FontWeight {

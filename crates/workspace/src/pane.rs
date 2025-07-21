@@ -40,6 +40,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -95,37 +96,46 @@ pub enum SaveIntent {
     Skip,
 }
 
+/// Activates a specific item in the pane by its index.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 pub struct ActivateItem(pub usize);
 
+/// Closes the currently active item in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
+/// Closes all inactive items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
-pub struct CloseInactiveItems {
+#[action(deprecated_aliases = ["pane::CloseInactiveItems"])]
+pub struct CloseOtherItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
+/// Closes all items in the pane.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
+/// Closes all items that have no unsaved changes.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +144,7 @@ pub struct CloseCleanItems {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the right of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -142,6 +153,7 @@ pub struct CloseItemsToTheRight {
     pub close_pinned: bool,
 }
 
+/// Closes all items to the left of the current item.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -150,6 +162,7 @@ pub struct CloseItemsToTheLeft {
     pub close_pinned: bool,
 }
 
+/// Reveals the current item in the project panel.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -158,6 +171,7 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+/// Opens the search interface with the specified configuration.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
@@ -173,25 +187,45 @@ pub struct DeploySearch {
 actions!(
     pane,
     [
+        /// Activates the previous item in the pane.
         ActivatePreviousItem,
+        /// Activates the next item in the pane.
         ActivateNextItem,
+        /// Activates the last item in the pane.
         ActivateLastItem,
+        /// Switches to the alternate file.
         AlternateFile,
+        /// Navigates back in history.
         GoBack,
+        /// Navigates forward in history.
         GoForward,
+        /// Joins this pane into the next pane.
         JoinIntoNext,
+        /// Joins all panes into one.
         JoinAll,
+        /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Splits the pane to the left.
         SplitLeft,
+        /// Splits the pane upward.
         SplitUp,
+        /// Splits the pane to the right.
         SplitRight,
+        /// Splits the pane downward.
         SplitDown,
+        /// Splits the pane horizontally.
         SplitHorizontal,
+        /// Splits the pane vertically.
         SplitVertical,
+        /// Swaps the current item with the one to the left.
         SwapItemLeft,
+        /// Swaps the current item with the one to the right.
         SwapItemRight,
+        /// Toggles preview mode for the current tab.
         TogglePreviewTab,
+        /// Toggles pin status for the current tab.
         TogglePinTab,
+        /// Unpins all tabs in the pane.
         UnpinAllTabs,
     ]
 );
@@ -332,6 +366,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
 }
@@ -473,6 +508,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
         }
     }
@@ -584,8 +620,16 @@ impl Pane {
             project::Event::DiskBasedDiagnosticsFinished { .. }
             | project::Event::DiagnosticsUpdated { .. } => {
                 if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
-                    self.update_diagnostics(cx);
-                    cx.notify();
+                    self.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.update_diagnostics(cx);
+                            cx.notify();
+                        })
+                        .log_err();
+                    });
                 }
             }
             _ => {}
@@ -1311,9 +1355,10 @@ impl Pane {
         })
     }
 
-    pub fn close_inactive_items(
+    pub fn close_other_items(
         &mut self,
-        action: &CloseInactiveItems,
+        action: &CloseOtherItems,
+        target_item_id: Option<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1321,7 +1366,11 @@ impl Pane {
             return Task::ready(Ok(()));
         }
 
-        let active_item_id = self.active_item_id();
+        let active_item_id = match target_item_id {
+            Some(result) => result,
+            None => self.active_item_id(),
+        };
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
@@ -2521,7 +2570,7 @@ impl Pane {
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
         right_click_menu(ix)
-            .trigger(|_| tab)
+            .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
@@ -2530,7 +2579,7 @@ impl Pane {
                         save_intent: None,
                         close_pinned: true,
                     };
-                    let close_inactive_items_action = CloseInactiveItems {
+                    let close_inactive_items_action = CloseOtherItems {
                         save_intent: None,
                         close_pinned: false,
                     };
@@ -2562,8 +2611,9 @@ impl Pane {
                                     .action(Box::new(close_inactive_items_action.clone()))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                        pane.close_inactive_items(
+                                        pane.close_other_items(
                                             &close_inactive_items_action,
+                                            Some(item_id),
                                             window,
                                             cx,
                                         )
@@ -2703,9 +2753,7 @@ impl Pane {
                                 .when(visible_in_project_panel, |menu| {
                                     menu.entry(
                                         "Reveal In Project Panel",
-                                        Some(Box::new(RevealInProjectPanel {
-                                            entry_id: Some(entry_id),
-                                        })),
+                                        Some(Box::new(RevealInProjectPanel::default())),
                                         window.handler_for(&pane, move |pane, _, cx| {
                                             pane.project
                                                 .update(cx, |_, cx| {
@@ -3474,8 +3522,8 @@ impl Render for Pane {
                 }),
             )
             .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseInactiveItems, window, cx| {
-                    pane.close_inactive_items(action, window, cx)
+                cx.listener(|pane: &mut Self, action: &CloseOtherItems, window, cx| {
+                    pane.close_other_items(action, None, window, cx)
                         .detach_and_log_err(cx);
                 }),
             )
@@ -5806,11 +5854,12 @@ mod tests {
         assert_item_labels(&pane, ["A!", "B!", "C", "D", "E*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )
@@ -5818,6 +5867,43 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_running_close_inactive_items_via_an_inactive_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_other_items(
+                &CloseOtherItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                Some(item_b.item_id()),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*"], cx);
     }
 
     #[gpui::test]
@@ -6171,11 +6257,12 @@ mod tests {
         .unwrap();
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )

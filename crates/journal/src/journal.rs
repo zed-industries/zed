@@ -13,7 +13,13 @@ use std::{
 };
 use workspace::{AppState, OpenVisible, Workspace};
 
-actions!(journal, [NewJournalEntry]);
+actions!(
+    journal,
+    [
+        /// Creates a new journal entry for today.
+        NewJournalEntry
+    ]
+);
 
 /// Settings specific to journaling
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

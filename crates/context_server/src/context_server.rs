@@ -1,4 +1,5 @@
 pub mod client;
+pub mod listener;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -29,6 +30,7 @@ impl Display for ContextServerId {
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
+    #[serde(rename = "command")]
     pub path: String,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,

@@ -37,7 +37,9 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{
+    ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -269,7 +271,6 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
-                        render_in_minimap: true,
                     }
                 }),
         );
@@ -538,7 +539,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -1064,7 +1065,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system.layout_line(&line, font_size, &runs)
+        text_system.layout_line(&line, font_size, &runs, None)
     }
 
     pub fn x_for_display_point(
@@ -1661,7 +1662,6 @@ pub mod tests {
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
-                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -2027,7 +2027,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2225,7 +2224,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2235,7 +2233,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2342,7 +2339,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             )
@@ -2418,7 +2414,6 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );

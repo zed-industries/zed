@@ -12,6 +12,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+  DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
 
 jobs:
   style:
@@ -51,13 +54,38 @@ jobs:
       - name: Run tests
         uses: ./.github/actions/run_tests
 
+  windows-tests:
+    timeout-minutes: 60
+    name: Run tests on Windows
+    if: github.repository_owner == 'zed-industries'
+    runs-on: [self-hosted, Windows, X64]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Configure CI
+        run: |
+          New-Item -ItemType Directory -Path "./../.cargo" -Force
+          Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
+
+      - name: Run tests
+        uses: ./.github/actions/run_tests_windows
+
+      - name: Limit target directory size
+        run: ./script/clear-target-dir-if-larger-than.ps1 1024
+
+      - name: Clean CI config file
+        if: always()
+        run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
+
   bundle-mac:
     timeout-minutes: 60
     name: Create a macOS bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - bundle
+      - self-mini-macos
     needs: tests
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -65,9 +93,6 @@ jobs:
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -99,10 +124,6 @@ jobs:
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -110,7 +131,7 @@ jobs:
           clean: false
 
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
@@ -138,10 +159,6 @@ jobs:
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -169,12 +186,9 @@ jobs:
 
   freebsd:
     timeout-minutes: 60
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
-    env:
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     name: Build Zed on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
@@ -213,9 +227,48 @@ jobs:
 
   bundle-nix:
     name: Build and cache Nix package
+    if: false
     needs: tests
     secrets: inherit
     uses: ./.github/workflows/nix.yml
+
+  bundle-windows-x64:
+    timeout-minutes: 60
+    name: Create a Windows installer
+    if: github.repository_owner == 'zed-industries'
+    runs-on: [self-hosted, Windows, X64]
+    needs: windows-tests
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Set release channel to nightly
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = git rev-parse --short HEAD
+          Write-Host "Publishing version: $version on release channel nightly"
+          "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+
+      - name: Build Zed installer
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1
+
+      - name: Upload Zed Nightly
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/upload-nightly.ps1 windows
 
   update-nightly-tag:
     name: Update nightly tag
@@ -225,6 +278,7 @@ jobs:
       - bundle-mac
       - bundle-linux-x86
       - bundle-linux-arm
+      - bundle-windows-x64
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
