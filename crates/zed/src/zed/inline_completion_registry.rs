@@ -1,5 +1,4 @@
-use agent_settings::AgentSettings;
-use client::{Client, UserStore};
+use client::{Client, DisableAiSettings, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
@@ -15,7 +14,7 @@ use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    if AgentSettings::get_global(cx).disable_ai {
+    if DisableAiSettings::get_global(cx).disable_ai {
         return;
     }
 
@@ -48,8 +47,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
-            // Skip assigning edit prediction provider if AI is disabled
-            if !AgentSettings::get_global(cx).disable_ai {
+            if !DisableAiSettings::get_global(cx).disable_ai {
                 let provider = all_language_settings(None, cx).edit_predictions.provider;
                 assign_edit_prediction_provider(
                     editor,

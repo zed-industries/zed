@@ -151,6 +151,7 @@ impl Settings for ProxySettings {
 
 pub fn init_settings(cx: &mut App) {
     TelemetrySettings::register(cx);
+    DisableAiSettings::register(cx);
     ClientSettings::register(cx);
     ProxySettings::register(cx);
 }
@@ -539,6 +540,32 @@ impl settings::Settings for TelemetrySettings {
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
     }
+}
+
+#[derive(Copy, Clone, Deserialize, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+/// Whether to disable all AI features in Zed.
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct DisableAiSettingsContent {
+    /// Whether to disable all AI features in Zed.
+    ///
+    /// Default: false
+    pub disable_ai: Option<bool>,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = DisableAiSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        sources.json_merge()
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Client {

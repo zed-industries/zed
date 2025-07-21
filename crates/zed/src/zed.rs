@@ -9,12 +9,12 @@ mod quick_action_bar;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_settings::AgentSettings;
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
+use client::DisableAiSettings;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
@@ -357,7 +357,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            if !AgentSettings::get_global(cx).disable_ai {
+            if !DisableAiSettings::get_global(cx).disable_ai {
                 status_bar.add_right_item(edit_prediction_button, window, cx);
             }
             status_bar.add_right_item(active_buffer_language, window, cx);
@@ -540,7 +540,7 @@ fn initialize_panels(
         })?;
 
         let is_assistant2_enabled =
-            !cfg!(test) && !cx.update(|_, cx| AgentSettings::get_global(cx).disable_ai)?;
+            !cfg!(test) && !cx.update(|_, cx| DisableAiSettings::get_global(cx).disable_ai)?;
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
                 agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())

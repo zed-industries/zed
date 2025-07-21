@@ -17,7 +17,6 @@ doctest = false
 test-support = []
 
 [dependencies]
-agent_settings.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 client.workspace = true

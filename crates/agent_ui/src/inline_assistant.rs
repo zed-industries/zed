@@ -16,7 +16,7 @@ use agent::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
+use client::{DisableAiSettings, telemetry::Telemetry};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::SelectionEffects;
 use editor::{
@@ -176,7 +176,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = !AgentSettings::get_global(cx).disable_ai;
+        let is_assistant2_enabled = !DisableAiSettings::get_global(cx).disable_ai;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {

@@ -46,7 +46,6 @@ pub enum NotifyWhenAgentWaiting {
 #[derive(Default, Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
-    pub disable_ai: bool,
     pub button: bool,
     pub dock: AgentDockPosition,
     pub default_width: Pixels,
@@ -220,10 +219,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    disable_ai: Option<bool>,
     /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
@@ -405,7 +400,6 @@ impl Settings for AgentSettings {
 
         for value in sources.defaults_and_customizations() {
             merge(&mut settings.enabled, value.enabled);
-            merge(&mut settings.disable_ai, value.disable_ai);
             merge(&mut settings.button, value.button);
             merge(&mut settings.dock, value.dock);
             merge(

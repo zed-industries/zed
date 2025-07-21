@@ -1,5 +1,5 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
-use agent_settings::AgentSettings;
+use client::DisableAiSettings;
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
@@ -57,7 +57,7 @@ impl RateCompletionView {
 
 impl RateCompletionModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-        if AgentSettings::get_global(cx).disable_ai {
+        if DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
         if let Some(zeta) = Zeta::global(cx) {

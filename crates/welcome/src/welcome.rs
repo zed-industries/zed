@@ -1,5 +1,4 @@
-use agent_settings::AgentSettings;
-use client::{TelemetrySettings, telemetry::Telemetry};
+use client::{DisableAiSettings, TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -175,7 +174,7 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .when(!AgentSettings::get_global(cx).disable_ai, |parent| {
+                                    .when(!DisableAiSettings::get_global(cx).disable_ai, |parent| {
                                         parent.child(
                                             Button::new(
                                                 "edit_prediction_onboarding",

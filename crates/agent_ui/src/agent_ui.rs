@@ -31,7 +31,7 @@ use std::sync::Arc;
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::Client;
+use client::{Client, DisableAiSettings};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, actions};
@@ -207,7 +207,7 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    if AgentSettings::get_global(cx).disable_ai {
+    if DisableAiSettings::get_global(cx).disable_ai {
         return;
     }
     SlashCommandSettings::register(cx);

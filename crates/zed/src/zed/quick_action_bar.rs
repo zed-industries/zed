@@ -2,6 +2,7 @@ mod preview;
 mod repl_menu;
 
 use agent_settings::AgentSettings;
+use client::DisableAiSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -577,7 +578,7 @@ impl Render for QuickActionBar {
             .when(
                 AgentSettings::get_global(cx).enabled
                     && AgentSettings::get_global(cx).button
-                    && !AgentSettings::get_global(cx).disable_ai,
+                    && !DisableAiSettings::get_global(cx).disable_ai,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

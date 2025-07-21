@@ -22,16 +22,16 @@ mod web_search_tool;
 
 use std::sync::Arc;
 
-use agent_settings::AgentSettings;
 use assistant_tool::ToolRegistry;
+use client::DisableAiSettings;
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
+use settings::Settings;
 use web_search_tool::WebSearchTool;
 
-use settings::Settings;
 pub(crate) use templates::*;
 
 use crate::create_directory_tool::CreateDirectoryTool;
@@ -53,7 +53,7 @@ pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
-    if AgentSettings::get_global(cx).disable_ai {
+    if DisableAiSettings::get_global(cx).disable_ai {
         return;
     }
     assistant_tool::init(cx);

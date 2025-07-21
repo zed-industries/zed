@@ -15,7 +15,6 @@ path = "src/welcome.rs"
 test-support = []
 
 [dependencies]
-agent_settings.workspace = true
 anyhow.workspace = true
 client.workspace = true
 component.workspace = true

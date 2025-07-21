@@ -12,6 +12,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use client::DisableAiSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -1806,7 +1807,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || AgentSettings::get_global(cx).disable_ai {
+        if !self.can_commit() || DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -2933,7 +2934,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if AgentSettings::get_global(cx).disable_ai {
+        if DisableAiSettings::get_global(cx).disable_ai {
             return None;
         }
         current_language_model(cx).is_some().then(|| {
