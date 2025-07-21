@@ -6,6 +6,8 @@
 //! of messages.
 
 use anyhow::Result;
+use gpui::AsyncApp;
+use serde_json::Value;
 
 use crate::client::Client;
 use crate::types::{self, Notification, Request};
@@ -97,5 +99,12 @@ impl InitializedContextServerProtocol {
 
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
         self.inner.notify(T::METHOD, params)
+    }
+
+    pub fn on_notification<F>(&self, method: &'static str, f: F)
+    where
+        F: 'static + Send + FnMut(Value, AsyncApp),
+    {
+        self.inner.on_notification(method, f);
     }
 }

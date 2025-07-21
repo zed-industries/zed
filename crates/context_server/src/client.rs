@@ -243,7 +243,6 @@ impl Client {
                     }
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
-                dbg!(&notification);
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
                     handler(notification.params.unwrap_or(Value::Null), cx.clone());
