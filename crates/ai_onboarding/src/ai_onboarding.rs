@@ -118,6 +118,12 @@ impl ZedAiOnboarding {
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
+                    .child(
+                        Label::new("(Current Plan)")
+                            .size(LabelSize::Small)
+                            .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
+                            .buffer_font(cx),
+                    )
                     .child(Divider::horizontal()),
             )
             .child(
@@ -152,43 +158,61 @@ impl ZedAiOnboarding {
     }
 
     fn render_pro_plan_section(&self, cx: &mut App) -> impl IntoElement {
-        let (button_label, button_url) = if self.account_too_young {
-            ("Start with Pro", zed_urls::upgrade_to_zed_pro_url(cx))
-        } else {
-            ("Start Pro Trial", zed_urls::account_url(cx))
-        };
-
-        v_flex()
-            .mt_2()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Label::new("Pro")
-                            .size(LabelSize::Small)
-                            .color(Color::Accent)
-                            .buffer_font(cx),
-                    )
-                    .child(Divider::horizontal()),
-            )
-            .child(
-                List::new()
-                    // .child(BulletItem::new("500 prompts per month with Claude models"))
-                    // .child(BulletItem::new("Unlimited edit predictions"))
-                    .when(!self.account_too_young, |this| {
-                        this.child(self.render_trial_content())
-                            .child(BulletItem::new(
-                                "Try it out for 14 days with no charge, no credit card required",
-                            ))
-                    }),
-            )
-            .child(
-                Button::new("pro", button_label)
-                    .full_width()
-                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(move |_, _window, cx| cx.open_url(&button_url)),
-            )
+        v_flex().mt_2().gap_1().map(|this| {
+            if self.account_too_young {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Label::new("Pro")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent)
+                                .buffer_font(cx),
+                        )
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    List::new()
+                        .child(BulletItem::new("500 prompts per month with Claude models"))
+                        .child(BulletItem::new(
+                            "Unlimited accepted edit predictions using our open-source Zeta model",
+                        )),
+                )
+                .child(
+                    Button::new("pro", "Start with Pro")
+                        .full_width()
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(move |_, _window, cx| {
+                            cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                        }),
+                )
+            } else {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Label::new("Pro Trial")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent)
+                                .buffer_font(cx),
+                        )
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    List::new()
+                        .child(self.render_trial_content())
+                        .child(BulletItem::new(
+                            "Try it out for 14 days with no charge and no credit card required",
+                        )),
+                )
+                .child(
+                    Button::new("pro", "Start Pro Trial")
+                        .full_width()
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(move |_, _window, cx| cx.open_url(&zed_urls::account_url(cx))),
+                )
+            }
+        })
     }
 
     fn render_accept_terms_of_service(&self) -> Div {
@@ -223,7 +247,7 @@ impl ZedAiOnboarding {
 
     fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
         const SIGN_IN_DISCLAIMER: &str =
-            "Sign in to start using AI in Zed with a free trial of Zed Pro, which includes:";
+            "Sign in to start using AI in Zed with a free trial of the Pro plan, which includes:";
 
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 

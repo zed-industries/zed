@@ -3074,7 +3074,15 @@ impl Render for AgentPanel {
                                 .into_any(),
                         )
                     })
-                    .child(h_flex().child(message_editor.clone()))
+                    .child(
+                        h_flex()
+                            .when(
+                                !LanguageModelRegistry::read_global(cx)
+                                    .has_authenticated_provider(cx),
+                                |this| this.invisible(),
+                            )
+                            .child(message_editor.clone()),
+                    )
                     .child(self.render_drag_target(cx)),
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
                     .relative()

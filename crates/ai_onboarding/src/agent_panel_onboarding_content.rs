@@ -135,6 +135,11 @@ impl AgentPanelOnboarding {
 
 impl Render for AgentPanelOnboarding {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let enrolled_in_trial = matches!(
+            self.user_store.read(cx).current_plan(),
+            Some(proto::Plan::ZedProTrial)
+        );
+
         AgentPanelOnboardingCard::new()
             .child(ZedAiOnboarding::new(
                 self.client.clone(),
@@ -142,6 +147,12 @@ impl Render for AgentPanelOnboarding {
                 self.continue_with_zed_ai.clone(),
                 cx,
             ))
-            .child(self.render_api_keys_section(cx))
+            .map(|this| {
+                if enrolled_in_trial {
+                    this
+                } else {
+                    this.child(self.render_api_keys_section(cx))
+                }
+            })
     }
 }
