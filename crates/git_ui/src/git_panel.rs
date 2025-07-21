@@ -2967,15 +2967,16 @@ impl GitPanel {
             }
 
             let can_commit = self.can_commit();
-            let _editor_focus_handle = self.commit_editor.focus_handle(cx);
+            let editor_focus_handle = self.commit_editor.focus_handle(cx);
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
                 .tooltip(move |window, cx| {
                     if can_commit {
-                        Tooltip::for_action(
+                        Tooltip::for_action_in(
                             "Generate Commit Message",
                             &git::GenerateCommitMessage,
+                            &editor_focus_handle,
                             window,
                             cx,
                         )
