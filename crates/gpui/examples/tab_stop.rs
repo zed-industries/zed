@@ -125,7 +125,9 @@ impl Render for Example {
                         cx.listener(move |this, _, window, cx| {
                             this.last_handle = window.focused(cx);
                             this.modal_open = true;
-                            first_handle.as_ref().map(|handle| window.focus(handle));
+                            if let Some(handle) = first_handle {
+                                window.focus(handle);
+                            }
                             cx.notify();
                         })
                     })),
@@ -159,7 +161,9 @@ impl Render for Example {
                                     cx.stop_propagation();
 
                                     this.modal_open = false;
-                                    this.last_handle.as_ref().map(|handle| window.focus(handle));
+                                    if let Some(handle) = this.last_handle.as_ref() {
+                                        window.focus(handle);
+                                    }
                                     cx.notify();
                                 }))
                                 .child("Focus cycle in Modal")
