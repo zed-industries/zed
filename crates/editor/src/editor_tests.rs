@@ -55,7 +55,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseInactiveItems, MoveItemToPaneInDirection, NavigationEntry,
+    CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
@@ -9568,6 +9568,100 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         cx.executor().start_waiting();
         save.await;
     }
+}
+
+#[gpui::test]
+async fn test_redo_after_non_format(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        // settings.defaults.format_on_save = Some(language_settings::FormatOnSave::Off);
+        // settings.defaults.remove_trailing_whitespace_on_save = Some(false);
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.txt"), "foo".into()).await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+
+    // let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    // language_registry.add(rust_lang());
+    // let mut fake_servers = language_registry.register_fake_lsp(
+    //     "Plain Text",
+    //     FakeLspAdapter {
+    //         capabilities: lsp::ServerCapabilities {
+    //             document_formatting_provider: Some(lsp::OneOf::Left(true)),
+    //             ..Default::default()
+    //         },
+    //         ..Default::default()
+    //     },
+    // );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
+    });
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+    // cx.executor().start_waiting();
+    // let fake_server = fake_servers.next().await.unwrap();
+
+    // fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+    //     move |params, _| async move {
+    //         unreachable!("should not have formatted");
+    //     },
+    // );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\n", window, cx)
+    });
+    cx.run_until_parked();
+    save(&editor, &project, cx).await;
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    async fn save(editor: &Entity<Editor>, project: &Entity<Project>, cx: &mut VisualTestContext) {
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
+
+    // save(&editor, &project, cx).await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+    save(&editor, &project, cx).await;
+    assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.redo(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
 }
 
 #[gpui::test]
@@ -21463,7 +21557,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21499,7 +21593,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), None, window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();

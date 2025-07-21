@@ -688,7 +688,7 @@ impl MemoryView {
                 menu = menu.action_disabled_when(
                     *memory_unreadable,
                     "Set Data Breakpoint",
-                    ToggleDataBreakpoint.boxed_clone(),
+                    ToggleDataBreakpoint { access_type: None }.boxed_clone(),
                 );
             }
             menu.context(self.focus_handle.clone())

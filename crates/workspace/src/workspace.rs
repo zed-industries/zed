@@ -2793,8 +2793,8 @@ impl Workspace {
 
         if retain_active_pane {
             let current_pane_close = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(
-                    &CloseInactiveItems {
+                pane.close_other_items(
+                    &CloseOtherItems {
                         save_intent: None,
                         close_pinned: false,
                     },
@@ -9471,8 +9471,8 @@ mod tests {
             );
         });
         let close_all_but_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },

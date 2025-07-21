@@ -2424,6 +2424,53 @@ impl Window {
         result
     }
 
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames.
+    pub fn use_keyed_state<S: 'static>(
+        &mut self,
+        key: impl Into<ElementId>,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
+    ) -> Entity<S> {
+        let current_view = self.current_view();
+        self.with_global_id(key.into(), |global_id, window| {
+            window.with_element_state(global_id, |state: Option<Entity<S>>, window| {
+                if let Some(state) = state {
+                    (state.clone(), state)
+                } else {
+                    let new_state = cx.new(|cx| init(window, cx));
+                    cx.observe(&new_state, move |_, cx| {
+                        cx.notify(current_view);
+                    })
+                    .detach();
+                    (new_state.clone(), new_state)
+                }
+            })
+        })
+    }
+
+    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
+    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_global_id(id.into(), |_, window| f(window))
+    }
+
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
+    ///
+    /// NOTE: This method uses the location of the caller to generate an ID for this state.
+    ///       If this is not sufficient to identify your state (e.g. you're rendering a list item),
+    ///       you can provide a custom ElementID using the `use_keyed_state` method.
+    #[track_caller]
+    pub fn use_state<S: 'static>(
+        &mut self,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
+    ) -> Entity<S> {
+        self.use_keyed_state(
+            ElementId::CodeLocation(*core::panic::Location::caller()),
+            cx,
+            init,
+        )
+    }
+
     /// Updates or initializes state for an element with the given id that lives across multiple
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
@@ -2658,7 +2705,7 @@ impl Window {
         path.color = color.opacity(opacity);
         self.next_frame
             .scene
-            .insert_primitive(path.apply_scale(scale_factor));
+            .insert_primitive(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -4577,6 +4624,8 @@ pub enum ElementId {
     NamedInteger(SharedString, u64),
     /// A path.
     Path(Arc<std::path::Path>),
+    /// A code location.
+    CodeLocation(core::panic::Location<'static>),
 }
 
 impl ElementId {
@@ -4596,6 +4645,7 @@ impl Display for ElementId {
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
+            ElementId::CodeLocation(location) => write!(f, "{}", location)?,
         }
 
         Ok(())

@@ -197,6 +197,11 @@ pub trait AppContext {
     where
         T: 'static;
 
+    /// Update a entity in the app context.
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
+    where
+        T: 'static;
+
     /// Read a entity from the app context.
     fn read_entity<T, R>(
         &self,

@@ -664,7 +664,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<ToolCallRequest> {
         let project = self.project.read(cx).languages().clone();
-        let Some((_, call)) = self.tool_call_mut(tool_call_id) else {
+        let Some((idx, call)) = self.tool_call_mut(tool_call_id) else {
             anyhow::bail!("Tool call not found");
         };
 
@@ -674,6 +674,8 @@ impl AcpThread {
             confirmation: ToolCallConfirmation::from_acp(confirmation, project, cx),
             respond_tx: tx,
         };
+
+        cx.emit(AcpThreadEvent::EntryUpdated(idx));
 
         Ok(ToolCallRequest {
             id: tool_call_id,
@@ -768,8 +770,13 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
-        call.content = new_content
-            .map(|new_content| ToolCallContent::from_acp(new_content, language_registry, cx));
+        if let Some(new_content) = new_content {
+            call.content = Some(ToolCallContent::from_acp(
+                new_content,
+                language_registry,
+                cx,
+            ));
+        }
 
         match &mut call.status {
             ToolCallStatus::Allowed { status } => {
