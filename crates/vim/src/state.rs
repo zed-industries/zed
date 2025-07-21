@@ -1044,6 +1044,8 @@ impl Operator {
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
             Operator::HelixMatch => "m".to_string(),
+            Operator::SelectNext => "]".to_string(),
+            Operator::SelectPrevious => "[".to_string(),
             _ => self.id().to_string(),
         }
     }

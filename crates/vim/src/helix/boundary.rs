@@ -3,6 +3,7 @@ use std::{error::Error, fmt::Display};
 use editor::{
     DisplayPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement,
 };
 use language::{CharClassifier, CharKind};
 use text::Bias;
@@ -19,7 +20,8 @@ impl Display for UnboundedErr {
 impl Error for UnboundedErr {}
 
 impl Object {
-    /// Returns the beginning of the inside of the closest object after the cursor if it can easily be found. Follows helix convention;
+    /// Returns the beginning of the inside of the closest object after the cursor if it can easily be found.
+    /// Follows helix convention.
     pub fn helix_next_start(
         self,
         map: &DisplaySnapshot,
@@ -32,7 +34,8 @@ impl Object {
             self.helix_is_start(right, left, classifier)
         })
     }
-    /// Returns the end of the inside of the closest object after the cursor if it can easily be found. Follows helix convention;
+    /// Returns the end of the inside of the closest object after the cursor if it can easily be found.
+    /// Follows helix convention.
     pub fn helix_next_end(
         self,
         map: &DisplaySnapshot,
@@ -45,7 +48,8 @@ impl Object {
             self.helix_is_end(right, left, classifier)
         })
     }
-    /// Returns the beginning of the inside of the closest object before the cursor if it can easily be found. Follows helix convention;
+    /// Returns the beginning of the inside of the closest object before the cursor if it can easily be found.
+    /// Follows helix convention.
     pub fn helix_previous_start(
         self,
         map: &DisplaySnapshot,
@@ -58,7 +62,8 @@ impl Object {
             self.helix_is_start(right, left, classifier)
         })
     }
-    /// Returns the end of the inside of the closest object before the cursor if it can easily be found. Follows helix convention;
+    /// Returns the end of the inside of the closest object before the cursor if it can easily be found.
+    /// Follows helix convention.
     pub fn helix_previous_end(
         self,
         map: &DisplaySnapshot,
@@ -81,10 +86,11 @@ impl Object {
         match self {
             Self::Word { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(is_word_start(left, right, classifier))
+                Ok(is_word_start(left, right, classifier) || is_buffer_start(left))
             }
             Self::Subword { ignore_punctuation } => {
-                todo!()
+                let classifier = classifier.ignore_punctuation(ignore_punctuation);
+                Ok(movement::is_subword_start(left, right, &classifier) || is_buffer_start(left))
             }
             Self::AngleBrackets => Ok(left == '<'),
             Self::BackQuotes => Ok(left == '`'),
@@ -106,10 +112,11 @@ impl Object {
         match self {
             Self::Word { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(is_word_end(left, right, classifier))
+                Ok(is_word_end(left, right, classifier) || is_buffer_end(right))
             }
             Self::Subword { ignore_punctuation } => {
-                todo!()
+                let classifier = classifier.ignore_punctuation(ignore_punctuation);
+                Ok(movement::is_subword_end(left, right, &classifier) || is_buffer_end(right))
             }
             Self::AngleBrackets => Ok(right == '>'),
             Self::BackQuotes => Ok(right == '`'),
@@ -136,7 +143,7 @@ fn try_find_boundary(
         .next()
         .unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.chars_at(offset) {
+    for ch in map.buffer_snapshot.chars_at(offset).chain(['\0']) {
         if is_boundary(prev_ch, ch)? {
             return Ok(Some(
                 map.clip_point(offset.to_display_point(map), Bias::Right),
@@ -157,13 +164,13 @@ fn try_find_preceding_boundary(
     let mut offset = from.to_offset(map, Bias::Right);
     let mut prev_ch = map.buffer_snapshot.chars_at(offset).next().unwrap_or('\0');
 
-    for ch in map.buffer_snapshot.reversed_chars_at(offset) {
+    for ch in map.buffer_snapshot.reversed_chars_at(offset).chain(['\0']) {
         if is_boundary(ch, prev_ch)? {
             return Ok(Some(
                 map.clip_point(offset.to_display_point(map), Bias::Right),
             ));
         }
-        offset -= ch.len_utf8();
+        offset = offset.saturating_sub(ch.len_utf8());
         prev_ch = ch;
     }
 
@@ -172,6 +179,10 @@ fn try_find_preceding_boundary(
 
 fn is_buffer_start(left: char) -> bool {
     left == '\0'
+}
+
+fn is_buffer_end(right: char) -> bool {
+    right == '\0'
 }
 
 fn is_word_start(left: char, right: char, classifier: CharClassifier) -> bool {

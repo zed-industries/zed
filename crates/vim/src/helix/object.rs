@@ -84,7 +84,8 @@ impl Object {
         }
     }
 
-    /// Returns the range of the object the cursor is over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    /// Returns the range of the object the cursor is over if it can be found with simple boundary checking.
+    /// Potentially none. Follows helix convention.
     fn current_bounded_object(
         self,
         map: &DisplaySnapshot,
@@ -116,7 +117,8 @@ impl Object {
         Ok(Some(prev_start..next_end))
     }
 
-    /// Returns the range of the next object the cursor is not over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    /// Returns the range of the next object the cursor is not over if it can be found with simple boundary checking.
+    /// Potentially none. Follows helix convention.
     fn next_bounded_object(
         self,
         map: &DisplaySnapshot,
@@ -138,7 +140,8 @@ impl Object {
         Ok(Some(next_start..end))
     }
 
-    /// Returns the previous range of the object the cursor not is over if it can be found with simple boundary checking. Potentially none. Follows helix convention.
+    /// Returns the previous range of the object the cursor not is over if it can be found with simple boundary checking.
+    /// Potentially none. Follows helix convention.
     fn previous_bounded_object(
         self,
         map: &DisplaySnapshot,
