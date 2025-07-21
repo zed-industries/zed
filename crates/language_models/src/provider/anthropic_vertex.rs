@@ -1078,7 +1078,7 @@ mod tests {
 
         let anthropic_request = into_anthropic(
             request,
-            "claude-3-5-sonnet".to_string(),
+            "claude-sonnet-4@20250514".to_string(),
             0.7,
             4096,
             ModelMode::Default,

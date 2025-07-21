@@ -38,16 +38,16 @@ pub enum ModelMode {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "claude-opus-4", alias = "claude-opus-4@20250514")]
+    #[serde(rename = "claude-opus-4@20250514")]
     ClaudeOpus4,
     #[serde(rename = "claude-opus-4-thinking")]
     ClaudeOpus4Thinking,
     #[default]
-    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4@20250514")]
+    #[serde(rename = "claude-sonnet-4@20250514")]
     ClaudeSonnet4,
     #[serde(rename = "claude-sonnet-4-thinking")]
     ClaudeSonnet4Thinking,
-    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet@20250219")]
+    #[serde(rename = "claude-3-7-sonnet@20250219")]
     Claude3_7Sonnet,
     #[serde(rename = "claude-3-7-sonnet-thinking")]
     Claude3_7SonnetThinking,
@@ -74,7 +74,7 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-opus-4") {
+        if id.starts_with("claude-opus-4-thinking") {
             return Ok(Self::ClaudeOpus4Thinking);
         }
 
@@ -82,7 +82,7 @@ impl Model {
             return Ok(Self::ClaudeOpus4);
         }
 
-        if id.starts_with("claude-sonnet-4") {
+        if id.starts_with("claude-sonnet-4-thinking") {
             return Ok(Self::ClaudeSonnet4Thinking);
         }
 
@@ -90,7 +90,7 @@ impl Model {
             return Ok(Self::ClaudeSonnet4);
         }
 
-        if id.starts_with("claude-3-7-sonnet") {
+        if id.starts_with("claude-3-7-sonnet-thinking") {
             return Ok(Self::Claude3_7SonnetThinking);
         }
 
@@ -104,11 +104,11 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::ClaudeOpus4 => "claude-opus-4@20250514",
-            Self::ClaudeOpus4Thinking => "claude-opus-4@20250514",
+            Self::ClaudeOpus4Thinking => "claude-opus-4-thinking@20250514",
             Self::ClaudeSonnet4 => "claude-sonnet-4@20250514",
-            Self::ClaudeSonnet4Thinking => "claude-sonnet-4@20250514",
+            Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking@20250514",
             Self::Claude3_7Sonnet => "	claude-3-7-sonnet@20250219",
-            Self::Claude3_7SonnetThinking => "	claude-3-7-sonnet@20250219",
+            Self::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking@20250219",
             Self::Custom { name, .. } => name,
         }
     }
@@ -118,19 +118,19 @@ impl Model {
         match self {
             Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4@20250514",
             Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4@20250514",
-            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "	claude-3-7-sonnet@20250219",
+            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => "claude-3-7-sonnet@20250219",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::ClaudeOpus4 => "Claude Opus 4",
-            Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
-            Self::ClaudeSonnet4 => "Claude Sonnet 4",
-            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
-            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
-            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
+            Self::ClaudeOpus4 => "Claude Opus 4 (VAI)",
+            Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking (VAI)",
+            Self::ClaudeSonnet4 => "Claude Sonnet 4 (VAI)",
+            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking (VAI)",
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet (VAI)",
+            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking (VAI)",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -175,7 +175,7 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking => 8_192,
+            | Self::Claude3_7SonnetThinking => 64_000,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
