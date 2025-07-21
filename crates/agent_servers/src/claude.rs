@@ -113,14 +113,9 @@ impl AgentServer for ClaudeCode {
                 let mut mode = ClaudeSessionMode::Start;
 
                 loop {
-                    let mut child = spawn_claude(
-                        &command,
-                        mode,
-                        dbg!(session_id),
-                        &mcp_config_path,
-                        &root_dir,
-                    )
-                    .await?;
+                    let mut child =
+                        spawn_claude(&command, mode, session_id, &mcp_config_path, &root_dir)
+                            .await?;
                     mode = ClaudeSessionMode::Resume;
 
                     let pid = child.id();
@@ -208,7 +203,7 @@ fn send_interrupt(pid: libc::pid_t) -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
-fn send_interrupt(pid: i32) -> anyhow::Result<()> {
+fn send_interrupt(_pid: i32) -> anyhow::Result<()> {
     panic!("Cancel not implemented on Windows")
 }
 
