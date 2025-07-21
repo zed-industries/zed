@@ -148,6 +148,7 @@ impl Render for Example {
                         .child(
                             div()
                                 .id("modal")
+                                .tab_group()
                                 .flex()
                                 .flex_col()
                                 .gap_3()
@@ -156,7 +157,6 @@ impl Render for Example {
                                 .bg(gpui::white())
                                 .shadow_md()
                                 .rounded_md()
-                                .tab_group("modal1")
                                 .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                                     cx.stop_propagation();
 

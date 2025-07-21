@@ -629,11 +629,11 @@ pub trait InteractiveElement: Sized {
     /// Set child element into focus group limit.
     ///
     /// When this is enabled, the window focus cycle will be limited to the child elements.
-    fn tab_group(mut self, group_id: impl Into<ElementId>) -> Self
+    fn tab_group(mut self) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().tab_group = Some(group_id.into());
+        self.interactivity().tab_group = true;
         self
     }
 
@@ -1405,8 +1405,7 @@ impl Element for Div {
             .map(|provider| provider.provide(window, cx));
 
         window.with_image_cache(image_cache, |window| {
-            let tab_group = self.interactivity.tab_group.clone();
-            window.with_tab_group(tab_group, |window| {
+            window.with_tab_group(self.interactivity.tab_group, |window| {
                 self.interactivity.paint(
                     global_id,
                     inspector_id,
@@ -1449,7 +1448,7 @@ pub struct Interactivity {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tab_index: Option<isize>,
-    pub(crate) tab_group: Option<ElementId>,
+    pub(crate) tab_group: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{ElementId, FocusHandle, FocusId, GlobalElementId};
+use crate::{FocusHandle, FocusId, GlobalElementId};
 
 /// Represents a collection of tab handles.
 ///
@@ -11,10 +11,7 @@ pub(crate) struct TabHandles {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) struct TabGroupId {
-    pub(crate) global_id: Option<Arc<GlobalElementId>>,
-    pub(crate) id: ElementId,
-}
+pub(crate) struct TabGroupId(pub(crate) Arc<GlobalElementId>);
 
 impl TabHandles {
     pub(crate) fn insert(&mut self, focus_handle: FocusHandle) {
@@ -98,7 +95,7 @@ impl TabHandles {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusMap, TabGroupId, TabHandles};
+    use crate::{FocusHandle, FocusMap, GlobalElementId, TabGroupId, TabHandles};
     use std::sync::Arc;
 
     #[test]
@@ -106,10 +103,9 @@ mod tests {
         let focus_map = Arc::new(FocusMap::default());
         let mut tab = TabHandles::default();
 
-        let group_id = TabGroupId {
-            global_id: None,
-            id: "group1".into(),
-        };
+        let group_id = TabGroupId(Arc::new(GlobalElementId(smallvec::smallvec![
+            "group1".into()
+        ])));
 
         let focus_handles = vec![
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),

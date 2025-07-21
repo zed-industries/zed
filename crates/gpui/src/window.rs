@@ -4321,19 +4321,15 @@ impl Window {
 
     /// Acquire a tab_group for the given ElementId.
     /// Only valid for the duration of the provided closure.
-    pub(crate) fn with_tab_group<R>(
-        &mut self,
-        tab_group: Option<ElementId>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        if let Some(tab_group) = tab_group.as_ref() {
-            self.tab_group_stack.push(TabGroupId {
-                global_id: Some(Arc::new(GlobalElementId(self.element_id_stack.clone()))),
-                id: tab_group.clone(),
-            });
+    pub(crate) fn with_tab_group<R>(&mut self, group: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+        if group {
+            self.tab_group_stack
+                .push(TabGroupId(Arc::new(GlobalElementId(
+                    self.element_id_stack.clone(),
+                ))));
         }
         let result = f(self);
-        if let Some(_) = tab_group {
+        if group {
             self.tab_group_stack.pop();
         }
         result
