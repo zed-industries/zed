@@ -678,6 +678,12 @@ pub fn wrap_for_ssh(
     (program, args)
 }
 
+#[cfg(not(target_os = "windows"))]
+fn quote_shell_invocation(shell_invocation: String) -> String {
+    shell_invocation
+}
+
+#[cfg(target_os = "windows")]
 fn quote_shell_invocation(shell_invocation: String) -> String {
     fn need_quote(arg_bytes: &[u8]) -> bool {
         arg_bytes.iter().any(|c| *c == b' ' || *c == b'\t') || arg_bytes.is_empty()
