@@ -146,7 +146,7 @@ impl ZedAiOnboarding {
         let (button_label, button_url) = if self.account_too_young {
             ("Start with Pro", zed_urls::upgrade_to_zed_pro_url(cx))
         } else {
-            ("Start Pro Trial", zed_urls::account_url(cx))
+            ("Start Pro Trial", zed_urls::start_trial_url(cx))
         };
 
         v_flex()
