@@ -553,8 +553,7 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-# When updating scap rev, also update it in .config/hakari.toml
-scap = { git = "https://github.com/zed-industries/scap", rev = "270538dc780f5240723233ff901e1054641ed318", default-features = false }
+scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -708,6 +707,7 @@ features = [
 [patch.crates-io]
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }

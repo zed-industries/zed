@@ -440,7 +440,7 @@ impl Platform for WindowsPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         crate::platform::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
