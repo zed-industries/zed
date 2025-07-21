@@ -72,11 +72,6 @@ enum SupermavenButtonStatus {
 
 impl Render for InlineCompletionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Hide the button entirely if AI is disabled
-        if AgentSettings::get_global(cx).disable_ai {
-            return div();
-        }
-
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
