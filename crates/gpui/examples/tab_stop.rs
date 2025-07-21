@@ -1,6 +1,7 @@
 use gpui::{
-    App, Application, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString,
-    Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+    App, Application, Bounds, Context, Div, ElementId, Entity, FocusHandle, KeyBinding,
+    SharedString, Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px,
+    size,
 };
 
 actions!(example, [Tab, TabPrev]);
@@ -9,7 +10,10 @@ struct Example {
     items: Vec<FocusHandle>,
     modal_items: Vec<FocusHandle>,
     message: SharedString,
-    modal_open: bool,
+    modal1_focus_handle: FocusHandle,
+    modal1_open: Entity<bool>,
+    modal2_focus_handle: FocusHandle,
+    modal2_open: Entity<bool>,
     last_focused: Option<FocusHandle>,
 }
 
@@ -32,7 +36,10 @@ impl Example {
             items,
             modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
-            modal_open: false,
+            modal1_focus_handle: cx.focus_handle().tab_stop(true),
+            modal1_open: cx.new(|_| false),
+            modal2_focus_handle: cx.focus_handle().tab_stop(true),
+            modal2_open: cx.new(|_| false),
             last_focused: None,
         }
     }
@@ -48,51 +55,101 @@ impl Example {
     }
 }
 
+fn button(id: impl Into<ElementId>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .h_10()
+        .flex_1()
+        .flex()
+        .justify_center()
+        .items_center()
+        .border_1()
+        .border_color(gpui::black())
+        .bg(gpui::black())
+        .text_color(gpui::white())
+        .focus(|this| this.border_color(gpui::blue()))
+        .shadow_sm()
+}
+
+fn input(
+    id: impl Into<ElementId>,
+    focus_handle: &FocusHandle,
+    window: &mut Window,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .track_focus(focus_handle)
+        .h_10()
+        .w_full()
+        .flex()
+        .justify_center()
+        .items_center()
+        .border_1()
+        .border_color(gpui::black())
+        .when(
+            focus_handle.tab_stop && focus_handle.is_focused(window),
+            |this| this.border_color(gpui::blue()),
+        )
+        .map(|this| match focus_handle.tab_stop {
+            true => this
+                .hover(|this| this.bg(gpui::black().opacity(0.1)))
+                .child(format!("tab_index: {}", focus_handle.tab_index)),
+            false => this.opacity(0.4).child("tab_stop: false"),
+        })
+}
+
+fn modal<E>(
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
+    open_state: Entity<bool>,
+    children: impl IntoIterator<Item = E>,
+    cx: &mut Context<Example>,
+) -> Stateful<Div>
+where
+    E: IntoElement,
+{
+    div()
+        .id(id)
+        .tab_group()
+        .occlude()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(gpui::black().opacity(0.5))
+        .child(
+            div()
+                .id("modal")
+                .flex()
+                .flex_col()
+                .gap_3()
+                .w(px(450.))
+                .p_5()
+                .bg(gpui::white())
+                .shadow_md()
+                .rounded_md()
+                .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+
+                    open_state.update(cx, |open, _| {
+                        *open = false;
+                    });
+                    if let Some(handle) = this.last_focused.as_ref() {
+                        window.focus(handle);
+                    }
+                    cx.notify();
+                }))
+                .child(title.into())
+                .children(children),
+        )
+}
+
 impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        fn button(id: impl Into<ElementId>) -> Stateful<Div> {
-            div()
-                .id(id)
-                .h_10()
-                .flex_1()
-                .flex()
-                .justify_center()
-                .items_center()
-                .border_1()
-                .border_color(gpui::black())
-                .bg(gpui::black())
-                .text_color(gpui::white())
-                .focus(|this| this.border_color(gpui::blue()))
-                .shadow_sm()
-        }
-
-        fn input(
-            id: impl Into<ElementId>,
-            focus_handle: &FocusHandle,
-            window: &mut Window,
-        ) -> Stateful<Div> {
-            div()
-                .id(id)
-                .track_focus(focus_handle)
-                .h_10()
-                .w_full()
-                .flex()
-                .justify_center()
-                .items_center()
-                .border_1()
-                .border_color(gpui::black())
-                .when(
-                    focus_handle.tab_stop && focus_handle.is_focused(window),
-                    |this| this.border_color(gpui::blue()),
-                )
-                .map(|this| match focus_handle.tab_stop {
-                    true => this
-                        .hover(|this| this.bg(gpui::black().opacity(0.1)))
-                        .child(format!("tab_index: {}", focus_handle.tab_index)),
-                    false => this.opacity(0.4).child("tab_stop: false"),
-                })
-        }
-
         div()
             .id("app")
             .on_action(cx.listener(Self::on_tab))
@@ -120,59 +177,54 @@ impl Render for Example {
                     .items_center()
                     .child(button("el1").tab_index(4).child("Button 1"))
                     .child(button("el2").tab_index(5).child("Button 2"))
-                    .child(button("open-modal").child("Open Modal...").on_click({
+                    .child(button("open-modal1").child("Open Modal...").on_click({
                         let first_handle = self.modal_items.first().cloned();
                         cx.listener(move |this, _, window, cx| {
                             this.last_focused = window.focused(cx);
-                            this.modal_open = true;
+                            this.modal1_open.update(cx, |open, _| {
+                                *open = true;
+                            });
                             if let Some(handle) = first_handle.as_ref() {
                                 window.focus(handle);
                             }
                             cx.notify();
                         })
+                    }))
+                    .child(button("open-modal2").child("Other Modal...").on_click({
+                        cx.listener(move |this, _, window, cx| {
+                            this.last_focused = window.focused(cx);
+                            this.modal2_focus_handle.focus(window);
+                            this.modal2_open.update(cx, |open, _| {
+                                *open = true;
+                            });
+                            cx.notify();
+                        })
                     })),
             )
-            .when(self.modal_open, |this| {
+            .when(*self.modal1_open.read(cx), |this| {
                 this.child(
-                    div()
-                        .id("modal-overlay")
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(gpui::black().opacity(0.5))
-                        .child(
-                            div()
-                                .id("modal")
-                                .tab_group()
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .w(px(450.))
-                                .p_5()
-                                .bg(gpui::white())
-                                .shadow_md()
-                                .rounded_md()
-                                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                                    cx.stop_propagation();
-
-                                    this.modal_open = false;
-                                    if let Some(handle) = this.last_focused.as_ref() {
-                                        window.focus(handle);
-                                    }
-                                    cx.notify();
-                                }))
-                                .child("Focus cycle in Modal")
-                                .children(self.modal_items.clone().into_iter().enumerate().map(
-                                    |(ix, item_handle)| {
-                                        input(("modal-input", ix), &item_handle, window)
-                                    },
-                                )),
+                    modal(
+                        "modal1",
+                        "Focus cycle in Modal",
+                        self.modal1_open.clone(),
+                        self.modal_items.clone().into_iter().enumerate().map(
+                            |(ix, item_handle)| input(("modal-input", ix), &item_handle, window),
                         ),
+                        cx,
+                    )
+                    .track_focus(&self.modal1_focus_handle),
+                )
+            })
+            .when(*self.modal2_open.read(cx), |this| {
+                this.child(
+                    modal(
+                        "modal2",
+                        "Empty Modal will block focus",
+                        self.modal2_open.clone(),
+                        vec![div().child("This is a empty modal.")],
+                        cx,
+                    )
+                    .track_focus(&self.modal2_focus_handle),
                 )
             })
     }
