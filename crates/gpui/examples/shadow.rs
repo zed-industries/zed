@@ -569,17 +569,19 @@ impl Render for Shadow {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1000.0), px(800.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| Shadow {}),
-        )
-        .unwrap();
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(1000.0), px(800.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| Shadow {}),
+            )
+            .unwrap();
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        })
+        .run();
 }

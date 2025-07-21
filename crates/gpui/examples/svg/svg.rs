@@ -72,7 +72,7 @@ fn main() {
         .with_assets(Assets {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples"),
         })
-        .run(|cx: &mut App| {
+        .add_plugins(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
             cx.open_window(
                 WindowOptions {
@@ -83,5 +83,6 @@ fn main() {
             )
             .unwrap();
             cx.activate(true);
-        });
+        })
+        .run();
 }

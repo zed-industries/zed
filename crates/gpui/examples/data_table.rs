@@ -448,27 +448,29 @@ impl Render for DataTable {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        cx.open_window(
-            WindowOptions {
-                focus: true,
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(1280.0), px(1000.0)),
-                    cx,
-                ))),
-                ..Default::default()
-            },
-            |_, cx| {
-                cx.new(|_| {
-                    let mut table = DataTable::new();
-                    table.generate();
-                    table
-                })
-            },
-        )
-        .unwrap();
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            cx.open_window(
+                WindowOptions {
+                    focus: true,
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                        None,
+                        size(px(1280.0), px(1000.0)),
+                        cx,
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|_| {
+                        let mut table = DataTable::new();
+                        table.generate();
+                        table
+                    })
+                },
+            )
+            .unwrap();
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        })
+        .run();
 }

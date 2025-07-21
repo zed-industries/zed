@@ -211,29 +211,31 @@ impl Render for WindowDemo {
 actions!(window, [Quit]);
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
 
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.new(|cx| {
-                    cx.observe_window_bounds(window, move |_, window, _| {
-                        println!("Window bounds changed: {:?}", window.bounds());
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        cx.observe_window_bounds(window, move |_, window, _| {
+                            println!("Window bounds changed: {:?}", window.bounds());
+                        })
+                        .detach();
+
+                        WindowDemo {}
                     })
-                    .detach();
+                },
+            )
+            .unwrap();
 
-                    WindowDemo {}
-                })
-            },
-        )
-        .unwrap();
-
-        cx.activate(true);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-    });
+            cx.activate(true);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        })
+        .run();
 }

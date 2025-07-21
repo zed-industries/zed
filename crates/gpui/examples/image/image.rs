@@ -148,7 +148,7 @@ fn main() {
         .with_assets(Assets {
             base: manifest_dir.join("examples"),
         })
-        .run(move |cx: &mut App| {
+        .add_plugins(move |cx: &mut App| {
             let http_client = ReqwestClient::user_agent("gpui example").unwrap();
             cx.set_http_client(Arc::new(http_client));
 
@@ -184,5 +184,6 @@ fn main() {
                 })
             })
             .unwrap();
-        });
+        })
+        .run();
 }

@@ -64,264 +64,265 @@ struct Args {
 }
 
 fn main() {
-    dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
-
-    env_logger::init();
-
-    let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
-    let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let run_id = match env::var("GITHUB_RUN_ID") {
-        Ok(run_id) => format!("github/{}", run_id),
-        Err(_) => format!("local/{}", run_timestamp),
-    };
-
-    let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .canonicalize()
-        .unwrap();
-    let eval_crate_dir = root_dir.join("crates").join("eval");
-    let repos_dir = eval_crate_dir.join("repos");
-    let worktrees_dir = eval_crate_dir.join("worktrees");
-    let examples_dir = eval_crate_dir.join("src").join("examples");
-    let run_dir = eval_crate_dir
-        .join("runs")
-        .join(format!("{}", run_timestamp));
-    std::fs::create_dir_all(&run_dir).unwrap();
-    std::fs::create_dir_all(&repos_dir).unwrap();
-    std::fs::create_dir_all(&worktrees_dir).unwrap();
-    std::fs::create_dir_all(&examples_dir).unwrap();
-    std::fs::create_dir_all(&paths::config_dir()).unwrap();
-
-    let zed_commit_sha = commit_sha_for_path(&root_dir);
-    let zed_branch_name = git_branch_for_path(&root_dir);
-    let args = Args::parse();
-    let languages: HashSet<String> = args.languages.into_iter().collect();
-
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client.clone());
-    let all_threads = examples::all(&examples_dir);
+    Application::headless()
+        .with_http_client(http_client.clone())
+        .add_plugins(|cx: &mut App| {
+            dotenvy::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
 
-    app.run(move |cx| {
-        let app_state = init(cx);
+            env_logger::init();
 
-        let telemetry = app_state.client.telemetry();
-        telemetry.start(system_id, installation_id, session_id, cx);
+            let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
+            let installation_id = ids::get_or_create_id(&ids::eval_installation_id_path()).ok();
+            let session_id = uuid::Uuid::new_v4().to_string();
+            let run_timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+            let run_id = match env::var("GITHUB_RUN_ID") {
+                Ok(run_id) => format!("github/{}", run_id),
+                Err(_) => format!("local/{}", run_timestamp),
+            };
 
-        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
-            && telemetry.has_checksum_seed();
-        if enable_telemetry {
-            println!("Telemetry enabled");
-            telemetry::event!(
-                "Agent Eval Started",
-                zed_commit_sha = zed_commit_sha,
-                zed_branch_name = zed_branch_name,
-                run_id = run_id,
-            );
-        }
+            let root_dir = Path::new(std::env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .canonicalize()
+                .unwrap();
+            let eval_crate_dir = root_dir.join("crates").join("eval");
+            let repos_dir = eval_crate_dir.join("repos");
+            let worktrees_dir = eval_crate_dir.join("worktrees");
+            let examples_dir = eval_crate_dir.join("src").join("examples");
+            let run_dir = eval_crate_dir
+                .join("runs")
+                .join(format!("{}", run_timestamp));
+            std::fs::create_dir_all(&run_dir).unwrap();
+            std::fs::create_dir_all(&repos_dir).unwrap();
+            std::fs::create_dir_all(&worktrees_dir).unwrap();
+            std::fs::create_dir_all(&examples_dir).unwrap();
+            std::fs::create_dir_all(&paths::config_dir()).unwrap();
 
-        let mut cumulative_tool_metrics = ToolMetrics::default();
+            let zed_commit_sha = commit_sha_for_path(&root_dir);
+            let zed_branch_name = git_branch_for_path(&root_dir);
+            let args = Args::parse();
+            let languages: HashSet<String> = args.languages.into_iter().collect();
 
-        let agent_model = load_model(&args.model, cx).unwrap();
-        let judge_model = load_model(&args.judge_model, cx).unwrap();
+            let all_threads = examples::all(&examples_dir);
+            let app_state = init(cx);
 
-        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(Some(agent_model.clone()), cx);
-        });
+            let telemetry = app_state.client.telemetry();
+            telemetry.start(system_id, installation_id, session_id, cx);
 
-        let auth1 = agent_model.provider.authenticate(cx);
-        let auth2 = judge_model.provider.authenticate(cx);
+            let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+                && telemetry.has_checksum_seed();
+            if enable_telemetry {
+                println!("Telemetry enabled");
+                telemetry::event!(
+                    "Agent Eval Started",
+                    zed_commit_sha = zed_commit_sha,
+                    zed_branch_name = zed_branch_name,
+                    run_id = run_id,
+                );
+            }
 
-        cx.spawn(async move |cx| {
-            auth1.await?;
-            auth2.await?;
+            let mut cumulative_tool_metrics = ToolMetrics::default();
 
-            let mut examples = Vec::new();
+            let agent_model = load_model(&args.model, cx).unwrap();
+            let judge_model = load_model(&args.judge_model, cx).unwrap();
 
-            const COLORS: [&str; 12] = [
-                "\x1b[31m", // Red
-                "\x1b[32m", // Green
-                "\x1b[33m", // Yellow
-                "\x1b[34m", // Blue
-                "\x1b[35m", // Magenta
-                "\x1b[36m", // Cyan
-                "\x1b[91m", // Bright Red
-                "\x1b[92m", // Bright Green
-                "\x1b[93m", // Bright Yellow
-                "\x1b[94m", // Bright Blue
-                "\x1b[95m", // Bright Magenta
-                "\x1b[96m", // Bright Cyan
-            ];
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_default_model(Some(agent_model.clone()), cx);
+            });
 
-            let mut skipped = Vec::new();
+            let auth1 = agent_model.provider.authenticate(cx);
+            let auth2 = judge_model.provider.authenticate(cx);
 
-            for thread in all_threads {
-                let meta = thread.meta();
-                if !args.filter.is_empty() && !args.filter.iter().any(|sub| meta.name.contains(sub))
-                {
-                    skipped.push(meta.name);
-                    continue;
-                }
+            cx.spawn(async move |cx| {
+                auth1.await?;
+                auth2.await?;
 
-                if let Some(language) = meta.language_server {
-                    if !languages.contains(&language.file_extension) {
-                        panic!(
-                            "Eval for {:?} could not be run because no language server was found for extension {:?}",
-                            meta.name,
-                            language.file_extension
+                let mut examples = Vec::new();
+
+                const COLORS: [&str; 12] = [
+                    "\x1b[31m", // Red
+                    "\x1b[32m", // Green
+                    "\x1b[33m", // Yellow
+                    "\x1b[34m", // Blue
+                    "\x1b[35m", // Magenta
+                    "\x1b[36m", // Cyan
+                    "\x1b[91m", // Bright Red
+                    "\x1b[92m", // Bright Green
+                    "\x1b[93m", // Bright Yellow
+                    "\x1b[94m", // Bright Blue
+                    "\x1b[95m", // Bright Magenta
+                    "\x1b[96m", // Bright Cyan
+                ];
+
+                let mut skipped = Vec::new();
+
+                for thread in all_threads {
+                    let meta = thread.meta();
+                    if !args.filter.is_empty() && !args.filter.iter().any(|sub| meta.name.contains(sub))
+                    {
+                        skipped.push(meta.name);
+                        continue;
+                    }
+
+                    if let Some(language) = meta.language_server {
+                        if !languages.contains(&language.file_extension) {
+                            panic!(
+                                "Eval for {:?} could not be run because no language server was found for extension {:?}",
+                                meta.name,
+                                language.file_extension
+                            );
+                        }
+                    }
+
+                    // TODO: This creates a worktree per repetition. Ideally these examples should
+                    // either be run sequentially on the same worktree, or reuse worktrees when there
+                    // are more examples to run than the concurrency limit.
+                    for repetition_number in 0..args.repetitions {
+                        let example_instance = ExampleInstance::new(
+                            thread.clone(),
+                            &repos_dir,
+                            &run_dir,
+                            &worktrees_dir,
+                            repetition_number,
                         );
+
+                        examples.push(example_instance);
                     }
                 }
 
-                // TODO: This creates a worktree per repetition. Ideally these examples should
-                // either be run sequentially on the same worktree, or reuse worktrees when there
-                // are more examples to run than the concurrency limit.
-                for repetition_number in 0..args.repetitions {
-                    let example_instance = ExampleInstance::new(
-                        thread.clone(),
-                        &repos_dir,
-                        &run_dir,
-                        &worktrees_dir,
-                        repetition_number,
+                if !skipped.is_empty() {
+                    println!("Skipped threads: {}", skipped.join(", "));
+                }
+
+                if examples.is_empty() {
+                    eprintln!("Filter matched no examples");
+                    return cx.update(|cx| cx.quit());
+                }
+
+                let mut repo_urls = HashSet::default();
+                let mut clone_tasks = Vec::new();
+
+                let max_name_width = examples
+                    .iter()
+                    .map(|e| e.worktree_name().len())
+                    .max()
+                    .unwrap_or(0);
+
+                for (i, example_instance) in examples.iter_mut().enumerate() {
+                    let color = COLORS[i % COLORS.len()].to_string();
+                    example_instance.set_log_prefix_style(&color, max_name_width);
+
+                    println!(
+                        "{}Logging to: {}",
+                        example_instance.log_prefix,
+                        example_instance.run_directory.display()
                     );
 
-                    examples.push(example_instance);
-                }
-            }
+                    let repo_url = example_instance.repo_url();
+                    if repo_urls.insert(repo_url.clone()) {
+                        let repo_path = example_instance.repo_path.clone();
 
-            if !skipped.is_empty() {
-                println!("Skipped threads: {}", skipped.join(", "));
-            }
+                        if !repo_path.join(".git").is_dir() {
+                            println!(
+                                "{:<width$} < {}",
+                                "↓ Cloning",
+                                repo_url,
+                                width = max_name_width
+                            );
 
-            if examples.is_empty() {
-                eprintln!("Filter matched no examples");
-                return cx.update(|cx| cx.quit());
-            }
+                            let git_task = cx.spawn(async move |_cx| {
+                                std::fs::create_dir_all(&repo_path)?;
+                                run_git(&repo_path, &["init"]).await?;
+                                run_git(&repo_path, &["remote", "add", "origin", &repo_url]).await
+                            });
 
-            let mut repo_urls = HashSet::default();
-            let mut clone_tasks = Vec::new();
+                            clone_tasks.push(git_task);
+                        } else {
+                            println!(
+                                "{:<width$}  < {}",
+                                "✔︎ Already cloned",
+                                repo_url,
+                                width = max_name_width
+                            );
 
-            let max_name_width = examples
-                .iter()
-                .map(|e| e.worktree_name().len())
-                .max()
-                .unwrap_or(0);
-
-            for (i, example_instance) in examples.iter_mut().enumerate() {
-                let color = COLORS[i % COLORS.len()].to_string();
-                example_instance.set_log_prefix_style(&color, max_name_width);
-
-                println!(
-                    "{}Logging to: {}",
-                    example_instance.log_prefix,
-                    example_instance.run_directory.display()
-                );
-
-                let repo_url = example_instance.repo_url();
-                if repo_urls.insert(repo_url.clone()) {
-                    let repo_path = example_instance.repo_path.clone();
-
-                    if !repo_path.join(".git").is_dir() {
-                        println!(
-                            "{:<width$} < {}",
-                            "↓ Cloning",
-                            repo_url,
-                            width = max_name_width
-                        );
-
-                        let git_task = cx.spawn(async move |_cx| {
-                            std::fs::create_dir_all(&repo_path)?;
-                            run_git(&repo_path, &["init"]).await?;
-                            run_git(&repo_path, &["remote", "add", "origin", &repo_url]).await
-                        });
-
-                        clone_tasks.push(git_task);
-                    } else {
-                        println!(
-                            "{:<width$}  < {}",
-                            "✔︎ Already cloned",
-                            repo_url,
-                            width = max_name_width
-                        );
-
-                        let actual_origin =
-                            run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
-                        anyhow::ensure!(
-                            actual_origin == repo_url,
-                            "remote origin {actual_origin} does not match expected origin {repo_url}"
-                        );
-                    }
-                }
-            }
-
-            future::join_all(clone_tasks).await;
-
-            for example_instance in examples.iter_mut() {
-                example_instance.fetch().await?;
-            }
-
-            let examples = Rc::new(RefCell::new(VecDeque::from(examples)));
-            let results_by_example_name = Rc::new(RefCell::new(HashMap::default()));
-
-            future::join_all((0..args.concurrency).map(|_| {
-                let app_state = app_state.clone();
-                let model = agent_model.model.clone();
-                let judge_model = judge_model.model.clone();
-                let zed_commit_sha = zed_commit_sha.clone();
-                let zed_branch_name = zed_branch_name.clone();
-                let run_id = run_id.clone();
-                let examples = examples.clone();
-                let results = results_by_example_name.clone();
-                cx.spawn(async move |cx| {
-                    loop {
-                        let Some(mut example) = examples.borrow_mut().pop_front() else {
-                            break;
-                        };
-                        let result = async {
-                            example.setup().await?;
-                            let run_output = cx
-                                .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
-                                .await?;
-                            let judge_output = judge_example(
-                                example.clone(),
-                                judge_model.clone(),
-                                &zed_commit_sha,
-                                &zed_branch_name,
-                                &run_id,
-                                &run_output,
-                                enable_telemetry,
-                                cx,
-                            )
-                            .await;
-                            anyhow::Ok((run_output, judge_output))
+                            let actual_origin =
+                                run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
+                            anyhow::ensure!(
+                                actual_origin == repo_url,
+                                "remote origin {actual_origin} does not match expected origin {repo_url}"
+                            );
                         }
-                        .await;
-                        results
-                            .borrow_mut()
-                            .entry(example.name.clone())
-                            .or_insert(Vec::new())
-                            .push((example.clone(), result));
                     }
-                })
-            }))
-            .await;
+                }
 
-            print_report(
-                &mut results_by_example_name.borrow_mut(),
-                &mut cumulative_tool_metrics,
-                &run_dir,
-            )?;
+                future::join_all(clone_tasks).await;
 
-            app_state.client.telemetry().flush_events().await;
+                for example_instance in examples.iter_mut() {
+                    example_instance.fetch().await?;
+                }
 
-            cx.update(|cx| cx.quit())
+                let examples = Rc::new(RefCell::new(VecDeque::from(examples)));
+                let results_by_example_name = Rc::new(RefCell::new(HashMap::default()));
+
+                future::join_all((0..args.concurrency).map(|_| {
+                    let app_state = app_state.clone();
+                    let model = agent_model.model.clone();
+                    let judge_model = judge_model.model.clone();
+                    let zed_commit_sha = zed_commit_sha.clone();
+                    let zed_branch_name = zed_branch_name.clone();
+                    let run_id = run_id.clone();
+                    let examples = examples.clone();
+                    let results = results_by_example_name.clone();
+                    cx.spawn(async move |cx| {
+                        loop {
+                            let Some(mut example) = examples.borrow_mut().pop_front() else {
+                                break;
+                            };
+                            let result = async {
+                                example.setup().await?;
+                                let run_output = cx
+                                    .update(|cx| example.run(model.clone(), app_state.clone(), cx))?
+                                    .await?;
+                                let judge_output = judge_example(
+                                    example.clone(),
+                                    judge_model.clone(),
+                                    &zed_commit_sha,
+                                    &zed_branch_name,
+                                    &run_id,
+                                    &run_output,
+                                    enable_telemetry,
+                                    cx,
+                                )
+                                .await;
+                                anyhow::Ok((run_output, judge_output))
+                            }
+                            .await;
+                            results
+                                .borrow_mut()
+                                .entry(example.name.clone())
+                                .or_insert(Vec::new())
+                                .push((example.clone(), result));
+                        }
+                    })
+                }))
+                .await;
+
+                print_report(
+                    &mut results_by_example_name.borrow_mut(),
+                    &mut cumulative_tool_metrics,
+                    &run_dir,
+                )?;
+
+                app_state.client.telemetry().flush_events().await;
+
+                cx.update(|cx| cx.quit())
+            })
+            .detach_and_log_err(cx);
         })
-        .detach_and_log_err(cx);
-    });
+        .run();
 }
 
 /// Subset of `workspace::AppState` needed by `HeadlessAssistant`, with additional fields.

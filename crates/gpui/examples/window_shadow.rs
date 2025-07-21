@@ -203,25 +203,27 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_background: WindowBackgroundAppearance::Opaque,
-                window_decorations: Some(WindowDecorations::Client),
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.new(|cx| {
-                    cx.observe_window_appearance(window, |_, window, _| {
-                        window.refresh();
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_background: WindowBackgroundAppearance::Opaque,
+                    window_decorations: Some(WindowDecorations::Client),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        cx.observe_window_appearance(window, |_, window, _| {
+                            window.refresh();
+                        })
+                        .detach();
+                        WindowShadow {}
                     })
-                    .detach();
-                    WindowShadow {}
-                })
-            },
-        )
-        .unwrap();
-    });
+                },
+            )
+            .unwrap();
+        })
+        .run();
 }

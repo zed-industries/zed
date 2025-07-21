@@ -249,42 +249,44 @@ actions!(image, [Quit]);
 fn main() {
     env_logger::init();
 
-    Application::new().run(move |cx: &mut App| {
-        let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-        cx.set_http_client(Arc::new(http_client));
+    Application::new()
+        .add_plugins(move |cx: &mut App| {
+            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
+            cx.set_http_client(Arc::new(http_client));
 
-        cx.activate(true);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Image Gallery".into(),
-            items: vec![MenuItem::action("Quit", Quit)],
-        }]);
+            cx.activate(true);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            cx.set_menus(vec![Menu {
+                name: "Image Gallery".into(),
+                items: vec![MenuItem::action("Quit", Quit)],
+            }]);
 
-        let window_options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some(SharedString::from("Image Gallery")),
-                appears_transparent: false,
+            let window_options = WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some(SharedString::from("Image Gallery")),
+                    appears_transparent: false,
+                    ..Default::default()
+                }),
+
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1100.), px(860.)),
+                    cx,
+                ))),
+
                 ..Default::default()
-            }),
+            };
 
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(1100.), px(860.)),
-                cx,
-            ))),
-
-            ..Default::default()
-        };
-
-        cx.open_window(window_options, |_, cx| {
-            cx.new(|ctx| ImageGallery {
-                image_key: "".into(),
-                items_count: IMAGES_IN_GALLERY,
-                total_count: 0,
-                image_cache: RetainAllImageCache::new(ctx),
+            cx.open_window(window_options, |_, cx| {
+                cx.new(|ctx| ImageGallery {
+                    image_key: "".into(),
+                    items_count: IMAGES_IN_GALLERY,
+                    total_count: 0,
+                    image_cache: RetainAllImageCache::new(ctx),
+                })
             })
+            .unwrap();
         })
-        .unwrap();
-    });
+        .run();
 }

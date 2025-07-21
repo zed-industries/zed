@@ -9,7 +9,9 @@ use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
+use gpui::{
+    App, AppContext as _, Context, Entity, Global, InsertGlobal, SemanticVersion, UpdateGlobal as _,
+};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
@@ -17,7 +19,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
+use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -236,11 +238,13 @@ fn handle_panic_requests(project: &Entity<HeadlessProject>, client: &Arc<Channel
     );
 }
 
+#[derive(Clone)]
 struct ServerListeners {
     stdin: UnixListener,
     stdout: UnixListener,
     stderr: UnixListener,
 }
+impl Global for ServerListeners {}
 
 impl ServerListeners {
     pub fn new(stdin_path: PathBuf, stdout_path: PathBuf, stderr_path: PathBuf) -> Result<Self> {
@@ -252,11 +256,7 @@ impl ServerListeners {
     }
 }
 
-fn start_server(
-    listeners: ServerListeners,
-    log_rx: Receiver<Vec<u8>>,
-    cx: &mut App,
-) -> Arc<ChannelClient> {
+fn start_server(cx: &mut App) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -274,6 +274,7 @@ fn start_server(
     .detach();
 
     cx.spawn(async move |cx| {
+        let listeners = cx.read_global::<ServerListeners, _>(|it, _cx| it.clone()).unwrap();
         let mut stdin_incoming = listeners.stdin.incoming();
         let mut stdout_incoming = listeners.stdout.incoming();
         let mut stderr_incoming = listeners.stderr.incoming();
@@ -320,6 +321,7 @@ fn start_server(
                 }
             }).detach();
 
+            let log_rx = &cx.read_global::<GlobalLogRx, _>(|it, _cx| it.clone()).unwrap().0;
             loop {
 
                 select_biased! {
@@ -395,6 +397,10 @@ fn init_paths() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
+pub struct GlobalLogRx(Receiver<Vec<u8>>);
+impl Global for GlobalLogRx {}
+
 pub fn execute_run(
     log_file: PathBuf,
     pid_file: PathBuf,
@@ -424,75 +430,78 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
-    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    gpui::Application::headless().run(move |cx| {
-        settings::init(cx);
-        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
-        release_channel::init(app_version, cx);
-        gpui_tokio::init(cx);
+    gpui::Application::headless()
+        .add_plugins(InsertGlobal::new(listeners))
+        .add_plugins(InsertGlobal::new(GlobalLogRx(log_rx)))
+        .add_plugins(|cx: &mut App| {
+            settings::init(cx);
+            release_channel::init(Default::default(), cx);
+            gpui_tokio::init(cx);
 
-        HeadlessProject::init(cx);
+            HeadlessProject::init(cx);
 
-        log::info!("gpui app started, initializing server");
-        let session = start_server(listeners, log_rx, cx);
+            log::info!("gpui app started, initializing server");
+            let session = start_server(cx);
 
-        client::init_settings(cx);
+            client::init_settings(cx);
 
-        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
-        git_hosting_providers::init(cx);
-        dap_adapters::init(cx);
+            let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
+            GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+            git_hosting_providers::init(cx);
+            dap_adapters::init(cx);
 
-        extension::init(cx);
-        let extension_host_proxy = ExtensionHostProxy::global(cx);
+            extension::init(cx);
+            let extension_host_proxy = ExtensionHostProxy::global(cx);
 
-        let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
-            let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
+            let project = cx.new(|cx| {
+                let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
+                let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
-            let proxy_url = read_proxy_settings(cx);
+                let proxy_url = read_proxy_settings(cx);
 
-            let http_client = {
-                let _guard = Tokio::handle(cx).enter();
-                Arc::new(
-                    ReqwestClient::proxy_and_user_agent(
-                        proxy_url,
-                        &format!(
-                            "Zed-Server/{} ({}; {})",
-                            env!("CARGO_PKG_VERSION"),
-                            std::env::consts::OS,
-                            std::env::consts::ARCH
-                        ),
+                let http_client = {
+                    let _guard = Tokio::handle(cx).enter();
+                    Arc::new(
+                        ReqwestClient::proxy_and_user_agent(
+                            proxy_url,
+                            &format!(
+                                "Zed-Server/{} ({}; {})",
+                                env!("CARGO_PKG_VERSION"),
+                                std::env::consts::OS,
+                                std::env::consts::ARCH
+                            ),
+                        )
+                        .expect("Could not start HTTP client"),
                     )
-                    .expect("Could not start HTTP client"),
+                };
+
+                let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
+
+                let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+                languages.set_language_server_download_dir(paths::languages_dir().clone());
+                let languages = Arc::new(languages);
+
+                HeadlessProject::new(
+                    HeadlessAppState {
+                        session: session.clone(),
+                        fs,
+                        http_client,
+                        node_runtime,
+                        languages,
+                        extension_host_proxy,
+                    },
+                    cx,
                 )
-            };
+            });
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
+            handle_panic_requests(&project, &session);
 
-            let mut languages = LanguageRegistry::new(cx.background_executor().clone());
-            languages.set_language_server_download_dir(paths::languages_dir().clone());
-            let languages = Arc::new(languages);
+            cx.background_spawn(async move { cleanup_old_binaries() })
+                .detach();
 
-            HeadlessProject::new(
-                HeadlessAppState {
-                    session: session.clone(),
-                    fs,
-                    http_client,
-                    node_runtime,
-                    languages,
-                    extension_host_proxy,
-                },
-                cx,
-            )
-        });
-
-        handle_panic_requests(&project, &session);
-
-        cx.background_spawn(async move { cleanup_old_binaries() })
-            .detach();
-
-        mem::forget(project);
-    });
+            mem::forget(project);
+        })
+        .run();
     log::info!("gpui app is shut down. quitting.");
     Ok(())
 }

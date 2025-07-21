@@ -74,7 +74,7 @@ impl Render for AnimationExample {
 fn main() {
     Application::new()
         .with_assets(Assets {})
-        .run(|cx: &mut App| {
+        .add_plugins(|cx: &mut App| {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -88,5 +88,6 @@ fn main() {
                 cx.new(|_| AnimationExample {})
             })
             .unwrap();
-        });
+        })
+        .run();
 }

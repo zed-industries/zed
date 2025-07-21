@@ -109,22 +109,24 @@ impl Render for Example {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new("tab", Tab, None),
-            KeyBinding::new("shift-tab", TabPrev, None),
-        ]);
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            cx.bind_keys([
+                KeyBinding::new("tab", Tab, None),
+                KeyBinding::new("shift-tab", TabPrev, None),
+            ]);
 
-        let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| Example::new(window, cx)),
-        )
-        .unwrap();
+            let bounds = Bounds::centered(None, size(px(800.), px(600.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| Example::new(window, cx)),
+            )
+            .unwrap();
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        })
+        .run();
 }

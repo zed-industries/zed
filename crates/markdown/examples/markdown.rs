@@ -35,30 +35,33 @@ Remember, markdown processors may have slight differences and extensions, so alw
 
 pub fn main() {
     env_logger::init();
-    Application::new().with_assets(Assets).run(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        language::init(cx);
-        SettingsStore::update(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
-        cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
+    Application::new()
+        .with_assets(Assets)
+        .add_plugins(|cx: &mut App| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            language::init(cx);
+            SettingsStore::update(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+            });
+            cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
-        let node_runtime = NodeRuntime::unavailable();
-        theme::init(LoadThemes::JustBase, cx);
+            let node_runtime = NodeRuntime::unavailable();
+            theme::init(LoadThemes::JustBase, cx);
 
-        let language_registry = LanguageRegistry::new(cx.background_executor().clone());
-        language_registry.set_theme(cx.theme().clone());
-        let language_registry = Arc::new(language_registry);
-        languages::init(language_registry.clone(), node_runtime, cx);
-        Assets.load_fonts(cx).unwrap();
+            let language_registry = LanguageRegistry::new(cx.background_executor().clone());
+            language_registry.set_theme(cx.theme().clone());
+            let language_registry = Arc::new(language_registry);
+            languages::init(language_registry.clone(), node_runtime, cx);
+            Assets.load_fonts(cx).unwrap();
 
-        cx.activate(true);
-        cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|cx| MarkdownExample::new(MARKDOWN_EXAMPLE.into(), language_registry, cx))
+            cx.activate(true);
+            cx.open_window(WindowOptions::default(), |_, cx| {
+                cx.new(|cx| MarkdownExample::new(MARKDOWN_EXAMPLE.into(), language_registry, cx))
+            })
+            .unwrap();
         })
-        .unwrap();
-    });
+        .run();
 }
 
 struct MarkdownExample {

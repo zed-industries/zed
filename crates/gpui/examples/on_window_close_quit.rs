@@ -35,48 +35,50 @@ impl Render for ExampleWindow {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let mut bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let mut bounds = Bounds::centered(None, size(px(500.), px(500.0)), cx);
 
-        cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, None)]);
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
+            cx.bind_keys([KeyBinding::new("cmd-w", CloseWindow, None)]);
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.activate(false);
+                    cx.new(|cx| {
+                        let focus_handle = cx.focus_handle();
+                        focus_handle.focus(window);
+                        ExampleWindow { focus_handle }
+                    })
+                },
+            )
+            .unwrap();
+
+            bounds.origin.x += bounds.size.width;
+
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        let focus_handle = cx.focus_handle();
+                        focus_handle.focus(window);
+                        ExampleWindow { focus_handle }
+                    })
+                },
+            )
+            .unwrap();
         })
-        .detach();
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.activate(false);
-                cx.new(|cx| {
-                    let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window);
-                    ExampleWindow { focus_handle }
-                })
-            },
-        )
-        .unwrap();
-
-        bounds.origin.x += bounds.size.width;
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.new(|cx| {
-                    let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window);
-                    ExampleWindow { focus_handle }
-                })
-            },
-        )
-        .unwrap();
-    });
+        .run();
 }

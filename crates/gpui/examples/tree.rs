@@ -32,15 +32,17 @@ impl Render for Tree {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| Tree {}),
-        )
-        .unwrap();
-    });
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| Tree {}),
+            )
+            .unwrap();
+        })
+        .run();
 }

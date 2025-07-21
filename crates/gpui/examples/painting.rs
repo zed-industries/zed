@@ -1,5 +1,5 @@
 use gpui::{
-    Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
+    App, Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
     PathStyle, Pixels, Point, Render, SharedString, StrokeOptions, Window, WindowOptions, canvas,
     div, linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
@@ -446,19 +446,21 @@ impl Render for PaintingViewer {
 }
 
 fn main() {
-    Application::new().run(|cx| {
-        cx.open_window(
-            WindowOptions {
-                focus: true,
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
-        )
-        .unwrap();
-        cx.on_window_closed(|cx| {
-            cx.quit();
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            cx.open_window(
+                WindowOptions {
+                    focus: true,
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
+            )
+            .unwrap();
+            cx.on_window_closed(|cx| {
+                cx.quit();
+            })
+            .detach();
+            cx.activate(true);
         })
-        .detach();
-        cx.activate(true);
-    });
+        .run();
 }

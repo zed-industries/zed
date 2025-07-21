@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use futures::AsyncReadExt as _;
 use futures::stream::FuturesUnordered;
+use gpui::App;
 use http_client::AsyncBody;
 use http_client::HttpClient;
 use reqwest_client::ReqwestClient;
@@ -9,7 +10,7 @@ use smol::stream::StreamExt;
 
 fn main() {
     let app = gpui::Application::new();
-    app.run(|cx| {
+    app.add_plugins(|cx: &mut App| {
         cx.spawn(async move |cx| {
             let client = ReqwestClient::new();
             let start = Instant::now();
@@ -38,4 +39,5 @@ fn main() {
         })
         .detach();
     })
+    .run()
 }

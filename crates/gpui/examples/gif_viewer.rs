@@ -24,18 +24,20 @@ impl Render for GifViewer {
 
 fn main() {
     env_logger::init();
-    Application::new().run(|cx: &mut App| {
-        let gif_path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/image/black-cat-typing.gif");
+    Application::new()
+        .add_plugins(|cx: &mut App| {
+            let gif_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("examples/image/black-cat-typing.gif");
 
-        cx.open_window(
-            WindowOptions {
-                focus: true,
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| GifViewer::new(gif_path)),
-        )
-        .unwrap();
-        cx.activate(true);
-    });
+            cx.open_window(
+                WindowOptions {
+                    focus: true,
+                    ..Default::default()
+                },
+                |_, cx| cx.new(|_| GifViewer::new(gif_path)),
+            )
+            .unwrap();
+            cx.activate(true);
+        })
+        .run();
 }
