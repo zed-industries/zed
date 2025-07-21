@@ -16,13 +16,13 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, Along, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Axis, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
-    KeyUpEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString,
-    Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea,
-    point, px, size,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
+    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1675,13 +1675,11 @@ impl Interactivity {
             // subtracting these, the container becomes scrollable for less than
             // 0.00000x pixels. As we generally don't benefit from a precision that
             // high for the maximum scroll, we round the scroll max to 2 decimal
-            // places here. If needed, we also adjust the padded content size
-            // accordingly so any calculations based on these values (e.g. scrollbar
-            // layouting) produce coherent results.
+            // places here.
             let padded_content_size = self.content_size + padding_size;
-            let base_scroll_max = padded_content_size - bounds.size;
-            let rounded_scroll_max = base_scroll_max.map(round_to_two_decimals);
-            let scroll_max = rounded_scroll_max.max(&Default::default());
+            let scroll_max = (padded_content_size - bounds.size)
+                .map(round_to_two_decimals)
+                .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1694,14 +1692,7 @@ impl Interactivity {
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
-                scroll_handle_state.padded_content_size = [Axis::Horizontal, Axis::Vertical]
-                    .into_iter()
-                    .fold(padded_content_size, |padded_content_size, axis| {
-                        let rounding_difference =
-                            base_scroll_max.along(axis) - rounded_scroll_max.along(axis);
-                        padded_content_size
-                            .apply_along(axis, |content_size| content_size - rounding_difference)
-                    });
+                scroll_handle_state.max_offset = scroll_max;
             }
 
             *scroll_offset
@@ -2941,7 +2932,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    padded_content_size: Size<Pixels>,
+    max_offset: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2968,6 +2959,11 @@ impl ScrollHandle {
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
         *self.0.borrow().offset.borrow()
+    }
+
+    /// Get the maximum scroll offset.
+    pub fn max_offset(&self) -> Size<Pixels> {
+        self.0.borrow().max_offset
     }
 
     /// Get the top child that's scrolled into view.
@@ -3002,11 +2998,6 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
-    }
-
-    /// Get the size of the content with padding of the container.
-    pub fn padded_content_size(&self) -> Size<Pixels> {
-        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is
