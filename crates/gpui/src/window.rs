@@ -12,11 +12,11 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TabGroupId, TabHandles,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -228,7 +228,7 @@ pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
     pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
-    pub(crate) tab_group: Option<ElementId>,
+    pub(crate) group_id: Option<TabGroupId>,
 }
 
 impl FocusId {
@@ -264,21 +264,21 @@ impl FocusId {
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
     pub(crate) id: FocusId,
+    pub(crate) group_id: Option<TabGroupId>,
     handles: Arc<FocusMap>,
     /// The index of this element in the tab order.
     pub tab_index: isize,
     /// The group of this element in the tab order, if any the tab navigation should cycle within.
-    pub tab_group: Option<ElementId>,
     /// Whether this element can be focused by tab navigation.
     pub tab_stop: bool,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.tab_group.is_some() {
+        if self.group_id.is_some() {
             f.write_fmt(format_args!(
                 "FocusHandle({:?}, {:?})",
-                self.tab_group, self.id
+                self.group_id, self.id
             ))
         } else {
             f.write_fmt(format_args!("FocusHandle({:?})", self.id))
@@ -292,12 +292,12 @@ impl FocusHandle {
             ref_count: AtomicUsize::new(1),
             tab_index: 0,
             tab_stop: false,
-            tab_group: None,
+            group_id: None,
         });
 
         Self {
             id,
-            tab_group: None,
+            group_id: None,
             tab_index: 0,
             tab_stop: false,
             handles: handles.clone(),
@@ -312,7 +312,7 @@ impl FocusHandle {
         }
         Some(Self {
             id,
-            tab_group: focus.tab_group.clone(),
+            group_id: focus.group_id.clone(),
             tab_index: focus.tab_index,
             tab_stop: focus.tab_stop,
             handles: handles.clone(),
@@ -342,11 +342,10 @@ impl FocusHandle {
     /// Set the tab group of this focus handle.
     ///
     /// If set, the focus cycle will loop in same group.
-    pub fn tab_group(mut self, group: impl Into<ElementId>) -> Self {
-        let group: ElementId = group.into();
-        self.tab_group = Some(group.clone());
+    pub(crate) fn tab_group(mut self, group_id: &TabGroupId) -> Self {
+        self.group_id = Some(group_id.clone());
         if let Some(focus) = self.handles.write().get_mut(self.id) {
-            focus.tab_group = Some(group);
+            focus.group_id = Some(group_id.clone());
         }
         self
     }
@@ -896,7 +895,7 @@ pub struct Window {
     pub(crate) client_inset: Option<Pixels>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
-    pub(crate) tab_group_stack: Vec<ElementId>,
+    pub(crate) tab_group_stack: Vec<TabGroupId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -4324,11 +4323,14 @@ impl Window {
     /// Only valid for the duration of the provided closure.
     pub(crate) fn with_tab_group<R>(
         &mut self,
-        tab_group: Option<&ElementId>,
+        tab_group: Option<ElementId>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        if let Some(tab_group) = tab_group {
-            self.tab_group_stack.push(tab_group.clone());
+        if let Some(tab_group) = tab_group.as_ref() {
+            self.tab_group_stack.push(TabGroupId {
+                global_id: Some(Arc::new(GlobalElementId(self.element_id_stack.clone()))),
+                id: tab_group.clone(),
+            });
         }
         let result = f(self);
         if let Some(_) = tab_group {

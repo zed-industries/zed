@@ -1,4 +1,6 @@
-use crate::{FocusHandle, FocusId};
+use std::sync::Arc;
+
+use crate::{ElementId, FocusHandle, FocusId, GlobalElementId};
 
 /// Represents a collection of tab handles.
 ///
@@ -6,6 +8,12 @@ use crate::{FocusHandle, FocusId};
 #[derive(Default)]
 pub(crate) struct TabHandles {
     handles: Vec<FocusHandle>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct TabGroupId {
+    pub(crate) global_id: Option<Arc<GlobalElementId>>,
+    pub(crate) id: ElementId,
 }
 
 impl TabHandles {
@@ -39,12 +47,12 @@ impl TabHandles {
                 return Box::new(
                     self.handles
                         .iter()
-                        .filter(|h| h.tab_group == handle.tab_group),
+                        .filter(|h| h.group_id == handle.group_id),
                 );
             }
         }
 
-        Box::new(self.handles.iter().filter(|h| h.tab_group.is_none()))
+        Box::new(self.handles.iter().filter(|h| h.group_id.is_none()))
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
@@ -90,13 +98,18 @@ impl TabHandles {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusMap, TabHandles};
+    use crate::{FocusHandle, FocusMap, TabGroupId, TabHandles};
     use std::sync::Arc;
 
     #[test]
     fn test_tab_handles() {
         let focus_map = Arc::new(FocusMap::default());
         let mut tab = TabHandles::default();
+
+        let group_id = TabGroupId {
+            global_id: None,
+            id: "group1".into(),
+        };
 
         let focus_handles = vec![
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
@@ -107,15 +120,15 @@ mod tests {
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group("group1"),
+                .tab_group(&group_id),
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group("group1"),
+                .tab_group(&group_id),
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group("group1"),
+                .tab_group(&group_id),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
         ];

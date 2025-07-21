@@ -1406,7 +1406,7 @@ impl Element for Div {
 
         window.with_image_cache(image_cache, |window| {
             let tab_group = self.interactivity.tab_group.clone();
-            window.with_tab_group(tab_group.as_ref(), |window| {
+            window.with_tab_group(tab_group, |window| {
                 self.interactivity.paint(
                     global_id,
                     inspector_id,
@@ -1775,7 +1775,7 @@ impl Interactivity {
                         window
                             .next_frame
                             .tab_handles
-                            .insert(focus_handle.clone().tab_group(tab_group.clone()));
+                            .insert(focus_handle.clone().tab_group(tab_group));
                     } else {
                         window.next_frame.tab_handles.insert(focus_handle.clone());
                     }
