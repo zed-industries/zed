@@ -1,4 +1,4 @@
-use acp_thread::{Plan, PlanEntry};
+use acp_thread::Plan;
 use agent_servers::AgentServer;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
