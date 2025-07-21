@@ -53,6 +53,9 @@ pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
+    if AgentSettings::get_global(cx).disable_ai {
+        return;
+    }
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
@@ -87,12 +90,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
-    // Don't register web search if AI is disabled
-    if AgentSettings::get_global(cx).disable_ai {
-        ToolRegistry::global(cx).unregister_tool(WebSearchTool);
-        return;
-    }
-
     let using_zed_provider = registry
         .read(cx)
         .default_model()
