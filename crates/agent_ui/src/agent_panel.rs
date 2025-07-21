@@ -1910,6 +1910,7 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("New Thread")
                                 .icon(IconName::NewThread)
+                                .icon_color(Color::Muted)
                                 .handler(move |window, cx| {
                                     window.dispatch_action(NewThread::default().boxed_clone(), cx);
                                 }),
@@ -1917,6 +1918,7 @@ impl AgentPanel {
                         .item(
                             ContextMenuEntry::new("New Text Thread")
                                 .icon(IconName::NewTextThread)
+                                .icon_color(Color::Muted)
                                 .handler(move |window, cx| {
                                     window.dispatch_action(NewTextThread.boxed_clone(), cx);
                                 }),
@@ -1929,6 +1931,7 @@ impl AgentPanel {
                                 this.item(
                                     ContextMenuEntry::new("New From Summary")
                                         .icon(IconName::NewFromSummary)
+                                        .icon_color(Color::Muted)
                                         .handler(move |window, cx| {
                                             window.dispatch_action(
                                                 Box::new(NewThread {
@@ -1948,6 +1951,7 @@ impl AgentPanel {
                                 .item(
                                     ContextMenuEntry::new("New Gemini Thread")
                                         .icon(IconName::AiGemini)
+                                        .icon_color(Color::Muted)
                                         .handler(move |window, cx| {
                                             window.dispatch_action(
                                                 NewExternalAgentThread {
@@ -1961,6 +1965,7 @@ impl AgentPanel {
                                 .item(
                                     ContextMenuEntry::new("New Claude Code Thread")
                                         .icon(IconName::AiClaude)
+                                        .icon_color(Color::Muted)
                                         .handler(move |window, cx| {
                                             window.dispatch_action(
                                                 NewExternalAgentThread {
