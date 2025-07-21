@@ -115,7 +115,6 @@
       "ctrl-d": "vim::ScrollDown",
       "ctrl-u": "vim::ScrollUp",
       "ctrl-e": "vim::LineDown",
-      "ctrl-y": "vim::LineUp",
       // "g" commands
       "g shift-r": "vim::PushReplaceWithRegister",
       "g r n": "editor::Rename",
@@ -214,6 +213,12 @@
       "ctrl-6": "pane::AlternateFile",
       "ctrl-^": "pane::AlternateFile",
       ".": "vim::Repeat"
+    }
+  },
+  {
+    "context": "VimControl && !menu && !editor_agent_diff && !AgentDiff",
+    "bindings": {
+      "ctrl-y": "vim::LineUp"
     }
   },
   {
