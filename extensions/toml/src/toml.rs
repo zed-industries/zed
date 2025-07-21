@@ -108,8 +108,9 @@ impl TomlExtension {
 
             zed::make_file_executable(&binary_path)?;
 
-            let entries = fs::read_dir(".")
-                .map_err(|err| format!("failed to list working directory {err}"))?;
+            let entries: Vec<_> = fs::read_dir(".")
+                .map_err(|err| format!("failed to list working directory {err}"))?
+                .collect();
             for entry in entries {
                 let entry = entry.map_err(|err| format!("failed to load directory entry {err}"))?;
                 if entry.file_name().to_str() != Some(&version_dir) {
