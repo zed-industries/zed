@@ -411,9 +411,9 @@ impl ListState {
         self.0.borrow_mut().set_offset_from_scrollbar(point);
     }
 
-    /// Returns the size of items we have measured.
+    /// Returns the maximum scroll offset according to the items we have measured.
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
-    pub fn content_size_for_scrollbar(&self) -> Size<Pixels> {
+    pub fn max_offset_for_scrollbar(&self) -> Size<Pixels> {
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds.unwrap_or_default();
 
@@ -421,7 +421,7 @@ impl ListState {
             .scrollbar_drag_start_height
             .unwrap_or_else(|| state.items.summary().height);
 
-        Size::new(bounds.size.width, height)
+        Size::new(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
