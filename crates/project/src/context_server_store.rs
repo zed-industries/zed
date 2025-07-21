@@ -934,6 +934,7 @@ mod tests {
                                 path: "somebinary".to_string(),
                                 args: vec!["arg".to_string()],
                                 env: None,
+                                tool_call_timeout_millis: None,
                             },
                         },
                     ),
@@ -974,6 +975,7 @@ mod tests {
                                 path: "somebinary".to_string(),
                                 args: vec!["anotherArg".to_string()],
                                 env: None,
+                                tool_call_timeout_millis: None,
                             },
                         },
                     ),
@@ -1056,6 +1058,7 @@ mod tests {
                         path: "somebinary".to_string(),
                         args: vec!["arg".to_string()],
                         env: None,
+                        tool_call_timeout_millis: None,
                     },
                 },
             )],
@@ -1187,6 +1190,7 @@ mod tests {
                 path: "somebinary".to_string(),
                 args: vec!["arg".to_string()],
                 env: None,
+                tool_call_timeout_millis: None,
             },
         }
     }
@@ -1275,6 +1279,7 @@ mod tests {
                 path: self.path.clone(),
                 args: vec!["arg1".to_string(), "arg2".to_string()],
                 env: None,
+                tool_call_timeout_millis: None,
             }))
         }
 
