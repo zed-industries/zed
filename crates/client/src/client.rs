@@ -542,27 +542,28 @@ impl settings::Settings for TelemetrySettings {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
-}
-
-/// Whether to disable all AI features in Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct DisableAiSettingsContent {
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    pub disable_ai: Option<bool>,
 }
 
 impl settings::Settings for DisableAiSettings {
     const KEY: Option<&'static str> = Some("disable_ai");
 
-    type FileContent = DisableAiSettingsContent;
+    type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
