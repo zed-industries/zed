@@ -1041,7 +1041,6 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 );
             }
         }
-        // todo! make this false
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         let state = app_state.clone();
         cx.update(|cx| show_onboarding_view(state, cx))?.await?;
