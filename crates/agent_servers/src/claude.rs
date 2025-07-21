@@ -153,6 +153,7 @@ impl AgentServer for ClaudeCode {
                 let handler_task = cx.foreground_executor().spawn({
                     let end_turn_tx = end_turn_tx.clone();
                     let tool_id_map = tool_id_map.clone();
+                    let delegate = delegate.clone();
                     async move {
                         while let Some(message) = incoming_message_rx.next().await {
                             ClaudeAgentConnection::handle_message(
@@ -167,6 +168,7 @@ impl AgentServer for ClaudeCode {
                 });
 
                 let mut connection = ClaudeAgentConnection {
+                    delegate,
                     outgoing_tx,
                     end_turn_tx,
                     _handler_task: handler_task,
@@ -186,6 +188,7 @@ impl AgentConnection for ClaudeAgentConnection {
         &self,
         params: AnyAgentRequest,
     ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
+        let delegate = self.delegate.clone();
         let end_turn_tx = self.end_turn_tx.clone();
         let outgoing_tx = self.outgoing_tx.clone();
         async move {
@@ -201,6 +204,8 @@ impl AgentConnection for ClaudeAgentConnection {
                     Err(anyhow!("Authentication not supported"))
                 }
                 AnyAgentRequest::SendUserMessageParams(message) => {
+                    delegate.clear_completed_plan_entries().await?;
+
                     let (tx, rx) = oneshot::channel();
                     end_turn_tx.borrow_mut().replace(tx);
                     let mut content = String::new();
@@ -241,6 +246,7 @@ impl AgentConnection for ClaudeAgentConnection {
 }
 
 struct ClaudeAgentConnection {
+    delegate: AcpClientDelegate,
     outgoing_tx: UnboundedSender<SdkMessage>,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
     _mcp_server: Option<ClaudeMcpServer>,
@@ -267,8 +273,17 @@ impl ClaudeAgentConnection {
                                 .log_err();
                         }
                         ContentChunk::ToolUse { id, name, input } => {
-                            if let Some(resp) = delegate
-                                .push_tool_call(ClaudeTool::infer(&name, input).as_acp())
+                            let claude_tool = ClaudeTool::infer(&name, input);
+
+                            if let ClaudeTool::TodoWrite(Some(params)) = claude_tool {
+                                delegate
+                                    .update_plan(acp::UpdatePlanParams {
+                                        entries: params.todos.into_iter().map(Into::into).collect(),
+                                    })
+                                    .await
+                                    .log_err();
+                            } else if let Some(resp) = delegate
+                                .push_tool_call(claude_tool.as_acp())
                                 .await
                                 .log_err()
                             {
