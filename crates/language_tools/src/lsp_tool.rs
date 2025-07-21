@@ -852,12 +852,12 @@ impl Render for LspTool {
         let mut has_warnings = false;
         let mut has_other_notifications = false;
         let state = self.server_state.read(cx);
-        for server in state.language_servers.health_statuses.values() {
-            if let Some(binary_status) = &state.language_servers.binary_statuses.get(&server.name) {
-                has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
-                has_other_notifications |= binary_status.message.is_some();
-            }
+        for binary_status in state.language_servers.binary_statuses.values() {
+            has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
+            has_other_notifications |= binary_status.message.is_some();
+        }
 
+        for server in state.language_servers.health_statuses.values() {
             if let Some((message, health)) = &server.health {
                 has_other_notifications |= message.is_some();
                 match health {
