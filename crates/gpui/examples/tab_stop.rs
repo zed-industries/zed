@@ -10,7 +10,7 @@ struct Example {
     modal_items: Vec<FocusHandle>,
     message: SharedString,
     modal_open: bool,
-    last_handle: Option<FocusHandle>,
+    last_focused: Option<FocusHandle>,
 }
 
 impl Example {
@@ -33,7 +33,7 @@ impl Example {
             modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
             modal_open: false,
-            last_handle: None,
+            last_focused: None,
         }
     }
 
@@ -123,9 +123,9 @@ impl Render for Example {
                     .child(button("open-modal").child("Open Modal...").on_click({
                         let first_handle = self.modal_items.first().cloned();
                         cx.listener(move |this, _, window, cx| {
-                            this.last_handle = window.focused(cx);
+                            this.last_focused = window.focused(cx);
                             this.modal_open = true;
-                            if let Some(handle) = first_handle {
+                            if let Some(handle) = first_handle.as_ref() {
                                 window.focus(handle);
                             }
                             cx.notify();
@@ -161,7 +161,7 @@ impl Render for Example {
                                     cx.stop_propagation();
 
                                     this.modal_open = false;
-                                    if let Some(handle) = this.last_handle.as_ref() {
+                                    if let Some(handle) = this.last_focused.as_ref() {
                                         window.focus(handle);
                                     }
                                     cx.notify();
