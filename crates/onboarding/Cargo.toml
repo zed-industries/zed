@@ -1,0 +1,28 @@
+[package]
+name = "onboarding"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/onboarding.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+command_palette_hooks.workspace = true
+db.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+gpui.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace.workspace = true
+workspace-hack.workspace = true

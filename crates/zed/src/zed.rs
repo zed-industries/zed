@@ -3957,6 +3957,7 @@ mod tests {
             language::init(cx);
             workspace::init(app_state.clone(), cx);
             welcome::init(cx);
+            onboarding::init(cx);
             Project::init_settings(cx);
             app_state
         })
