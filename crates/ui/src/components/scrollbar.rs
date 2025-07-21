@@ -152,18 +152,17 @@ impl ScrollbarState {
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
         const MINIMUM_THUMB_SIZE: Pixels = px(25.);
-        let max_scroll_offset = self.scroll_handle.max_offset().along(axis);
+        let max_offset = self.scroll_handle.max_offset().along(axis);
         let viewport_size = self.scroll_handle.viewport().size.along(axis);
-        if max_scroll_offset.is_zero() || viewport_size.is_zero() {
+        if max_offset.is_zero() || viewport_size.is_zero() {
             return None;
         }
-        let content_size = viewport_size + max_scroll_offset;
+        let content_size = viewport_size + max_offset;
         let visible_percentage = viewport_size / content_size;
         let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
         if thumb_size > viewport_size {
             return None;
         }
-        let max_offset = content_size - viewport_size;
         let current_offset = self
             .scroll_handle
             .offset()
