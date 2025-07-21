@@ -1,4 +1,3 @@
-use agent_settings::AgentSettings;
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use copilot::{Copilot, Status};

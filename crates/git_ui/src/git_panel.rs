@@ -1801,18 +1801,12 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if AgentSettings::get_global(cx).disable_ai {
-            return;
-        }
         self.generate_commit_message(cx);
     }
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if AgentSettings::get_global(cx).disable_ai {
-            return;
-        }
-        if !self.can_commit() {
+        if !self.can_commit() || AgentSettings::get_global(cx).disable_ai {
             return;
         }
 
