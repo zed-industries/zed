@@ -36,7 +36,7 @@ impl Example {
             items,
             modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
-            modal1_focus_handle: cx.focus_handle().tab_stop(true),
+            modal1_focus_handle: cx.focus_handle(),
             modal1_open: cx.new(|_| false),
             modal2_focus_handle: cx.focus_handle().tab_stop(true),
             modal2_open: cx.new(|_| false),
@@ -175,6 +175,8 @@ impl Render for Example {
                     .flex_row()
                     .gap_3()
                     .items_center()
+                    // Apply the buttons as difference tab group
+                    .tab_group()
                     .child(button("el1").tab_index(4).child("Button 1"))
                     .child(button("el2").tab_index(5).child("Button 2"))
                     .child(button("open-modal1").child("Open Modal...").on_click({
