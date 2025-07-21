@@ -63,6 +63,7 @@ which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
+diffy = "0.4.2"
 
 [dev-dependencies]
 lsp = { workspace = true, features = ["test-support"] }

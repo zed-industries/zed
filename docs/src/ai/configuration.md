@@ -23,6 +23,8 @@ Here's an overview of the supported providers and tool call support:
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
 | [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
+| [Vercel](#vercel-v0)                            | ✅                                                                                                                                                                          |
+| [xAI](#xai)                                     | ✅                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
@@ -221,6 +223,8 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
+To use Copilot Enterprise with Zed (for both agent and inline completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use
@@ -233,7 +237,7 @@ You can use Gemini models with the Zed agent by choosing it via the model dropdo
 
 The Google AI API key will be saved in your keychain.
 
-Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
+Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See [Using Gemini API keys](Using Gemini API keys) in the Gemini docs for more.
 
 #### Custom Models {#google-ai-custom-models}
 
@@ -442,27 +446,30 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
-You can add a custom API URL for OpenAI either via the UI or by editing your `settings.json`.
-Here are a few model examples you can plug in by using this feature:
+Zed supports using OpenAI compatible APIs by specifying a custom `api_url` and `available_models` for the OpenAI provider. This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-#### X.ai Grok
+To configure a compatible API, you can add a custom API URL for OpenAI either via the UI or by editing your `settings.json`. For example, to connect to [Together AI](https://www.together.ai/):
 
-Example configuration for using X.ai Grok with Zed:
+1.  Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
+2.  Add the following to your `settings.json`:
 
 ```json
+{
   "language_models": {
     "openai": {
-      "api_url": "https://api.x.ai/v1",
+      "api_url": "https://api.together.xyz/v1",
+      "api_key": "YOUR_TOGETHER_AI_API_KEY",
       "available_models": [
         {
-          "name": "grok-beta",
-          "display_name": "X.ai Grok (Beta)",
-          "max_tokens": 131072
+          "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+          "display_name": "Together Mixtral 8x7B",
+          "max_tokens": 32768,
+          "supports_tools": true
         }
-      ],
-      "version": "1"
-    },
+      ]
+    }
   }
+}
 ```
 
 ### OpenRouter {#openrouter}
@@ -523,7 +530,9 @@ You can find available models and their specifications on the [OpenRouter models
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
-### Vercel v0
+### Vercel v0 {#vercel-v0}
+
+> ✅ Supports tool use
 
 [Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
@@ -534,6 +543,49 @@ To start using it with Zed, ensure you have first created a [v0 API key](https:/
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
 
 You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
+
+### xAI {#xai}
+
+> ✅ Supports tool use
+
+Zed has first-class support for [xAI](https://x.ai/) models. You can use your own API key to access Grok models.
+
+1. [Create an API key in the xAI Console](https://console.x.ai/team/default/api-keys)
+2. Open the settings view (`agent: open configuration`) and go to the **xAI** section
+3. Enter your xAI API key
+
+The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_KEY` environment variable if it's defined.
+
+> **Note:** While the xAI API is OpenAI-compatible, Zed has first-class support for it as a dedicated provider. For the best experience, we recommend using the dedicated `x_ai` provider configuration instead of the [OpenAI API Compatible](#openai-api-compatible) method.
+
+#### Custom Models {#xai-custom-models}
+
+The Zed agent comes pre-configured with common Grok models. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1",
+      "available_models": [
+        {
+          "name": "grok-1.5",
+          "display_name": "Grok 1.5",
+          "max_tokens": 131072,
+          "max_output_tokens": 8192
+        },
+        {
+          "name": "grok-1.5v",
+          "display_name": "Grok 1.5V (Vision)",
+          "max_tokens": 131072,
+          "max_output_tokens": 8192,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
 
 ## Advanced Configuration {#advanced-configuration}
 
@@ -646,3 +698,35 @@ You can choose between `thread` (the default) and `text_thread`:
   }
 }
 ```
+
+### Edit Card
+
+Use the `expand_edit_card` setting to control whether edit cards show the full diff in the Agent Panel.
+It is set to `true` by default, but if set to false, the card's height is capped to a certain number of lines, requiring a click to be expanded.
+
+```json
+{
+  "agent": {
+    "expand_edit_card": "false"
+  }
+}
+```
+
+This setting is currently only available in Preview.
+It should be up in Stable by the next release.
+
+### Terminal Card
+
+Use the `expand_terminal_card` setting to control whether terminal cards show the command output in the Agent Panel.
+It is set to `true` by default, but if set to false, the card will be fully collapsed even while the command is running, requiring a click to be expanded.
+
+```json
+{
+  "agent": {
+    "expand_terminal_card": "false"
+  }
+}
+```
+
+This setting is currently only available in Preview.
+It should be up in Stable by the next release.

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
-use crate::language_model_selector::ToggleModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     MaxModeTooltip,
@@ -28,8 +28,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, KeyContext, Subscription, Task,
+    TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
@@ -47,13 +47,15 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
+use zed_actions::agent::Chat;
+use zed_actions::agent::ToggleModelSelector;
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
+    ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
@@ -130,6 +132,7 @@ pub(crate) fn create_editor(
             placement: Some(ContextMenuPlacement::Above),
         });
         editor.register_addon(ContextCreasesAddon::new());
+        editor.register_addon(MessageEditorAddon::new());
         editor
     });
 
@@ -474,9 +477,12 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(diff) =
-            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
-        {
+        if let Ok(diff) = AgentDiffPane::deploy(
+            AgentDiffThread::Native(self.thread.clone()),
+            self.workspace.clone(),
+            window,
+            cx,
+        ) {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
         }
@@ -604,7 +610,11 @@ impl MessageEditor {
         )
     }
 
-    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_follow_toggle(
+        &self,
+        is_model_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let following = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -613,6 +623,7 @@ impl MessageEditor {
             .unwrap_or(false);
 
         IconButton::new("follow-agent", IconName::Crosshair)
+            .disabled(is_model_selected)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
@@ -781,7 +792,7 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.render_follow_toggle(is_model_selected, cx))
                                     .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
@@ -1160,7 +1171,7 @@ impl MessageEditor {
                                 })
                                 .child(
                                     h_flex()
-                                        .id("file-name")
+                                        .id(("file-name", index))
                                         .pr_8()
                                         .gap_1p5()
                                         .max_w_full()
@@ -1171,9 +1182,16 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(file_name)
                                                 .children(file_path),
-                                        ), // TODO: Implement line diff
-                                           // .child(Label::new("+").color(Color::Created))
-                                           // .child(Label::new("-").color(Color::Deleted)),
+                                        )
+                                        .on_click({
+                                            let buffer = buffer.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.handle_file_click(buffer.clone(), window, cx);
+                                            })
+                                        }), // TODO: Implement line diff
+                                            // .child(Label::new("+").color(Color::Created))
+                                            // .child(Label::new("-").color(Color::Deleted)),
+                                            //
                                 )
                                 .child(
                                     h_flex()
@@ -1446,6 +1464,7 @@ impl MessageEditor {
                         tool_choice: None,
                         stop: vec![],
                         temperature: AgentSettings::temperature_for_model(&model.model, cx),
+                        thinking_allowed: true,
                     };
 
                     Some(model.model.count_tokens(request, cx))
@@ -1474,6 +1493,31 @@ impl MessageEditor {
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
+}
+
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
 }
 
 impl Addon for ContextCreasesAddon {
@@ -1613,6 +1657,7 @@ impl Render for MessageEditor {
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })

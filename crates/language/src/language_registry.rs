@@ -334,6 +334,9 @@ impl LanguageRegistry {
         if let Some(adapters) = state.lsp_adapters.get_mut(language_name) {
             adapters.retain(|adapter| &adapter.name != name)
         }
+        state.all_lsp_adapters.remove(name);
+        state.available_lsp_adapters.remove(name);
+
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();

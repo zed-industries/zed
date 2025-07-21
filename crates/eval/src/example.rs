@@ -221,9 +221,6 @@ impl ExampleContext {
                 ThreadEvent::ShowError(thread_error) => {
                     tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
                 }
-                ThreadEvent::RetriesFailed { .. } => {
-                    // Ignore retries failed events
-                }
                 ThreadEvent::Stopped(reason) => match reason {
                     Ok(StopReason::EndTurn) => {
                         tx.close_channel();
@@ -423,6 +420,13 @@ impl AppContext for ExampleContext {
         T: 'static,
     {
         self.app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.app.as_mut(handle)
     }
 
     fn read_entity<T, R>(

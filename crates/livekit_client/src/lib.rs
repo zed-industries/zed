@@ -3,36 +3,16 @@ use collections::HashMap;
 mod remote_video_track_view;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")
-)))]
+#[cfg(not(any(test, feature = "test-support", target_os = "freebsd")))]
 mod livekit_client;
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")
-)))]
+#[cfg(not(any(test, feature = "test-support", target_os = "freebsd")))]
 pub use livekit_client::*;
 
-#[cfg(any(
-    test,
-    feature = "test-support",
-    any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")
-))]
+#[cfg(any(test, feature = "test-support", target_os = "freebsd"))]
 mod mock_client;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")
-))]
+#[cfg(any(test, feature = "test-support", target_os = "freebsd"))]
 pub mod test;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")
-))]
+#[cfg(any(test, feature = "test-support", target_os = "freebsd"))]
 pub use mock_client::*;
 
 #[derive(Debug, Clone)]

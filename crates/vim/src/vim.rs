@@ -375,6 +375,7 @@ pub(crate) struct Vim {
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
+    pub(crate) undo_last_line_tx: Option<TransactionId>,
 
     selected_register: Option<char>,
     pub search: SearchState,
@@ -422,6 +423,7 @@ impl Vim {
 
             stored_visual_mode: None,
             current_tx: None,
+            undo_last_line_tx: None,
             current_anchor: None,
             undo_modes: HashMap::default(),
 

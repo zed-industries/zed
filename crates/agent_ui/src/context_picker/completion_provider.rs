@@ -686,6 +686,7 @@ impl ContextPickerCompletionProvider {
         let mut label = CodeLabel::plain(symbol.name.clone(), None);
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
+        label.push_str(&format!(" L{}", symbol.range.start.0.row + 1), comment_id);
 
         let new_text = format!("{} ", MentionLink::for_symbol(&symbol.name, &full_path));
         let new_text_len = new_text.len();

@@ -70,7 +70,7 @@ impl Tool for GrepTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Regex
+        IconName::ToolRegex
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

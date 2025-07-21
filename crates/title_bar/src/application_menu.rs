@@ -1,4 +1,5 @@
 use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+use settings::Settings;
 
 #[cfg(not(target_os = "macos"))]
 use gpui::{Action, actions};
@@ -10,6 +11,8 @@ use serde::Deserialize;
 
 use smallvec::SmallVec;
 use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+
+use crate::title_bar_settings::TitleBarSettings;
 
 #[cfg(not(target_os = "macos"))]
 actions!(
@@ -242,15 +245,21 @@ impl ApplicationMenu {
         cx.defer_in(window, move |_, window, cx| next_handle.show(window, cx));
     }
 
-    pub fn all_menus_shown(&self) -> bool {
-        self.entries.iter().any(|entry| entry.handle.is_deployed())
+    pub fn all_menus_shown(&self, cx: &mut Context<Self>) -> bool {
+        show_menus(cx)
+            || self.entries.iter().any(|entry| entry.handle.is_deployed())
             || self.pending_menu_open.is_some()
     }
 }
 
+pub(crate) fn show_menus(cx: &mut App) -> bool {
+    TitleBarSettings::get_global(cx).show_menus
+        && (cfg!(not(target_os = "macos")) || option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some())
+}
+
 impl Render for ApplicationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let all_menus_shown = self.all_menus_shown();
+        let all_menus_shown = self.all_menus_shown(cx);
 
         if let Some(pending_menu_open) = self.pending_menu_open.take() {
             if let Some(entry) = self

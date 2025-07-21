@@ -10,16 +10,17 @@ use stripe::{
     CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionSubscriptionDataTrialSettings,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
-    CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
-    SubscriptionId, SubscriptionItem, SubscriptionItemId, UpdateCustomer, UpdateSubscriptionItems,
-    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
+    CreateCustomer, CreateSubscriptionAutomaticTax, Customer, CustomerId, ListCustomers, Price,
+    PriceId, Recurring, Subscription, SubscriptionId, SubscriptionItem, SubscriptionItemId,
+    UpdateCustomer, UpdateSubscriptionItems, UpdateSubscriptionTrialSettings,
+    UpdateSubscriptionTrialSettingsEndBehavior,
     UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeBillingAddressCollection, StripeCancellationDetails,
-    StripeCancellationDetailsReason, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    CreateCustomerParams, StripeAutomaticTax, StripeBillingAddressCollection,
+    StripeCancellationDetails, StripeCancellationDetailsReason, StripeCheckoutSession,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
@@ -27,8 +28,8 @@ use crate::stripe_client::{
     StripeMeter, StripePrice, StripePriceId, StripePriceRecurring, StripeSubscription,
     StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
     StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
-    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateCustomerParams,
-    UpdateSubscriptionParams,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, StripeTaxIdCollection,
+    UpdateCustomerParams, UpdateSubscriptionParams,
 };
 
 pub struct RealStripeClient {
@@ -151,6 +152,7 @@ impl StripeClient for RealStripeClient {
                 })
                 .collect(),
         );
+        create_subscription.automatic_tax = params.automatic_tax.map(Into::into);
 
         let subscription = Subscription::create(&self.client, create_subscription).await?;
 
@@ -366,6 +368,15 @@ impl From<SubscriptionItem> for StripeSubscriptionItem {
     }
 }
 
+impl From<StripeAutomaticTax> for CreateSubscriptionAutomaticTax {
+    fn from(value: StripeAutomaticTax) -> Self {
+        Self {
+            enabled: value.enabled,
+            liability: None,
+        }
+    }
+}
+
 impl From<StripeSubscriptionTrialSettings> for UpdateSubscriptionTrialSettings {
     fn from(value: StripeSubscriptionTrialSettings) -> Self {
         Self {
@@ -448,6 +459,7 @@ impl<'a> TryFrom<StripeCreateCheckoutSessionParams<'a>> for CreateCheckoutSessio
             success_url: value.success_url,
             billing_address_collection: value.billing_address_collection.map(Into::into),
             customer_update: value.customer_update.map(Into::into),
+            tax_id_collection: value.tax_id_collection.map(Into::into),
             ..Default::default()
         })
     }
@@ -587,6 +599,14 @@ impl From<StripeCustomerUpdate> for stripe::CreateCheckoutSessionCustomerUpdate 
             address: value.address.map(Into::into),
             name: value.name.map(Into::into),
             shipping: value.shipping.map(Into::into),
+        }
+    }
+}
+
+impl From<StripeTaxIdCollection> for stripe::CreateCheckoutSessionTaxIdCollection {
+    fn from(value: StripeTaxIdCollection) -> Self {
+        stripe::CreateCheckoutSessionTaxIdCollection {
+            enabled: value.enabled,
         }
     }
 }
