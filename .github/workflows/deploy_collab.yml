@@ -79,12 +79,12 @@ jobs:
       - name: Build docker image
         run: |
           docker build -f Dockerfile-collab \
-            --build-arg GITHUB_SHA=$GITHUB_SHA \
-            --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA \
+            --build-arg "GITHUB_SHA=$GITHUB_SHA" \
+            --tag "registry.digitalocean.com/zed/collab:$GITHUB_SHA" \
             .
 
       - name: Publish docker image
-        run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+        run: docker push "registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
       - name: Prune Docker system
         run: docker system prune  --filter 'until=72h' -f
@@ -131,7 +131,8 @@ jobs:
           source script/lib/deploy-helpers.sh
           export_vars_for_environment $ZED_KUBE_NAMESPACE
 
-          export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
+          ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
+          export ZED_DO_CERTIFICATE_ID
           export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
           export ZED_SERVICE_NAME=collab

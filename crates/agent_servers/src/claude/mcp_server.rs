@@ -69,9 +69,6 @@ impl ClaudeMcpServer {
     }
 
     pub fn server_config(&self) -> Result<McpServerConfig> {
-        #[cfg(not(target_os = "windows"))]
-        let zed_path = util::get_shell_safe_zed_path()?;
-        #[cfg(target_os = "windows")]
         let zed_path = std::env::current_exe()
             .context("finding current executable path for use in mcp_server")?
             .to_string_lossy()
