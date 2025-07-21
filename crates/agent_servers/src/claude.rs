@@ -1,5 +1,4 @@
-mod mcp_server;
-mod tools;
+pub mod tools;
 
 use collections::HashMap;
 use project::Project;
@@ -27,8 +26,8 @@ use gpui::{App, AppContext, Entity, Task};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::claude::mcp_server::ClaudeMcpServer;
 use crate::claude::tools::ClaudeTool;
+use crate::mcp_server::{McpConfig, ZedMcpServer};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
@@ -70,11 +69,11 @@ impl AgentServer for ClaudeCode {
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let permission_mcp_server =
-                ClaudeMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
+                ZedMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
-                mcp_server::SERVER_NAME.to_string(),
+                crate::mcp_server::SERVER_NAME.to_string(),
                 permission_mcp_server.server_config()?,
             );
             let mcp_config = McpConfig { mcp_servers };
@@ -112,8 +111,8 @@ impl AgentServer for ClaudeCode {
                         "--permission-prompt-tool",
                         &format!(
                             "mcp__{}__{}",
-                            mcp_server::SERVER_NAME,
-                            mcp_server::PERMISSION_TOOL
+                            crate::mcp_server::SERVER_NAME,
+                            crate::mcp_server::PERMISSION_TOOL
                         ),
                         "--allowedTools",
                         "mcp__zed__Read,mcp__zed__Edit",
@@ -249,7 +248,7 @@ struct ClaudeAgentConnection {
     delegate: AcpClientDelegate,
     outgoing_tx: UnboundedSender<SdkMessage>,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
-    _mcp_server: Option<ClaudeMcpServer>,
+    _mcp_server: Option<ZedMcpServer>,
     _handler_task: Task<()>,
 }
 
@@ -574,21 +573,6 @@ enum PermissionMode {
     AcceptEdits,
     BypassPermissions,
     Plan,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct McpConfig {
-    mcp_servers: HashMap<String, McpServerConfig>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct McpServerConfig {
-    command: String,
-    args: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<HashMap<String, String>>,
 }
 
 #[cfg(test)]

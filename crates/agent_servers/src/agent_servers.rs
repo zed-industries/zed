@@ -1,5 +1,7 @@
 mod claude;
+mod codex;
 mod gemini;
+mod mcp_server;
 mod settings;
 mod stdio_agent_server;
 
@@ -7,6 +9,7 @@ mod stdio_agent_server;
 mod e2e_tests;
 
 pub use claude::*;
+pub use codex::*;
 pub use gemini::*;
 pub use settings::*;
 pub use stdio_agent_server::*;

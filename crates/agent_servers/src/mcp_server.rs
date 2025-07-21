@@ -4,26 +4,23 @@ use acp_thread::AcpClientDelegate;
 use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
 use anyhow::{Context, Result};
 use collections::HashMap;
-use context_server::{
-    listener::McpServer,
-    types::{
-        CallToolParams, CallToolResponse, Implementation, InitializeParams, InitializeResponse,
-        ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolAnnotations,
-        ToolResponseContent, ToolsCapabilities, requests,
-    },
+use context_server::types::{
+    CallToolParams, CallToolResponse, Implementation, InitializeParams, InitializeResponse,
+    ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolAnnotations,
+    ToolResponseContent, ToolsCapabilities, requests,
 };
 use gpui::{App, AsyncApp, Task};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::debug_panic;
 
-use crate::claude::{
-    McpServerConfig,
-    tools::{ClaudeTool, EditToolParams, EditToolResponse, ReadToolParams, ReadToolResponse},
+// todo! use shared tool inference?
+use crate::claude::tools::{
+    ClaudeTool, EditToolParams, EditToolResponse, ReadToolParams, ReadToolResponse,
 };
 
-pub struct ClaudeMcpServer {
-    server: McpServer,
+pub struct ZedMcpServer {
+    server: context_server::listener::McpServer,
 }
 
 pub const SERVER_NAME: &str = "zed";
@@ -52,13 +49,13 @@ enum PermissionToolBehavior {
     Deny,
 }
 
-impl ClaudeMcpServer {
+impl ZedMcpServer {
     pub async fn new(
         delegate: watch::Receiver<Option<AcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let mut mcp_server = McpServer::new(cx).await?;
+        let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
@@ -297,4 +294,19 @@ impl ClaudeMcpServer {
             }
         })
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConfig {
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerConfig {
+    command: String,
+    args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env: Option<HashMap<String, String>>,
 }
