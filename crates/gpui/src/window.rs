@@ -4322,7 +4322,7 @@ impl Window {
 
     /// Acquire a tab_group for the given ElementId.
     /// Only valid for the duration of the provided closure.
-    pub fn with_tab_group<R>(
+    pub(crate) fn with_tab_group<R>(
         &mut self,
         tab_group: Option<&ElementId>,
         f: impl FnOnce(&mut Self) -> R,
