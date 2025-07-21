@@ -759,10 +759,19 @@ impl DirectWriteState {
         let baseline_origin_x = 0.0;
         let baseline_origin_y = 0.0;
 
+        let transform = DWRITE_MATRIX {
+            m11: params.scale_factor,
+            m12: 0.0,
+            m21: 0.0,
+            m22: params.scale_factor,
+            dx: 0.0,
+            dy: 0.0,
+        };
+
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
-                None,
+                Some(&transform),
                 rendering_mode,
                 measuring_mode,
                 DWRITE_GRID_FIT_MODE_DEFAULT,
@@ -775,19 +784,6 @@ impl DirectWriteState {
         let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
         let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
 
-        // todo(windows)
-        // This is a walkaround, deleted when figured out.
-        let y_offset;
-        let extra_height;
-        if params.is_emoji {
-            y_offset = 0;
-            extra_height = 0;
-        } else {
-            // make some room for scaler.
-            y_offset = -1;
-            extra_height = 2;
-        }
-
         if bounds.right < bounds.left {
             Ok(Bounds {
                 origin: point(0.into(), 0.into()),
@@ -795,16 +791,10 @@ impl DirectWriteState {
             })
         } else {
             Ok(Bounds {
-                origin: point(
-                    ((bounds.left as f32 * params.scale_factor).ceil() as i32).into(),
-                    ((bounds.top as f32 * params.scale_factor).ceil() as i32 + y_offset).into(),
-                ),
+                origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
                 size: size(
-                    (((bounds.right - bounds.left) as f32 * params.scale_factor).ceil() as i32)
-                        .into(),
-                    (((bounds.bottom - bounds.top) as f32 * params.scale_factor).ceil() as i32
-                        + extra_height)
-                        .into(),
+                    (bounds.right - bounds.left).into(),
+                    (bounds.bottom - bounds.top).into(),
                 ),
             })
         }
@@ -922,7 +912,6 @@ impl DirectWriteState {
                 &transform,
                 point(baseline_origin_x, baseline_origin_y),
                 bitmap_size,
-                size(texture_width, texture_height),
             ) {
                 bitmap_data = color;
             } else {
@@ -960,7 +949,6 @@ impl DirectWriteState {
 
         let mut alpha_data = vec![0u8; (texture_size.width * texture_size.height * 3) as usize];
 
-        // todo: this should just use the 1x1 format without manual converison as it's kinda useless here
         unsafe {
             glyph_analysis.CreateAlphaTexture(
                 DWRITE_TEXTURE_CLEARTYPE_3x1,
@@ -1006,7 +994,6 @@ impl DirectWriteState {
         transform: &DWRITE_MATRIX,
         baseline_origin: Point<f32>,
         bitmap_size: Size<DevicePixels>,
-        texture_size: Size<u32>,
     ) -> Result<Vec<u8>> {
         // todo: support formats other than COLR
         let color_enumerator = unsafe {
