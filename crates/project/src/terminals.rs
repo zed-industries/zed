@@ -677,6 +677,39 @@ pub fn wrap_for_ssh(
     (program, args)
 }
 
+fn quote_shell_invocation(shell_invocation: String) -> String {
+    fn need_quote(arg_bytes: &[u8]) -> bool {
+        arg_bytes.iter().any(|c| *c == b' ' || *c == b'\t') || arg_bytes.is_empty()
+    }
+
+    let mut result = Vec::new();
+    let arg_bytes = shell_invocation.as_bytes();
+    let quote = need_quote(arg_bytes);
+    if quote {
+        result.push('"' as u16);
+    }
+    let mut backslashes = 0;
+    for x in shell_invocation.encode_utf16() {
+        if x == '\\' as u16 {
+            backslashes += 1;
+        } else {
+            if x == '"' as u16 {
+                // Add n+1 backslashes to total 2n+1 before internal '"'.
+                result.extend((0..=backslashes).map(|_| '\\' as u16));
+            }
+            backslashes = 0;
+        }
+        result.push(x);
+    }
+
+    if quote {
+        // Add n backslashes to total 2n before ending '"'.
+        result.extend((0..backslashes).map(|_| '\\' as u16));
+        result.push('"' as u16);
+    }
+    String::from_utf16(&result).unwrap()
+}
+
 fn add_environment_path(env: &mut HashMap<String, String>, new_path: &Path) -> Result<()> {
     let mut env_paths = vec![new_path.to_path_buf()];
     if let Some(path) = env.get("PATH").or(env::var("PATH").ok().as_ref()) {
