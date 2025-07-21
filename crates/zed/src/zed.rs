@@ -541,7 +541,6 @@ fn initialize_panels(
 
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
-            // Check if AI is disabled globally
             let ai_disabled = workspace_handle
                 .update_in(cx, |_, _, cx| AgentSettings::get_global(cx).disable_ai)?;
 

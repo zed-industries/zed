@@ -15,7 +15,6 @@ use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    // Check if AI is disabled globally
     if AgentSettings::get_global(cx).disable_ai {
         return;
     }
