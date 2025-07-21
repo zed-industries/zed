@@ -667,7 +667,8 @@ pub fn wrap_for_ssh(
     } else {
         format!("cd; {env_changes} {to_run}")
     };
-    let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands).unwrap());
+    let shell_invocation =
+        quote_shell_invocation(format!("sh -c {}", shlex::try_quote(&commands).unwrap()));
 
     let program = "ssh".to_string();
     let mut args = ssh_command.arguments.clone();
