@@ -168,10 +168,14 @@ impl MetalRenderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let sample_count = [4, 2, 1]
-            .into_iter()
-            .find(|count| device.supports_texture_sample_count(*count))
-            .unwrap_or(1);
+        let sample_count = if cfg!(target_arch = "aarch64") {
+            [4, 2, 1]
+                .into_iter()
+                .find(|count| device.supports_texture_sample_count(*count))
+                .unwrap_or(1)
+        } else {
+            1
+        };
 
         let path_pipeline_state = build_pipeline_state(
             &device,
