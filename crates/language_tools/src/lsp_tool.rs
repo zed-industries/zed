@@ -196,7 +196,6 @@ impl LanguageServerState {
                 continue;
             };
 
-            let workspace = self.workspace.clone();
             let server_selector = server_info.server_selector();
             // TODO currently, Zed remote does not work well with the LSP logs
             // https://github.com/zed-industries/zed/issues/28557
@@ -205,6 +204,7 @@ impl LanguageServerState {
 
             let status_color = server_info
                 .binary_status
+                .as_ref()
                 .and_then(|binary_status| match binary_status.status {
                     BinaryStatus::None => None,
                     BinaryStatus::CheckingForUpdate
@@ -234,6 +234,20 @@ impl LanguageServerState {
                 menu = menu.header("Current Buffer");
             }
 
+            let message = server_info
+                .message
+                .as_ref()
+                .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
+                .cloned();
+            let hover_label = if has_logs {
+                Some("View Logs")
+            } else if message.is_some() {
+                Some("View Message")
+            } else {
+                None
+            };
+
+            let server_name = server_info.name.clone();
             menu = menu.item(ContextMenuItem::custom_entry(
                 move |_, _| {
                     h_flex()
@@ -245,42 +259,99 @@ impl LanguageServerState {
                             h_flex()
                                 .gap_2()
                                 .child(Indicator::dot().color(status_color))
-                                .child(Label::new(server_info.name.0.clone())),
+                                .child(Label::new(server_name.0.clone())),
                         )
-                        .child(
-                            h_flex()
-                                .visible_on_hover("menu_item")
-                                .child(
-                                    Label::new("View Logs")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Icon::new(IconName::ChevronRight)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
+                        .when_some(hover_label, |div, hover_label| {
+                            div.child(
+                                h_flex()
+                                    .visible_on_hover("menu_item")
+                                    .child(
+                                        Label::new(hover_label)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Icon::new(IconName::ChevronRight)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        })
                         .into_any_element()
                 },
                 {
                     let lsp_logs = lsp_logs.clone();
+                    let message = message.clone();
+                    let server_selector = server_selector.clone();
+                    let server_name = server_info.name.clone();
+                    let workspace = self.workspace.clone();
                     move |window, cx| {
-                        if !has_logs {
+                        if has_logs {
+                            lsp_logs.update(cx, |lsp_logs, cx| {
+                                lsp_logs.open_server_trace(
+                                    workspace.clone(),
+                                    server_selector.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        } else if let Some(message) = &message {
+                            let Some(create_buffer) = workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace
+                                        .project()
+                                        .update(cx, |project, cx| project.create_buffer(cx))
+                                })
+                                .ok()
+                            else {
+                                return;
+                            };
+
+                            let window = window.window_handle();
+                            let workspace = workspace.clone();
+                            let message = message.clone();
+                            let server_name = server_name.clone();
+                            cx.spawn(async move |cx| {
+                                let buffer = create_buffer.await?;
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.edit(
+                                        [(
+                                            0..0,
+                                            format!("Language server {server_name}:\n\n{message}"),
+                                        )],
+                                        None,
+                                        cx,
+                                    );
+                                    buffer.set_capability(language::Capability::ReadOnly, cx);
+                                })?;
+
+                                workspace.update(cx, |workspace, cx| {
+                                    window.update(cx, |_, window, cx| {
+                                        workspace.add_item_to_active_pane(
+                                            Box::new(cx.new(|cx| {
+                                                let mut editor =
+                                                    Editor::for_buffer(buffer, None, window, cx);
+                                                editor.set_read_only(true);
+                                                editor
+                                            })),
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })??;
+
+                                anyhow::Ok(())
+                            })
+                            .detach();
+                        } else {
                             cx.propagate();
                             return;
                         }
-                        lsp_logs.update(cx, |lsp_logs, cx| {
-                            lsp_logs.open_server_trace(
-                                workspace.clone(),
-                                server_selector.clone(),
-                                window,
-                                cx,
-                            );
-                        });
                     }
                 },
-                server_info.message.map(|server_message| {
+                message.map(|server_message| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
                         Rc::new(move |_| Label::new(server_message.clone()).into_any_element()),
