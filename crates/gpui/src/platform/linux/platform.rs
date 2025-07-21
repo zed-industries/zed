@@ -828,6 +828,11 @@ impl crate::Keystroke {
             Keysym::Delete => "delete".to_owned(),
             Keysym::Escape => "escape".to_owned(),
 
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
