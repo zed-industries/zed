@@ -24,6 +24,7 @@ use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use onboarding::show_onboarding_view;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
@@ -619,6 +620,7 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         welcome::init(cx);
+        onboarding::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
@@ -1039,6 +1041,10 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 );
             }
         }
+    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        let state = app_state.clone();
+        cx.update(|cx| show_onboarding_view(state, cx))?.await?;
+        // cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
