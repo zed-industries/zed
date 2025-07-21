@@ -10,6 +10,7 @@ mod settings;
 pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::anthropic_vertex::AnthropicVertexLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
@@ -70,6 +71,11 @@ fn register_language_model_providers(
     registry.register_provider(
         // NEW REGISTRATION BY DIAB
         GoogleVertexLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        // NEW REGISTRATION BY DIAB
+        AnthropicVertexLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(

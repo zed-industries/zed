@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod anthropic_vertex;
 pub mod bedrock;
 pub mod cloud;
 pub mod copilot_chat;
