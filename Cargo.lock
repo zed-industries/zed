@@ -10978,6 +10978,7 @@ dependencies = [
  "theme",
  "ui",
  "workspace",
+ "workspace-hack",
 ]
 
 [[package]]
