@@ -21,7 +21,6 @@ use util::TryFutureExt;
 use crate::transport::{StdioTransport, Transport};
 
 const JSON_RPC_VERSION: &str = "2.0";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Standard JSON-RPC error codes
 pub const PARSE_ERROR: i32 = -32700;
@@ -55,6 +54,7 @@ pub(crate) struct Client {
     executor: BackgroundExecutor,
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
+    request_timeout: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -144,6 +144,7 @@ impl Client {
     pub fn stdio(
         server_id: ContextServerId,
         binary: ModelContextServerBinary,
+        request_timeout: Duration,
         cx: AsyncApp,
     ) -> Result<Self> {
         log::info!(
@@ -159,7 +160,7 @@ impl Client {
             .unwrap_or_else(String::new);
 
         let transport = Arc::new(StdioTransport::new(binary, &cx)?);
-        Self::new(server_id, server_name.into(), transport, cx)
+        Self::new(server_id, server_name.into(), transport, request_timeout, cx)
     }
 
     /// Creates a new Client instance for a context server.
@@ -167,6 +168,7 @@ impl Client {
         server_id: ContextServerId,
         server_name: Arc<str>,
         transport: Arc<dyn Transport>,
+        request_timeout: Duration,
         cx: AsyncApp,
     ) -> Result<Self> {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
@@ -218,6 +220,7 @@ impl Client {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
+            request_timeout,
         })
     }
 
@@ -329,7 +332,7 @@ impl Client {
         handle_response?;
         send?;
 
-        let mut timeout = executor.timer(REQUEST_TIMEOUT).fuse();
+        let mut timeout = executor.timer(self.request_timeout).fuse();
         select! {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
@@ -349,7 +352,7 @@ impl Client {
                 }
             }
             _ = timeout => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", REQUEST_TIMEOUT);
+                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", self.request_timeout);
                 anyhow::bail!("Context server request timeout");
             }
         }

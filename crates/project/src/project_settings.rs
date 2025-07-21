@@ -60,6 +60,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
+    /// Common context server settings.
+    #[serde(default)]
+    pub global_context_server_settings: GlobalContextServerSettings,
+
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
@@ -120,6 +124,20 @@ pub struct GlobalLspSettings {
     /// Default: `true`
     #[serde(default = "default_true")]
     pub button: bool,
+}
+
+/// Common context server settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalContextServerSettings {
+    /// Request timeout for context server requests in seconds.
+    ///
+    /// Default: `60`
+    #[serde(default = "default_context_server_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+fn default_context_server_request_timeout_secs() -> u64 {
+    60
 }
 
 impl ContextServerSettings {
@@ -287,6 +305,14 @@ impl Default for GlobalLspSettings {
     fn default() -> Self {
         Self {
             button: default_true(),
+        }
+    }
+}
+
+impl Default for GlobalContextServerSettings {
+    fn default() -> Self {
+        Self {
+            request_timeout_secs: default_context_server_request_timeout_secs(),
         }
     }
 }
