@@ -7,7 +7,10 @@ actions!(example, [Tab, TabPrev]);
 
 struct Example {
     items: Vec<FocusHandle>,
+    modal_items: Vec<FocusHandle>,
     message: SharedString,
+    modal_open: bool,
+    last_handle: Option<FocusHandle>,
 }
 
 impl Example {
@@ -19,11 +22,18 @@ impl Example {
             cx.focus_handle(),
             cx.focus_handle().tab_index(2).tab_stop(true),
         ];
+        let modal_items = vec![
+            cx.focus_handle().tab_index(1).tab_stop(true),
+            cx.focus_handle().tab_index(2).tab_stop(true),
+        ];
 
         window.focus(items.first().unwrap());
         Self {
             items,
+            modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
+            modal_open: false,
+            last_handle: None,
         }
     }
 
@@ -56,6 +66,33 @@ impl Render for Example {
                 .shadow_sm()
         }
 
+        fn input(
+            id: impl Into<ElementId>,
+            focus_handle: &FocusHandle,
+            window: &mut Window,
+        ) -> Stateful<Div> {
+            div()
+                .id(id)
+                .track_focus(focus_handle)
+                .h_10()
+                .w_full()
+                .flex()
+                .justify_center()
+                .items_center()
+                .border_1()
+                .border_color(gpui::black())
+                .when(
+                    focus_handle.tab_stop && focus_handle.is_focused(window),
+                    |this| this.border_color(gpui::blue()),
+                )
+                .map(|this| match focus_handle.tab_stop {
+                    true => this
+                        .hover(|this| this.bg(gpui::black().opacity(0.1)))
+                        .child(format!("tab_index: {}", focus_handle.tab_index)),
+                    false => this.opacity(0.4).child("tab_stop: false"),
+                })
+        }
+
         div()
             .id("app")
             .on_action(cx.listener(Self::on_tab))
@@ -73,28 +110,7 @@ impl Render for Example {
                     .clone()
                     .into_iter()
                     .enumerate()
-                    .map(|(ix, item_handle)| {
-                        div()
-                            .id(("item", ix))
-                            .track_focus(&item_handle)
-                            .h_10()
-                            .w_full()
-                            .flex()
-                            .justify_center()
-                            .items_center()
-                            .border_1()
-                            .border_color(gpui::black())
-                            .when(
-                                item_handle.tab_stop && item_handle.is_focused(window),
-                                |this| this.border_color(gpui::blue()),
-                            )
-                            .map(|this| match item_handle.tab_stop {
-                                true => this
-                                    .hover(|this| this.bg(gpui::black().opacity(0.1)))
-                                    .child(format!("tab_index: {}", item_handle.tab_index)),
-                                false => this.opacity(0.4).child("tab_stop: false"),
-                            })
-                    }),
+                    .map(|(ix, item_handle)| input(("item", ix), &item_handle, window)),
             )
             .child(
                 div()
@@ -103,8 +119,58 @@ impl Render for Example {
                     .gap_3()
                     .items_center()
                     .child(button("el1").tab_index(4).child("Button 1"))
-                    .child(button("el2").tab_index(5).child("Button 2")),
+                    .child(button("el2").tab_index(5).child("Button 2"))
+                    .child(button("open-modal").child("Open Modal...").on_click({
+                        let first_handle = self.modal_items.first().cloned();
+                        cx.listener(move |this, _, window, cx| {
+                            this.last_handle = window.focused(cx);
+                            this.modal_open = true;
+                            first_handle.as_ref().map(|handle| window.focus(handle));
+                            cx.notify();
+                        })
+                    })),
             )
+            .when(self.modal_open, |this| {
+                this.child(
+                    div()
+                        .id("modal-overlay")
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(gpui::black().opacity(0.5))
+                        .child(
+                            div()
+                                .id("modal")
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .w(px(450.))
+                                .p_5()
+                                .bg(gpui::white())
+                                .shadow_md()
+                                .rounded_md()
+                                .tab_group("modal1")
+                                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                                    cx.stop_propagation();
+
+                                    this.modal_open = false;
+                                    this.last_handle.as_ref().map(|handle| window.focus(handle));
+                                    cx.notify();
+                                }))
+                                .child("Focus cycle in Modal")
+                                .children(self.modal_items.clone().into_iter().enumerate().map(
+                                    |(ix, item_handle)| {
+                                        input(("modal-input", ix), &item_handle, window)
+                                    },
+                                )),
+                        ),
+                )
+            })
     }
 }
 

@@ -9,12 +9,10 @@ pub(crate) struct TabHandles {
 }
 
 impl TabHandles {
-    pub(crate) fn insert(&mut self, focus_handle: &FocusHandle) {
+    pub(crate) fn insert(&mut self, focus_handle: FocusHandle) {
         if !focus_handle.tab_stop {
             return;
         }
-
-        let focus_handle = focus_handle.clone();
 
         // Insert handle with same tab_index last
         if let Some(ix) = self
@@ -32,22 +30,36 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    fn current_index(&self, focused_id: Option<&FocusId>) -> usize {
-        self.handles
-            .iter()
-            .position(|h| Some(&h.id) == focused_id)
-            .unwrap_or_default()
+    pub(crate) fn with_group<'a>(
+        &'a self,
+        focused_id: Option<&FocusId>,
+    ) -> Box<dyn Iterator<Item = &'a FocusHandle> + 'a> {
+        if let Some(focused_id) = focused_id {
+            if let Some(handle) = self.handles.iter().find(|h| &h.id == focused_id) {
+                return Box::new(
+                    self.handles
+                        .iter()
+                        .filter(|h| h.tab_group == handle.tab_group),
+                );
+            }
+        }
+
+        Box::new(self.handles.iter().filter(|h| h.tab_group.is_none()))
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id);
+        let group_handles: Vec<&FocusHandle> = self.with_group(focused_id).collect();
+        let ix = group_handles
+            .iter()
+            .position(|h| Some(&h.id) == focused_id)
+            .unwrap_or_default();
 
         let mut next_ix = ix + 1;
-        if next_ix + 1 > self.handles.len() {
+        if next_ix + 1 > group_handles.len() {
             next_ix = 0;
         }
 
-        if let Some(next_handle) = self.handles.get(next_ix) {
+        if let Some(next_handle) = group_handles.get(next_ix).cloned() {
             Some(next_handle.clone())
         } else {
             None
@@ -55,15 +67,20 @@ impl TabHandles {
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let ix = self.current_index(focused_id);
+        let group_handles: Vec<&FocusHandle> = self.with_group(focused_id).collect();
+        let ix = group_handles
+            .iter()
+            .position(|h| Some(&h.id) == focused_id)
+            .unwrap_or_default();
+
         let prev_ix;
         if ix == 0 {
-            prev_ix = self.handles.len().saturating_sub(1);
+            prev_ix = group_handles.len().saturating_sub(1);
         } else {
             prev_ix = ix.saturating_sub(1);
         }
 
-        if let Some(prev_handle) = self.handles.get(prev_ix) {
+        if let Some(prev_handle) = group_handles.get(prev_ix).cloned() {
             Some(prev_handle.clone())
         } else {
             None
@@ -87,12 +104,24 @@ mod tests {
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
             FocusHandle::new(&focus_map),
             FocusHandle::new(&focus_map).tab_index(2),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .tab_group("group1"),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .tab_group("group1"),
+            FocusHandle::new(&focus_map)
+                .tab_stop(true)
+                .tab_index(0)
+                .tab_group("group1"),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
         ];
 
         for handle in focus_handles.iter() {
-            tab.insert(&handle);
+            tab.insert(handle.clone());
         }
         assert_eq!(
             tab.handles
@@ -100,20 +129,72 @@ mod tests {
                 .map(|handle| handle.id)
                 .collect::<Vec<_>>(),
             vec![
+                // ix 0
                 focus_handles[0].id,
+                // ix 1, group1
                 focus_handles[5].id,
-                focus_handles[1].id,
-                focus_handles[2].id,
+                // ix 2, group1
                 focus_handles[6].id,
+                // ix 3, group1
+                focus_handles[7].id,
+                // ix 4
+                focus_handles[8].id,
+                // ix 5
+                focus_handles[1].id,
+                // ix 6
+                focus_handles[2].id,
+                // ix 7
+                focus_handles[9].id,
             ]
         );
 
         // next
-        assert_eq!(tab.next(None), Some(tab.handles[1].clone()));
+        assert_eq!(tab.next(None), Some(tab.handles[4].clone()));
         assert_eq!(
             tab.next(Some(&tab.handles[0].id)),
-            Some(tab.handles[1].clone())
+            Some(tab.handles[4].clone())
         );
+        assert_eq!(
+            tab.next(Some(&tab.handles[4].id)),
+            Some(tab.handles[5].clone())
+        );
+        assert_eq!(
+            tab.next(Some(&tab.handles[5].id)),
+            Some(tab.handles[6].clone())
+        );
+        assert_eq!(
+            tab.next(Some(&tab.handles[6].id)),
+            Some(tab.handles[7].clone())
+        );
+        assert_eq!(
+            tab.next(Some(&tab.handles[7].id)),
+            Some(tab.handles[0].clone())
+        );
+
+        // prev
+        assert_eq!(tab.prev(None), Some(tab.handles[7].clone()));
+        assert_eq!(
+            tab.prev(Some(&tab.handles[0].id)),
+            Some(tab.handles[7].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&tab.handles[4].id)),
+            Some(tab.handles[0].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&tab.handles[5].id)),
+            Some(tab.handles[4].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&tab.handles[6].id)),
+            Some(tab.handles[5].clone())
+        );
+        assert_eq!(
+            tab.prev(Some(&tab.handles[7].id)),
+            Some(tab.handles[6].clone())
+        );
+
+        // next in group1
         assert_eq!(
             tab.next(Some(&tab.handles[1].id)),
             Some(tab.handles[2].clone())
@@ -124,22 +205,13 @@ mod tests {
         );
         assert_eq!(
             tab.next(Some(&tab.handles[3].id)),
-            Some(tab.handles[4].clone())
-        );
-        assert_eq!(
-            tab.next(Some(&tab.handles[4].id)),
-            Some(tab.handles[0].clone())
+            Some(tab.handles[1].clone())
         );
 
-        // prev
-        assert_eq!(tab.prev(None), Some(tab.handles[4].clone()));
-        assert_eq!(
-            tab.prev(Some(&tab.handles[0].id)),
-            Some(tab.handles[4].clone())
-        );
+        // prev in group1
         assert_eq!(
             tab.prev(Some(&tab.handles[1].id)),
-            Some(tab.handles[0].clone())
+            Some(tab.handles[3].clone())
         );
         assert_eq!(
             tab.prev(Some(&tab.handles[2].id)),
@@ -148,10 +220,6 @@ mod tests {
         assert_eq!(
             tab.prev(Some(&tab.handles[3].id)),
             Some(tab.handles[2].clone())
-        );
-        assert_eq!(
-            tab.prev(Some(&tab.handles[4].id)),
-            Some(tab.handles[3].clone())
         );
     }
 }

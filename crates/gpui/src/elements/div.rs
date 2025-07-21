@@ -626,6 +626,17 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Set child element into focus group limit.
+    ///
+    /// When this is enabled, the window focus cycle will be limited to the child elements.
+    fn tab_group(mut self, group_id: impl Into<ElementId>) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().tab_group = Some(group_id.into());
+        self
+    }
+
     /// Set the keymap context for this element. This will be used to determine
     /// which action to dispatch from the keymap.
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -1394,19 +1405,22 @@ impl Element for Div {
             .map(|provider| provider.provide(window, cx));
 
         window.with_image_cache(image_cache, |window| {
-            self.interactivity.paint(
-                global_id,
-                inspector_id,
-                bounds,
-                hitbox.as_ref(),
-                window,
-                cx,
-                |_style, window, cx| {
-                    for child in &mut self.children {
-                        child.paint(window, cx);
-                    }
-                },
-            )
+            let tab_group = self.interactivity.tab_group.clone();
+            window.with_tab_group(tab_group.as_ref(), |window| {
+                self.interactivity.paint(
+                    global_id,
+                    inspector_id,
+                    bounds,
+                    hitbox.as_ref(),
+                    window,
+                    cx,
+                    |_style, window, cx| {
+                        for child in &mut self.children {
+                            child.paint(window, cx);
+                        }
+                    },
+                )
+            })
         });
     }
 }
@@ -1434,6 +1448,8 @@ pub struct Interactivity {
     pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
+    pub(crate) tab_index: Option<isize>,
+    pub(crate) tab_group: Option<ElementId>,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
@@ -1469,7 +1485,6 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
-    pub(crate) tab_index: Option<isize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1756,7 +1771,14 @@ impl Interactivity {
                 }
 
                 if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_handles.insert(focus_handle);
+                    if let Some(tab_group) = window.tab_group_stack.last() {
+                        window
+                            .next_frame
+                            .tab_handles
+                            .insert(focus_handle.clone().tab_group(tab_group.clone()));
+                    } else {
+                        window.next_frame.tab_handles.insert(focus_handle.clone());
+                    }
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
