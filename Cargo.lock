@@ -4890,7 +4890,6 @@ dependencies = [
 name = "editor"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
  "aho-corasick",
  "anyhow",
  "assets",
@@ -8336,7 +8335,6 @@ dependencies = [
 name = "inline_completion_button"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
  "anyhow",
  "client",
  "copilot",

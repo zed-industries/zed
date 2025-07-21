@@ -540,7 +540,7 @@ fn initialize_panels(
         })?;
 
         let is_assistant2_enabled =
-            !cfg!(test) && !cx.read(|cx| AgentSettings::get_global(cx).disable_ai)?;
+            !cfg!(test) && !cx.update(|_, cx| AgentSettings::get_global(cx).disable_ai)?;
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
                 agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
