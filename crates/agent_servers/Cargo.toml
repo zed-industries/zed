@@ -39,6 +39,7 @@ ui.workspace = true
 util.workspace = true
 watch.workspace = true
 which.workspace = true
+shlex.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
