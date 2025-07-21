@@ -277,7 +277,7 @@
     }
   },
   {
-    "context": "MessageEditor > Editor && !use_modifier_to_send",
+    "context": "MessageEditor && !Picker > Editor && !use_modifier_to_send",
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-enter": "agent::ChatWithFollow",
@@ -288,7 +288,7 @@
     }
   },
   {
-    "context": "MessageEditor > Editor && use_modifier_to_send",
+    "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
     "bindings": {
       "ctrl-enter": "agent::Chat",
       "enter": "editor::Newline",
