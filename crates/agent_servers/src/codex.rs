@@ -233,6 +233,15 @@ impl CodexAgentConnection {
                     })
                     .await?;
             }
+            AcpNotification::AgentReasoning(message) => {
+                delegate
+                    .stream_assistant_message_chunk(acp::StreamAssistantMessageChunkParams {
+                        chunk: acp::AssistantMessageChunk::Thought {
+                            thought: message.text,
+                        },
+                    })
+                    .await?
+            }
             AcpNotification::Other => {}
         }
 
@@ -258,6 +267,7 @@ struct CodexEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AcpNotification {
     AgentMessage(AgentMessageEvent),
+    AgentReasoning(AgentReasoningEvent),
     #[serde(other)]
     Other,
 }
@@ -265,4 +275,9 @@ pub enum AcpNotification {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMessageEvent {
     pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentReasoningEvent {
+    pub text: String,
 }
