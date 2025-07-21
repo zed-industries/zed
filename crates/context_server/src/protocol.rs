@@ -6,6 +6,7 @@
 //! of messages.
 
 use anyhow::Result;
+use futures::channel::oneshot;
 use gpui::AsyncApp;
 use serde_json::Value;
 
@@ -95,6 +96,16 @@ impl InitializedContextServerProtocol {
 
     pub async fn request<T: Request>(&self, params: T::Params) -> Result<T::Response> {
         self.inner.request(T::METHOD, params).await
+    }
+
+    pub async fn cancellable_request<T: Request>(
+        &self,
+        params: T::Params,
+        cancel_rx: oneshot::Receiver<()>,
+    ) -> Result<T::Response> {
+        self.inner
+            .cancellable_request(T::METHOD, params, cancel_rx)
+            .await
     }
 
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {

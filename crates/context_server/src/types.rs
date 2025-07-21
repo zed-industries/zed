@@ -3,6 +3,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::client::RequestId;
+
 pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
 pub const VERSION_2024_11_05: &str = "2024-11-05";
 
@@ -100,6 +102,7 @@ pub mod notifications {
     notification!("notifications/initialized", Initialized, ());
     notification!("notifications/progress", Progress, ProgressParams);
     notification!("notifications/message", Message, MessageParams);
+    notification!("notifications/cancelled", Cancelled, CancelledParams);
     notification!(
         "notifications/resources/updated",
         ResourcesUpdated,
@@ -617,11 +620,14 @@ pub enum ClientNotification {
     Initialized,
     Progress(ProgressParams),
     RootsListChanged,
-    Cancelled {
-        request_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
+    Cancelled(CancelledParams),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelledParams {
+    pub request_id: RequestId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

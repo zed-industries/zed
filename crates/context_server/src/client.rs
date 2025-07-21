@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt, StreamExt, channel::oneshot, select};
+use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
@@ -10,15 +10,19 @@ use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
+    pin::pin,
     sync::{
         Arc,
         atomic::{AtomicI32, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 
-use crate::transport::{StdioTransport, Transport};
+use crate::{
+    transport::{StdioTransport, Transport},
+    types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
+};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -295,6 +299,24 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
+        self.request_impl(method, params, None).await
+    }
+
+    pub async fn cancellable_request<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: impl Serialize,
+        cancel_rx: oneshot::Receiver<()>,
+    ) -> Result<T> {
+        self.request_impl(method, params, Some(cancel_rx)).await
+    }
+
+    pub async fn request_impl<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: impl Serialize,
+        cancel_rx: Option<oneshot::Receiver<()>>,
+    ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
         let request = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
@@ -330,6 +352,16 @@ impl Client {
         send?;
 
         let mut timeout = executor.timer(REQUEST_TIMEOUT).fuse();
+        let mut cancel_fut = pin!(
+            match cancel_rx {
+                Some(rx) => future::Either::Left(async {
+                    rx.await.log_err();
+                }),
+                None => future::Either::Right(future::pending()),
+            }
+            .fuse()
+        );
+
         select! {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
@@ -347,6 +379,16 @@ impl Client {
                     }
                     Err(_) => anyhow::bail!("cancelled")
                 }
+            }
+            _ = cancel_fut => {
+                self.notify(
+                    Cancelled::METHOD,
+                    ClientNotification::Cancelled(CancelledParams {
+                        request_id: RequestId::Int(id),
+                        reason: None
+                    })
+                ).log_err();
+                anyhow::bail!("Request cancelled")
             }
             _ = timeout => {
                 log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", REQUEST_TIMEOUT);

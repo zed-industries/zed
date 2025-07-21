@@ -2,7 +2,7 @@ use collections::HashMap;
 use context_server::types::CallToolParams;
 use context_server::types::requests::CallTool;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use project::Project;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -144,6 +144,7 @@ impl AgentServer for Codex {
                 let connection = CodexAgentConnection {
                     root_dir,
                     codex_mcp: codex_mcp_client,
+                    cancel_request_tx: Default::default(),
                     _handler_task: handler_task,
                     _zed_mcp: zed_mcp_server,
                 };
@@ -162,6 +163,7 @@ impl AgentConnection for CodexAgentConnection {
     ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
         let client = self.codex_mcp.client();
         let root_dir = self.root_dir.clone();
+        let cancel_request_tx = self.cancel_request_tx.clone();
         async move {
             let client = client.context("Codex MCP server is not initialized")?;
 
@@ -177,34 +179,48 @@ impl AgentConnection for CodexAgentConnection {
                     Err(anyhow!("Authentication not supported"))
                 }
                 AnyAgentRequest::SendUserMessageParams(message) => {
+                    let (new_cancel_tx, cancel_rx) = oneshot::channel();
+                    cancel_request_tx.borrow_mut().replace(new_cancel_tx);
+
                     client
-                        .request::<CallTool>(CallToolParams {
-                            name: "codex".into(),
-                            arguments: Some(serde_json::to_value(CodexToolCallParam {
-                                prompt: message
-                                    .chunks
-                                    .into_iter()
-                                    .filter_map(|chunk| match chunk {
-                                        acp::UserMessageChunk::Text { text } => Some(text),
-                                        acp::UserMessageChunk::Path { .. } => {
-                                            // todo!
-                                            None
-                                        }
-                                    })
-                                    .collect(),
-                                cwd: root_dir,
-                            })?),
-                            meta: None,
-                        })
+                        .cancellable_request::<CallTool>(
+                            CallToolParams {
+                                name: "codex".into(),
+                                arguments: Some(serde_json::to_value(CodexToolCallParam {
+                                    prompt: message
+                                        .chunks
+                                        .into_iter()
+                                        .filter_map(|chunk| match chunk {
+                                            acp::UserMessageChunk::Text { text } => Some(text),
+                                            acp::UserMessageChunk::Path { .. } => {
+                                                // todo!
+                                                None
+                                            }
+                                        })
+                                        .collect(),
+                                    cwd: root_dir,
+                                })?),
+                                meta: None,
+                            },
+                            cancel_rx,
+                        )
                         .await?;
 
                     Ok(AnyAgentResult::SendUserMessageResponse(
                         acp::SendUserMessageResponse,
                     ))
                 }
-                AnyAgentRequest::CancelSendMessageParams(_) => Ok(
-                    AnyAgentResult::CancelSendMessageResponse(acp::CancelSendMessageResponse),
-                ),
+                AnyAgentRequest::CancelSendMessageParams(_) => {
+                    if let Ok(mut borrow) = cancel_request_tx.try_borrow_mut() {
+                        if let Some(cancel_tx) = borrow.take() {
+                            cancel_tx.send(()).ok();
+                        }
+                    }
+
+                    Ok(AnyAgentResult::CancelSendMessageResponse(
+                        acp::CancelSendMessageResponse,
+                    ))
+                }
             }
         }
         .boxed_local()
@@ -214,6 +230,7 @@ impl AgentConnection for CodexAgentConnection {
 struct CodexAgentConnection {
     codex_mcp: Arc<context_server::ContextServer>,
     root_dir: PathBuf,
+    cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
     _handler_task: Task<()>,
     _zed_mcp: ZedMcpServer,
 }
