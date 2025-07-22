@@ -501,7 +501,7 @@ mod remote_button {
         )
         .into_any_element();
 
-        SplitButton { left, right }
+        SplitButton::new(left, right)
     }
 }
 
