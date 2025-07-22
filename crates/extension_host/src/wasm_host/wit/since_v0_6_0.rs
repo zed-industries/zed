@@ -75,7 +75,7 @@ impl From<Range> for std::ops::Range<usize> {
 impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {
-            command: value.command,
+            command: value.command.into(),
             args: value.args,
             env: value.env,
         }
@@ -958,7 +958,7 @@ impl ExtensionImports for WasmState {
                                 command,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
-                                    path: Some(command.path),
+                                    path: command.path.to_str().map(|path| path.to_string()),
                                     arguments: Some(command.args),
                                     env: command.env.map(|env| env.into_iter().collect()),
                                 }),

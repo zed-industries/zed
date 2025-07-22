@@ -610,7 +610,7 @@ mod tests {
     use context_server::test::create_fake_transport;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use serde_json::json;
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, path::PathBuf, rc::Rc};
     use util::path;
 
     #[gpui::test]
@@ -931,7 +931,7 @@ mod tests {
                         ContextServerSettings::Custom {
                             enabled: true,
                             command: ContextServerCommand {
-                                path: "somebinary".to_string(),
+                                path: "somebinary".into(),
                                 args: vec!["arg".to_string()],
                                 env: None,
                             },
@@ -971,7 +971,7 @@ mod tests {
                         ContextServerSettings::Custom {
                             enabled: true,
                             command: ContextServerCommand {
-                                path: "somebinary".to_string(),
+                                path: "somebinary".into(),
                                 args: vec!["anotherArg".to_string()],
                                 env: None,
                             },
@@ -1053,7 +1053,7 @@ mod tests {
                 ContextServerSettings::Custom {
                     enabled: true,
                     command: ContextServerCommand {
-                        path: "somebinary".to_string(),
+                        path: "somebinary".into(),
                         args: vec!["arg".to_string()],
                         env: None,
                     },
@@ -1104,7 +1104,7 @@ mod tests {
                     ContextServerSettings::Custom {
                         enabled: false,
                         command: ContextServerCommand {
-                            path: "somebinary".to_string(),
+                            path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
                         },
@@ -1132,7 +1132,7 @@ mod tests {
                     ContextServerSettings::Custom {
                         enabled: true,
                         command: ContextServerCommand {
-                            path: "somebinary".to_string(),
+                            path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
                         },
@@ -1184,7 +1184,7 @@ mod tests {
         ContextServerSettings::Custom {
             enabled: true,
             command: ContextServerCommand {
-                path: "somebinary".to_string(),
+                path: "somebinary".into(),
                 args: vec!["arg".to_string()],
                 env: None,
             },
@@ -1256,11 +1256,11 @@ mod tests {
     }
 
     struct FakeContextServerDescriptor {
-        path: String,
+        path: PathBuf,
     }
 
     impl FakeContextServerDescriptor {
-        fn new(path: impl Into<String>) -> Self {
+        fn new(path: impl Into<PathBuf>) -> Self {
             Self { path: path.into() }
         }
     }
