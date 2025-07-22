@@ -51,7 +51,7 @@ use util::{ResultExt as _, debug_panic, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
-const MAX_RETRY_ATTEMPTS: u8 = 3;
+const MAX_RETRY_ATTEMPTS: u8 = 4;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -2182,8 +2182,8 @@ impl Thread {
 
         // General strategy here:
         // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
-        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), try multiple times with exponential backoff.
-        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), just retry once.
+        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), retry up to 4 times with exponential backoff.
+        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), retry up to 3 times.
         match error {
             HttpResponseError {
                 status_code: StatusCode::TOO_MANY_REQUESTS,
@@ -2211,8 +2211,8 @@ impl Thread {
                 }
                 StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
                     delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                    // Internal Server Error could be anything, so only retry once.
-                    max_attempts: 1,
+                    // Internal Server Error could be anything, retry up to 3 times.
+                    max_attempts: 3,
                 }),
                 status => {
                     // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
@@ -2223,20 +2223,23 @@ impl Thread {
                             max_attempts: MAX_RETRY_ATTEMPTS,
                         })
                     } else {
-                        None
+                        Some(RetryStrategy::Fixed {
+                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                            max_attempts: 2,
+                        })
                     }
                 }
             },
             ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
-                max_attempts: 1,
+                max_attempts: 3,
             }),
             ApiReadResponseError { .. }
             | HttpSend { .. }
             | DeserializeResponse { .. }
             | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
-                max_attempts: 1,
+                max_attempts: 3,
             }),
             // Retrying these errors definitely shouldn't help.
             HttpResponseError {
@@ -2244,24 +2247,31 @@ impl Thread {
                     StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
                 ..
             }
-            | SerializeRequest { .. }
+            | AuthenticationError { .. }
+            | PermissionError { .. } => None,
+            // These errors might be transient, so retry them
+            SerializeRequest { .. }
             | BuildRequestBody { .. }
             | PromptTooLarge { .. }
-            | AuthenticationError { .. }
-            | PermissionError { .. }
             | ApiEndpointNotFound { .. }
-            | NoApiKey { .. } => None,
+            | NoApiKey { .. } => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 2,
+            }),
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
                 if status_code.is_client_error() || status_code.is_server_error() =>
             {
                 Some(RetryStrategy::Fixed {
                     delay: BASE_RETRY_DELAY,
-                    max_attempts: 1,
+                    max_attempts: 3,
                 })
             }
             // Conservatively assume that any other errors are non-retryable
-            HttpResponseError { .. } | Other(..) => None,
+            HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
+                delay: BASE_RETRY_DELAY,
+                max_attempts: 2,
+            }),
         }
     }
 
@@ -4352,7 +4362,7 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, 1,
+                retry_state.max_attempts, 3,
                 "Should have correct max attempts"
             );
         });
@@ -4368,8 +4378,9 @@ fn main() {{
                             if let MessageSegment::Text(text) = seg {
                                 text.contains("internal")
                                     && text.contains("Fake")
-                                    && text.contains("Retrying in")
-                                    && !text.contains("attempt")
+                                    && text.contains("Retrying")
+                                    && text.contains("attempt 1 of 3")
+                                    && text.contains("seconds")
                             } else {
                                 false
                             }
@@ -4464,8 +4475,8 @@ fn main() {{
             let retry_state = thread.retry_state.as_ref().unwrap();
             assert_eq!(retry_state.attempt, 1, "Should be first retry attempt");
             assert_eq!(
-                retry_state.max_attempts, 1,
-                "Internal server errors should only retry once"
+                retry_state.max_attempts, 3,
+                "Internal server errors should retry up to 3 times"
             );
         });
 
@@ -4473,7 +4484,15 @@ fn main() {{
         cx.executor().advance_clock(BASE_RETRY_DELAY);
         cx.run_until_parked();
 
-        // Should have scheduled second retry - count retry messages
+        // Advance clock for second retry
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
+        cx.run_until_parked();
+
+        // Advance clock for third retry
+        cx.executor().advance_clock(BASE_RETRY_DELAY);
+        cx.run_until_parked();
+
+        // Should have completed all retries - count retry messages
         let retry_count = thread.update(cx, |thread, _| {
             thread
                 .messages
@@ -4491,24 +4510,24 @@ fn main() {{
                 .count()
         });
         assert_eq!(
-            retry_count, 1,
-            "Should have only one retry for internal server errors"
+            retry_count, 3,
+            "Should have 3 retries for internal server errors"
         );
 
-        // For internal server errors, we only retry once and then give up
-        // Check that retry_state is cleared after the single retry
+        // For internal server errors, we retry 3 times and then give up
+        // Check that retry_state is cleared after all retries
         thread.read_with(cx, |thread, _| {
             assert!(
                 thread.retry_state.is_none(),
-                "Retry state should be cleared after single retry"
+                "Retry state should be cleared after all retries"
             );
         });
 
-        // Verify total attempts (1 initial + 1 retry)
+        // Verify total attempts (1 initial + 3 retries)
         assert_eq!(
             *completion_count.lock(),
-            2,
-            "Should have attempted once plus 1 retry"
+            4,
+            "Should have attempted once plus 3 retries"
         );
     }
 

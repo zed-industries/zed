@@ -1,19 +1,24 @@
 // Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
-use super::{BladeAtlas, BladeContext};
+use super::{BladeAtlas, BladeContext, PATH_TEXTURE_FORMAT};
 use crate::{
-    Background, Bounds, ContentMask, DevicePixels, GpuSpecs, MonochromeSprite, PathVertex,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
+    AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
+    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
-use blade_graphics::{self as gpu};
+use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
+use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
+// Use 4x MSAA, all devices support it.
+// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
+const DEFAULT_PATH_SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -61,9 +66,16 @@ struct ShaderShadowsData {
 }
 
 #[derive(blade_macros::ShaderData)]
-struct ShaderPathsData {
+struct ShaderPathRasterizationData {
     globals: GlobalParams,
     b_path_vertices: gpu::BufferPiece,
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ShaderPathsData {
+    globals: GlobalParams,
+    t_sprite: gpu::TextureView,
+    s_sprite: gpu::Sampler,
     b_path_sprites: gpu::BufferPiece,
 }
 
@@ -103,27 +115,13 @@ struct ShaderSurfacesData {
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
     color: Background,
-}
-
-/// Argument buffer layout for `draw_indirect` commands.
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-pub struct DrawIndirectArgs {
-    /// The number of vertices to draw.
-    pub vertex_count: u32,
-    /// The number of instances to draw.
-    pub instance_count: u32,
-    /// The Index of the first vertex to draw.
-    pub first_vertex: u32,
-    /// The instance ID of the first instance to draw.
-    ///
-    /// Has to be 0, unless [`Features::INDIRECT_FIRST_INSTANCE`](crate::Features::INDIRECT_FIRST_INSTANCE) is enabled.
-    pub first_instance: u32,
+    tile: AtlasTile,
 }
 
 struct BladePipelines {
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
+    path_rasterization: gpu::RenderPipeline,
     paths: gpu::RenderPipeline,
     underlines: gpu::RenderPipeline,
     mono_sprites: gpu::RenderPipeline,
@@ -132,7 +130,7 @@ struct BladePipelines {
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, sample_count: u32) -> Self {
+    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Self {
         use gpu::ShaderData as _;
 
         log::info!(
@@ -180,10 +178,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_quad")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
@@ -197,8 +192,26 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_shadow")),
                 color_targets,
+                multisample_state: gpu::MultisampleState::default(),
+            }),
+            path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
+                name: "path_rasterization",
+                data_layouts: &[&ShaderPathRasterizationData::layout()],
+                vertex: shader.at("vs_path_rasterization"),
+                vertex_fetches: &[],
+                primitive: gpu::PrimitiveState {
+                    topology: gpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                fragment: Some(shader.at("fs_path_rasterization")),
+                color_targets: &[gpu::ColorTargetState {
+                    format: PATH_TEXTURE_FORMAT,
+                    blend: Some(gpu::BlendState::ADDITIVE),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
                 multisample_state: gpu::MultisampleState {
-                    sample_count,
+                    sample_count: path_sample_count,
                     ..Default::default()
                 },
             }),
@@ -208,16 +221,13 @@ impl BladePipelines {
                 vertex: shader.at("vs_path"),
                 vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
-                    topology: gpu::PrimitiveTopology::TriangleList,
+                    topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
                 },
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_path")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
@@ -231,10 +241,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_underline")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
@@ -248,10 +255,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_mono_sprite")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
@@ -265,10 +269,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_poly_sprite")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "surfaces",
@@ -282,10 +283,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_surface")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
         }
     }
@@ -293,6 +291,7 @@ impl BladePipelines {
     fn destroy(&mut self, gpu: &gpu::Context) {
         gpu.destroy_render_pipeline(&mut self.quads);
         gpu.destroy_render_pipeline(&mut self.shadows);
+        gpu.destroy_render_pipeline(&mut self.path_rasterization);
         gpu.destroy_render_pipeline(&mut self.paths);
         gpu.destroy_render_pipeline(&mut self.underlines);
         gpu.destroy_render_pipeline(&mut self.mono_sprites);
@@ -318,13 +317,12 @@ pub struct BladeRenderer {
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
     instance_belt: BufferBelt,
+    path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
-    sample_count: u32,
-    texture_msaa: Option<gpu::Texture>,
-    texture_view_msaa: Option<gpu::TextureView>,
+    path_sample_count: u32,
 }
 
 impl BladeRenderer {
@@ -333,18 +331,6 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
-        // workaround for https://github.com/zed-industries/zed/issues/26143
-        let sample_count = std::env::var("ZED_SAMPLE_COUNT")
-            .ok()
-            .or_else(|| std::env::var("ZED_PATH_SAMPLE_COUNT").ok())
-            .and_then(|v| v.parse().ok())
-            .or_else(|| {
-                [4, 2, 1]
-                    .into_iter()
-                    .find(|count| context.gpu.supports_texture_sample_count(*count))
-            })
-            .unwrap_or(1);
-
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
             usage: gpu::TextureUsage::TARGET,
@@ -358,27 +344,22 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .map_err(|err| anyhow::anyhow!("Failed to create surface: {err:?}"))?;
 
-        let (texture_msaa, texture_view_msaa) = create_msaa_texture_if_needed(
-            &context.gpu,
-            surface.info().format,
-            config.size.width,
-            config.size.height,
-            sample_count,
-        )
-        .unzip();
-
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
-
-        let pipelines = BladePipelines::new(&context.gpu, surface.info(), sample_count);
+        // workaround for https://github.com/zed-industries/zed/issues/26143
+        let path_sample_count = std::env::var("ZED_PATH_SAMPLE_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_PATH_SAMPLE_COUNT);
+        let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu));
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu, path_sample_count));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
@@ -402,13 +383,12 @@ impl BladeRenderer {
             last_sync_point: None,
             pipelines,
             instance_belt,
+            path_tiles: HashMap::default(),
             atlas,
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            sample_count,
-            texture_msaa,
-            texture_view_msaa,
+            path_sample_count,
         })
     }
 
@@ -461,24 +441,6 @@ impl BladeRenderer {
             self.surface_config.size = gpu_size;
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
-
-            if let Some(texture_msaa) = self.texture_msaa {
-                self.gpu.destroy_texture(texture_msaa);
-            }
-            if let Some(texture_view_msaa) = self.texture_view_msaa {
-                self.gpu.destroy_texture_view(texture_view_msaa);
-            }
-
-            let (texture_msaa, texture_view_msaa) = create_msaa_texture_if_needed(
-                &self.gpu,
-                self.surface.info().format,
-                gpu_size.width,
-                gpu_size.height,
-                self.sample_count,
-            )
-            .unzip();
-            self.texture_msaa = texture_msaa;
-            self.texture_view_msaa = texture_view_msaa;
         }
     }
 
@@ -489,7 +451,8 @@ impl BladeRenderer {
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
             self.pipelines.destroy(&self.gpu);
-            self.pipelines = BladePipelines::new(&self.gpu, self.surface.info(), self.sample_count);
+            self.pipelines =
+                BladePipelines::new(&self.gpu, self.surface.info(), self.path_sample_count);
         }
     }
 
@@ -527,6 +490,80 @@ impl BladeRenderer {
         objc2::rc::Retained::as_ptr(&self.surface.metal_layer()) as *mut _
     }
 
+    #[profiling::function]
+    fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
+        self.path_tiles.clear();
+        let mut vertices_by_texture_id = HashMap::default();
+
+        for path in paths {
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
+            let tile = self.atlas.allocate_for_rendering(
+                clipped_bounds.size.map(Into::into),
+                AtlasTextureKind::Path,
+                &mut self.command_encoder,
+            );
+            vertices_by_texture_id
+                .entry(tile.texture_id)
+                .or_insert(Vec::new())
+                .extend(path.vertices.iter().map(|vertex| PathVertex {
+                    xy_position: vertex.xy_position - clipped_bounds.origin
+                        + tile.bounds.origin.map(Into::into),
+                    st_position: vertex.st_position,
+                    content_mask: ContentMask {
+                        bounds: tile.bounds.map(Into::into),
+                    },
+                }));
+            self.path_tiles.insert(path.id, tile);
+        }
+
+        for (texture_id, vertices) in vertices_by_texture_id {
+            let tex_info = self.atlas.get_texture_info(texture_id);
+            let globals = GlobalParams {
+                viewport_size: [tex_info.size.width as f32, tex_info.size.height as f32],
+                premultiplied_alpha: 0,
+                pad: 0,
+            };
+
+            let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
+            let frame_view = tex_info.raw_view;
+            let color_target = if let Some(msaa_view) = tex_info.msaa_view {
+                gpu::RenderTarget {
+                    view: msaa_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::ResolveTo(frame_view),
+                }
+            } else {
+                gpu::RenderTarget {
+                    view: frame_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }
+            };
+
+            if let mut pass = self.command_encoder.render(
+                "paths",
+                gpu::RenderTargetSet {
+                    colors: &[color_target],
+                    depth_stencil: None,
+                },
+            ) {
+                let mut encoder = pass.with(&self.pipelines.path_rasterization);
+                encoder.bind(
+                    0,
+                    &ShaderPathRasterizationData {
+                        globals,
+                        b_path_vertices: vertex_buf,
+                    },
+                );
+                encoder.draw(0, vertices.len() as u32, 0, 1);
+            }
+        }
+    }
+
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
         self.atlas.destroy();
@@ -535,26 +572,17 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
         self.pipelines.destroy(&self.gpu);
         self.gpu.destroy_surface(&mut self.surface);
-        if let Some(texture_msaa) = self.texture_msaa {
-            self.gpu.destroy_texture(texture_msaa);
-        }
-        if let Some(texture_view_msaa) = self.texture_view_msaa {
-            self.gpu.destroy_texture_view(texture_view_msaa);
-        }
     }
 
     pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
+        self.rasterize_paths(scene.paths());
 
         let frame = {
             profiling::scope!("acquire frame");
             self.surface.acquire_frame()
         };
-        let frame_view = frame.texture_view();
-        if let Some(texture_msaa) = self.texture_msaa {
-            self.command_encoder.init_texture(texture_msaa);
-        }
         self.command_encoder.init_texture(frame.texture());
 
         let globals = GlobalParams {
@@ -569,25 +597,14 @@ impl BladeRenderer {
             pad: 0,
         };
 
-        let target = if let Some(texture_view_msaa) = self.texture_view_msaa {
-            gpu::RenderTarget {
-                view: texture_view_msaa,
-                init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                finish_op: gpu::FinishOp::ResolveTo(frame_view),
-            }
-        } else {
-            gpu::RenderTarget {
-                view: frame_view,
-                init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                finish_op: gpu::FinishOp::Store,
-            }
-        };
-
-        // draw to the target texture
         if let mut pass = self.command_encoder.render(
             "main",
             gpu::RenderTargetSet {
-                colors: &[target],
+                colors: &[gpu::RenderTarget {
+                    view: frame.texture_view(),
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }],
                 depth_stencil: None,
             },
         ) {
@@ -622,55 +639,32 @@ impl BladeRenderer {
                     }
                     PrimitiveBatch::Paths(paths) => {
                         let mut encoder = pass.with(&self.pipelines.paths);
-
-                        let mut vertices = Vec::new();
-                        let mut sprites = Vec::with_capacity(paths.len());
-                        let mut draw_indirect_commands = Vec::with_capacity(paths.len());
-                        let mut first_vertex = 0;
-
-                        for (i, path) in paths.iter().enumerate() {
-                            draw_indirect_commands.push(DrawIndirectArgs {
-                                vertex_count: path.vertices.len() as u32,
-                                instance_count: 1,
-                                first_vertex,
-                                first_instance: i as u32,
-                            });
-                            first_vertex += path.vertices.len() as u32;
-
-                            vertices.extend(path.vertices.iter().map(|v| PathVertex {
-                                xy_position: v.xy_position,
-                                content_mask: ContentMask {
-                                    bounds: path.content_mask.bounds,
+                        // todo(linux): group by texture ID
+                        for path in paths {
+                            let tile = &self.path_tiles[&path.id];
+                            let tex_info = self.atlas.get_texture_info(tile.texture_id);
+                            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
+                            let sprites = [PathSprite {
+                                bounds: Bounds {
+                                    origin: origin.map(|p| p.floor()),
+                                    size: tile.bounds.size.map(Into::into),
                                 },
-                            }));
-
-                            sprites.push(PathSprite {
-                                bounds: path.bounds,
                                 color: path.color,
-                            });
-                        }
+                                tile: (*tile).clone(),
+                            }];
 
-                        let b_path_vertices =
-                            unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-                        let instance_buf =
-                            unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
-                        let indirect_buf = unsafe {
-                            self.instance_belt
-                                .alloc_typed(&draw_indirect_commands, &self.gpu)
-                        };
-
-                        encoder.bind(
-                            0,
-                            &ShaderPathsData {
-                                globals,
-                                b_path_vertices,
-                                b_path_sprites: instance_buf,
-                            },
-                        );
-
-                        for i in 0..paths.len() {
-                            encoder.draw_indirect(indirect_buf.buffer.at(indirect_buf.offset
-                                + (i * mem::size_of::<DrawIndirectArgs>()) as u64));
+                            let instance_buf =
+                                unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
+                            encoder.bind(
+                                0,
+                                &ShaderPathsData {
+                                    globals,
+                                    t_sprite: tex_info.raw_view,
+                                    s_sprite: self.atlas_sampler,
+                                    b_path_sprites: instance_buf,
+                                },
+                            );
+                            encoder.draw(0, 4, 0, sprites.len() as u32);
                         }
                     }
                     PrimitiveBatch::Underlines(underlines) => {
@@ -823,47 +817,9 @@ impl BladeRenderer {
         profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
+        self.atlas.clear_textures(AtlasTextureKind::Path);
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
     }
-}
-
-fn create_msaa_texture_if_needed(
-    gpu: &gpu::Context,
-    format: gpu::TextureFormat,
-    width: u32,
-    height: u32,
-    sample_count: u32,
-) -> Option<(gpu::Texture, gpu::TextureView)> {
-    if sample_count <= 1 {
-        return None;
-    }
-
-    let texture_msaa = gpu.create_texture(gpu::TextureDesc {
-        name: "msaa",
-        format,
-        size: gpu::Extent {
-            width,
-            height,
-            depth: 1,
-        },
-        array_layer_count: 1,
-        mip_level_count: 1,
-        sample_count,
-        dimension: gpu::TextureDimension::D2,
-        usage: gpu::TextureUsage::TARGET,
-        external: None,
-    });
-    let texture_view_msaa = gpu.create_texture_view(
-        texture_msaa,
-        gpu::TextureViewDesc {
-            name: "msaa view",
-            format,
-            dimension: gpu::ViewDimension::D2,
-            subresources: &Default::default(),
-        },
-    );
-
-    Some((texture_msaa, texture_view_msaa))
 }

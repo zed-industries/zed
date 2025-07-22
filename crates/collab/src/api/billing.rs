@@ -1,12 +1,10 @@
 use anyhow::{Context as _, bail};
-use axum::routing::put;
 use axum::{Extension, Json, Router, extract, routing::post};
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
     BillingPortalSession, CancellationDetailsReason, CreateBillingPortalSession,
@@ -20,7 +18,6 @@ use stripe::{
 use util::{ResultExt, maybe};
 use zed_llm_client::LanguageModelProvider;
 
-use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -36,14 +33,13 @@ use crate::{
     db::{
         BillingSubscriptionId, CreateBillingCustomerParams, CreateBillingSubscriptionParams,
         CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
-        UpdateBillingPreferencesParams, UpdateBillingSubscriptionParams, billing_customer,
+        UpdateBillingSubscriptionParams, billing_customer,
     },
     stripe_billing::StripeBilling,
 };
 
 pub fn router() -> Router {
     Router::new()
-        .route("/billing/preferences", put(update_billing_preferences))
         .route("/billing/subscriptions", post(create_billing_subscription))
         .route(
             "/billing/subscriptions/manage",
@@ -53,108 +49,6 @@ pub fn router() -> Router {
             "/billing/subscriptions/sync",
             post(sync_billing_subscription),
         )
-}
-
-#[derive(Debug, Serialize)]
-struct BillingPreferencesResponse {
-    trial_started_at: Option<String>,
-    max_monthly_llm_usage_spending_in_cents: i32,
-    model_request_overages_enabled: bool,
-    model_request_overages_spend_limit_in_cents: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateBillingPreferencesBody {
-    github_user_id: i32,
-    #[serde(default)]
-    max_monthly_llm_usage_spending_in_cents: i32,
-    #[serde(default)]
-    model_request_overages_enabled: bool,
-    #[serde(default)]
-    model_request_overages_spend_limit_in_cents: i32,
-}
-
-async fn update_billing_preferences(
-    Extension(app): Extension<Arc<AppState>>,
-    Extension(rpc_server): Extension<Arc<crate::rpc::Server>>,
-    extract::Json(body): extract::Json<UpdateBillingPreferencesBody>,
-) -> Result<Json<BillingPreferencesResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
-
-    let max_monthly_llm_usage_spending_in_cents =
-        body.max_monthly_llm_usage_spending_in_cents.max(0);
-    let model_request_overages_spend_limit_in_cents =
-        body.model_request_overages_spend_limit_in_cents.max(0);
-
-    let billing_preferences =
-        if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
-            app.db
-                .update_billing_preferences(
-                    user.id,
-                    &UpdateBillingPreferencesParams {
-                        max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
-                            max_monthly_llm_usage_spending_in_cents,
-                        ),
-                        model_request_overages_enabled: ActiveValue::set(
-                            body.model_request_overages_enabled,
-                        ),
-                        model_request_overages_spend_limit_in_cents: ActiveValue::set(
-                            model_request_overages_spend_limit_in_cents,
-                        ),
-                    },
-                )
-                .await?
-        } else {
-            app.db
-                .create_billing_preferences(
-                    user.id,
-                    &crate::db::CreateBillingPreferencesParams {
-                        max_monthly_llm_usage_spending_in_cents,
-                        model_request_overages_enabled: body.model_request_overages_enabled,
-                        model_request_overages_spend_limit_in_cents,
-                    },
-                )
-                .await?
-        };
-
-    SnowflakeRow::new(
-        "Billing Preferences Updated",
-        Some(user.metrics_id),
-        user.admin,
-        None,
-        json!({
-            "user_id": user.id,
-            "model_request_overages_enabled": billing_preferences.model_request_overages_enabled,
-            "model_request_overages_spend_limit_in_cents": billing_preferences.model_request_overages_spend_limit_in_cents,
-            "max_monthly_llm_usage_spending_in_cents": billing_preferences.max_monthly_llm_usage_spending_in_cents,
-        }),
-    )
-    .write(&app.kinesis_client, &app.config.kinesis_stream)
-    .await
-    .log_err();
-
-    rpc_server.refresh_llm_tokens_for_user(user.id).await;
-
-    Ok(Json(BillingPreferencesResponse {
-        trial_started_at: billing_customer
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| {
-                trial_started_at
-                    .and_utc()
-                    .to_rfc3339_opts(SecondsFormat::Millis, true)
-            }),
-        max_monthly_llm_usage_spending_in_cents: billing_preferences
-            .max_monthly_llm_usage_spending_in_cents,
-        model_request_overages_enabled: billing_preferences.model_request_overages_enabled,
-        model_request_overages_spend_limit_in_cents: billing_preferences
-            .model_request_overages_spend_limit_in_cents,
-    }))
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
