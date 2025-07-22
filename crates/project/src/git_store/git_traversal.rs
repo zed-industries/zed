@@ -72,14 +72,13 @@ impl<'a> GitTraversal<'a> {
 
         if entry.is_dir() {
             let mut statuses = statuses.clone();
-            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &());
-            let summary =
-                statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left, &());
+            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left);
+            let summary = statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left);
 
             self.current_entry_summary = Some(summary);
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
-            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
+            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left) {
                 // TODO: Investigate statuses.item() being None here.
                 self.current_entry_summary = statuses.item().map(|item| item.status.into());
             } else {
