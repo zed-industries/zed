@@ -22,7 +22,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    feature_gate_predict_edits_rating_actions(cx);
+    feature_gate_predict_edits_actions(cx);
 
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
@@ -58,7 +58,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn feature_gate_predict_edits_rating_actions(cx: &mut App) {
+fn feature_gate_predict_edits_actions(cx: &mut App) {
     let rate_completion_action_types = [TypeId::of::<RateCompletions>()];
     let reset_onboarding_action_types = [TypeId::of::<ResetOnboarding>()];
     let zeta_all_action_types = [
