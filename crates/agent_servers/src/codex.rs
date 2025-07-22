@@ -125,7 +125,6 @@ impl AgentServer for Codex {
                 });
 
             cx.new(|cx| {
-                // todo! handle notifications
                 let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
                 delegate_tx.send(Some(delegate.clone())).log_err();
 
