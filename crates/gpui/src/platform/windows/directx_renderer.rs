@@ -253,6 +253,11 @@ impl DirectXRenderer {
         {
             self._direct_composition = direct_composition;
         }
+        unsafe {
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+        }
         Ok(())
     }
 
