@@ -117,7 +117,7 @@ impl Render for WhichKeyLayer {
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
 
-        let binding_data: Vec<_> = bindings
+        let mut binding_data: Vec<_> = bindings
             .iter()
             .map(|binding| {
                 let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
@@ -125,6 +125,40 @@ impl Render for WhichKeyLayer {
                 (remaining_keystrokes, action_name)
             })
             .collect();
+
+        // Group bindings if enabled
+        if which_key_settings.group {
+            binding_data = group_bindings(binding_data);
+        }
+
+        // Sort bindings from shortest to longest, with groups last
+        // Using stable sort to preserve relative order of equal elements
+        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
+            // Groups (actions starting with "+") should go last
+            let is_group_a = action_a.starts_with('+');
+            let is_group_b = action_b.starts_with('+');
+
+            // First, separate groups from non-groups
+            let group_cmp = is_group_a.cmp(&is_group_b);
+            if group_cmp != std::cmp::Ordering::Equal {
+                return group_cmp;
+            }
+
+            // Then sort by keystroke count
+            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
+            if keystroke_cmp != std::cmp::Ordering::Equal {
+                return keystroke_cmp;
+            }
+
+            // Finally sort by text length, then lexicographically for full stability
+            let text_a = text_for_keystrokes(keystrokes_a, cx);
+            let text_b = text_for_keystrokes(keystrokes_b, cx);
+            let text_len_cmp = text_a.len().cmp(&text_b.len());
+            if text_len_cmp != std::cmp::Ordering::Equal {
+                return text_len_cmp;
+            }
+            text_a.cmp(&text_b)
+        });
 
         // Find the longest text width
         let longest_text = binding_data
@@ -194,6 +228,37 @@ impl Render for WhichKeyLayer {
                     .child(v_flex().gap_2().children(rows)),
             )
     }
+}
+
+fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keystroke>, String)> {
+    use std::collections::HashMap;
+
+    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, String)>> = HashMap::new();
+
+    // Group bindings by their first keystroke
+    for (remaining_keystrokes, action_name) in binding_data {
+        let first_key = remaining_keystrokes.first().cloned();
+        groups
+            .entry(first_key)
+            .or_default()
+            .push((remaining_keystrokes, action_name));
+    }
+
+    let mut result = Vec::new();
+
+    for (first_key, mut group_bindings) in groups {
+        if group_bindings.len() > 1 && first_key.is_some() {
+            // This is a group - create a single entry with just the first keystroke
+            let first_keystroke = vec![first_key.unwrap()];
+            let count = group_bindings.len();
+            result.push((first_keystroke, format!("+{} keybinds", count)));
+        } else {
+            // Not a group or empty keystrokes - add all bindings as-is
+            result.append(&mut group_bindings);
+        }
+    }
+
+    result
 }
 
 fn create_binding_element(

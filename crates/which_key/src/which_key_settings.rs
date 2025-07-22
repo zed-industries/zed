@@ -10,6 +10,8 @@ pub struct WhichKeySettings {
     pub enabled: bool,
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u64,
+    #[serde(default = "default_group")]
+    pub group: bool,
 }
 
 fn default_enabled() -> bool {
@@ -18,6 +20,10 @@ fn default_enabled() -> bool {
 
 fn default_delay_ms() -> u64 {
     600
+}
+
+fn default_group() -> bool {
+    true
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -30,6 +36,10 @@ pub struct WhichKeySettingsContent {
     ///
     /// Default: 600
     pub delay_ms: Option<u64>,
+    /// Whether to group key bindings with the same first keystroke.
+    ///
+    /// Default: true
+    pub group: Option<bool>,
 }
 
 impl Settings for WhichKeySettings {
