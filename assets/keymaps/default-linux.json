@@ -483,6 +483,7 @@
       "ctrl-k ctrl-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch  / find_under_expand_skip
       "ctrl-k ctrl-shift-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "ctrl-k ctrl-i": "editor::Hover",
+      "ctrl-k ctrl-b": "editor::BlameHover",
       "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
