@@ -36,12 +36,12 @@ use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt, maybe};
-use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
     Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
+use workspace::{OpenInDebugJson, SplitDirection};
 use zed_actions::ToggleFocus;
 
 pub enum DebugPanelEvent {
@@ -97,6 +97,25 @@ impl DebugPanel {
                     this.focus_active_item(window, cx);
                 },
             );
+
+            if let Some(entity) = workspace.weak_handle().upgrade() {
+                let edit_scenario_subscription = cx.subscribe_in(
+                    &entity,
+                    window,
+                    move |this, workspace, OpenInDebugJson { scenario, id }, window, cx| {
+                        let task = this.go_to_scenario_definition(
+                            TaskSourceKind::UserInput,
+                            scenario.clone(),
+                            todo!(),
+                            // *id,
+                            window,
+                            cx,
+                        );
+                        cx.spawn(async move |_, cx| task.await)
+                            .detach_and_log_err(cx);
+                    },
+                );
+            }
 
             Self {
                 size: px(300.),

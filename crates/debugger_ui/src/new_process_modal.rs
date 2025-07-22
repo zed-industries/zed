@@ -343,12 +343,6 @@ impl NewProcessModal {
             return;
         }
 
-        if let NewProcessMode::Launch = &self.mode {
-            if self.configure_mode.read(cx).save_to_debug_json.selected() {
-                self.save_debug_scenario(window, cx);
-            }
-        }
-
         let Some(debugger) = self.debugger.clone() else {
             return;
         };
@@ -806,7 +800,6 @@ pub(super) struct ConfigureMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
     stop_on_entry: ToggleState,
-    save_to_debug_json: ToggleState,
 }
 
 impl ConfigureMode {
@@ -825,7 +818,6 @@ impl ConfigureMode {
             program,
             cwd,
             stop_on_entry: ToggleState::Unselected,
-            save_to_debug_json: ToggleState::Unselected,
         })
     }
 

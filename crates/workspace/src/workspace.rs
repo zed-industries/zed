@@ -1092,6 +1092,14 @@ pub struct Workspace {
 
 impl EventEmitter<Event> for Workspace {}
 
+#[derive(Clone)]
+pub struct OpenInDebugJson {
+    pub scenario: DebugScenario,
+    pub id: WorkspaceId,
+}
+
+impl EventEmitter<OpenInDebugJson> for Workspace {}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ViewId {
     pub creator: CollaboratorId,

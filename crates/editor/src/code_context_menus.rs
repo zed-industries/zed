@@ -1446,11 +1446,20 @@ impl CodeActionsMenu {
                                                 )
                                                 .on_click(cx.listener({
                                                     let scenario = scenario.clone();
-                                                    move |_, _, _window, cx| {
+                                                    move |editor, _, _window, cx| {
+                                                        if let Some((workspace, Some(id))) =
+                                                            editor.workspace.as_ref()
+                                                        {
+                                                            workspace
+                                                                .update(cx, |_, cx| {
+                                                                    cx.emit(workspace::OpenInDebugJson {
+                                                                        scenario: scenario.clone(),
+                                                                        id: *id,
+                                                                    });
+                                                                })
+                                                                .ok();
+                                                        }
                                                         cx.stop_propagation();
-                                                        cx.emit(OpenInDebugJson {
-                                                            scenario: scenario.clone(),
-                                                        });
                                                     }
                                                 })),
                                             )
@@ -1498,9 +1507,4 @@ impl CodeActionsMenu {
 
         Popover::new().child(list).into_any_element()
     }
-}
-
-#[derive(Clone)]
-pub struct OpenInDebugJson {
-    pub scenario: DebugScenario,
 }
