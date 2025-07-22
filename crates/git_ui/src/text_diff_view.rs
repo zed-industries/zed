@@ -1,4 +1,4 @@
-//! TextDiffView provides a UI for displaying differences between two buffers.
+//! TextDiffView currently provides a UI for displaying differences between the clipboard and selected text.
 
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
@@ -47,9 +47,9 @@ impl TextDiffView {
 
         let source_editor_buffer_and_range = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
-            let buffer = multibuffer.as_singleton()?.clone();
+            let source_buffer = multibuffer.as_singleton()?.clone();
             let selections = editor.selections.all::<Point>(cx);
-            let buffer_snapshot = buffer.read(cx);
+            let buffer_snapshot = source_buffer.read(cx);
             let Some(first_selection) = selections.first() else {
                 return None;
             };
@@ -59,7 +59,7 @@ impl TextDiffView {
                 first_selection.start..first_selection.end
             };
 
-            Some((buffer, selection_range))
+            Some((source_buffer, selection_range))
         });
 
         let Some((source_buffer, selected_range)) = source_editor_buffer_and_range else {
@@ -71,28 +71,28 @@ impl TextDiffView {
 
         let workspace = workspace.weak_handle();
 
-        let diff = cx.new(|cx| {
+        let diff_buffer = cx.new(|cx| {
             let source_buffer_snapshot = source_buffer.read(cx).snapshot();
             let diff = BufferDiff::new(&source_buffer_snapshot.text, cx);
             diff
         });
 
-        let neo_clipboard_buffer =
-            build_neo_clipboard_buffer(clipboard_text, &source_buffer, selected_range.clone(), cx);
+        let clipboard_buffer =
+            build_clipboard_buffer(clipboard_text, &source_buffer, selected_range.clone(), cx);
 
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
-            update_diff(&diff, &source_buffer, &neo_clipboard_buffer, cx).await?;
+            update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
                     TextDiffView::new(
-                        neo_clipboard_buffer,
+                        clipboard_buffer,
                         source_editor,
                         source_buffer,
                         selected_range,
-                        diff,
+                        diff_buffer,
                         project,
                         window,
                         cx,
@@ -112,11 +112,11 @@ impl TextDiffView {
     }
 
     pub fn new(
-        neo_clipboard_buffer: Entity<Buffer>,
-        source_editor: Entity<Editor>, // todo - diff: remove param - just need title
+        clipboard_buffer: Entity<Buffer>,
+        source_editor: Entity<Editor>,
         source_buffer: Entity<Buffer>,
         source_range: Range<Point>,
-        diff: Entity<BufferDiff>,
+        diff_buffer: Entity<BufferDiff>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -130,7 +130,7 @@ impl TextDiffView {
                 cx,
             );
 
-            multibuffer.add_diff(diff.clone(), cx);
+            multibuffer.add_diff(diff_buffer.clone(), cx);
             multibuffer
         });
         let diff_editor = cx.new(|cx| {
@@ -201,7 +201,7 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    update_diff(&diff, &source_buffer, &neo_clipboard_buffer, cx).await?;
+                    update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -210,8 +210,7 @@ impl TextDiffView {
     }
 }
 
-// todo - diff: come up with better name than neo_clipboard_buffer
-fn build_neo_clipboard_buffer(
+fn build_clipboard_buffer(
     clipboard_text: String,
     source_buffer: &Entity<Buffer>,
     selected_range: Range<Point>,
@@ -231,15 +230,15 @@ fn build_neo_clipboard_buffer(
     })
 }
 
-async fn update_diff(
+async fn update_diff_buffer(
     diff: &Entity<BufferDiff>,
     source_buffer: &Entity<Buffer>,
-    neo_clipboard_buffer: &Entity<Buffer>,
+    clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
-    let base_buffer_snapshot = neo_clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
     let base_text = base_buffer_snapshot.text().to_string();
 
     let diff_snapshot = cx
@@ -437,11 +436,9 @@ mod tests {
 
     use editor::{actions, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
-    use language::{Language, LanguageConfig, LanguageMatcher, LanguageRegistry};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
     use unindent::unindent;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -484,28 +481,6 @@ mod tests {
             })
             .await
             .unwrap();
-
-        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        // language_registry.add(Arc::new(Language::new(
-        //     LanguageConfig {
-        //         name: "Markdown".into(),
-        //         matcher: LanguageMatcher {
-        //             path_suffixes: vec!["md".into()],
-        //             ..Default::default()
-        //         },
-        //         ..Default::default()
-        //     },
-        //     Some(tree_sitter_md::LANGUAGE.into()),
-        // )));
-
-        // let markdown = language_registry
-        //     .language_for_name("Markdown")
-        //     .await
-        //     .unwrap();
-
-        // buffer.update(cx, |buffer, cx| {
-        //     buffer.set_language(Some(markdown.clone()), cx);
-        // });
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
@@ -557,24 +532,5 @@ mod tests {
                 "Clipboard ↔ test/a/b/text.txt @ L1:1-L5:1"
             );
         });
-
-        // let diff_buffer = diff_view.read_with(cx, |view, _| view.diff_editor.clone());
-        // let snapshot =
-        //     diff_buffer.read_with(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx));
-
-        // let deletion_line = 0; // "- old line 1"
-        // let deletion_point = language::Point::new(deletion_line, 2); // Skip "- " prefix
-        // let language_at_deletion = snapshot.language_at(deletion_point);
-        // assert_eq!(language_at_deletion, Some(&markdown.clone()),);
-
-        // let addition_line = 1; // "+ new line 1"
-        // let addition_point = language::Point::new(addition_line, 2); // Skip "+ " prefix
-        // let language_at_addition = snapshot.language_at(addition_point);
-        // assert_eq!(language_at_addition, Some(&markdown),);
     }
 }
-
-// TODO - diff - single line diffs should work, do we need to adjust indenting when not selecting the entire line?
-// TODO - diff - adjusting highlight in original file should adjust what is shown in the diff view?
-// TODO - diff - editing the source should keep the diff in tact, but it currently loses the diff when editing
-// TODO - diff - language isn't being set in diff deletion hunks
