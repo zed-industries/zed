@@ -206,8 +206,8 @@ impl LanguageModelRegistry {
         None
     }
 
-    /// Check that we have at least one provider that is authenticated.
-    fn has_authenticated_provider(&self, cx: &App) -> bool {
+    /// Returns `true` if at least one provider that is authenticated.
+    pub fn has_authenticated_provider(&self, cx: &App) -> bool {
         self.providers.values().any(|p| p.is_authenticated(cx))
     }
 

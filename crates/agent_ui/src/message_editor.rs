@@ -14,6 +14,7 @@ use agent::{
     context_store::ContextStoreEvent,
 };
 use agent_settings::{AgentSettings, CompletionMode};
+use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -33,7 +34,8 @@ use gpui::{
 };
 use language::{Buffer, Language, Point};
 use language_model::{
-    ConfiguredModel, LanguageModelRequestMessage, MessageContent, ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use multi_buffer;
 use project::Project;
@@ -1655,9 +1657,28 @@ impl Render for MessageEditor {
 
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
+        let enrolled_in_trial = matches!(
+            self.user_store.read(cx).current_plan(),
+            Some(proto::Plan::ZedProTrial)
+        );
+
+        let configured_providers: Vec<(IconName, SharedString)> =
+            LanguageModelRegistry::read_global(cx)
+                .providers()
+                .iter()
+                .filter(|provider| {
+                    provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
+                })
+                .map(|provider| (provider.icon(), provider.name().0.clone()))
+                .collect();
+        let has_existing_providers = configured_providers.len() > 0;
+
         v_flex()
             .size_full()
             .bg(cx.theme().colors().panel_background)
+            .when(has_existing_providers && !enrolled_in_trial, |this| {
+                this.child(cx.new(ApiKeysWithProviders::new))
+            })
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
