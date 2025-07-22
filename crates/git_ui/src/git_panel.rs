@@ -5045,6 +5045,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             Project::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             crate::init(cx);
         });
     }
