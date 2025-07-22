@@ -394,18 +394,27 @@ impl Item for TextDiffView {
 }
 
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
-    let buffer = editor.buffer().read(cx).snapshot(cx);
+    let buffer = editor.buffer().read(cx);
+    let buffer_snapshot = buffer.snapshot(cx);
     let Some(first_selection) = editor.selections.disjoint.first() else {
         return None;
     };
 
-    let selection_start = first_selection.start.to_point(&buffer);
-    let selection_end = first_selection.end.to_point(&buffer);
+    let (start_row, start_column, end_row, end_column) =
+        if first_selection.start == first_selection.end {
+            let max_point = buffer_snapshot.max_point();
+            (0, 0, max_point.row, max_point.column)
+        } else {
+            let selection_start = first_selection.start.to_point(&buffer_snapshot);
+            let selection_end = first_selection.end.to_point(&buffer_snapshot);
 
-    let start_row = selection_start.row;
-    let start_column = selection_start.column;
-    let end_row = selection_end.row;
-    let end_column = selection_end.column;
+            (
+                selection_start.row,
+                selection_start.column,
+                selection_end.row,
+                selection_end.column,
+            )
+        };
 
     let range_text = if start_row == end_row {
         format!("L{}:{}-{}", start_row + 1, start_column + 1, end_column + 1)
@@ -454,7 +463,18 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_clipboard_against_selection_text_diff_view(cx: &mut TestAppContext) {
+    async fn test_diffing_clipboard_against_specific_selection(cx: &mut TestAppContext) {
+        base_test(true, cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_against_empty_selection_uses_full_buffer(
+        cx: &mut TestAppContext,
+    ) {
+        base_test(false, cx).await;
+    }
+
+    async fn base_test(select_all_text: bool, cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -485,7 +505,11 @@ mod tests {
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_text("new line 1\nline 2\nnew line 3\nline 4\n", window, cx);
-            editor.select_all(&actions::SelectAll, window, cx);
+
+            if select_all_text {
+                editor.select_all(&actions::SelectAll, window, cx);
+            }
+
             editor
         });
 
