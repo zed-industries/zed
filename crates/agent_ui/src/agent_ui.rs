@@ -249,8 +249,9 @@ pub fn init(
     update_command_palette_filter(cx);
 
     // Watch for settings changes
-    cx.observe_global::<SettingsStore>(|cx| {
-        update_command_palette_filter(cx);
+    cx.observe_global::<SettingsStore>(|app_cx| {
+        // When settings change, update the command palette filter
+        update_command_palette_filter(app_cx);
     })
     .detach();
 }
@@ -263,6 +264,9 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
             filter.hide_namespace("zed_predict_onboarding");
+
+            // Hide the edit_prediction namespace entirely
+            filter.hide_namespace("edit_prediction");
 
             // Hide edit prediction actions
             use editor::actions::{
@@ -286,6 +290,9 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("agent");
             filter.show_namespace("assistant");
             filter.show_namespace("zed_predict_onboarding");
+
+            // Show the edit_prediction namespace
+            filter.show_namespace("edit_prediction");
 
             // Show edit prediction actions
             use editor::actions::{

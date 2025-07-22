@@ -6,6 +6,7 @@ mod sign_in;
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
+use client::DisableAiSettings;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -25,6 +26,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
 use serde_json::json;
+use settings::Settings;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::collections::hash_map::Entry;
@@ -93,27 +95,49 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
+
+        // Check if AI features are disabled globally
+        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+
+        // Get filter after checking settings to avoid borrowing conflict
         let filter = CommandPaletteFilter::global_mut(cx);
 
-        match status {
-            Status::Disabled => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.hide_action_types(&copilot_no_auth_action_types);
+        if is_ai_disabled {
+            // Hide all Copilot actions when AI is disabled
+            filter.hide_action_types(&copilot_action_types);
+            filter.hide_action_types(&copilot_auth_action_types);
+            filter.hide_action_types(&copilot_no_auth_action_types);
+        } else {
+            // Normal filtering based on Copilot status
+            match status {
+                Status::Disabled => {
+                    filter.hide_action_types(&copilot_action_types);
+                    filter.hide_action_types(&copilot_auth_action_types);
+                    filter.hide_action_types(&copilot_no_auth_action_types);
+                }
+                Status::Authorized => {
+                    filter.hide_action_types(&copilot_no_auth_action_types);
+                    filter.show_action_types(
+                        copilot_action_types
+                            .iter()
+                            .chain(&copilot_auth_action_types),
+                    );
+                }
+                _ => {
+                    filter.hide_action_types(&copilot_action_types);
+                    filter.hide_action_types(&copilot_auth_action_types);
+                    filter.show_action_types(copilot_no_auth_action_types.iter());
+                }
             }
-            Status::Authorized => {
-                filter.hide_action_types(&copilot_no_auth_action_types);
-                filter.show_action_types(
-                    copilot_action_types
-                        .iter()
-                        .chain(&copilot_auth_action_types),
-                );
-            }
-            _ => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.show_action_types(copilot_no_auth_action_types.iter());
-            }
+        }
+    })
+    .detach();
+
+    // Observe AI settings changes to update command palette filtering
+    cx.observe_global::<SettingsStore>(move |cx| {
+        // Directly update the global Copilot entity to trigger the filter update callback
+        if let Some(handle) = Copilot::global(cx) {
+            handle.update(cx, |_, _| {});
         }
     })
     .detach();

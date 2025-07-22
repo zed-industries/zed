@@ -80,6 +80,8 @@ actions!(
     ]
 );
 
+// No imports needed here
+
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
 
