@@ -32,13 +32,13 @@ pub struct Codex;
 
 pub struct CodexApproval;
 impl context_server::types::Request for CodexApproval {
-    type Params = CodexApprovalRequest;
+    type Params = CodexElicitation;
     type Response = CodexApprovalResponse;
     const METHOD: &'static str = "elicitation/create";
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CodexApprovalRequest {
+pub struct ExecApprovalRequest {
     // These fields are required so that `params`
     // conforms to ElicitRequestParams.
     pub message: String,
@@ -47,11 +47,44 @@ pub struct CodexApprovalRequest {
 
     // // These are additional fields the client can use to
     // // correlate the request with the codex tool call.
-    // pub codex_elicitation: String,
-    // pub codex_mcp_tool_call_id: String,
+    pub codex_mcp_tool_call_id: String,
     // pub codex_event_id: String,
-    // pub codex_command: Vec<String>,
-    // pub codex_cwd: PathBuf,
+    pub codex_command: Vec<String>,
+    pub codex_cwd: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PatchApprovalRequest {
+    pub message: String,
+    // #[serde(rename = "requestedSchema")]
+    // pub requested_schema: ElicitRequestParamsRequestedSchema,
+    pub codex_mcp_tool_call_id: String,
+    pub codex_event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_grant_root: Option<PathBuf>,
+    pub codex_changes: HashMap<PathBuf, FileChange>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "codex_elicitation", rename_all = "snake_case")]
+enum CodexElicitation {
+    ExecApproval(ExecApprovalRequest),
+    PatchApproval(PatchApprovalRequest),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChange {
+    Add {
+        content: String,
+    },
+    Delete,
+    Update {
+        unified_diff: String,
+        move_path: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -157,15 +190,11 @@ impl AgentServer for Codex {
             // todo! stop
 
             let (notification_tx, mut notification_rx) = mpsc::unbounded();
+            let (request_tx, mut request_rx) = mpsc::unbounded();
 
             let client = codex_mcp_client
                 .client()
                 .context("Failed to subscribe to server")?;
-            client.on_request::<CodexApproval, _>({
-                move |elicitation: CodexApprovalRequest, cx| {
-                    cx.spawn(async move |cx| anyhow::bail!("oops"))
-                }
-            });
             client.on_notification("codex/event", {
                 move |event, cx| {
                     let mut notification_tx = notification_tx.clone();
@@ -176,6 +205,17 @@ impl AgentServer for Codex {
                         }
                     })
                     .detach();
+                }
+            });
+
+            client.on_request::<CodexApproval, _>({
+                let delegate = delegate.clone();
+                {
+                    move |elicitation, cx| {
+                        let (tx, rx) = oneshot::channel::<Result<CodexApprovalResponse>>();
+                        request_tx.send((elicitation, tx));
+                        cx.foreground_executor().spawn(rx)
+                    }
                 }
             });
 
@@ -199,12 +239,95 @@ impl AgentServer for Codex {
                     }
                 });
 
+                let request_task = cx.spawn({
+                    let delegate = delegate.clone();
+                    let tool_id_map = tool_id_map.clone();
+                    async move |_, _cx| {
+                        while let Some((elicitation, respond)) = request_tx.next().await {
+                            let confirmation = match elicitation {
+                                CodexElicitation::ExecApproval(exec) => {
+                                    let inner_command =
+                                        strip_bash_lc_and_escape(&exec.codex_command);
+
+                                    acp::RequestToolCallConfirmationParams {
+                                        tool_call: acp::PushToolCallParams {
+                                            label: todo!(),
+                                            icon: acp::Icon::Terminal,
+                                            content: None,
+                                            locations: vec![],
+                                        },
+                                        confirmation: acp::ToolCallConfirmation::Execute {
+                                            root_command: inner_command
+                                                .split(" ")
+                                                .next()
+                                                .unwrap_or_default()
+                                                .to_string(),
+                                            command: inner_command,
+                                            description: Some(exec.message),
+                                        },
+                                    }
+                                }
+                                CodexElicitation::PatchApproval(patch) => {
+                                    acp::RequestToolCallConfirmationParams {
+                                        tool_call: acp::PushToolCallParams {
+                                            label: "Edit".to_string(),
+                                            icon: acp::Icon::Pencil,
+                                            content: None, // todo!()
+                                            locations: patch
+                                                .codex_changes
+                                                .keys()
+                                                .map(|path| acp::ToolCallLocation {
+                                                    path: path.clone(),
+                                                    line: None,
+                                                })
+                                                .collect(),
+                                        },
+                                        confirmation: acp::ToolCallConfirmation::Edit {
+                                            description: Some(patch.message),
+                                        },
+                                    }
+                                }
+                            };
+
+                            let task = cx.spawn(async move |cx| {
+                                let response = delegate
+                                    .request_tool_call_confirmation(confirmation)
+                                    .await?;
+
+                                let decision = match response.outcome {
+                                    acp::ToolCallConfirmationOutcome::Allow => {
+                                        ReviewDecision::Approved
+                                    }
+                                    acp::ToolCallConfirmationOutcome::AlwaysAllow
+                                    | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
+                                    | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
+                                        ReviewDecision::ApprovedForSession
+                                    }
+                                    acp::ToolCallConfirmationOutcome::Reject => {
+                                        ReviewDecision::Denied
+                                    }
+                                    acp::ToolCallConfirmationOutcome::Cancel => {
+                                        ReviewDecision::Abort
+                                    }
+                                };
+
+                                Ok(CodexApprovalResponse { decision })
+                            });
+                        }
+
+                        cx.spawn(async move |cx| {
+                            tx.send(task.await).ok();
+                        })
+                    }
+                });
+
                 let connection = CodexAgentConnection {
                     root_dir,
                     codex_mcp: codex_mcp_client,
                     cancel_request_tx: Default::default(),
                     tool_id_map: tool_id_map.clone(),
                     _handler_task: handler_task,
+                    _request_task: request_task,
                     _zed_mcp: zed_mcp_server,
                 };
 
@@ -292,6 +415,7 @@ struct CodexAgentConnection {
     cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
     tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
     _handler_task: Task<()>,
+    _request_task: Task<()>,
     _zed_mcp: ZedMcpServer,
 }
 
