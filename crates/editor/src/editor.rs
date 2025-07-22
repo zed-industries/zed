@@ -56,7 +56,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, DisableAiSettings, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -138,11 +138,6 @@ use project::{
 };
 
 pub use git::blame::BlameRenderer;
-
-// Define a simple BlameHover struct for use with the blame_hover action
-#[derive(Debug, Clone, PartialEq, Default, gpui::Action)]
-pub struct BlameHover;
-
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -955,7 +950,6 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
-    #[allow(dead_code)]
     keyboard_grace: bool,
 }
 
@@ -2396,9 +2390,9 @@ impl Editor {
                 }
             }
             Some(CodeContextMenu::CodeActions(menu)) => {
-                if !menu.actions.is_empty() {
+                if menu.visible() {
                     key_context.add("menu");
-                    key_context.add("showing_code_actions");
+                    key_context.add("showing_code_actions")
                 }
             }
             None => {}
@@ -2863,11 +2857,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Don't toggle edit predictions if AI is disabled
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return;
-        }
-
         if self.show_inline_completions_override.is_some() {
             self.set_show_edit_predictions(None, window, cx);
         } else {
@@ -5463,7 +5452,7 @@ impl Editor {
         };
 
         let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
-            buffer_snapshot.surrounding_word(buffer_position)
+            buffer_snapshot.surrounding_word(buffer_position, false)
         {
             let word_to_exclude = buffer_snapshot
                 .text_for_range(word_range.clone())
@@ -6652,8 +6641,8 @@ impl Editor {
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
-        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position);
-        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position);
+        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, false);
+        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, false);
         if start_word_range != end_word_range {
             self.document_highlights_task.take();
             self.clear_background_highlights::<DocumentHighlightRead>(cx);
@@ -22184,7 +22173,7 @@ impl SemanticsProvider for Entity<Project> {
                         // Fallback on using TreeSitter info to determine identifier range
                         buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
-                            let (range, kind) = snapshot.surrounding_word(position);
+                            let (range, kind) = snapshot.surrounding_word(position, false);
                             if kind != Some(CharKind::Word) {
                                 return None;
                             }
