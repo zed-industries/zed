@@ -35,36 +35,38 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    pub(crate) fn with_group<'a>(
-        &'a self,
-        focused_id: Option<&FocusId>,
-    ) -> Box<dyn Iterator<Item = &'a FocusHandle> + 'a> {
+    pub(crate) fn with_group<'a>(&'a self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
         if let Some(focused_id) = focused_id {
             if let Some(handle) = self.handles.iter().find(|h| &h.id == focused_id) {
-                return Box::new(
-                    self.handles
-                        .iter()
-                        .filter(|h| h.tab_group == handle.tab_group),
-                );
+                return self
+                    .handles
+                    .iter()
+                    .filter(|h| h.tab_group == handle.tab_group)
+                    .cloned()
+                    .collect();
             }
         }
 
-        Box::new(self.handles.iter().filter(|h| h.tab_group.is_none()))
+        self.handles
+            .iter()
+            .filter(|h| h.tab_group.is_none())
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let group_handles: Vec<&FocusHandle> = self.with_group(focused_id).collect();
+        let group_handles = self.with_group(focused_id);
         let ix = group_handles
             .iter()
             .position(|h| Some(&h.id) == focused_id)
             .unwrap_or_default();
 
         let mut next_ix = ix + 1;
-        if next_ix + 1 > group_handles.len() {
+        if next_ix >= group_handles.len() {
             next_ix = 0;
         }
 
-        if let Some(next_handle) = group_handles.get(next_ix).cloned() {
+        if let Some(next_handle) = group_handles.get(next_ix) {
             Some(next_handle.clone())
         } else {
             None
@@ -72,20 +74,19 @@ impl TabHandles {
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let group_handles: Vec<&FocusHandle> = self.with_group(focused_id).collect();
+        let group_handles = self.with_group(focused_id);
         let ix = group_handles
             .iter()
             .position(|h| Some(&h.id) == focused_id)
             .unwrap_or_default();
 
-        let prev_ix;
-        if ix == 0 {
-            prev_ix = group_handles.len().saturating_sub(1);
+        let prev_ix = if ix == 0 {
+            group_handles.len().saturating_sub(1)
         } else {
-            prev_ix = ix.saturating_sub(1);
-        }
+            ix.saturating_sub(1)
+        };
 
-        if let Some(prev_handle) = group_handles.get(prev_ix).cloned() {
+        if let Some(prev_handle) = group_handles.get(prev_ix) {
             Some(prev_handle.clone())
         } else {
             None
