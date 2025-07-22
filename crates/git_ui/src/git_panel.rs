@@ -12,6 +12,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use client::DisableAiSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -53,7 +54,7 @@ use project::{
     git_store::{GitStoreEvent, Repository},
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{Settings, SettingsStore};
 use std::future::Future;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -464,9 +465,14 @@ impl GitPanel {
             };
 
             let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
+            let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+                if assistant_enabled != AgentSettings::get_global(cx).enabled
+                    || was_ai_disabled != is_ai_disabled
+                {
                     assistant_enabled = AgentSettings::get_global(cx).enabled;
+                    was_ai_disabled = is_ai_disabled;
                     cx.notify();
                 }
             });
@@ -1806,7 +1812,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() {
+        if !self.can_commit() || DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -4305,8 +4311,10 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    agent_settings::AgentSettings::get_global(cx)
-        .enabled
+    let is_enabled = agent_settings::AgentSettings::get_global(cx).enabled
+        && !DisableAiSettings::get_global(cx).disable_ai;
+
+    is_enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
                 LanguageModelRegistry::read_global(cx).commit_message_model()?;
@@ -5037,6 +5045,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             Project::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             crate::init(cx);
         });
     }
