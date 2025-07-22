@@ -155,6 +155,7 @@ mod tests {
         // add item when it equals to current item if it's not the last one
         search_history.add(&mut cursor, "php".to_string());
         search_history.previous(&mut cursor);
+        assert_eq!(search_history.current(&cursor), Some("rustlang"));
         search_history.add(&mut cursor, "rustlang".to_string());
         assert_eq!(search_history.history.len(), 3, "Should add item");
         assert_eq!(search_history.current(&cursor), Some("rustlang"));
