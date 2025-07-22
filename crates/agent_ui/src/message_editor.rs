@@ -1657,9 +1657,14 @@ impl Render for MessageEditor {
 
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
-        let enrolled_in_trial = matches!(
+        let in_pro_trial = matches!(
             self.user_store.read(cx).current_plan(),
             Some(proto::Plan::ZedProTrial)
+        );
+
+        let pro_user = matches!(
+            self.user_store.read(cx).current_plan(),
+            Some(proto::Plan::ZedPro)
         );
 
         let configured_providers: Vec<(IconName, SharedString)> =
@@ -1676,9 +1681,10 @@ impl Render for MessageEditor {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().panel_background)
-            .when(has_existing_providers && !enrolled_in_trial, |this| {
-                this.child(cx.new(ApiKeysWithProviders::new))
-            })
+            .when(
+                has_existing_providers && !in_pro_trial && !pro_user,
+                |this| this.child(cx.new(ApiKeysWithProviders::new)),
+            )
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
