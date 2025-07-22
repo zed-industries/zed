@@ -72,7 +72,7 @@ impl AgentServer for ClaudeCode {
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let permission_mcp_server =
-                ZedMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
+                ZedMcpServer::new(delegate_rx, tool_id_map.clone(), Default::default(), cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(

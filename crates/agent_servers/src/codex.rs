@@ -3,9 +3,7 @@ use context_server::types::requests::CallTool;
 use context_server::types::{CallToolParams, ToolResponseContent};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
-use itertools::Itertools;
 use project::Project;
-use serde::de::DeserializeOwned;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::cell::RefCell;
@@ -18,12 +16,13 @@ use agentic_coding_protocol::{
 };
 use anyhow::{Context, Result, anyhow};
 use futures::future::LocalBoxFuture;
-use futures::{AsyncWriteExt, FutureExt, SinkExt as _};
+use futures::{FutureExt, SinkExt as _};
 use gpui::{App, AppContext, Entity, Task};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
-use crate::mcp_server::{McpConfig, ZedMcpServer};
+use crate::mcp_server::{self, McpServerConfig, ZedMcpServer};
+use crate::tools::{EditToolParams, ReadToolParams};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
 use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
@@ -148,33 +147,26 @@ impl AgentServer for Codex {
             let (mut delegate_tx, delegate_rx) = watch::channel(None);
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
-            let zed_mcp_server = ZedMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
-            let mcp_server_config = zed_mcp_server.server_config()?;
-            // https://github.com/openai/codex/blob/main/codex-rs/config.md
-            let cli_server_config = format!(
-                "mcp_servers.{}={{command = \"{}\", args = [{}]}}",
-                crate::mcp_server::SERVER_NAME,
-                mcp_server_config.command.display(),
-                mcp_server_config
-                    .args
-                    .iter()
-                    .map(|arg| format!("\"{}\"", arg))
-                    .join(", ")
-            );
+            let zed_mcp_server = ZedMcpServer::new(
+                delegate_rx,
+                tool_id_map.clone(),
+                mcp_server::EnabledTools {
+                    permission: false,
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await?;
 
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).codex.clone()
             })?;
 
-            let Some(mut command) =
+            let Some(command) =
                 AgentServerCommand::resolve("codex", &["mcp"], settings, &project, cx).await
             else {
                 anyhow::bail!("Failed to find codex binary");
             };
-
-            command
-                .args
-                .extend(["--config".to_string(), cli_server_config]);
 
             let codex_mcp_client: Arc<ContextServer> = ContextServer::stdio(
                 ContextServerId("codex-mcp-server".into()),
@@ -270,7 +262,7 @@ impl AgentServer for Codex {
                     cancel_request_tx: Default::default(),
                     _handler_task: handler_task,
                     _request_task: request_task,
-                    _zed_mcp: zed_mcp_server,
+                    zed_mcp_server,
                 };
 
                 acp_thread::AcpThread::new(connection, title, None, project.clone(), cx)
@@ -288,6 +280,7 @@ impl AgentConnection for CodexAgentConnection {
         let client = self.codex_mcp.client();
         let root_dir = self.root_dir.clone();
         let cancel_request_tx = self.cancel_request_tx.clone();
+        let mcp_config = self.zed_mcp_server.server_config();
         async move {
             let client = client.context("Codex MCP server is not initialized")?;
 
@@ -323,6 +316,16 @@ impl AgentConnection for CodexAgentConnection {
                                         })
                                         .collect(),
                                     cwd: root_dir,
+                                    config: Some(CodexConfig {
+                                        mcp_servers: Some(
+                                            mcp_config
+                                                .into_iter()
+                                                .map(|config| {
+                                                    (mcp_server::SERVER_NAME.to_string(), config)
+                                                })
+                                                .collect(),
+                                        ),
+                                    }),
                                 })?),
                                 meta: None,
                             },
@@ -351,13 +354,18 @@ impl AgentConnection for CodexAgentConnection {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CodexConfig {
+    mcp_servers: Option<HashMap<String, McpServerConfig>>,
+}
+
 struct CodexAgentConnection {
     codex_mcp: Arc<context_server::ContextServer>,
     root_dir: PathBuf,
     cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
     _handler_task: Task<()>,
     _request_task: Task<()>,
-    _zed_mcp: ZedMcpServer,
+    zed_mcp_server: ZedMcpServer,
 }
 
 impl CodexAgentConnection {
@@ -452,27 +460,65 @@ impl CodexAgentConnection {
                     })
                     .await?
             }
-            AcpNotification::McpToolCallBegin(event) => {
+            AcpNotification::McpToolCallBegin(mut event) => {
                 if let Some(requested_tool_id) = requested_call_id.take() {
                     tool_id_map
                         .borrow_mut()
                         .insert(event.call_id, requested_tool_id);
                 } else {
-                    let result = delegate
-                        .push_tool_call(acp::PushToolCallParams {
-                            label: format!("`{}: {}`", event.server, event.tool),
-                            icon: acp::Icon::Hammer,
-                            content: event.arguments.and_then(|args| {
-                                Some(acp::ToolCallContent::Markdown {
-                                    markdown: md_codeblock(
-                                        "json",
-                                        &serde_json::to_string_pretty(&args).ok()?,
-                                    ),
-                                })
-                            }),
-                            locations: vec![],
+                    let mut tool_call = acp::PushToolCallParams {
+                        label: format!("`{}: {}`", event.server, event.tool),
+                        icon: acp::Icon::Hammer,
+                        content: event.arguments.as_ref().and_then(|args| {
+                            Some(acp::ToolCallContent::Markdown {
+                                markdown: md_codeblock(
+                                    "json",
+                                    &serde_json::to_string_pretty(args).ok()?,
+                                ),
+                            })
+                        }),
+                        locations: vec![],
+                    };
+
+                    if event.server == mcp_server::SERVER_NAME
+                        && event.tool == mcp_server::EDIT_TOOL
+                        && let Some(params) = event.arguments.take().and_then(|args| {
+                            serde_json::from_value::<EditToolParams>(args).log_err()
                         })
-                        .await?;
+                    {
+                        tool_call = acp::PushToolCallParams {
+                            label: "Edit".into(),
+                            icon: acp::Icon::Pencil,
+                            content: Some(acp::ToolCallContent::Diff {
+                                diff: acp::Diff {
+                                    path: params.abs_path.clone(),
+                                    old_text: Some(params.old_text),
+                                    new_text: params.new_text,
+                                },
+                            }),
+                            locations: vec![acp::ToolCallLocation {
+                                path: params.abs_path,
+                                line: None,
+                            }],
+                        };
+                    } else if event.server == mcp_server::SERVER_NAME
+                        && event.tool == mcp_server::READ_TOOL
+                        && let Some(params) = event.arguments.take().and_then(|args| {
+                            serde_json::from_value::<ReadToolParams>(args).log_err()
+                        })
+                    {
+                        tool_call = acp::PushToolCallParams {
+                            label: "Read".into(),
+                            icon: acp::Icon::FileSearch,
+                            content: None,
+                            locations: vec![acp::ToolCallLocation {
+                                path: params.abs_path,
+                                line: params.offset,
+                            }],
+                        }
+                    }
+
+                    let result = delegate.push_tool_call(tool_call).await?;
 
                     tool_id_map.borrow_mut().insert(event.call_id, result.id);
                 }
@@ -591,11 +637,12 @@ impl CodexAgentConnection {
 
 /// todo! use types from h2a crate when we have one
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct CodexToolCallParam {
     pub prompt: String,
     pub cwd: PathBuf,
+    pub config: Option<CodexConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

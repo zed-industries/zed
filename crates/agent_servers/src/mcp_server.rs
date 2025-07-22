@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use util::debug_panic;
 
 // todo! use shared tool inference?
-use crate::claude::tools::{
-    ClaudeTool, EditToolParams, EditToolResponse, ReadToolParams, ReadToolResponse,
+use crate::{
+    claude::tools::{ClaudeTool, EditToolParams, ReadToolParams},
+    tools::{EditToolResponse, ReadToolResponse},
 };
 
 pub struct ZedMcpServer {
@@ -49,15 +50,36 @@ enum PermissionToolBehavior {
     Deny,
 }
 
+#[derive(Clone)]
+pub struct EnabledTools {
+    pub read: bool,
+    pub edit: bool,
+    pub permission: bool,
+}
+
+impl Default for EnabledTools {
+    fn default() -> Self {
+        EnabledTools {
+            read: true,
+            edit: true,
+            permission: true,
+        }
+    }
+}
+
 impl ZedMcpServer {
     pub async fn new(
         delegate: watch::Receiver<Option<AcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        enabled_tools: EnabledTools,
         cx: &AsyncApp,
     ) -> Result<Self> {
         let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
-        mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
+        mcp_server.handle_request::<requests::ListTools>({
+            let enabled_tools = enabled_tools.clone();
+            move |_, cx| Self::handle_list_tools(enabled_tools.clone(), cx)
+        });
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
             Self::handle_call_tool(request, delegate.clone(), tool_id_map.clone(), cx)
         });
@@ -102,17 +124,17 @@ impl ZedMcpServer {
         })
     }
 
-    fn handle_list_tools(_: (), cx: &App) -> Task<Result<ListToolsResponse>> {
+    fn handle_list_tools(enabled: EnabledTools, cx: &App) -> Task<Result<ListToolsResponse>> {
         cx.foreground_executor().spawn(async move {
             Ok(ListToolsResponse {
-                tools: vec![
-                    Tool {
+                tools: [
+                    enabled.permission.then(|| Tool {
                         name: PERMISSION_TOOL.into(),
                         input_schema: schemars::schema_for!(PermissionToolParams).into(),
                         description: None,
                         annotations: None,
-                    },
-                    Tool {
+                    }),
+                    enabled.read.then(|| Tool {
                         name: READ_TOOL.into(),
                         input_schema: schemars::schema_for!(ReadToolParams).into(),
                         description: Some("Read the contents of a file. In sessions with mcp__zed__Read always use it instead of Read as it contains the most up-to-date contents.".to_string()),
@@ -125,8 +147,8 @@ impl ZedMcpServer {
                             // true or false seem too strong, let's try a none.
                             idempotent_hint: None,
                         }),
-                    },
-                    Tool {
+                    }),
+                    enabled.edit.then(|| Tool {
                         name: EDIT_TOOL.into(),
                         input_schema: schemars::schema_for!(EditToolParams).into(),
                         description: Some("Edits a file. In sessions with mcp__zed__Edit always use it instead of Edit as it will show the diff to the user better.".to_string()),
@@ -137,8 +159,8 @@ impl ZedMcpServer {
                             open_world_hint: Some(false),
                             idempotent_hint: Some(false),
                         }),
-                    },
-                ],
+                    }),
+                ].into_iter().flatten().collect(),
                 next_cursor: None,
                 meta: None,
             })
@@ -300,7 +322,7 @@ pub struct McpConfig {
     pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
     pub command: PathBuf,
