@@ -262,15 +262,7 @@ impl Client {
 
         while let Some(message) = receiver.next().await {
             log::trace!("recv: {}", &message);
-            if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
-                dbg!("here!");
-                if let Some(handlers) = response_handlers.lock().as_mut() {
-                    if let Some(handler) = handlers.remove(&response.id) {
-                        handler(Ok(message.to_string()));
-                    }
-                }
-            } else if let Some(request) = serde_json::from_str::<AnyRequest>(&message).log_err() {
-                dbg!("here!");
+            if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
                 if let Some(handler) = request_handlers.get_mut(request.method) {
                     handler(
@@ -279,14 +271,19 @@ impl Client {
                         cx.clone(),
                     );
                 }
+            } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
+                if let Some(handlers) = response_handlers.lock().as_mut() {
+                    if let Some(handler) = handlers.remove(&response.id) {
+                        handler(Ok(message.to_string()));
+                    }
+                }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
-                dbg!("here!");
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
                     handler(notification.params.unwrap_or(Value::Null), cx.clone());
                 }
             } else {
-                dbg!("WTF", &message);
+                log::error!("Unhandled JSON from context_server: {}", message);
             }
         }
 
