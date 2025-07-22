@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use acp_thread::AcpClientDelegate;
 use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
@@ -67,9 +67,7 @@ impl ZedMcpServer {
 
     pub fn server_config(&self) -> Result<McpServerConfig> {
         let zed_path = std::env::current_exe()
-            .context("finding current executable path for use in mcp_server")?
-            .to_string_lossy()
-            .to_string();
+            .context("finding current executable path for use in mcp_server")?;
 
         Ok(McpServerConfig {
             command: zed_path,
@@ -302,11 +300,11 @@ pub struct McpConfig {
     pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerConfig {
-    command: String,
-    args: Vec<String>,
+    pub command: PathBuf,
+    pub args: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    env: Option<HashMap<String, String>>,
+    pub env: Option<HashMap<String, String>>,
 }
