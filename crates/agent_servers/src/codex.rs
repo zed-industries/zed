@@ -5,6 +5,7 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
 use itertools::Itertools;
 use project::Project;
+use serde::de::DeserializeOwned;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::cell::RefCell;
@@ -28,6 +29,57 @@ use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 
 #[derive(Clone)]
 pub struct Codex;
+
+pub struct CodexApproval;
+impl context_server::types::Request for CodexApproval {
+    type Params = CodexApprovalRequest;
+    type Response = CodexApprovalResponse;
+    const METHOD: &'static str = "elicitation/create";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CodexApprovalRequest {
+    // These fields are required so that `params`
+    // conforms to ElicitRequestParams.
+    pub message: String,
+    // #[serde(rename = "requestedSchema")]
+    // pub requested_schema: ElicitRequestParamsRequestedSchema,
+
+    // // These are additional fields the client can use to
+    // // correlate the request with the codex tool call.
+    // pub codex_elicitation: String,
+    // pub codex_mcp_tool_call_id: String,
+    // pub codex_event_id: String,
+    // pub codex_command: Vec<String>,
+    // pub codex_cwd: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CodexApprovalResponse {
+    pub decision: ReviewDecision,
+}
+
+/// User's decision in response to an ExecApprovalRequest.
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDecision {
+    /// User has approved this command and the agent should execute it.
+    Approved,
+
+    /// User has approved this command and wants to automatically approve any
+    /// future identical instances (`command` and `cwd` match exactly) for the
+    /// remainder of the session.
+    ApprovedForSession,
+
+    /// User has denied this command and the agent should not execute it, but
+    /// it should continue the session and try something else.
+    #[default]
+    Denied,
+
+    /// User has denied this command and the agent should not do anything until
+    /// the user's next command.
+    Abort,
+}
 
 impl AgentServer for Codex {
     fn name(&self) -> &'static str {
@@ -106,23 +158,26 @@ impl AgentServer for Codex {
 
             let (notification_tx, mut notification_rx) = mpsc::unbounded();
 
-            codex_mcp_client
+            let client = codex_mcp_client
                 .client()
-                .context("Failed to subscribe to server")?
-                .on_notification("codex/event", {
-                    move |event, cx| {
-                        let mut notification_tx = notification_tx.clone();
-                        cx.background_spawn(async move {
-                            log::trace!("Notification: {:?}", event);
-                            if let Some(event) =
-                                serde_json::from_value::<CodexEvent>(event).log_err()
-                            {
-                                notification_tx.send(event.msg).await.log_err();
-                            }
-                        })
-                        .detach();
-                    }
-                });
+                .context("Failed to subscribe to server")?;
+            client.on_request::<CodexApproval, _>({
+                move |elicitation: CodexApprovalRequest, cx| {
+                    cx.spawn(async move |cx| anyhow::bail!("oops"))
+                }
+            });
+            client.on_notification("codex/event", {
+                move |event, cx| {
+                    let mut notification_tx = notification_tx.clone();
+                    cx.background_spawn(async move {
+                        log::trace!("Notification: {:?}", event);
+                        if let Some(event) = serde_json::from_value::<CodexEvent>(event).log_err() {
+                            notification_tx.send(event.msg).await.log_err();
+                        }
+                    })
+                    .detach();
+                }
+            });
 
             cx.new(|cx| {
                 let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());

@@ -36,6 +36,7 @@ pub const INTERNAL_ERROR: i32 = -32603;
 
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
+type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -50,6 +51,7 @@ pub(crate) struct Client {
     outbound_tx: channel::Sender<String>,
     name: Arc<str>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
@@ -80,6 +82,15 @@ pub struct Request<'a, T> {
     pub method: &'a str,
     #[serde(skip_serializing_if = "is_null_value")]
     pub params: T,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AnyRequest<'a> {
+    pub jsonrpc: &'a str,
+    pub id: RequestId,
+    pub method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
+    pub params: Option<&'a RawValue>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,15 +191,23 @@ impl Client {
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
+        let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
 
         let receive_input_task = cx.spawn({
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
+            let request_handlers = request_handlers.clone();
             let transport = transport.clone();
             async move |cx| {
-                Self::handle_input(transport, notification_handlers, response_handlers, cx)
-                    .log_err()
-                    .await
+                Self::handle_input(
+                    transport,
+                    notification_handlers,
+                    request_handlers,
+                    response_handlers,
+                    cx,
+                )
+                .log_err()
+                .await
             }
         });
         let receive_err_task = cx.spawn({
@@ -215,6 +234,7 @@ impl Client {
             server_id,
             notification_handlers,
             response_handlers,
+            request_handlers,
             name: server_name,
             next_id: Default::default(),
             outbound_tx,
@@ -234,23 +254,39 @@ impl Client {
     async fn handle_input(
         transport: Arc<dyn Transport>,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
+            log::trace!("recv: {}", &message);
             if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
+                dbg!("here!");
                 if let Some(handlers) = response_handlers.lock().as_mut() {
                     if let Some(handler) = handlers.remove(&response.id) {
                         handler(Ok(message.to_string()));
                     }
                 }
+            } else if let Some(request) = serde_json::from_str::<AnyRequest>(&message).log_err() {
+                dbg!("here!");
+                let mut request_handlers = request_handlers.lock();
+                if let Some(handler) = request_handlers.get_mut(request.method) {
+                    handler(
+                        request.id,
+                        request.params.unwrap_or(RawValue::NULL),
+                        cx.clone(),
+                    );
+                }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
+                dbg!("here!");
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
                     handler(notification.params.unwrap_or(Value::Null), cx.clone());
                 }
+            } else {
+                dbg!("WTF", &message);
             }
         }
 
@@ -418,6 +454,79 @@ impl Client {
         self.notification_handlers
             .lock()
             .insert(method, Box::new(f));
+    }
+
+    pub fn on_request<R: crate::types::Request, F>(&self, mut f: F)
+    where
+        F: 'static + Send + FnMut(R::Params, AsyncApp) -> Task<Result<R::Response>>,
+    {
+        let outbound_tx = self.outbound_tx.clone();
+        self.request_handlers.lock().insert(
+            R::METHOD,
+            Box::new(move |id, json, cx| {
+                let outbound_tx = outbound_tx.clone();
+                match serde_json::from_str(json.get()) {
+                    Ok(req) => {
+                        let task = f(req, cx.clone());
+                        cx.foreground_executor()
+                            .spawn(async move {
+                                match task.await {
+                                    Ok(res) => {
+                                        outbound_tx
+                                            .send(
+                                                serde_json::to_string(&Response {
+                                                    jsonrpc: JSON_RPC_VERSION,
+                                                    id,
+                                                    value: CspResult::Ok(Some(res)),
+                                                })
+                                                .unwrap(),
+                                            )
+                                            .await
+                                            .ok();
+                                    }
+                                    Err(e) => {
+                                        outbound_tx
+                                            .send(
+                                                serde_json::to_string(&Response {
+                                                    jsonrpc: JSON_RPC_VERSION,
+                                                    id,
+                                                    value: CspResult::<()>::Error(Some(Error {
+                                                        code: -1, // todo!()
+                                                        message: format!("{e}"),
+                                                    })),
+                                                })
+                                                .unwrap(),
+                                            )
+                                            .await
+                                            .ok();
+                                    }
+                                }
+                            })
+                            .detach();
+                    }
+                    Err(e) => {
+                        cx.foreground_executor()
+                            .spawn(async move {
+                                outbound_tx
+                                    .send(
+                                        serde_json::to_string(&Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id,
+                                            value: CspResult::<()>::Error(Some(Error {
+                                                code: -1, // todo!()
+                                                message: format!("{e}"),
+                                            })),
+                                        })
+                                        .unwrap(),
+                                    )
+                                    .await
+                                    .ok();
+                            })
+                            .detach();
+                    }
+                }
+            }),
+        );
     }
 }
 

@@ -7,7 +7,9 @@
 
 use anyhow::Result;
 use futures::channel::oneshot;
-use gpui::AsyncApp;
+use gpui::{AsyncApp, Task};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::client::Client;
@@ -117,5 +119,12 @@ impl InitializedContextServerProtocol {
         F: 'static + Send + FnMut(Value, AsyncApp),
     {
         self.inner.on_notification(method, f);
+    }
+
+    pub fn on_request<R: crate::types::Request, F>(&self, f: F)
+    where
+        F: 'static + Send + FnMut(R::Params, AsyncApp) -> Task<Result<R::Response>>,
+    {
+        self.inner.on_request::<R, F>(f);
     }
 }
