@@ -29,7 +29,6 @@ use editor::{
     },
 };
 use fs::Fs;
-
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
@@ -59,7 +58,6 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
 
-    // Observe AI settings changes to update inline assistant state
     cx.observe_global::<SettingsStore>(|cx| {
         if DisableAiSettings::get_global(cx).disable_ai {
             // Hide any active inline assist UI when AI is disabled
@@ -173,7 +171,6 @@ impl InlineAssistant {
             }
         }
     }
-    // This duplicate method has been removed
 
     fn handle_workspace_event(
         &mut self,
@@ -233,9 +230,8 @@ impl InlineAssistant {
                         cx,
                     );
 
-                    // Also check if AI is disabled and might have changed
                     if DisableAiSettings::get_global(cx).disable_ai {
-                        // Cancel any active completions immediately
+                        // Cancel any active completions
                         if editor.has_active_inline_completion() {
                             editor.cancel(&Default::default(), window, cx);
                         }
@@ -260,12 +256,8 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        // Don't allow inline assist when AI is disabled
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return;
-        }
         let settings = AgentSettings::get_global(cx);
-        if !settings.enabled {
+        if !settings.enabled || DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 

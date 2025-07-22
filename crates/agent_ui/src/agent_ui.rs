@@ -260,15 +260,11 @@ fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     CommandPaletteFilter::update_global(cx, |filter, _| {
         if disable_ai {
-            // Hide agent/assistant namespaces
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
             filter.hide_namespace("zed_predict_onboarding");
-
-            // Hide the edit_prediction namespace entirely
             filter.hide_namespace("edit_prediction");
 
-            // Hide edit prediction actions
             use editor::actions::{
                 AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
                 PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
@@ -282,19 +278,14 @@ fn update_command_palette_filter(cx: &mut App) {
                 TypeId::of::<ToggleEditPrediction>(),
             ];
             filter.hide_action_types(&edit_prediction_actions);
-
-            // Hide other AI-related actions
             filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         } else {
-            // Show agent/assistant namespaces
             filter.show_namespace("agent");
             filter.show_namespace("assistant");
             filter.show_namespace("zed_predict_onboarding");
 
-            // Show the edit_prediction namespace
             filter.show_namespace("edit_prediction");
 
-            // Show edit prediction actions
             use editor::actions::{
                 AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
                 PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
@@ -309,7 +300,6 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            // Show other AI-related actions
             filter
                 .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
         }
