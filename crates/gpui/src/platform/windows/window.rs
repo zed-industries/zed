@@ -82,7 +82,6 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
-        gpu_context: &DirectXDevices,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
     ) -> Result<Self> {
@@ -101,7 +100,7 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(gpu_context, hwnd)?;
+        let renderer = DirectXRenderer::new(hwnd)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -207,7 +206,6 @@ impl WindowsWindowStatePtr {
             cs,
             context.current_cursor,
             context.display,
-            context.gpu_context,
             context.min_size,
             context.appearance,
         )?);
@@ -326,7 +324,7 @@ pub(crate) struct Callbacks {
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-struct WindowCreateContext<'a> {
+struct WindowCreateContext {
     inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
@@ -339,7 +337,6 @@ struct WindowCreateContext<'a> {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
-    gpu_context: &'a DirectXDevices,
     main_thread_id_win32: u32,
     appearance: WindowAppearance,
 }
@@ -349,7 +346,6 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         creation_info: WindowCreationInfo,
-        gpu_context: &DirectXDevices,
     ) -> Result<Self> {
         let WindowCreationInfo {
             icon,
@@ -408,7 +404,6 @@ impl WindowsWindow {
             drop_target_helper,
             validation_number,
             main_receiver,
-            gpu_context,
             main_thread_id_win32,
             appearance,
         };

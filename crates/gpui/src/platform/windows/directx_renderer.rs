@@ -27,8 +27,8 @@ const MULTISAMPLE_COUNT: u32 = 4;
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
-    devices: DirectXDevices,
-    resources: DirectXResources,
+    devices: ManuallyDrop<DirectXDevices>,
+    resources: ManuallyDrop<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     #[cfg(not(feature = "enable-renderdoc"))]
@@ -115,16 +115,14 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(devices: &DirectXDevices, hwnd: HWND) -> Result<Self> {
-        let atlas = Arc::new(DirectXAtlas::new(
-            devices.device.clone(),
-            devices.device_context.clone(),
-        ));
+    pub(crate) fn new(hwnd: HWND) -> Result<Self> {
+        let devices = ManuallyDrop::new(DirectXDevices::new().context("Creating DirectX devices")?);
+        let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(devices).unwrap();
+        let resources = DirectXResources::new(&devices, 1, 1).unwrap();
         #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(devices, hwnd)?;
+        let resources = DirectXResources::new(&devices, hwnd)?;
 
         let globals = DirectXGlobalElements::new(&devices.device).unwrap();
         let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
@@ -139,7 +137,7 @@ impl DirectXRenderer {
         Ok(DirectXRenderer {
             hwnd,
             atlas,
-            devices: devices.clone(),
+            devices,
             resources,
             globals,
             pipelines,
@@ -212,17 +210,29 @@ impl DirectXRenderer {
     }
 
     fn handle_device_lost(&mut self) -> Result<()> {
-        let devices = DirectXDevices::new().context("Recreating DirectX devices")?;
-        #[cfg(not(feature = "enable-renderdoc"))]
         unsafe {
+            ManuallyDrop::drop(&mut self.devices);
+            ManuallyDrop::drop(&mut self.resources);
+            #[cfg(not(feature = "enable-renderdoc"))]
             ManuallyDrop::drop(&mut self._direct_composition);
         }
-        self.atlas
-            .handle_device_lost(devices.device.clone(), devices.device_context.clone());
+        let devices =
+            ManuallyDrop::new(DirectXDevices::new().context("Recreating DirectX devices")?);
+        unsafe {
+            devices.device_context.OMSetRenderTargets(None, None);
+            devices.device_context.ClearState();
+            devices.device_context.Flush();
+        }
         #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(&devices).unwrap();
+        let resources =
+            DirectXResources::new(&devices, self.resources.width, self.resources.height).unwrap();
         #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(&devices, self.hwnd)?;
+        let resources = DirectXResources::new(
+            &devices,
+            self.resources.width,
+            self.resources.height,
+            self.hwnd,
+        )?;
         let globals = DirectXGlobalElements::new(&devices.device).unwrap();
         let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
 
@@ -233,6 +243,8 @@ impl DirectXRenderer {
             .set_swap_chain(&resources.swap_chain)
             .unwrap();
 
+        self.atlas
+            .handle_device_lost(&devices.device, &devices.device_context);
         self.devices = devices;
         self.resources = resources;
         self.globals = globals;
@@ -505,11 +517,10 @@ impl DirectXRenderer {
 impl DirectXResources {
     pub fn new(
         devices: &DirectXDevices,
+        width: u32,
+        height: u32,
         #[cfg(feature = "enable-renderdoc")] hwnd: HWND,
-    ) -> Result<Self> {
-        let width = 1;
-        let height = 1;
-
+    ) -> Result<ManuallyDrop<Self>> {
         #[cfg(not(feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
         #[cfg(feature = "enable-renderdoc")]
@@ -520,7 +531,7 @@ impl DirectXResources {
             create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             swap_chain,
             render_target,
             render_target_view,
@@ -529,7 +540,7 @@ impl DirectXResources {
             width,
             height,
             viewport,
-        })
+        }))
     }
 
     #[inline]
@@ -978,10 +989,12 @@ struct PathSprite {
     color: Background,
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
         unsafe {
+            ManuallyDrop::drop(&mut self.devices);
+            ManuallyDrop::drop(&mut self.resources);
+            #[cfg(not(feature = "enable-renderdoc"))]
             ManuallyDrop::drop(&mut self._direct_composition);
         }
     }

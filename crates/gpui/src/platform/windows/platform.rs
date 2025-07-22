@@ -34,7 +34,6 @@ pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
-    directx_devices: DirectXDevices,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -111,13 +110,11 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let directx_devices = DirectXDevices::new().context("Unable to init directx devices.")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             state,
             raw_window_handles,
-            directx_devices,
             icon,
             main_receiver,
             background_executor,
@@ -455,13 +452,8 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.generate_creation_info(),
-            &self.directx_devices,
-        )
-        .inspect_err(|err| show_error("Failed to open new window", err.to_string()))?;
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())
+            .inspect_err(|err| show_error("Failed to open new window", err.to_string()))?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
