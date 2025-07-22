@@ -57,37 +57,51 @@ impl Render for ApiKeysWithProviders {
                         .child(Label::new(name))
                 });
 
-        h_flex()
+        v_flex()
             .mx_2p5()
-            .p_1()
-            .pb_0()
-            .gap_2()
-            .rounded_t_lg()
-            .border_t_1()
-            .border_x_1()
-            .border_color(cx.theme().colors().border.opacity(0.5))
-            .bg(cx.theme().colors().background.alpha(0.5))
-            .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.15),
-                offset: point(px(1.), px(-1.)),
-                blur_radius: px(3.),
-                spread_radius: px(0.),
-            }])
+            .mb_2()
             .child(
                 h_flex()
-                    .px_2p5()
-                    .py_1p5()
-                    .gap_2()
-                    .flex_wrap()
-                    .rounded_t(px(5.))
-                    .overflow_hidden()
-                    .border_t_1()
-                    .border_x_1()
+                    .p_3()
+                    .gap_3()
+                    .rounded_lg()
+                    .border_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().panel_background)
-                    .child(Icon::new(IconName::Info).size(IconSize::XSmall).color(Color::Muted))
-                    .child(Label::new("Or start now using API keys from your environment for the following providers:").color(Color::Muted))
-                    .children(configured_providers_list)
+                    .shadow(vec![gpui::BoxShadow {
+                        color: gpui::black().opacity(0.15),
+                        offset: point(px(1.), px(-1.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(0.),
+                    }])
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .pt_0p5()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                            )
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                Label::new("Or start now using API keys from your environment for the following providers:")
+                                    .color(Color::Muted)
+                            )
+                            .when(!self.configured_providers.is_empty(), |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .children(configured_providers_list)
+                                )
+                            })
+                    )
             )
     }
 }
