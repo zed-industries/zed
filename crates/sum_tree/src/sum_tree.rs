@@ -986,14 +986,14 @@ mod tests {
 
                 tree = {
                     let mut cursor = tree.cursor::<Count>(&());
-                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
+                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right);
                     if rng.r#gen() {
                         new_tree.extend(new_items, &());
                     } else {
                         new_tree.par_extend(new_items, &());
                     }
-                    cursor.seek(&Count(splice_end), Bias::Right, &());
-                    new_tree.append(cursor.slice(&tree_end, Bias::Right, &()), &());
+                    cursor.seek(&Count(splice_end), Bias::Right);
+                    new_tree.append(cursor.slice(&tree_end, Bias::Right), &());
                     new_tree
                 };
 
@@ -1049,9 +1049,9 @@ mod tests {
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>(&());
                 let start_pos = rng.gen_range(0..=reference_items.len());
-                cursor.seek(&Count(start_pos), Bias::Right, &());
+                cursor.seek(&Count(start_pos), Bias::Right);
                 let mut pos = rng.gen_range(start_pos..=reference_items.len());
-                cursor.seek_forward(&Count(pos), Bias::Right, &());
+                cursor.seek_forward(&Count(pos), Bias::Right);
 
                 for i in 0..10 {
                     assert_eq!(cursor.start().0, pos);
@@ -1099,11 +1099,11 @@ mod tests {
                 let end_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
 
                 let mut cursor = tree.cursor::<Count>(&());
-                cursor.seek(&Count(start), start_bias, &());
-                let slice = cursor.slice(&Count(end), end_bias, &());
+                cursor.seek(&Count(start), start_bias);
+                let slice = cursor.slice(&Count(end), end_bias);
 
-                cursor.seek(&Count(start), start_bias, &());
-                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias, &());
+                cursor.seek(&Count(start), start_bias);
+                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias);
 
                 assert_eq!(summary.0, slice.summary().sum);
             }
@@ -1116,7 +1116,7 @@ mod tests {
         let tree = SumTree::<u8>::default();
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
-            cursor.slice(&Count(0), Bias::Right, &()).items(&()),
+            cursor.slice(&Count(0), Bias::Right).items(&()),
             Vec::<u8>::new()
         );
         assert_eq!(cursor.item(), None);
@@ -1139,7 +1139,7 @@ mod tests {
         tree.extend(vec![1], &());
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
-            cursor.slice(&Count(0), Bias::Right, &()).items(&()),
+            cursor.slice(&Count(0), Bias::Right).items(&()),
             Vec::<u8>::new()
         );
         assert_eq!(cursor.item(), Some(&1));
@@ -1160,16 +1160,16 @@ mod tests {
         assert_eq!(cursor.start().sum, 0);
 
         let mut cursor = tree.cursor::<IntegersSummary>(&());
-        assert_eq!(cursor.slice(&Count(1), Bias::Right, &()).items(&()), [1]);
+        assert_eq!(cursor.slice(&Count(1), Bias::Right).items(&()), [1]);
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.seek(&Count(0), Bias::Right, &());
+        cursor.seek(&Count(0), Bias::Right);
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             [1]
         );
@@ -1183,7 +1183,7 @@ mod tests {
         tree.extend(vec![1, 2, 3, 4, 5, 6], &());
         let mut cursor = tree.cursor::<IntegersSummary>(&());
 
-        assert_eq!(cursor.slice(&Count(2), Bias::Right, &()).items(&()), [1, 2]);
+        assert_eq!(cursor.slice(&Count(2), Bias::Right).items(&()), [1, 2]);
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
         assert_eq!(cursor.next_item(), Some(&4));
@@ -1265,7 +1265,7 @@ mod tests {
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             tree.items(&())
         );
@@ -1274,10 +1274,10 @@ mod tests {
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
-        cursor.seek(&Count(3), Bias::Right, &());
+        cursor.seek(&Count(3), Bias::Right);
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             [4, 5, 6]
         );
@@ -1287,25 +1287,16 @@ mod tests {
         assert_eq!(cursor.start().sum, 21);
 
         // Seeking can bias left or right
-        cursor.seek(&Count(1), Bias::Left, &());
+        cursor.seek(&Count(1), Bias::Left);
         assert_eq!(cursor.item(), Some(&1));
-        cursor.seek(&Count(1), Bias::Right, &());
+        cursor.seek(&Count(1), Bias::Right);
         assert_eq!(cursor.item(), Some(&2));
 
         // Slicing without resetting starts from where the cursor is parked at.
-        cursor.seek(&Count(1), Bias::Right, &());
-        assert_eq!(
-            cursor.slice(&Count(3), Bias::Right, &()).items(&()),
-            vec![2, 3]
-        );
-        assert_eq!(
-            cursor.slice(&Count(6), Bias::Left, &()).items(&()),
-            vec![4, 5]
-        );
-        assert_eq!(
-            cursor.slice(&Count(6), Bias::Right, &()).items(&()),
-            vec![6]
-        );
+        cursor.seek(&Count(1), Bias::Right);
+        assert_eq!(cursor.slice(&Count(3), Bias::Right).items(&()), vec![2, 3]);
+        assert_eq!(cursor.slice(&Count(6), Bias::Left).items(&()), vec![4, 5]);
+        assert_eq!(cursor.slice(&Count(6), Bias::Right).items(&()), vec![6]);
     }
 
     #[test]
