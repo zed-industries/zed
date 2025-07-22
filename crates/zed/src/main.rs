@@ -755,11 +755,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
-    if let Some(action_index) = request.dock_menu_action {
-        cx.perform_dock_menu_action(action_index);
-        return;
-    }
-
     if let Some(kind) = request.kind {
         match kind {
             OpenRequestKind::Extension { extension_id } => {
@@ -777,6 +772,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     })
                 })
                 .detach_and_log_err(cx);
+            }
+            OpenRequestKind::DockMenuAction { index } => {
+                cx.perform_dock_menu_action(index);
             }
         }
 

@@ -36,13 +36,13 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
-    pub dock_menu_action: Option<usize>,
     pub kind: Option<OpenRequestKind>,
 }
 
 #[derive(Debug)]
 pub enum OpenRequestKind {
     Extension { extension_id: String },
+    DockMenuAction { index: usize },
 }
 
 impl OpenRequest {
@@ -52,7 +52,9 @@ impl OpenRequest {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
-                this.dock_menu_action = Some(action_index.parse()?);
+                this.kind = Some(OpenRequestKind::DockMenuAction {
+                    index: action_index.parse()?,
+                });
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
