@@ -447,7 +447,6 @@ mod windows {
             const_definition.replace('{', "[").replace('}', "]")
         );
         let mut options = fs::OpenOptions::new()
-            .write(true)
             .create(true)
             .append(true)
             .open(output_path)
