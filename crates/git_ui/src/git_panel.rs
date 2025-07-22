@@ -465,9 +465,14 @@ impl GitPanel {
             };
 
             let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
+            let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+                if assistant_enabled != AgentSettings::get_global(cx).enabled
+                    || was_ai_disabled != is_ai_disabled
+                {
                     assistant_enabled = AgentSettings::get_global(cx).enabled;
+                    was_ai_disabled = is_ai_disabled;
                     cx.notify();
                 }
             });
