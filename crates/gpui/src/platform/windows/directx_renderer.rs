@@ -120,19 +120,17 @@ impl DirectXRenderer {
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(&devices, 1, 1).unwrap();
+        let resources = DirectXResources::new(&devices, 1, 1)?;
         #[cfg(feature = "enable-renderdoc")]
         let resources = DirectXResources::new(&devices, hwnd)?;
 
-        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
-        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
+        let globals = DirectXGlobalElements::new(&devices.device)?;
+        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd).unwrap();
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
         #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition
-            .set_swap_chain(&resources.swap_chain)
-            .unwrap();
+        direct_composition.set_swap_chain(&resources.swap_chain)?;
 
         Ok(DirectXRenderer {
             hwnd,
@@ -225,7 +223,7 @@ impl DirectXRenderer {
         }
         #[cfg(not(feature = "enable-renderdoc"))]
         let resources =
-            DirectXResources::new(&devices, self.resources.width, self.resources.height).unwrap();
+            DirectXResources::new(&devices, self.resources.width, self.resources.height)?;
         #[cfg(feature = "enable-renderdoc")]
         let resources = DirectXResources::new(
             &devices,
@@ -233,15 +231,13 @@ impl DirectXRenderer {
             self.resources.height,
             self.hwnd,
         )?;
-        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
-        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
+        let globals = DirectXGlobalElements::new(&devices.device)?;
+        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, self.hwnd).unwrap();
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, self.hwnd)?;
         #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition
-            .set_swap_chain(&resources.swap_chain)
-            .unwrap();
+        direct_composition.set_swap_chain(&resources.swap_chain)?;
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -603,9 +599,9 @@ impl DirectXRenderPipelines {
 #[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
     pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<ManuallyDrop<Self>> {
-        let comp_device = get_comp_device(&dxgi_device).unwrap();
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }.unwrap();
-        let comp_visual = unsafe { comp_device.CreateVisual() }.unwrap();
+        let comp_device = get_comp_device(&dxgi_device)?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
         Ok(ManuallyDrop::new(Self {
             comp_device,
