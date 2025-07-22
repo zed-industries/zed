@@ -14,7 +14,6 @@ use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
-
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
@@ -537,7 +536,8 @@ fn initialize_panels(
             workspace.add_panel(debug_panel, window, cx);
         })?;
 
-        let agent_panel = if !cfg!(test) {
+        let is_assistant2_enabled = !cfg!(test);
+        let agent_panel = if is_assistant2_enabled {
             let agent_panel =
                 agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
@@ -548,7 +548,7 @@ fn initialize_panels(
         };
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(agent_panel) = agent_panel.clone() {
+            if let Some(agent_panel) = agent_panel {
                 workspace.add_panel(agent_panel, window, cx);
             }
 
@@ -558,16 +558,16 @@ fn initialize_panels(
             // functions so that we only register the actions once.
             //
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if agent_panel.is_some() {
+            if is_assistant2_enabled {
                 <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,
                 );
-            }
 
-            workspace
-                .register_action(agent_ui::AgentPanel::toggle_focus)
-                .register_action(agent_ui::InlineAssistant::inline_assist);
+                workspace
+                    .register_action(agent_ui::AgentPanel::toggle_focus)
+                    .register_action(agent_ui::InlineAssistant::inline_assist);
+            }
         })?;
 
         anyhow::Ok(())
