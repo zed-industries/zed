@@ -44,7 +44,6 @@ impl AwsConnector for AwsHttpConnector {
                 Ok(response) => response,
                 Err(err) => return Err(ConnectorError::other(err.into(), None)),
             };
-
             let (parts, body) = response.into_parts();
 
             let mut response = HttpResponse::new(
