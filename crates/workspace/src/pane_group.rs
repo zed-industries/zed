@@ -995,9 +995,12 @@ mod element {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
+            // Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
+            // Flexes make this annoying, because we have to output "1.33, 1, 1", instead of "40%, 30%, 30%"
             let mut flexes = flexes.lock();
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
+            // Math to convert a flex value to a pixel value
             let size = move |ix, flexes: &[f32]| {
                 container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
             };
@@ -1007,9 +1010,13 @@ mod element {
                 return;
             }
 
+            // This is basically a "bucket" of pixel changes that need to be applied in response to this
+            // mouse event. Probably a small, fractional number like 0.5 or 1.5 pixels
             let mut proposed_current_pixel_change =
                 (e.position - child_start).along(axis) - size(ix, flexes.as_slice());
 
+            // This takes a pixel change, and computes the flex changes that correspond to this pixel change
+            // as well as the next one, for some reason
             let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
                 let flex_change = pixel_dx / container_size.along(axis);
                 let current_target_flex = flexes[target_ix] + flex_change;
@@ -1017,6 +1024,9 @@ mod element {
                 (current_target_flex, next_target_flex)
             };
 
+            // Generate the list of flex successors, from the current index.
+            // If you're dragging column 3 forward, out of 6 columns, then this code will produce [4, 5, 6]
+            // If you're dragging column 3 backward, out of 6 columns, then this code will produce [2, 1, 0]
             let mut successors = iter::from_fn({
                 let forward = proposed_current_pixel_change > px(0.);
                 let mut ix_offset = 0;
@@ -1034,6 +1044,7 @@ mod element {
                 }
             });
 
+            // Now actually loop over these, and empty our bucket of pixel changes
             while proposed_current_pixel_change.abs() > px(0.) {
                 let Some(current_ix) = successors.next() else {
                     break;

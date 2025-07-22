@@ -1435,11 +1435,12 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.45),
                         DefiniteLength::Fraction(0.08),
                     ])
-                    .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .resizable_columns(
                         [false, true, true, true, true, true],
-                        self.current_widths.clone(),
+                        &self.current_widths,
+                        cx,
                     )
+                    .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
