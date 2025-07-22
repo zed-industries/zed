@@ -2784,6 +2784,7 @@ impl KeystrokeInput {
         else {
             log::trace!("No keybinding to stop recording keystrokes in keystroke input");
             self.close_keystrokes.take();
+            self.close_keystrokes_start.take();
             return CloseKeystrokeResult::None;
         };
         let action_keystrokes = keybind_for_close_action.keystrokes();
@@ -2976,7 +2977,9 @@ impl KeystrokeInput {
             return;
         }
         window.focus(&self.outer_focus_handle);
-        if let Some(close_keystrokes_start) = self.close_keystrokes_start.take() {
+        if let Some(close_keystrokes_start) = self.close_keystrokes_start.take()
+            && close_keystrokes_start < self.keystrokes.len()
+        {
             self.keystrokes.drain(close_keystrokes_start..);
         }
         self.close_keystrokes.take();
