@@ -200,7 +200,7 @@ mod tests {
 
         // Run the tool before any changes
         let tool = Arc::new(ProjectNotificationsTool);
-        let provider = Arc::new(FakeLanguageModelProvider);
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         let model: Arc<dyn LanguageModel> = Arc::new(provider.test_model());
         let request = Arc::new(LanguageModelRequest::default());
         let tool_input = json!({});

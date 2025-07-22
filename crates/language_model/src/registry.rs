@@ -125,7 +125,7 @@ impl LanguageModelRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> crate::fake_provider::FakeLanguageModelProvider {
-        let fake_provider = crate::fake_provider::FakeLanguageModelProvider;
+        let fake_provider = crate::fake_provider::FakeLanguageModelProvider::default();
         let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
@@ -403,16 +403,17 @@ mod tests {
     fn test_register_providers(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
+        let provider = FakeLanguageModelProvider::default();
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider, cx);
+            registry.register_provider(provider.clone(), cx);
         });
 
         let providers = registry.read(cx).providers();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id(), crate::fake_provider::provider_id());
+        assert_eq!(providers[0].id(), provider.id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(crate::fake_provider::provider_id(), cx);
+            registry.unregister_provider(provider.id(), cx);
         });
 
         let providers = registry.read(cx).providers();

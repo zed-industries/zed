@@ -20,6 +20,7 @@ pub enum IconName {
     AiMistral,
     AiOllama,
     AiOpenAi,
+    AiOpenAiCompat,
     AiOpenRouter,
     AiVZero,
     AiXAi,
