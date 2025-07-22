@@ -66,11 +66,7 @@ impl TabHandles {
             next_ix = 0;
         }
 
-        if let Some(next_handle) = group_handles.get(next_ix) {
-            Some(next_handle.clone())
-        } else {
-            None
-        }
+        group_handles.get(next_ix).cloned()
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
