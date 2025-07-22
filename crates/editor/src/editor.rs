@@ -138,6 +138,11 @@ use project::{
 };
 
 pub use git::blame::BlameRenderer;
+
+// Define a simple BlameHover struct for use with the blame_hover action
+#[derive(Debug, Clone, PartialEq, Default, gpui::Action)]
+pub struct BlameHover;
+
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -950,6 +955,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
+    #[allow(dead_code)]
     keyboard_grace: bool,
 }
 
@@ -2390,9 +2396,9 @@ impl Editor {
                 }
             }
             Some(CodeContextMenu::CodeActions(menu)) => {
-                if menu.visible() {
+                if !menu.actions.is_empty() {
                     key_context.add("menu");
-                    key_context.add("showing_code_actions")
+                    key_context.add("showing_code_actions");
                 }
             }
             None => {}
@@ -5286,7 +5292,7 @@ impl Editor {
         }
 
         // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
+        // hence we do LSP request & edit on host side only — add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_via_collab();
@@ -5452,7 +5458,7 @@ impl Editor {
         };
 
         let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
-            buffer_snapshot.surrounding_word(buffer_position, false)
+            buffer_snapshot.surrounding_word(buffer_position)
         {
             let word_to_exclude = buffer_snapshot
                 .text_for_range(word_range.clone())
@@ -6641,8 +6647,8 @@ impl Editor {
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
-        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, false);
-        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, false);
+        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position);
+        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position);
         if start_word_range != end_word_range {
             self.document_highlights_task.take();
             self.clear_background_highlights::<DocumentHighlightRead>(cx);
@@ -22173,7 +22179,7 @@ impl SemanticsProvider for Entity<Project> {
                         // Fallback on using TreeSitter info to determine identifier range
                         buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
-                            let (range, kind) = snapshot.surrounding_word(position, false);
+                            let (range, kind) = snapshot.surrounding_word(position);
                             if kind != Some(CharKind::Word) {
                                 return None;
                             }
