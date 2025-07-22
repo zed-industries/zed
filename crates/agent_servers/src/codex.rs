@@ -3,6 +3,7 @@ use context_server::types::requests::CallTool;
 use context_server::types::{CallToolParams, ToolResponseContent};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
+use itertools::Itertools;
 use project::Project;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -63,33 +64,32 @@ impl AgentServer for Codex {
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let zed_mcp_server = ZedMcpServer::new(delegate_rx, tool_id_map.clone(), cx).await?;
-
-            let mut mcp_servers = HashMap::default();
-            mcp_servers.insert(
-                crate::mcp_server::SERVER_NAME.to_string(),
-                zed_mcp_server.server_config()?,
+            let mcp_server_config = zed_mcp_server.server_config()?;
+            // https://github.com/openai/codex/blob/main/codex-rs/config.md
+            let cli_server_config = format!(
+                "mcp_servers.{}={{command = \"{}\", args = [{}]}}",
+                crate::mcp_server::SERVER_NAME,
+                mcp_server_config.command.display(),
+                mcp_server_config
+                    .args
+                    .iter()
+                    .map(|arg| format!("\"{}\"", arg))
+                    .join(", ")
             );
-            let mcp_config = McpConfig { mcp_servers };
-
-            // todo! pass zed mcp server to codex tool
-            let mcp_config_file = tempfile::NamedTempFile::new()?;
-            let (mcp_config_file, _mcp_config_path) = mcp_config_file.into_parts();
-
-            let mut mcp_config_file = smol::fs::File::from(mcp_config_file);
-            mcp_config_file
-                .write_all(serde_json::to_string(&mcp_config)?.as_bytes())
-                .await?;
-            mcp_config_file.flush().await?;
 
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).codex.clone()
             })?;
 
-            let Some(command) =
+            let Some(mut command) =
                 AgentServerCommand::resolve("codex", &["mcp"], settings, &project, cx).await
             else {
                 anyhow::bail!("Failed to find codex binary");
             };
+
+            command
+                .args
+                .extend(["--config".to_string(), cli_server_config]);
 
             let codex_mcp_client: Arc<ContextServer> = ContextServer::stdio(
                 ContextServerId("codex-mcp-server".into()),
