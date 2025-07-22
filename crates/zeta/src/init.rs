@@ -22,7 +22,6 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    // Initialize command palette filtering
     feature_gate_predict_edits_rating_actions(cx);
 
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
@@ -79,17 +78,14 @@ fn feature_gate_predict_edits_rating_actions(cx: &mut App) {
         filter.hide_action_types(&[zed_actions::OpenZedPredictOnboarding.type_id()]);
     });
 
-    // Observe AI settings changes
     cx.observe_global::<SettingsStore>(move |cx| {
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let has_feature_flag = cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>();
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             if is_ai_disabled {
-                // Hide all Zeta actions when AI is disabled
                 filter.hide_action_types(&zeta_all_action_types);
             } else {
-                // Show or hide based on feature flags when AI is enabled
                 if has_feature_flag {
                     filter.show_action_types(rate_completion_action_types.iter());
                 } else {
@@ -101,7 +97,6 @@ fn feature_gate_predict_edits_rating_actions(cx: &mut App) {
     .detach();
 
     cx.observe_flag::<PredictEditsRateCompletionsFeatureFlag, _>(move |is_enabled, cx| {
-        // Only modify filters if AI is not disabled
         if !DisableAiSettings::get_global(cx).disable_ai {
             if is_enabled {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {

@@ -48,7 +48,6 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Set up AI settings subscription
         let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
         let mut was_agent_button = AgentSettings::get_global(cx).button;
