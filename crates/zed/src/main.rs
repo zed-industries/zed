@@ -55,6 +55,8 @@ use zed::{
     inline_completion_registry, open_paths_with_positions,
 };
 
+use crate::zed::OpenRequestKind;
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -758,20 +760,26 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
-    if let Some(extension) = request.extension_id {
-        cx.spawn(async move |cx| {
-            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-            workspace.update(cx, |_, window, cx| {
-                window.dispatch_action(
-                    Box::new(zed_actions::Extensions {
-                        category_filter: None,
-                        id: Some(extension),
-                    }),
-                    cx,
-                );
-            })
-        })
-        .detach_and_log_err(cx);
+    if let Some(kind) = request.kind {
+        match kind {
+            OpenRequestKind::Extension { extension_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(zed_actions::Extensions {
+                                category_filter: None,
+                                id: Some(extension_id),
+                            }),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+
         return;
     }
 
