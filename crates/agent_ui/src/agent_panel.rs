@@ -728,6 +728,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        // Don't toggle the panel if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))

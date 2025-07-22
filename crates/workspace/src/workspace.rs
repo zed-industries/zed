@@ -1331,8 +1331,7 @@ impl Workspace {
             if was_ai_disabled != is_ai_disabled {
                 was_ai_disabled = is_ai_disabled;
 
-                // When AI is disabled, a separate mechanism will prevent showing the agent panel
-                // via panel activation. Here we just need to update the UI.
+                // When AI is disabled, update the UI
                 cx.notify();
             }
         });
@@ -2884,17 +2883,19 @@ impl Workspace {
                 let Some(panel_ix) = panel_ix else {
                     return;
                 };
-                dock.activate_panel(panel_ix, window, cx);
-            }
 
-            // If the active panel is the agent panel and AI is disabled, try to find another panel
-            if DisableAiSettings::get_global(cx).disable_ai {
-                if let Some(active_panel) = dock.active_panel() {
-                    if active_panel.persistent_name() == "AgentPanel" {
-                        if let Some(panel_ix) =
-                            dock.first_enabled_panel_idx_excluding("AgentPanel", cx)
-                        {
-                            dock.activate_panel(panel_ix, window, cx);
+                dock.activate_panel(panel_ix, window, cx);
+
+                // If the active panel is the agent panel and AI is disabled, try to find another panel
+                if DisableAiSettings::get_global(cx).disable_ai {
+                    if let Some(active_panel) = dock.active_panel() {
+                        if active_panel.persistent_name() == "AgentPanel" {
+                            // Find another panel that's not the AgentPanel
+                            if let Some(panel_ix) =
+                                dock.first_enabled_panel_idx_excluding("AgentPanel", cx)
+                            {
+                                dock.activate_panel(panel_ix, window, cx);
+                            }
                         }
                     }
                 }
@@ -3030,6 +3031,8 @@ impl Workspace {
                             && DisableAiSettings::get_global(cx).disable_ai
                         {
                             focus_center = true;
+                            // Also ensure the panel is closed when AI is disabled
+                            dock.set_open(false, window, cx);
                         } else if should_focus(&**panel, window, cx) {
                             dock.set_open(true, window, cx);
                             panel.panel_focus_handle(cx).focus(window);
@@ -10113,7 +10116,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_move_focused_panel_to_next_position(cx: &mut gpui::TestAppContext) {
+    async fn test_move_focused_panel_to_next_position(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;

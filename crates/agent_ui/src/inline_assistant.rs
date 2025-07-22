@@ -29,6 +29,7 @@ use editor::{
     },
 };
 use fs::Fs;
+
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
     WeakEntity, Window, point,
@@ -57,6 +58,18 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+
+    // Observe AI settings changes to update inline assistant state
+    cx.observe_global::<SettingsStore>(|cx| {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            // Hide any active inline assist UI when AI is disabled
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                assistant.cancel_all_active_completions(cx);
+            });
+        }
+    })
+    .detach();
+
     cx.observe_new(|_workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -141,6 +154,27 @@ impl InlineAssistant {
         .detach();
     }
 
+    /// Hides all active inline assists when AI is disabled
+    pub fn cancel_all_active_completions(&mut self, cx: &mut App) {
+        // Cancel all active completions in editors
+        for (editor_handle, _) in self.assists_by_editor.iter() {
+            if let Some(editor) = editor_handle.upgrade() {
+                let windows = cx.windows();
+                if !windows.is_empty() {
+                    let window = windows[0];
+                    let _ = window.update(cx, |_, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            if editor.has_active_inline_completion() {
+                                editor.cancel(&Default::default(), window, cx);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    }
+    // This duplicate method has been removed
+
     fn handle_workspace_event(
         &mut self,
         workspace: Entity<Workspace>,
@@ -199,6 +233,14 @@ impl InlineAssistant {
                         cx,
                     );
 
+                    // Also check if AI is disabled and might have changed
+                    if DisableAiSettings::get_global(cx).disable_ai {
+                        // Cancel any active completions immediately
+                        if editor.has_active_inline_completion() {
+                            editor.cancel(&Default::default(), window, cx);
+                        }
+                    }
+
                     // Remove the Assistant1 code action provider, as it still might be registered.
                     editor.remove_code_action_provider("assistant".into(), window, cx);
                 } else {
@@ -218,6 +260,10 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        // Don't allow inline assist when AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
         let settings = AgentSettings::get_global(cx);
         if !settings.enabled {
             return;
