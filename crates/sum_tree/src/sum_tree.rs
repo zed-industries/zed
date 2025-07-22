@@ -525,10 +525,6 @@ impl<T: Item> SumTree<T> {
         }
     }
 
-    pub fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-
     fn push_tree_recursive(
         &mut self,
         other: SumTree<T>,
@@ -686,11 +682,6 @@ impl<T: Item> SumTree<T> {
             } => child_trees.last().unwrap().rightmost_leaf(),
         }
     }
-
-    #[cfg(debug_assertions)]
-    pub fn _debug_entries(&self) -> Vec<&T> {
-        self.iter().collect::<Vec<_>>()
-    }
 }
 
 impl<T: Item + PartialEq> PartialEq for SumTree<T> {
@@ -803,55 +794,6 @@ impl<T: KeyedItem> SumTree<T> {
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub fn contains(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> bool {
-        self.get(key, cx).is_some()
-    }
-
-    pub fn update<F, R>(
-        &mut self,
-        key: &T::Key,
-        cx: &<T::Summary as Summary>::Context,
-        f: F,
-    ) -> Option<R>
-    where
-        F: FnOnce(&mut T) -> R,
-    {
-        let mut cursor = self.cursor::<T::Key>(cx);
-        let mut new_tree = cursor.slice(key, Bias::Left, cx);
-        let mut result = None;
-        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
-            let mut updated = cursor.item().unwrap().clone();
-            result = Some(f(&mut updated));
-            new_tree.push(updated, cx);
-            cursor.next(cx);
-        }
-        new_tree.append(cursor.suffix(cx), cx);
-        drop(cursor);
-        *self = new_tree;
-        result
-    }
-
-    pub fn retain<F: FnMut(&T) -> bool>(
-        &mut self,
-        cx: &<T::Summary as Summary>::Context,
-        mut predicate: F,
-    ) {
-        let mut new_map = SumTree::new(cx);
-
-        let mut cursor = self.cursor::<T::Key>(cx);
-        cursor.next(cx);
-        while let Some(item) = cursor.item() {
-            if predicate(&item) {
-                new_map.push(item.clone(), cx);
-            }
-            cursor.next(cx);
-        }
-        drop(cursor);
-
-        *self = new_map;
     }
 }
 
