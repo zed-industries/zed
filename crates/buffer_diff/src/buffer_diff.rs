@@ -355,7 +355,7 @@ impl BufferDiffInner {
                     .cmp(&buffer_range.end, buffer)
                     .is_le()
             }) {
-                old_pending_hunks.next(buffer);
+                old_pending_hunks.next();
             }
 
             if (stage && secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
@@ -382,7 +382,7 @@ impl BufferDiffInner {
         pending_hunks.append(old_pending_hunks.suffix(buffer), buffer);
 
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
-        unstaged_hunk_cursor.next(buffer);
+        unstaged_hunk_cursor.next();
 
         // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
         let mut prev_unstaged_hunk_buffer_end = 0;
@@ -425,7 +425,7 @@ impl BufferDiffInner {
                         buffer_offset_range.end =
                             buffer_offset_range.end.max(unstaged_hunk_offset_range.end);
 
-                        unstaged_hunk_cursor.next(buffer);
+                        unstaged_hunk_cursor.next();
                         continue;
                     }
                 }
@@ -514,7 +514,7 @@ impl BufferDiffInner {
             });
 
         let anchor_iter = iter::from_fn(move || {
-            cursor.next(buffer);
+            cursor.next();
             cursor.item()
         })
         .flat_map(move |hunk| {
@@ -531,12 +531,12 @@ impl BufferDiffInner {
         });
 
         let mut pending_hunks_cursor = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
-        pending_hunks_cursor.next(buffer);
+        pending_hunks_cursor.next();
 
         let mut secondary_cursor = None;
         if let Some(secondary) = secondary.as_ref() {
             let mut cursor = secondary.hunks.cursor::<DiffHunkSummary>(buffer);
-            cursor.next(buffer);
+            cursor.next();
             secondary_cursor = Some(cursor);
         }
 
@@ -635,7 +635,7 @@ impl BufferDiffInner {
             });
 
         iter::from_fn(move || {
-            cursor.prev(buffer);
+            cursor.prev();
 
             let hunk = cursor.item()?;
             let range = hunk.buffer_range.to_point(buffer);
@@ -653,8 +653,8 @@ impl BufferDiffInner {
     fn compare(&self, old: &Self, new_snapshot: &text::BufferSnapshot) -> Option<Range<Anchor>> {
         let mut new_cursor = self.hunks.cursor::<()>(new_snapshot);
         let mut old_cursor = old.hunks.cursor::<()>(new_snapshot);
-        old_cursor.next(new_snapshot);
-        new_cursor.next(new_snapshot);
+        old_cursor.next();
+        new_cursor.next();
         let mut start = None;
         let mut end = None;
 
@@ -669,7 +669,7 @@ impl BufferDiffInner {
                         Ordering::Less => {
                             start.get_or_insert(new_hunk.buffer_range.start);
                             end.replace(new_hunk.buffer_range.end);
-                            new_cursor.next(new_snapshot);
+                            new_cursor.next();
                         }
                         Ordering::Equal => {
                             if new_hunk != old_hunk {
@@ -686,25 +686,25 @@ impl BufferDiffInner {
                                 }
                             }
 
-                            new_cursor.next(new_snapshot);
-                            old_cursor.next(new_snapshot);
+                            new_cursor.next();
+                            old_cursor.next();
                         }
                         Ordering::Greater => {
                             start.get_or_insert(old_hunk.buffer_range.start);
                             end.replace(old_hunk.buffer_range.end);
-                            old_cursor.next(new_snapshot);
+                            old_cursor.next();
                         }
                     }
                 }
                 (Some(new_hunk), None) => {
                     start.get_or_insert(new_hunk.buffer_range.start);
                     end.replace(new_hunk.buffer_range.end);
-                    new_cursor.next(new_snapshot);
+                    new_cursor.next();
                 }
                 (None, Some(old_hunk)) => {
                     start.get_or_insert(old_hunk.buffer_range.start);
                     end.replace(old_hunk.buffer_range.end);
-                    old_cursor.next(new_snapshot);
+                    old_cursor.next();
                 }
                 (None, None) => break,
             }

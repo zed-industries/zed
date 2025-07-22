@@ -831,7 +831,7 @@ impl Buffer {
         let mut fragment_start = old_fragments.start().visible;
         for (range, new_text) in edits {
             let new_text = LineEnding::normalize_arc(new_text.into());
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.end().visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -847,7 +847,7 @@ impl Buffer {
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
-                    old_fragments.next(&None);
+                    old_fragments.next();
                 }
 
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
@@ -903,7 +903,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).visible;
+                let fragment_end = old_fragments.end().visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -930,7 +930,7 @@ impl Buffer {
                     fragment_start = intersection_end;
                 }
                 if fragment_end <= range.end {
-                    old_fragments.next(&None);
+                    old_fragments.next();
                 }
             }
 
@@ -942,7 +942,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.start().visible {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.end().visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -951,7 +951,7 @@ impl Buffer {
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
-            old_fragments.next(&None);
+            old_fragments.next();
         }
 
         let suffix = old_fragments.suffix(&None);
@@ -1050,7 +1050,7 @@ impl Buffer {
 
         let mut fragment_start = old_fragments.start().0.full_offset();
         for (range, new_text) in edits {
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1067,7 +1067,7 @@ impl Buffer {
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                 }
 
                 let slice =
@@ -1078,7 +1078,7 @@ impl Buffer {
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end.0 - fragment_start.0;
@@ -1086,7 +1086,7 @@ impl Buffer {
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
-                old_fragments.next(&cx);
+                old_fragments.next();
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
@@ -1096,7 +1096,7 @@ impl Buffer {
                 if fragment_start == range.start && fragment.timestamp > timestamp {
                     new_ropes.push_fragment(fragment, fragment.visible);
                     new_fragments.push(fragment.clone(), &None);
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                     debug_assert_eq!(fragment_start, range.start);
                 } else {
                     break;
@@ -1152,7 +1152,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).0.full_offset();
+                let fragment_end = old_fragments.end().0.full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
@@ -1181,7 +1181,7 @@ impl Buffer {
                     fragment_start = intersection_end;
                 }
                 if fragment_end <= range.end {
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                 }
             }
         }
@@ -1189,7 +1189,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.start().0.full_offset() {
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end.0 - fragment_start.0;
@@ -1198,7 +1198,7 @@ impl Buffer {
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
-            old_fragments.next(&cx);
+            old_fragments.next();
         }
 
         let suffix = old_fragments.suffix(&cx);
@@ -1260,7 +1260,7 @@ impl Buffer {
                     break;
                 }
                 fragment_ids.push(&item.fragment_id);
-                insertions_cursor.next(&());
+                insertions_cursor.next();
             }
         }
         fragment_ids.sort_unstable();
@@ -1304,7 +1304,7 @@ impl Buffer {
                 new_ropes.push_fragment(&fragment, fragment_was_visible);
                 new_fragments.push(fragment, &None);
 
-                old_fragments.next(&None);
+                old_fragments.next();
             }
         }
 
@@ -1862,7 +1862,7 @@ impl BufferSnapshot {
             .filter::<_, FragmentTextSummary>(&None, move |summary| {
                 !version.observed_all(&summary.max_version)
             });
-        cursor.next(&None);
+        cursor.next();
 
         let mut visible_cursor = self.visible_text.cursor(0);
         let mut deleted_cursor = self.deleted_text.cursor(0);
@@ -1875,18 +1875,18 @@ impl BufferSnapshot {
 
             if fragment.was_visible(version, &self.undo_map) {
                 if fragment.visible {
-                    let text = visible_cursor.slice(cursor.end(&None).visible);
+                    let text = visible_cursor.slice(cursor.end().visible);
                     rope.append(text);
                 } else {
                     deleted_cursor.seek_forward(cursor.start().deleted);
-                    let text = deleted_cursor.slice(cursor.end(&None).deleted);
+                    let text = deleted_cursor.slice(cursor.end().deleted);
                     rope.append(text);
                 }
             } else if fragment.visible {
-                visible_cursor.seek_forward(cursor.end(&None).visible);
+                visible_cursor.seek_forward(cursor.end().visible);
             }
 
-            cursor.next(&None);
+            cursor.next();
         }
 
         if cursor.start().visible > visible_cursor.offset() {
@@ -2210,10 +2210,10 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
             assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
@@ -2257,10 +2257,10 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
 
             let Some(insertion) = insertion_cursor
@@ -2303,10 +2303,10 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
 
             let Some(insertion) = insertion_cursor.item().filter(|insertion| {
@@ -2425,7 +2425,7 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             Some(cursor)
         };
         let mut cursor = self
@@ -2466,7 +2466,7 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             while let Some(fragment) = cursor.item() {
                 if fragment.id > *end_fragment_id {
                     break;
@@ -2478,7 +2478,7 @@ impl BufferSnapshot {
                         return true;
                     }
                 }
-                cursor.next(&None);
+                cursor.next();
             }
         }
         false
@@ -2489,14 +2489,14 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             while let Some(fragment) = cursor.item() {
                 let was_visible = fragment.was_visible(since, &self.undo_map);
                 let is_visible = fragment.visible;
                 if was_visible != is_visible {
                     return true;
                 }
-                cursor.next(&None);
+                cursor.next();
             }
         }
         false
@@ -2601,7 +2601,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
         while let Some(fragment) = cursor.item() {
             if fragment.id < *self.range.start.0 {
-                cursor.next(&None);
+                cursor.next();
                 continue;
             } else if fragment.id > *self.range.end.0 {
                 break;
@@ -2634,7 +2634,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
             };
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {
-                let mut visible_end = cursor.end(&None).visible;
+                let mut visible_end = cursor.end().visible;
                 if fragment.id == *self.range.end.0 {
                     visible_end = cmp::min(
                         visible_end,
@@ -2660,7 +2660,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
                 self.new_end = new_end;
             } else if fragment.was_visible(self.since, self.undos) && !fragment.visible {
-                let mut deleted_end = cursor.end(&None).deleted;
+                let mut deleted_end = cursor.end().deleted;
                 if fragment.id == *self.range.end.0 {
                     deleted_end = cmp::min(
                         deleted_end,
@@ -2690,7 +2690,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 self.old_end = old_end;
             }
 
-            cursor.next(&None);
+            cursor.next();
         }
 
         pending_edit

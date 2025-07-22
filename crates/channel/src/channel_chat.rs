@@ -617,7 +617,7 @@ impl ChannelChat {
                     } else {
                         new_messages.push(message.clone(), &());
                     }
-                    old_cursor.next(&());
+                    old_cursor.next();
                 }
             }
 
@@ -645,7 +645,7 @@ impl ChannelChat {
         if let Some(item) = cursor.item() {
             if item.id == ChannelMessageId::Saved(id) {
                 let deleted_message_ix = messages.summary().count;
-                cursor.next(&());
+                cursor.next();
                 messages.append(cursor.suffix(&()), &());
                 drop(cursor);
                 self.messages = messages;
@@ -688,7 +688,7 @@ impl ChannelChat {
             message_to_update.mentions = mentions;
             message_to_update.edited_at = edited_at;
             messages.push(message_to_update, &());
-            cursor.next(&());
+            cursor.next();
         }
 
         messages.append(cursor.suffix(&()), &());

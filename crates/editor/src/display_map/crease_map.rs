@@ -55,12 +55,12 @@ impl CreaseSnapshot {
         cursor.seek(&start, Bias::Left, snapshot);
         while let Some(item) = cursor.item() {
             match Ord::cmp(&item.crease.range().start.to_point(snapshot).row, &row.0) {
-                Ordering::Less => cursor.next(snapshot),
+                Ordering::Less => cursor.next(),
                 Ordering::Equal => {
                     if item.crease.range().start.is_valid(snapshot) {
                         return Some(&item.crease);
                     } else {
-                        cursor.next(snapshot);
+                        cursor.next();
                     }
                 }
                 Ordering::Greater => break,
@@ -80,7 +80,7 @@ impl CreaseSnapshot {
 
         std::iter::from_fn(move || {
             while let Some(item) = cursor.item() {
-                cursor.next(snapshot);
+                cursor.next();
                 let crease_range = item.crease.range();
                 let crease_start = crease_range.start.to_point(snapshot);
                 let crease_end = crease_range.end.to_point(snapshot);
@@ -102,13 +102,13 @@ impl CreaseSnapshot {
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         let mut results = Vec::new();
 
-        cursor.next(snapshot);
+        cursor.next();
         while let Some(item) = cursor.item() {
             let crease_range = item.crease.range();
             let start_point = crease_range.start.to_point(snapshot);
             let end_point = crease_range.end.to_point(snapshot);
             results.push((item.id, start_point..end_point));
-            cursor.next(snapshot);
+            cursor.next();
         }
 
         results
@@ -334,7 +334,7 @@ impl CreaseMap {
             for (id, range) in &removals {
                 new_creases.append(cursor.slice(range, Bias::Left, snapshot), snapshot);
                 while let Some(item) = cursor.item() {
-                    cursor.next(snapshot);
+                    cursor.next();
                     if item.id == *id {
                         break;
                     } else {

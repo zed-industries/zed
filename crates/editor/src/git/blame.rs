@@ -412,7 +412,7 @@ impl GitBlame {
                 );
             }
 
-            let old_end = cursor.end(&());
+            let old_end = cursor.end();
             if row_edits
                 .peek()
                 .map_or(true, |next_edit| next_edit.old.start >= old_end)
@@ -421,14 +421,14 @@ impl GitBlame {
                     if old_end > edit.old.end {
                         new_entries.push(
                             GitBlameEntry {
-                                rows: cursor.end(&()) - edit.old.end,
+                                rows: cursor.end() - edit.old.end,
                                 blame: entry.blame.clone(),
                             },
                             &(),
                         );
                     }
 
-                    cursor.next(&());
+                    cursor.next();
                 }
             }
         }

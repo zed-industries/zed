@@ -598,7 +598,7 @@ impl StateInner {
         // the scroll top upward.
         if rendered_height - scroll_top.offset_in_item < available_height {
             while rendered_height < available_height {
-                cursor.prev(&());
+                cursor.prev();
                 if let Some(item) = cursor.item() {
                     let item_index = cursor.start().0;
                     let mut element = (self.render_item)(item_index, window, cx);
@@ -645,7 +645,7 @@ impl StateInner {
         // Measure items in the leading overdraw
         let mut leading_overdraw = scroll_top.offset_in_item;
         while leading_overdraw < self.overdraw {
-            cursor.prev(&());
+            cursor.prev();
             if let Some(item) = cursor.item() {
                 let size = if let ListItem::Measured { size, .. } = item {
                     *size
@@ -679,7 +679,7 @@ impl StateInner {
             let mut cursor = self
                 .items
                 .filter::<_, Count>(&(), |summary| summary.has_focus_handles);
-            cursor.next(&());
+            cursor.next();
             while let Some(item) = cursor.item() {
                 if item.contains_focused(window, cx) {
                     let item_index = cursor.start().0;
@@ -692,7 +692,7 @@ impl StateInner {
                     });
                     break;
                 }
-                cursor.next(&());
+                cursor.next();
             }
         }
 
@@ -749,7 +749,7 @@ impl StateInner {
 
                                 // Keep decreasing the scroll top until we fill all the available space.
                                 while height > Pixels::ZERO {
-                                    cursor.prev(&());
+                                    cursor.prev();
                                     let Some(item) = cursor.item() else { break };
 
                                     let size = item.size().unwrap_or_else(|| {

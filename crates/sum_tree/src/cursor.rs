@@ -64,11 +64,11 @@ where
         }
     }
 
-    fn reset(&mut self, cx: &<T::Summary as Summary>::Context) {
+    fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
         self.stack.truncate(0);
-        self.position = D::zero(cx);
+        self.position = D::zero(self.cx);
     }
 
     pub fn start(&self) -> &D {
@@ -76,10 +76,10 @@ where
     }
 
     #[track_caller]
-    pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> D {
+    pub fn end(&self) -> D {
         if let Some(item_summary) = self.item_summary() {
             let mut end = self.start().clone();
-            end.add_summary(item_summary, cx);
+            end.add_summary(item_summary, self.cx);
             end
         } else {
             self.start().clone()
@@ -204,12 +204,12 @@ where
     }
 
     #[track_caller]
-    pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.search_backward(|_| true, cx)
+    pub fn prev(&mut self) {
+        self.search_backward(|_| true)
     }
 
     #[track_caller]
-    pub fn search_backward<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    pub fn search_backward<F>(&mut self, mut filter_node: F)
     where
         F: FnMut(&T::Summary) -> bool,
     {
@@ -219,13 +219,13 @@ where
         }
 
         if self.at_end {
-            self.position = D::zero(cx);
+            self.position = D::zero(self.cx);
             self.at_end = self.tree.is_empty();
             if !self.tree.is_empty() {
                 self.stack.push(StackEntry {
                     tree: self.tree,
                     index: self.tree.0.child_summaries().len(),
-                    position: D::from_summary(self.tree.summary(), cx),
+                    position: D::from_summary(self.tree.summary(), self.cx),
                 });
             }
         }
@@ -235,7 +235,7 @@ where
             if let Some(StackEntry { position, .. }) = self.stack.iter().rev().nth(1) {
                 self.position = position.clone();
             } else {
-                self.position = D::zero(cx);
+                self.position = D::zero(self.cx);
             }
 
             let entry = self.stack.last_mut().unwrap();
@@ -249,7 +249,7 @@ where
             }
 
             for summary in &entry.tree.0.child_summaries()[..entry.index] {
-                self.position.add_summary(summary, cx);
+                self.position.add_summary(summary, self.cx);
             }
             entry.position = self.position.clone();
 
@@ -259,7 +259,7 @@ where
                     if descending {
                         let tree = &child_trees[entry.index];
                         self.stack.push(StackEntry {
-                            position: D::zero(cx),
+                            position: D::zero(self.cx),
                             tree,
                             index: tree.0.child_summaries().len() - 1,
                         })
@@ -275,12 +275,12 @@ where
     }
 
     #[track_caller]
-    pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.search_forward(|_| true, cx)
+    pub fn next(&mut self) {
+        self.search_forward(|_| true)
     }
 
     #[track_caller]
-    pub fn search_forward<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
+    pub fn search_forward<F>(&mut self, mut filter_node: F)
     where
         F: FnMut(&T::Summary) -> bool,
     {
@@ -291,7 +291,7 @@ where
                 self.stack.push(StackEntry {
                     tree: self.tree,
                     index: 0,
-                    position: D::zero(cx),
+                    position: D::zero(self.cx),
                 });
                 descend = true;
             }
@@ -318,8 +318,8 @@ where
                                 break;
                             } else {
                                 entry.index += 1;
-                                entry.position.add_summary(next_summary, cx);
-                                self.position.add_summary(next_summary, cx);
+                                entry.position.add_summary(next_summary, self.cx);
+                                self.position.add_summary(next_summary, self.cx);
                             }
                         }
 
@@ -329,8 +329,8 @@ where
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
                             entry.index += 1;
-                            entry.position.add_summary(item_summary, cx);
-                            self.position.add_summary(item_summary, cx);
+                            entry.position.add_summary(item_summary, self.cx);
+                            self.position.add_summary(item_summary, self.cx);
                         }
 
                         loop {
@@ -339,8 +339,8 @@ where
                                     return;
                                 } else {
                                     entry.index += 1;
-                                    entry.position.add_summary(next_item_summary, cx);
-                                    self.position.add_summary(next_item_summary, cx);
+                                    entry.position.add_summary(next_item_summary, self.cx);
+                                    self.position.add_summary(next_item_summary, self.cx);
                                 }
                             } else {
                                 break None;
@@ -391,7 +391,7 @@ where
     where
         Target: SeekTarget<'a, T::Summary, D>,
     {
-        self.reset(cx);
+        self.reset();
         self.seek_internal(pos, bias, &mut (), cx)
     }
 
@@ -636,11 +636,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.did_seek {
-            self.next(&());
+            self.next();
         }
 
         if let Some(item) = self.item() {
-            self.next(&());
+            self.next();
             Some(item)
         } else {
             None
@@ -675,8 +675,8 @@ where
         self.cursor.start()
     }
 
-    pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> D {
-        self.cursor.end(cx)
+    pub fn end(&self) -> D {
+        self.cursor.end()
     }
 
     pub fn item(&self) -> Option<&'a T> {
@@ -687,12 +687,12 @@ where
         self.cursor.item_summary()
     }
 
-    pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.search_forward(&mut self.filter_node, cx);
+    pub fn next(&mut self) {
+        self.cursor.search_forward(&mut self.filter_node);
     }
 
-    pub fn prev(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.search_backward(&mut self.filter_node, cx);
+    pub fn prev(&mut self) {
+        self.cursor.search_backward(&mut self.filter_node);
     }
 }
 
@@ -707,11 +707,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.cursor.did_seek {
-            self.next(&());
+            self.next();
         }
 
         if let Some(item) = self.item() {
-            self.cursor.search_forward(&mut self.filter_node, &());
+            self.cursor.search_forward(&mut self.filter_node);
             Some(item)
         } else {
             None

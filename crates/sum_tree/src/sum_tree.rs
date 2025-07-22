@@ -351,10 +351,10 @@ impl<T: Item> SumTree<T> {
     pub fn items(&self, cx: &<T::Summary as Summary>::Context) -> Vec<T> {
         let mut items = Vec::new();
         let mut cursor = self.cursor::<()>(cx);
-        cursor.next(cx);
+        cursor.next();
         while let Some(item) = cursor.item() {
             items.push(item.clone());
-            cursor.next(cx);
+            cursor.next();
         }
         items
     }
@@ -684,7 +684,7 @@ impl<T: KeyedItem> SumTree<T> {
             if let Some(cursor_item) = cursor.item() {
                 if cursor_item.key() == item.key() {
                     replaced = Some(cursor_item.clone());
-                    cursor.next(cx);
+                    cursor.next();
                 }
             }
             new_tree.push(item, cx);
@@ -702,7 +702,7 @@ impl<T: KeyedItem> SumTree<T> {
             if let Some(item) = cursor.item() {
                 if item.key() == *key {
                     removed = Some(item.clone());
-                    cursor.next(cx);
+                    cursor.next();
                 }
             }
             new_tree.append(cursor.suffix(cx), cx);
@@ -746,7 +746,7 @@ impl<T: KeyedItem> SumTree<T> {
                 if let Some(old_item) = old_item {
                     if old_item.key() == new_key {
                         removed.push(old_item.clone());
-                        cursor.next(cx);
+                        cursor.next();
                     }
                 }
 
@@ -1015,10 +1015,10 @@ mod tests {
                     .collect::<Vec<_>>();
 
                 let mut item_ix = if rng.r#gen() {
-                    filter_cursor.next(&());
+                    filter_cursor.next();
                     0
                 } else {
-                    filter_cursor.prev(&());
+                    filter_cursor.prev();
                     expected_filtered_items.len().saturating_sub(1)
                 };
                 while item_ix < expected_filtered_items.len() {
@@ -1028,19 +1028,19 @@ mod tests {
                     assert_eq!(actual_item, &reference_item);
                     assert_eq!(filter_cursor.start().0, reference_index);
                     log::info!("next");
-                    filter_cursor.next(&());
+                    filter_cursor.next();
                     item_ix += 1;
 
                     while item_ix > 0 && rng.gen_bool(0.2) {
                         log::info!("prev");
-                        filter_cursor.prev(&());
+                        filter_cursor.prev();
                         item_ix -= 1;
 
                         if item_ix == 0 && rng.gen_bool(0.2) {
-                            filter_cursor.prev(&());
+                            filter_cursor.prev();
                             assert_eq!(filter_cursor.item(), None);
                             assert_eq!(filter_cursor.start().0, 0);
-                            filter_cursor.next(&());
+                            filter_cursor.next();
                         }
                     }
                 }
@@ -1077,13 +1077,13 @@ mod tests {
                     }
 
                     if i < 5 {
-                        cursor.next(&());
+                        cursor.next();
                         if pos < reference_items.len() {
                             pos += 1;
                             before_start = false;
                         }
                     } else {
-                        cursor.prev(&());
+                        cursor.prev();
                         if pos == 0 {
                             before_start = true;
                         }
@@ -1123,12 +1123,12 @@ mod tests {
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
@@ -1147,13 +1147,13 @@ mod tests {
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
@@ -1189,74 +1189,74 @@ mod tests {
         assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
         assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
         assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
-        cursor.next(&());
-        cursor.next(&());
+        cursor.next();
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&6));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
         assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
         assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
         assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&2));
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), Some(&3));
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&2));
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&1));
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&2));

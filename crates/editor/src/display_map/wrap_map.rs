@@ -358,28 +358,28 @@ impl WrapSnapshot {
 
                 old_cursor.seek_forward(&edit.old.end, Bias::Right, &());
                 if let Some(next_edit) = tab_edits_iter.peek() {
-                    if next_edit.old.start > old_cursor.end(&()) {
-                        if old_cursor.end(&()) > edit.old.end {
+                    if next_edit.old.start > old_cursor.end() {
+                        if old_cursor.end() > edit.old.end {
                             let summary = self
                                 .tab_snapshot
-                                .text_summary_for_range(edit.old.end..old_cursor.end(&()));
+                                .text_summary_for_range(edit.old.end..old_cursor.end());
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
 
-                        old_cursor.next(&());
+                        old_cursor.next();
                         new_transforms.append(
                             old_cursor.slice(&next_edit.old.start, Bias::Right, &()),
                             &(),
                         );
                     }
                 } else {
-                    if old_cursor.end(&()) > edit.old.end {
+                    if old_cursor.end() > edit.old.end {
                         let summary = self
                             .tab_snapshot
-                            .text_summary_for_range(edit.old.end..old_cursor.end(&()));
+                            .text_summary_for_range(edit.old.end..old_cursor.end());
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
-                    old_cursor.next(&());
+                    old_cursor.next();
                     new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
@@ -518,14 +518,14 @@ impl WrapSnapshot {
 
                 old_cursor.seek_forward(&TabPoint::new(edit.old_rows.end, 0), Bias::Right, &());
                 if let Some(next_edit) = row_edits.peek() {
-                    if next_edit.old_rows.start > old_cursor.end(&()).row() {
-                        if old_cursor.end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                    if next_edit.old_rows.start > old_cursor.end().row() {
+                        if old_cursor.end() > TabPoint::new(edit.old_rows.end, 0) {
                             let summary = self.tab_snapshot.text_summary_for_range(
-                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(&()),
+                                TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(),
                             );
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
-                        old_cursor.next(&());
+                        old_cursor.next();
                         new_transforms.append(
                             old_cursor.slice(
                                 &TabPoint::new(next_edit.old_rows.start, 0),
@@ -536,13 +536,13 @@ impl WrapSnapshot {
                         );
                     }
                 } else {
-                    if old_cursor.end(&()) > TabPoint::new(edit.old_rows.end, 0) {
+                    if old_cursor.end() > TabPoint::new(edit.old_rows.end, 0) {
                         let summary = self.tab_snapshot.text_summary_for_range(
-                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(&()),
+                            TabPoint::new(edit.old_rows.end, 0)..old_cursor.end(),
                         );
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
-                    old_cursor.next(&());
+                    old_cursor.next();
                     new_transforms.append(old_cursor.suffix(&()), &());
                 }
             }
@@ -661,7 +661,7 @@ impl WrapSnapshot {
         cursor.seek(&start, Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let start_in_transform = start.0 - cursor.start().0.0;
-            let end_in_transform = cmp::min(end, cursor.end(&()).0).0 - cursor.start().0.0;
+            let end_in_transform = cmp::min(end, cursor.end().0).0 - cursor.start().0.0;
             if transform.is_isomorphic() {
                 let tab_start = TabPoint(cursor.start().1.0 + start_in_transform);
                 let tab_end = TabPoint(cursor.start().1.0 + end_in_transform);
@@ -678,7 +678,7 @@ impl WrapSnapshot {
                 };
             }
 
-            cursor.next(&());
+            cursor.next();
         }
 
         if rows.end > cursor.start().0.row() {
@@ -793,14 +793,14 @@ impl WrapSnapshot {
         let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         cursor.seek(&point, Bias::Right, &());
         if cursor.item().is_none() {
-            cursor.prev(&());
+            cursor.prev();
         }
 
         while let Some(transform) = cursor.item() {
             if transform.is_isomorphic() && cursor.start().1.column() == 0 {
-                return cmp::min(cursor.end(&()).0.row(), point.row());
+                return cmp::min(cursor.end().0.row(), point.row());
             } else {
-                cursor.prev(&());
+                cursor.prev();
             }
         }
 
@@ -816,7 +816,7 @@ impl WrapSnapshot {
             if transform.is_isomorphic() && cursor.start().1.column() == 0 {
                 return Some(cmp::max(cursor.start().0.row(), point.row()));
             } else {
-                cursor.next(&());
+                cursor.next();
             }
         }
 
@@ -930,7 +930,7 @@ impl<'a> Iterator for WrapChunks<'a> {
             }
 
             self.output_position.0 += summary;
-            self.transforms.next(&());
+            self.transforms.next();
             return Some(Chunk {
                 text: &display_text[start_ix..end_ix],
                 ..Default::default()
@@ -942,7 +942,7 @@ impl<'a> Iterator for WrapChunks<'a> {
         }
 
         let mut input_len = 0;
-        let transform_end = self.transforms.end(&()).0;
+        let transform_end = self.transforms.end().0;
         for c in self.input_chunk.text.chars() {
             let char_len = c.len_utf8();
             input_len += char_len;
@@ -954,7 +954,7 @@ impl<'a> Iterator for WrapChunks<'a> {
             }
 
             if self.output_position >= transform_end {
-                self.transforms.next(&());
+                self.transforms.next();
                 break;
             }
         }

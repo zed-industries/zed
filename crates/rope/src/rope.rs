@@ -41,8 +41,8 @@ impl Rope {
                 self.push_chunk(chunk.as_slice());
 
                 let mut chunks = rope.chunks.cursor::<()>(&());
-                chunks.next(&());
-                chunks.next(&());
+                chunks.next();
+                chunks.next();
                 self.chunks.append(chunks.suffix(&()), &());
                 self.check_invariants();
                 return;
@@ -536,12 +536,12 @@ impl<'a> Cursor<'a> {
         let mut slice = Rope::new();
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
-            let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
+            let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
             slice.push_chunk(start_chunk.slice(start_ix..end_ix));
         }
 
-        if end_offset > self.chunks.end(&()) {
-            self.chunks.next(&());
+        if end_offset > self.chunks.end() {
+            self.chunks.next();
             slice.append(Rope {
                 chunks: self.chunks.slice(&end_offset, Bias::Right, &()),
             });
@@ -561,12 +561,12 @@ impl<'a> Cursor<'a> {
         let mut summary = D::zero(&());
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
-            let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
+            let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
             summary.add_assign(&D::from_chunk(start_chunk.slice(start_ix..end_ix)));
         }
 
-        if end_offset > self.chunks.end(&()) {
-            self.chunks.next(&());
+        if end_offset > self.chunks.end() {
+            self.chunks.next();
             summary.add_assign(&self.chunks.summary(&end_offset, Bias::Right, &()));
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
@@ -638,7 +638,7 @@ impl<'a> Chunks<'a> {
             Bias::Right
         };
 
-        if offset >= self.chunks.end(&()) {
+        if offset >= self.chunks.end() {
             self.chunks.seek_forward(&offset, bias, &());
         } else {
             self.chunks.seek(&offset, bias, &());
@@ -670,18 +670,18 @@ impl<'a> Chunks<'a> {
                 found = self.offset <= self.range.end;
             } else {
                 self.chunks
-                    .search_forward(|summary| summary.text.lines.row > 0, &());
+                    .search_forward(|summary| summary.text.lines.row > 0);
                 self.offset = *self.chunks.start();
 
                 if let Some(newline_ix) = self.peek().and_then(|chunk| chunk.find('\n')) {
                     self.offset += newline_ix + 1;
                     found = self.offset <= self.range.end;
                 } else {
-                    self.offset = self.chunks.end(&());
+                    self.offset = self.chunks.end();
                 }
             }
 
-            if self.offset == self.chunks.end(&()) {
+            if self.offset == self.chunks.end() {
                 self.next();
             }
         }
@@ -707,7 +707,7 @@ impl<'a> Chunks<'a> {
         let initial_offset = self.offset;
 
         if self.offset == *self.chunks.start() {
-            self.chunks.prev(&());
+            self.chunks.prev();
         }
 
         if let Some(chunk) = self.chunks.item() {
@@ -725,14 +725,14 @@ impl<'a> Chunks<'a> {
         }
 
         self.chunks
-            .search_backward(|summary| summary.text.lines.row > 0, &());
+            .search_backward(|summary| summary.text.lines.row > 0);
         self.offset = *self.chunks.start();
         if let Some(chunk) = self.chunks.item() {
             if let Some(newline_ix) = chunk.text.rfind('\n') {
                 self.offset += newline_ix + 1;
                 if self.offset_is_valid() {
-                    if self.offset == self.chunks.end(&()) {
-                        self.chunks.next(&());
+                    if self.offset == self.chunks.end() {
+                        self.chunks.next();
                     }
 
                     return true;
@@ -761,7 +761,7 @@ impl<'a> Chunks<'a> {
             slice_start..slice_end
         } else {
             let slice_start = self.offset - chunk_start;
-            let slice_end = cmp::min(self.chunks.end(&()), self.range.end) - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(), self.range.end) - chunk_start;
             slice_start..slice_end
         };
 
@@ -821,12 +821,12 @@ impl<'a> Iterator for Chunks<'a> {
         if self.reversed {
             self.offset -= chunk.len();
             if self.offset <= *self.chunks.start() {
-                self.chunks.prev(&());
+                self.chunks.prev();
             }
         } else {
             self.offset += chunk.len();
-            if self.offset >= self.chunks.end(&()) {
-                self.chunks.next(&());
+            if self.offset >= self.chunks.end() {
+                self.chunks.next();
             }
         }
 
@@ -857,7 +857,7 @@ impl<'a> Bytes<'a> {
 
     pub fn peek(&self) -> Option<&'a [u8]> {
         let chunk = self.chunks.item()?;
-        if self.reversed && self.range.start >= self.chunks.end(&()) {
+        if self.reversed && self.range.start >= self.chunks.end() {
             return None;
         }
         let chunk_start = *self.chunks.start();
@@ -877,9 +877,9 @@ impl<'a> Iterator for Bytes<'a> {
         let result = self.peek();
         if result.is_some() {
             if self.reversed {
-                self.chunks.prev(&());
+                self.chunks.prev();
             } else {
-                self.chunks.next(&());
+                self.chunks.next();
             }
         }
         result
@@ -901,9 +901,9 @@ impl io::Read for Bytes<'_> {
 
             if len == chunk.len() {
                 if self.reversed {
-                    self.chunks.prev(&());
+                    self.chunks.prev();
                 } else {
-                    self.chunks.next(&());
+                    self.chunks.next();
                 }
             }
             Ok(len)

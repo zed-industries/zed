@@ -374,7 +374,7 @@ impl NotificationStore {
             let old_notification = cursor.item();
             if let Some(old_notification) = old_notification {
                 if old_notification.id == id {
-                    cursor.next(&());
+                    cursor.next();
 
                     if let Some(new_notification) = &new_notification {
                         if new_notification.is_read {

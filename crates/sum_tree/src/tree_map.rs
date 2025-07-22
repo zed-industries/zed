@@ -87,9 +87,9 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        if key.cmp(&cursor.end(), &()) == Ordering::Equal {
             removed = Some(cursor.item().unwrap().value.clone());
-            cursor.next(&());
+            cursor.next();
         }
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
@@ -113,7 +113,7 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
         cursor.seek(&key, Bias::Right, &());
-        cursor.prev(&());
+        cursor.prev();
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
@@ -133,11 +133,11 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
         let mut result = None;
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        if key.cmp(&cursor.end(), &()) == Ordering::Equal {
             let mut updated = cursor.item().unwrap().clone();
             result = Some(f(&mut updated.value));
             new_tree.push(updated, &());
-            cursor.next(&());
+            cursor.next();
         }
         new_tree.append(cursor.suffix(&()), &());
         drop(cursor);
@@ -149,12 +149,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let mut new_map = SumTree::<MapEntry<K, V>>::default();
 
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
-        cursor.next(&());
+        cursor.next();
         while let Some(item) = cursor.item() {
             if predicate(&item.key, &item.value) {
                 new_map.push(item.clone(), &());
             }
-            cursor.next(&());
+            cursor.next();
         }
         drop(cursor);
 
