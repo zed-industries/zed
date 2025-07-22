@@ -363,7 +363,7 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<'a, T, S>
+    pub fn cursor<'a, S>(&'a self, cx: &'a <T::Summary as Summary>::Context) -> Cursor<'a, T, S>
     where
         S: Dimension<'a, T::Summary>,
     {
@@ -374,7 +374,7 @@ impl<T: Item> SumTree<T> {
     /// that is returned cannot be used with Rust's iterators.
     pub fn filter<'a, F, U>(
         &'a self,
-        cx: &<T::Summary as Summary>::Context,
+        cx: &'a <T::Summary as Summary>::Context,
         filter_node: F,
     ) -> FilterCursor<'a, F, T, U>
     where
@@ -766,7 +766,11 @@ impl<T: KeyedItem> SumTree<T> {
         removed
     }
 
-    pub fn get(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<&T> {
+    pub fn get<'a>(
+        &'a self,
+        key: &T::Key,
+        cx: &'a <T::Summary as Summary>::Context,
+    ) -> Option<&'a T> {
         let mut cursor = self.cursor::<T::Key>(cx);
         if cursor.seek(key, Bias::Left, cx) {
             cursor.item()

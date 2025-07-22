@@ -25,6 +25,7 @@ pub struct Cursor<'a, T: Item, D> {
     position: D,
     did_seek: bool,
     at_end: bool,
+    cx: &'a <T::Summary as Summary>::Context,
 }
 
 impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'_, T, D>
@@ -52,13 +53,14 @@ where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(tree: &'a SumTree<T>, cx: &<T::Summary as Summary>::Context) -> Self {
+    pub fn new(tree: &'a SumTree<T>, cx: &'a <T::Summary as Summary>::Context) -> Self {
         Self {
             tree,
             stack: ArrayVec::new(),
             position: D::zero(cx),
             did_seek: false,
             at_end: tree.is_empty(),
+            cx,
         }
     }
 
@@ -659,7 +661,7 @@ where
 {
     pub fn new(
         tree: &'a SumTree<T>,
-        cx: &<T::Summary as Summary>::Context,
+        cx: &'a <T::Summary as Summary>::Context,
         filter_node: F,
     ) -> Self {
         let cursor = tree.cursor::<D>(cx);
