@@ -549,9 +549,11 @@ fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp::Tool
 pub mod tests {
     use super::*;
 
+    crate::common_e2e_tests!(Codex);
+
     pub fn local_command() -> AgentServerCommand {
         let cli_path =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../codex/target/debug/codex");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../codex/code-rs/target/debug/codex");
 
         AgentServerCommand {
             path: cli_path,
