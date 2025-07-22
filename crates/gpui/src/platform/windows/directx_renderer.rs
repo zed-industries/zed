@@ -213,6 +213,7 @@ impl DirectXRenderer {
 
     fn handle_device_lost(&mut self) -> Result<()> {
         let devices = DirectXDevices::new().context("Recreating DirectX devices")?;
+        #[cfg(not(feature = "enable-renderdoc"))]
         unsafe {
             ManuallyDrop::drop(&mut self._direct_composition);
         }
@@ -221,7 +222,7 @@ impl DirectXRenderer {
         #[cfg(not(feature = "enable-renderdoc"))]
         let resources = DirectXResources::new(&devices).unwrap();
         #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(devices, hwnd)?;
+        let resources = DirectXResources::new(&devices, self.hwnd)?;
         let globals = DirectXGlobalElements::new(&devices.device).unwrap();
         let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
 
@@ -977,6 +978,7 @@ struct PathSprite {
     color: Background,
 }
 
+#[cfg(not(feature = "enable-renderdoc"))]
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
         unsafe {
