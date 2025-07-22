@@ -544,3 +544,19 @@ fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp::Tool
         None
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    pub fn local_command() -> AgentServerCommand {
+        let cli_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../codex/target/debug/codex");
+
+        AgentServerCommand {
+            path: cli_path,
+            args: vec!["mcp".into()],
+            env: None,
+        }
+    }
+}
