@@ -17,7 +17,7 @@ use crate::stripe_client::{
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
     StripeCustomerId, StripeCustomerUpdate, StripeCustomerUpdateAddress, StripeCustomerUpdateName,
-    StripeMeter, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
+    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
     StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, StripeTaxIdCollection,
     UpdateSubscriptionItems, UpdateSubscriptionParams,
@@ -30,7 +30,6 @@ pub struct StripeBilling {
 
 #[derive(Default)]
 struct StripeBillingState {
-    meters_by_event_name: HashMap<String, StripeMeter>,
     price_ids_by_meter_id: HashMap<String, StripePriceId>,
     prices_by_lookup_key: HashMap<String, StripePrice>,
 }
@@ -60,14 +59,7 @@ impl StripeBilling {
 
         let mut state = self.state.write().await;
 
-        let (meters, prices) =
-            futures::try_join!(self.client.list_meters(), self.client.list_prices())?;
-
-        for meter in meters {
-            state
-                .meters_by_event_name
-                .insert(meter.event_name.clone(), meter);
-        }
+        let prices = self.client.list_prices().await?;
 
         for price in prices {
             if let Some(lookup_key) = price.lookup_key.clone() {
