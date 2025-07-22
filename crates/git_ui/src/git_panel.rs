@@ -2939,9 +2939,6 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
         current_language_model(cx).is_some().then(|| {
             if self.generate_commit_message_task.is_some() {
                 return h_flex()
@@ -4314,8 +4311,10 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    agent_settings::AgentSettings::get_global(cx)
-        .enabled
+    let is_enabled = agent_settings::AgentSettings::get_global(cx).enabled
+        && !DisableAiSettings::get_global(cx).disable_ai;
+
+    is_enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
                 LanguageModelRegistry::read_global(cx).commit_message_model()?;
