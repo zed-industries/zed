@@ -62,40 +62,37 @@ impl TextDiffView {
             Some((buffer, selection_range))
         });
 
-        let Some((source_buffer, source_range)) = source_editor_buffer_and_range else {
+        let Some((source_buffer, selected_range)) = source_editor_buffer_and_range else {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return None;
         };
 
-        let clipboard_buffer = cx.new(|cx| {
-            let clipboard_text = diff_data.clipboard_text.clone();
-            let mut buffer = language::Buffer::local(clipboard_text, cx);
-            let source_language = source_buffer.read(cx).language().cloned();
-            buffer.set_language(source_language, cx);
-            buffer
-        });
+        let clipboard_text = diff_data.clipboard_text.clone();
 
         let workspace = workspace.weak_handle();
+
+        let diff = cx.new(|cx| {
+            let source_buffer_snapshot = source_buffer.read(cx).snapshot();
+            let diff = BufferDiff::new(&source_buffer_snapshot.text, cx);
+            diff
+        });
+
+        let neo_clipboard_buffer =
+            build_neo_clipboard_buffer(clipboard_text, &source_buffer, selected_range.clone(), cx);
 
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
-            let buffer_diff = build_range_based_diff(
-                clipboard_buffer.clone(),
-                source_buffer.clone(),
-                source_range.clone(),
-                cx,
-            )
-            .await?;
+            update_diff(&diff, &source_buffer, &neo_clipboard_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let diff_view = cx.new(|cx| {
                     TextDiffView::new(
-                        clipboard_buffer,
+                        neo_clipboard_buffer,
                         source_editor,
                         source_buffer,
-                        source_range,
-                        buffer_diff,
+                        selected_range,
+                        diff,
                         project,
                         window,
                         cx,
@@ -115,8 +112,8 @@ impl TextDiffView {
     }
 
     pub fn new(
-        clipboard_buffer: Entity<Buffer>,
-        source_editor: Entity<Editor>,
+        neo_clipboard_buffer: Entity<Buffer>,
+        source_editor: Entity<Editor>, // todo - diff: remove param - just need title
         source_buffer: Entity<Buffer>,
         source_range: Range<Point>,
         diff: Entity<BufferDiff>,
@@ -189,7 +186,7 @@ impl TextDiffView {
             title: format!("Clipboard ↔ {selection_location_title}").into(),
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
-            _recalculate_diff_task: cx.spawn(async move |this, cx| {
+            _recalculate_diff_task: cx.spawn(async move |_, cx| {
                 while let Ok(_) = buffer_changes_rx.recv().await {
                     loop {
                         let mut timer = cx
@@ -204,25 +201,7 @@ impl TextDiffView {
                     }
 
                     log::trace!("start recalculating");
-                    let (old_snapshot, new_snapshot) = this.update(cx, |_, cx| {
-                        (
-                            clipboard_buffer.read(cx).snapshot(),
-                            source_buffer.read(cx).snapshot(),
-                        )
-                    })?;
-                    let diff_snapshot = cx
-                        .update(|cx| {
-                            BufferDiffSnapshot::new_with_base_buffer(
-                                new_snapshot.text.clone(),
-                                Some(old_snapshot.text().into()),
-                                old_snapshot,
-                                cx,
-                            )
-                        })?
-                        .await;
-                    diff.update(cx, |diff, cx| {
-                        diff.set_snapshot(diff_snapshot, &new_snapshot, cx)
-                    })?;
+                    update_diff(&diff, &source_buffer, &neo_clipboard_buffer, cx).await?;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -231,37 +210,42 @@ impl TextDiffView {
     }
 }
 
-async fn build_range_based_diff(
-    old_buffer: Entity<Buffer>,
-    new_buffer: Entity<Buffer>,
-    new_range: Range<Point>,
+// todo - diff: come up with better name than neo_clipboard_buffer
+fn build_neo_clipboard_buffer(
+    clipboard_text: String,
+    source_buffer: &Entity<Buffer>,
+    selected_range: Range<Point>,
+    cx: &mut App,
+) -> Entity<Buffer> {
+    let source_buffer_snapshot = source_buffer.read(cx).snapshot();
+    cx.new(|cx| {
+        let mut buffer = language::Buffer::local(source_buffer_snapshot.text(), cx);
+        let language = source_buffer.read(cx).language().cloned();
+        buffer.set_language(language, cx);
+
+        let range_start = source_buffer_snapshot.point_to_offset(selected_range.start);
+        let range_end = source_buffer_snapshot.point_to_offset(selected_range.end);
+        buffer.edit([(range_start..range_end, clipboard_text)], None, cx);
+
+        buffer
+    })
+}
+
+async fn update_diff(
+    diff: &Entity<BufferDiff>,
+    source_buffer: &Entity<Buffer>,
+    neo_clipboard_buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Result<Entity<BufferDiff>> {
-    let old_text = old_buffer.read_with(cx, |buffer, _| buffer.text())?;
+) -> Result<()> {
+    let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-
-    let base_buffer = cx.update(|cx| {
-        cx.new(|cx| {
-            let mut buffer = language::Buffer::local(new_buffer_snapshot.text().to_string(), cx);
-            let language = new_buffer.read(cx).language().cloned();
-            buffer.set_language(language, cx);
-
-            let range_start = new_buffer_snapshot.point_to_offset(new_range.start);
-            let range_end = new_buffer_snapshot.point_to_offset(new_range.end);
-            buffer.edit([(range_start..range_end, old_text)], None, cx);
-
-            buffer
-        })
-    })?;
-
-    let base_buffer_snapshot = base_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    let base_buffer_snapshot = neo_clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
     let base_text = base_buffer_snapshot.text().to_string();
 
     let diff_snapshot = cx
         .update(|cx| {
             BufferDiffSnapshot::new_with_base_buffer(
-                new_buffer_snapshot.text.clone(),
+                source_buffer_snapshot.text.clone(),
                 Some(Arc::new(base_text)),
                 base_buffer_snapshot,
                 cx,
@@ -269,11 +253,10 @@ async fn build_range_based_diff(
         })?
         .await;
 
-    cx.new(|cx| {
-        let mut diff = BufferDiff::new(&new_buffer_snapshot.text, cx);
-        diff.set_snapshot(diff_snapshot, &new_buffer_snapshot.text, cx);
-        diff
-    })
+    diff.update(cx, |diff, cx| {
+        diff.set_snapshot(diff_snapshot, &source_buffer_snapshot.text, cx);
+    })?;
+    Ok(())
 }
 
 impl EventEmitter<EditorEvent> for TextDiffView {}
