@@ -188,7 +188,7 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiOpenAi
+        IconName::AiOpenAiCompat
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
