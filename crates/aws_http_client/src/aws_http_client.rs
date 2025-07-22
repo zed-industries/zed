@@ -32,6 +32,7 @@ impl AwsConnector for AwsHttpConnector {
                 return HttpConnectorFuture::ready(Err(ConnectorError::other(err.into(), None)));
             }
         };
+
         let (parts, body) = req.into_parts();
 
         let response = self
