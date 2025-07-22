@@ -2300,7 +2300,20 @@ impl AgentPanel {
             return None;
         }
 
-        Some(div().size_full().child(self.onboarding.clone()))
+        let thread_view = matches!(&self.active_view, ActiveView::Thread { .. });
+        let text_thread_view = matches!(&self.active_view, ActiveView::TextThread { .. });
+
+        Some(
+            div()
+                .size_full()
+                .when(thread_view, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                })
+                .when(text_thread_view, |this| {
+                    this.bg(cx.theme().colors().editor_background)
+                })
+                .child(self.onboarding.clone()),
+        )
     }
 
     fn render_trial_end_upsell(
