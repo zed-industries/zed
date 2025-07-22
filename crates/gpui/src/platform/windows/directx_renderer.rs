@@ -122,7 +122,7 @@ impl DirectXRenderer {
         #[cfg(not(feature = "enable-renderdoc"))]
         let resources = DirectXResources::new(&devices, 1, 1)?;
         #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(&devices, hwnd)?;
+        let resources = DirectXResources::new(&devices, 1, 1, hwnd)?;
 
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
