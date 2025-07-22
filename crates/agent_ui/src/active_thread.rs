@@ -3724,8 +3724,11 @@ pub(crate) fn open_context(
 
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, cx| {
-                    panel.open_thread(thread_context.thread.clone(), window, cx);
+                let thread = thread_context.thread.clone();
+                window.defer(cx, move |window, cx| {
+                    panel.update(cx, |panel, cx| {
+                        panel.open_thread(thread, window, cx);
+                    });
                 });
             }
         }),
@@ -3733,8 +3736,11 @@ pub(crate) fn open_context(
         AgentContextHandle::TextThread(text_thread_context) => {
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
+                    let context = text_thread_context.context.clone();
+                    window.defer(cx, move |window, cx| {
+                        panel.update(cx, |panel, cx| {
+                            panel.open_prompt_editor(context, window, cx)
+                        });
                     });
                 }
             })

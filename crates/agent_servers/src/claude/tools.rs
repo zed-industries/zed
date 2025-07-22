@@ -118,13 +118,106 @@ impl ClaudeTool {
 
     pub fn content(&self) -> Option<acp::ToolCallContent> {
         match &self {
-            ClaudeTool::Other { input, .. } => Some(acp::ToolCallContent::Markdown {
+            Self::Other { input, .. } => Some(acp::ToolCallContent::Markdown {
                 markdown: format!(
                     "```json\n{}```",
                     serde_json::to_string_pretty(&input).unwrap_or("{}".to_string())
                 ),
             }),
-            _ => None,
+            Self::Task(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.prompt.clone(),
+            }),
+            Self::NotebookRead(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.notebook_path.display().to_string(),
+            }),
+            Self::NotebookEdit(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.new_source.clone(),
+            }),
+            Self::Terminal(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: format!(
+                    "`{}`\n\n{}",
+                    params.command,
+                    params.description.as_deref().unwrap_or_default()
+                ),
+            }),
+            Self::ReadFile(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.abs_path.display().to_string(),
+            }),
+            Self::Ls(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.path.display().to_string(),
+            }),
+            Self::Glob(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.to_string(),
+            }),
+            Self::Grep(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: format!("`{params}`"),
+            }),
+            Self::WebFetch(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.prompt.clone(),
+            }),
+            Self::WebSearch(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.to_string(),
+            }),
+            Self::TodoWrite(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params
+                    .todos
+                    .iter()
+                    .map(|todo| {
+                        format!(
+                            "- {} {}: {}",
+                            match todo.status {
+                                TodoStatus::Completed => "✅",
+                                TodoStatus::InProgress => "🚧",
+                                TodoStatus::Pending => "⬜",
+                            },
+                            todo.priority,
+                            todo.content
+                        )
+                    })
+                    .join("\n"),
+            }),
+            Self::ExitPlanMode(Some(params)) => Some(acp::ToolCallContent::Markdown {
+                markdown: params.plan.clone(),
+            }),
+            Self::Edit(Some(params)) => Some(acp::ToolCallContent::Diff {
+                diff: acp::Diff {
+                    path: params.abs_path.clone(),
+                    old_text: Some(params.old_text.clone()),
+                    new_text: params.new_text.clone(),
+                },
+            }),
+            Self::Write(Some(params)) => Some(acp::ToolCallContent::Diff {
+                diff: acp::Diff {
+                    path: params.file_path.clone(),
+                    old_text: None,
+                    new_text: params.content.clone(),
+                },
+            }),
+            Self::MultiEdit(Some(params)) => {
+                // todo: show multiple edits in a multibuffer?
+                params.edits.first().map(|edit| acp::ToolCallContent::Diff {
+                    diff: acp::Diff {
+                        path: params.file_path.clone(),
+                        old_text: Some(edit.old_string.clone()),
+                        new_text: edit.new_string.clone(),
+                    },
+                })
+            }
+            Self::Task(None)
+            | Self::NotebookRead(None)
+            | Self::NotebookEdit(None)
+            | Self::Terminal(None)
+            | Self::ReadFile(None)
+            | Self::Ls(None)
+            | Self::Glob(None)
+            | Self::Grep(None)
+            | Self::WebFetch(None)
+            | Self::WebSearch(None)
+            | Self::TodoWrite(None)
+            | Self::ExitPlanMode(None)
+            | Self::Edit(None)
+            | Self::Write(None)
+            | Self::MultiEdit(None) => None,
         }
     }
 
@@ -513,12 +606,22 @@ impl std::fmt::Display for GrepToolParams {
     }
 }
 
-#[derive(Deserialize, Serialize, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, JsonSchema, strum::Display, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoPriority {
     High,
     Medium,
     Low,
+}
+
+impl Into<acp::PlanEntryPriority> for TodoPriority {
+    fn into(self) -> acp::PlanEntryPriority {
+        match self {
+            TodoPriority::High => acp::PlanEntryPriority::High,
+            TodoPriority::Medium => acp::PlanEntryPriority::Medium,
+            TodoPriority::Low => acp::PlanEntryPriority::Low,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Debug)]
@@ -527,6 +630,16 @@ pub enum TodoStatus {
     Pending,
     InProgress,
     Completed,
+}
+
+impl Into<acp::PlanEntryStatus> for TodoStatus {
+    fn into(self) -> acp::PlanEntryStatus {
+        match self {
+            TodoStatus::Pending => acp::PlanEntryStatus::Pending,
+            TodoStatus::InProgress => acp::PlanEntryStatus::InProgress,
+            TodoStatus::Completed => acp::PlanEntryStatus::Completed,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Debug)]
@@ -539,6 +652,16 @@ pub struct Todo {
     pub priority: TodoPriority,
     /// Current status of the todo
     pub status: TodoStatus,
+}
+
+impl Into<acp::PlanEntry> for Todo {
+    fn into(self) -> acp::PlanEntry {
+        acp::PlanEntry {
+            content: self.content,
+            priority: self.priority.into(),
+            status: self.status.into(),
+        }
+    }
 }
 
 #[derive(Deserialize, JsonSchema, Debug)]

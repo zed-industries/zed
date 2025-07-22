@@ -24,7 +24,7 @@ The file contains a JSON array of objects with `"bindings"`. If no `"context"` i
 
 Within each binding section a [key sequence](#keybinding-syntax) is mapped to an [action](#actions). If conflicts are detected they are resolved as [described below](#precedence).
 
-If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_layout_keys` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
+If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
 For example:
 
@@ -87,8 +87,6 @@ If a binding group has a `"context"` key it will be matched against the currentl
 
 Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `dev: Open Key Context View` in the command palette.
 
-Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
-
 For example:
 
 ```
@@ -106,9 +104,20 @@ Workspace os=macos
 Context expressions can contain the following syntax:
 
 - `X && Y`, `X || Y` to and/or two conditions
-- `!X` to negate a condition
+- `!X` to check that a condition is false
 - `(X)` for grouping
-- `X > Y` to match if a parent in the tree matches X and this layer matches Y.
+- `X > Y` to match if an ancestor in the tree matches X and this layer matches Y.
+
+For example:
+
+- `"context": "Editor"` - matches any editor (including inline inputs)
+- `"context": "Editor && mode=full"` - matches the main editors used for editing code
+- `"context": "!Editor && !Terminal"` - matches anywhere except where an Editor or Terminal is focused
+- `"context": "os=macos > Editor"` - matches any editor on macOS.
+
+It's worth noting that attributes are only available on the node they are defined on. This means that if you want to (for example) only enable a keybinding when the debugger is stopped in vim normal mode, you need to do `debugger_stopped > vim_mode == normal`.
+
+Note: Before Zed v0.197.x, the ! operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os=macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
 
 If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts)
 

@@ -231,7 +231,6 @@ impl ActivityIndicator {
                 status,
             } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
-                let project = project.clone();
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -247,8 +246,7 @@ impl ActivityIndicator {
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project.clone()), window, cx);
+                                let mut editor = Editor::for_buffer(buffer, None, window, cx);
                                 editor.set_read_only(true);
                                 editor
                             })),

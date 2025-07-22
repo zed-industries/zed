@@ -453,9 +453,69 @@ impl Diff {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub entries: Vec<PlanEntry>,
+}
+
+#[derive(Debug)]
+pub struct PlanStats<'a> {
+    pub in_progress_entry: Option<&'a PlanEntry>,
+    pub pending: u32,
+    pub completed: u32,
+}
+
+impl Plan {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn stats(&self) -> PlanStats<'_> {
+        let mut stats = PlanStats {
+            in_progress_entry: None,
+            pending: 0,
+            completed: 0,
+        };
+
+        for entry in &self.entries {
+            match &entry.status {
+                acp::PlanEntryStatus::Pending => {
+                    stats.pending += 1;
+                }
+                acp::PlanEntryStatus::InProgress => {
+                    stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
+                }
+                acp::PlanEntryStatus::Completed => {
+                    stats.completed += 1;
+                }
+            }
+        }
+
+        stats
+    }
+}
+
+#[derive(Debug)]
+pub struct PlanEntry {
+    pub content: Entity<Markdown>,
+    pub priority: acp::PlanEntryPriority,
+    pub status: acp::PlanEntryStatus,
+}
+
+impl PlanEntry {
+    pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
+        Self {
+            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            priority: entry.priority,
+            status: entry.status,
+        }
+    }
+}
+
 pub struct AcpThread {
-    entries: Vec<AgentThreadEntry>,
     title: SharedString,
+    entries: Vec<AgentThreadEntry>,
+    plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
@@ -515,6 +575,7 @@ impl AcpThread {
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            plan: Default::default(),
             title,
             project,
             send_task: None,
@@ -664,7 +725,7 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<ToolCallRequest> {
         let project = self.project.read(cx).languages().clone();
-        let Some((_, call)) = self.tool_call_mut(tool_call_id) else {
+        let Some((idx, call)) = self.tool_call_mut(tool_call_id) else {
             anyhow::bail!("Tool call not found");
         };
 
@@ -674,6 +735,8 @@ impl AcpThread {
             confirmation: ToolCallConfirmation::from_acp(confirmation, project, cx),
             respond_tx: tx,
         };
+
+        cx.emit(AcpThreadEvent::EntryUpdated(idx));
 
         Ok(ToolCallRequest {
             id: tool_call_id,
@@ -768,8 +831,13 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
-        call.content = new_content
-            .map(|new_content| ToolCallContent::from_acp(new_content, language_registry, cx));
+        if let Some(new_content) = new_content {
+            call.content = Some(ToolCallContent::from_acp(
+                new_content,
+                language_registry,
+                cx,
+            ));
+        }
 
         match &mut call.status {
             ToolCallStatus::Allowed { status } => {
@@ -810,6 +878,29 @@ impl AcpThread {
                 None
             }
         }
+    }
+
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    pub fn update_plan(&mut self, request: acp::UpdatePlanParams, cx: &mut Context<Self>) {
+        self.plan = Plan {
+            entries: request
+                .entries
+                .into_iter()
+                .map(|entry| PlanEntry::from_acp(entry, cx))
+                .collect(),
+        };
+
+        cx.notify();
+    }
+
+    pub fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
+        self.plan
+            .entries
+            .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
+        cx.notify();
     }
 
     pub fn set_project_location(&self, location: ToolCallLocation, cx: &mut Context<Self>) {
@@ -1129,6 +1220,17 @@ impl AcpClientDelegate {
         Self { thread, cx }
     }
 
+    pub async fn clear_completed_plan_entries(&self) -> Result<()> {
+        let cx = &mut self.cx.clone();
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.clear_completed_plan_entries(cx))
+        })?
+        .context("Failed to update thread")?;
+
+        Ok(())
+    }
+
     pub async fn request_existing_tool_call_confirmation(
         &self,
         tool_call_id: ToolCallId,
@@ -1222,6 +1324,18 @@ impl acp::Client for AcpClientDelegate {
             })
         })?
         .context("Failed to update thread")??;
+
+        Ok(())
+    }
+
+    async fn update_plan(&self, request: acp::UpdatePlanParams) -> Result<(), acp::Error> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.update_plan(request, cx))
+        })?
+        .context("Failed to update thread")?;
 
         Ok(())
     }

@@ -12,10 +12,11 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
+    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -222,7 +223,12 @@ impl ArenaClearNeeded {
     }
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
+pub(crate) struct FocusRef {
+    pub(crate) ref_count: AtomicUsize,
+    pub(crate) tab_index: isize,
+    pub(crate) tab_stop: bool,
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -258,6 +264,10 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
+    /// The index of this element in the tab order.
+    pub tab_index: isize,
+    /// Whether this element can be focused by tab navigation.
+    pub tab_stop: bool,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -268,23 +278,52 @@ impl std::fmt::Debug for FocusHandle {
 
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+        let id = handles.write().insert(FocusRef {
+            ref_count: AtomicUsize::new(1),
+            tab_index: 0,
+            tab_stop: false,
+        });
+
         Self {
             id,
+            tab_index: 0,
+            tab_stop: false,
             handles: handles.clone(),
         }
     }
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
-        if atomic_incr_if_not_zero(ref_count) == 0 {
+        let focus = lock.get(id)?;
+        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
             return None;
         }
         Some(Self {
             id,
+            tab_index: focus.tab_index,
+            tab_stop: focus.tab_stop,
             handles: handles.clone(),
         })
+    }
+
+    /// Sets the tab index of the element associated with this handle.
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = index;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_index = index;
+        }
+        self
+    }
+
+    /// Sets whether the element associated with this handle is a tab stop.
+    ///
+    /// When `false`, the element will not be included in the tab order.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_stop = tab_stop;
+        }
+        self
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -354,6 +393,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .ref_count
             .fetch_sub(1, SeqCst);
     }
 }
@@ -642,6 +682,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
+    pub(crate) tab_handles: TabHandles,
 }
 
 #[derive(Clone, Default)]
@@ -689,6 +730,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
+            tab_handles: TabHandles::default(),
         }
     }
 
@@ -704,6 +746,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
+        self.tab_handles.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1287,6 +1330,28 @@ impl Window {
     pub fn disable_focus(&mut self) {
         self.blur();
         self.focus_enabled = false;
+    }
+
+    /// Move focus to next tab stop.
+    pub fn focus_next(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
+    }
+
+    /// Move focus to previous tab stop.
+    pub fn focus_prev(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
     }
 
     /// Accessor for the text system.
@@ -2424,6 +2489,53 @@ impl Window {
         result
     }
 
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames.
+    pub fn use_keyed_state<S: 'static>(
+        &mut self,
+        key: impl Into<ElementId>,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
+    ) -> Entity<S> {
+        let current_view = self.current_view();
+        self.with_global_id(key.into(), |global_id, window| {
+            window.with_element_state(global_id, |state: Option<Entity<S>>, window| {
+                if let Some(state) = state {
+                    (state.clone(), state)
+                } else {
+                    let new_state = cx.new(|cx| init(window, cx));
+                    cx.observe(&new_state, move |_, cx| {
+                        cx.notify(current_view);
+                    })
+                    .detach();
+                    (new_state.clone(), new_state)
+                }
+            })
+        })
+    }
+
+    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
+    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_global_id(id.into(), |_, window| f(window))
+    }
+
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
+    ///
+    /// NOTE: This method uses the location of the caller to generate an ID for this state.
+    ///       If this is not sufficient to identify your state (e.g. you're rendering a list item),
+    ///       you can provide a custom ElementID using the `use_keyed_state` method.
+    #[track_caller]
+    pub fn use_state<S: 'static>(
+        &mut self,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
+    ) -> Entity<S> {
+        self.use_keyed_state(
+            ElementId::CodeLocation(*core::panic::Location::caller()),
+            cx,
+            init,
+        )
+    }
+
     /// Updates or initializes state for an element with the given id that lives across multiple
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
@@ -2658,7 +2770,7 @@ impl Window {
         path.color = color.opacity(opacity);
         self.next_frame
             .scene
-            .insert_primitive(path.apply_scale(scale_factor));
+            .insert_primitive(path.scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -4577,6 +4689,8 @@ pub enum ElementId {
     NamedInteger(SharedString, u64),
     /// A path.
     Path(Arc<std::path::Path>),
+    /// A code location.
+    CodeLocation(core::panic::Location<'static>),
 }
 
 impl ElementId {
@@ -4596,6 +4710,7 @@ impl Display for ElementId {
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
+            ElementId::CodeLocation(location) => write!(f, "{}", location)?,
         }
 
         Ok(())
