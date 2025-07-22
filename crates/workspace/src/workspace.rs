@@ -1139,32 +1139,14 @@ impl Workspace {
                 project::Event::CollaboratorLeft(peer_id) => {
                     this.collaborator_left(*peer_id, window, cx);
                 }
-                project::Event::WorktreeRemoved(_) => {
-                    // If no worktrees remain, remove this workspace from the session
-                    // so it won't be restored on restart.
-                    if let Some(local_paths) = this.local_paths(cx) {
-                        if local_paths.is_empty() {
-                            this.session_id.take();
-                        }
-                    }
+
+                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
-                    // This event could be triggered by `RemoveFromProject`.
-                    // So we need to update the history.
+                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.update_history(cx);
                 }
-                project::Event::WorktreeAdded(_) => {
-                    // If this workspace had its session_id removed because all worktrees were removed,
-                    // restore the session_id now that we have worktrees again.
-                    if this.session_id.is_none() {
-                        this.session_id = Some(this.app_state.session.read(cx).id().to_owned());
-                    }
-                    this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject`
-                    // So we need to update the history.
-                    this.update_history(cx);
-                }
+
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(window, cx);
                     let leaders_to_unfollow =
