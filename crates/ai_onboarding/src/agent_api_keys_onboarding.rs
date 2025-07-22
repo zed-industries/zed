@@ -38,10 +38,6 @@ impl ApiKeysWithProviders {
             .map(|provider| (provider.icon(), provider.name().0.clone()))
             .collect()
     }
-
-    pub fn has_providers(&self) -> bool {
-        !self.configured_providers.is_empty()
-    }
 }
 
 impl Render for ApiKeysWithProviders {
@@ -53,55 +49,56 @@ impl Render for ApiKeysWithProviders {
                 .map(|(icon, name)| {
                     h_flex()
                         .gap_1p5()
-                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
                         .child(Label::new(name))
                 });
-
-        v_flex()
+        div()
             .mx_2p5()
-            .mb_2()
+            .p_1()
+            .pb_0()
+            .gap_2()
+            .rounded_t_lg()
+            .border_t_1()
+            .border_x_1()
+            .border_color(cx.theme().colors().border.opacity(0.5))
+            .bg(cx.theme().colors().background.alpha(0.5))
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::black().opacity(0.15),
+                offset: point(px(1.), px(-1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            }])
             .child(
                 h_flex()
-                    .p_3()
-                    .gap_3()
-                    .rounded_lg()
-                    .border_1()
+                    .px_2p5()
+                    .py_1p5()
+                    .gap_2()
+                    .flex_wrap()
+                    .rounded_t(px(5.))
+                    .overflow_hidden()
+                    .border_t_1()
+                    .border_x_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().panel_background)
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.15),
-                        offset: point(px(1.), px(-1.)),
-                        blur_radius: px(3.),
-                        spread_radius: px(0.),
-                    }])
                     .child(
-                        div()
-                            .flex_shrink_0()
-                            .pt_0p5()
+                        h_flex()
+                            .min_w_0()
+                            .gap_2()
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted)
                             )
-                    )
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .flex_1()
-                            .min_w_0()
                             .child(
-                                Label::new("Or start now using API keys from your environment for the following providers:")
-                                    .color(Color::Muted)
+                                div()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Or start now using API keys from your environment for the following providers:")
+                                            .color(Color::Muted)
+                                    )
                             )
-                            .when(!self.configured_providers.is_empty(), |this| {
-                                this.child(
-                                    h_flex()
-                                        .gap_2()
-                                        .flex_wrap()
-                                        .children(configured_providers_list)
-                                )
-                            })
                     )
+                    .children(configured_providers_list)
             )
     }
 }
