@@ -12163,7 +12163,7 @@ impl Editor {
     ) {
         let selections = self.selections.all::<usize>(cx);
 
-        if selections.first().is_none() {
+        if selections.is_empty() {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return;
         };
