@@ -780,7 +780,6 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-
                 .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
@@ -844,10 +843,43 @@ impl Render for ConfigurationView {
                 .into_any()
         };
 
+        let compatible_api_section = h_flex()
+            .mt_1p5()
+            .gap_0p5()
+            .flex_wrap()
+            .when(self.should_render_editor(cx), |this| {
+                this.pt_1p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new("Zed also supports OpenAI-compatible models.")),
+            )
+            .child(
+                Button::new("docs", "Learn More")
+                    .icon(IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .on_click(move |_, _window, cx| {
+                        cx.open_url("https://zed.dev/docs/ai/configuration#openai-api-compatible")
+                    }),
+            );
+
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials…")).into_any()
         } else {
-            v_flex().size_full().child(api_key_section).into_any()
+            v_flex()
+                .size_full()
+                .child(api_key_section)
+                .child(compatible_api_section)
+                .into_any()
         }
     }
 }
