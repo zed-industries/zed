@@ -1490,7 +1490,7 @@ impl BufferSearchBar {
         // For example, if `\c` was present in the query and the case
         // sensitivity was initially enabled, removing `\c` from the query
         // should re-enable case sensitivity.
-        let mut search_options = self.default_options.clone();
+        let mut search_options = self.default_options;
         let query = self.raw_query(cx);
 
         for (pattern, search_option, value) in PATTERN_ITEMS {
