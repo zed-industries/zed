@@ -434,10 +434,6 @@ pub struct EditToolParams {
     pub new_text: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EditToolResponse;
-
 #[derive(Deserialize, JsonSchema, Debug)]
 pub struct ReadToolParams {
     /// The absolute path to the file to read.
@@ -448,12 +444,6 @@ pub struct ReadToolParams {
     /// How many lines to read. Omit for the whole file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadToolResponse {
-    pub content: String,
 }
 
 #[derive(Deserialize, JsonSchema, Debug)]
