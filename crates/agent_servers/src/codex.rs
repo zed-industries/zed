@@ -30,90 +30,6 @@ use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
 #[derive(Clone)]
 pub struct Codex;
 
-pub struct CodexApproval;
-impl context_server::types::Request for CodexApproval {
-    type Params = CodexElicitation;
-    type Response = CodexApprovalResponse;
-    const METHOD: &'static str = "elicitation/create";
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExecApprovalRequest {
-    // These fields are required so that `params`
-    // conforms to ElicitRequestParams.
-    pub message: String,
-    // #[serde(rename = "requestedSchema")]
-    // pub requested_schema: ElicitRequestParamsRequestedSchema,
-
-    // // These are additional fields the client can use to
-    // // correlate the request with the codex tool call.
-    pub codex_mcp_tool_call_id: String,
-    // pub codex_event_id: String,
-    pub codex_command: Vec<String>,
-    pub codex_cwd: PathBuf,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PatchApprovalRequest {
-    pub message: String,
-    // #[serde(rename = "requestedSchema")]
-    // pub requested_schema: ElicitRequestParamsRequestedSchema,
-    pub codex_mcp_tool_call_id: String,
-    pub codex_event_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codex_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub codex_grant_root: Option<PathBuf>,
-    pub codex_changes: HashMap<PathBuf, FileChange>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "codex_elicitation", rename_all = "kebab-case")]
-pub enum CodexElicitation {
-    ExecApproval(ExecApprovalRequest),
-    PatchApproval(PatchApprovalRequest),
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileChange {
-    Add {
-        content: String,
-    },
-    Delete,
-    Update {
-        unified_diff: String,
-        move_path: Option<PathBuf>,
-    },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CodexApprovalResponse {
-    pub decision: ReviewDecision,
-}
-
-/// User's decision in response to an ExecApprovalRequest.
-#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewDecision {
-    /// User has approved this command and the agent should execute it.
-    Approved,
-
-    /// User has approved this command and wants to automatically approve any
-    /// future identical instances (`command` and `cwd` match exactly) for the
-    /// remainder of the session.
-    ApprovedForSession,
-
-    /// User has denied this command and the agent should not execute it, but
-    /// it should continue the session and try something else.
-    #[default]
-    Denied,
-
-    /// User has denied this command and the agent should not do anything until
-    /// the user's next command.
-    Abort,
-}
-
 impl AgentServer for Codex {
     fn name(&self) -> &'static str {
         "Codex"
@@ -787,6 +703,90 @@ fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp::Tool
     } else {
         None
     }
+}
+
+pub struct CodexApproval;
+impl context_server::types::Request for CodexApproval {
+    type Params = CodexElicitation;
+    type Response = CodexApprovalResponse;
+    const METHOD: &'static str = "elicitation/create";
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecApprovalRequest {
+    // These fields are required so that `params`
+    // conforms to ElicitRequestParams.
+    pub message: String,
+    // #[serde(rename = "requestedSchema")]
+    // pub requested_schema: ElicitRequestParamsRequestedSchema,
+
+    // // These are additional fields the client can use to
+    // // correlate the request with the codex tool call.
+    pub codex_mcp_tool_call_id: String,
+    // pub codex_event_id: String,
+    pub codex_command: Vec<String>,
+    pub codex_cwd: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PatchApprovalRequest {
+    pub message: String,
+    // #[serde(rename = "requestedSchema")]
+    // pub requested_schema: ElicitRequestParamsRequestedSchema,
+    pub codex_mcp_tool_call_id: String,
+    pub codex_event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex_grant_root: Option<PathBuf>,
+    pub codex_changes: HashMap<PathBuf, FileChange>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "codex_elicitation", rename_all = "kebab-case")]
+pub enum CodexElicitation {
+    ExecApproval(ExecApprovalRequest),
+    PatchApproval(PatchApprovalRequest),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChange {
+    Add {
+        content: String,
+    },
+    Delete,
+    Update {
+        unified_diff: String,
+        move_path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CodexApprovalResponse {
+    pub decision: ReviewDecision,
+}
+
+/// User's decision in response to an ExecApprovalRequest.
+#[derive(Debug, Default, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDecision {
+    /// User has approved this command and the agent should execute it.
+    Approved,
+
+    /// User has approved this command and wants to automatically approve any
+    /// future identical instances (`command` and `cwd` match exactly) for the
+    /// remainder of the session.
+    ApprovedForSession,
+
+    /// User has denied this command and the agent should not execute it, but
+    /// it should continue the session and try something else.
+    #[default]
+    Denied,
+
+    /// User has denied this command and the agent should not do anything until
+    /// the user's next command.
+    Abort,
 }
 
 #[cfg(test)]
