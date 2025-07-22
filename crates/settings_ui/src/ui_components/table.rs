@@ -199,7 +199,7 @@ impl TableInteractionState {
     fn render_resize_handles<const COLS: usize>(
         &self,
         column_widths: &[Length; COLS],
-        resizable_columns: &[bool; COLS],
+        resizable_columns: &[ResizeBehavior; COLS],
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -227,7 +227,10 @@ impl TableInteractionState {
                     .w(px(5.0))
                     .h_full();
 
-                if Some(&true) == resizable_columns.next() {
+                if resizable_columns
+                    .next()
+                    .is_some_and(ResizeBehavior::is_resizable)
+                {
                     let hovered = window.use_state(cx, |_window, _cx| false);
                     resize_divider = resize_divider.when(*hovered.read(cx), |div| {
                         div.bg(cx.theme().colors().border_focused)
@@ -434,6 +437,27 @@ impl TableInteractionState {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ResizeBehavior {
+    None,
+    Resizable,
+    MinSize(f32),
+}
+
+impl ResizeBehavior {
+    pub fn is_resizable(&self) -> bool {
+        *self != ResizeBehavior::None
+    }
+
+    pub fn min_size(&self) -> Option<f32> {
+        match self {
+            ResizeBehavior::None => None,
+            ResizeBehavior::Resizable => Some(0.05),
+            ResizeBehavior::MinSize(min_size) => Some(*min_size),
+        }
+    }
+}
+
 pub struct ColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     initialized: bool,
@@ -460,6 +484,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
+        resize_behavior: &[ResizeBehavior; COLS],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -490,15 +515,16 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         let is_dragging_right = diff > 0.0;
 
-        // TODO: broken when dragging left
-        // split into an if dragging_right { this } else { new loop}
-        // then combine if same logic
         let mut diff_left = diff;
         let mut curr_column = col_idx + 1;
-        let min_size = 0.05; // todo!
 
         if is_dragging_right {
             while diff_left > 0.0 && curr_column < COLS {
+                let Some(min_size) = resize_behavior[curr_column - 1].min_size() else {
+                    curr_column += 1;
+                    continue;
+                };
+
                 let mut curr_width =
                     Self::get_fraction(&self.widths[curr_column], bounds_width, rem_size)
                         - diff_left;
@@ -519,6 +545,12 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         } else {
             curr_column = col_idx;
             while diff_left < 0.0 && curr_column > 0 {
+                // todo! When resize is none and dragging to the left this doesn't work correctly
+                let Some(min_size) = resize_behavior[curr_column].min_size() else {
+                    curr_column -= 1;
+                    continue;
+                };
+
                 let mut curr_width =
                     Self::get_fraction(&self.widths[curr_column], bounds_width, rem_size)
                         + diff_left;
@@ -544,7 +576,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 pub struct TableWidths<const COLS: usize> {
     initial: [DefiniteLength; COLS],
     current: Option<Entity<ColumnWidths<COLS>>>,
-    resizable: [bool; COLS],
+    resizable: [ResizeBehavior; COLS],
 }
 
 impl<const COLS: usize> TableWidths<COLS> {
@@ -554,7 +586,7 @@ impl<const COLS: usize> TableWidths<COLS> {
         TableWidths {
             initial: widths.clone(),
             current: None,
-            resizable: [false; COLS],
+            resizable: [ResizeBehavior::None; COLS],
         }
     }
 
@@ -660,12 +692,12 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn resizable_columns(
         mut self,
-        resizable: [impl Into<bool>; COLS],
+        resizable: [ResizeBehavior; COLS],
         column_widths: &Entity<ColumnWidths<COLS>>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
-            table_widths.resizable = resizable.map(Into::into);
+            table_widths.resizable = resizable;
             let column_widths = table_widths
                 .current
                 .get_or_insert_with(|| column_widths.clone());
@@ -811,8 +843,8 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
         let current_widths = self
             .col_widths
             .as_ref()
-            .and_then(|widths| widths.current.as_ref())
-            .map(|curr| curr.downgrade());
+            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable)))
+            .map(|(curr, resize_behavior)| (curr.downgrade(), resize_behavior));
 
         let scroll_track_size = px(16.);
         let h_scroll_offset = if interaction_state
@@ -835,11 +867,11 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, table_context.clone(), cx))
             })
-            .when_some(current_widths, |this, widths| {
+            .when_some(current_widths, |this, (widths, resize_behavior)| {
                 this.on_drag_move::<DraggedColumn>(move |e, window, cx| {
                     widths
                         .update(cx, |widths, cx| {
-                            widths.on_drag_move(e, window, cx);
+                            widths.on_drag_move(e, &resize_behavior, window, cx);
                         })
                         .ok();
                 })

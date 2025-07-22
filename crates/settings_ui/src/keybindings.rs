@@ -36,7 +36,7 @@ use workspace::{
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
-    ui_components::table::{ColumnWidths, Table, TableInteractionState},
+    ui_components::table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
@@ -1436,7 +1436,15 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.08),
                     ])
                     .resizable_columns(
-                        [false, true, true, true, true, true],
+                        // todo! Resize doesn't fully work
+                        [
+                            ResizeBehavior::None,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable, // this column doesn't matter
+                        ],
                         &self.current_widths,
                         cx,
                     )
