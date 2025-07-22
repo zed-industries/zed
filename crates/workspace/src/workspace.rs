@@ -20,7 +20,7 @@ pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
 use client::{
-    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, DisableAiSettings, ErrorExt, Status, TypedEnvelope, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
@@ -1073,6 +1073,7 @@ pub struct Workspace {
     app_state: Arc<AppState>,
     dispatching_keystrokes: Rc<RefCell<(HashSet<String>, Vec<Keystroke>)>>,
     _subscriptions: Vec<Subscription>,
+    _ai_settings_subscription: Subscription,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
     _schedule_serialize: Option<Task<()>>,
@@ -1321,6 +1322,37 @@ impl Workspace {
             Self::serialize_items(&this, serializable_items_rx, cx).await
         });
 
+        // Observe AI settings changes to hide/show agent panel
+        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let _ai_settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            if was_ai_disabled != is_ai_disabled {
+                was_ai_disabled = is_ai_disabled;
+
+                if is_ai_disabled {
+                    // Hide agent panel if it's open
+                    for position in [
+                        DockPosition::Left,
+                        DockPosition::Right,
+                        DockPosition::Bottom,
+                    ] {
+                        let dock = this.dock_at_position(position);
+                        dock.update(cx, |dock, cx| {
+                            // Check if the active panel is the agent panel
+                            if let Some(active) = dock.active_panel() {
+                                if active.persistent_name() == "AgentPanel" {
+                                    dock.set_open(false, cx.window(), cx);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                // Update panel buttons visibility
+                cx.notify();
+            }
+        });
+
         let subscriptions = vec![
             cx.observe_window_activation(window, Self::on_window_activation_changed),
             cx.observe_window_bounds(window, move |this, window, cx| {
@@ -1406,6 +1438,7 @@ impl Workspace {
             _schedule_serialize: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
+            _ai_settings_subscription,
             pane_history_timestamp,
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
@@ -2857,10 +2890,14 @@ impl Workspace {
             dock.set_open(!was_visible, window, cx);
 
             if dock.active_panel().is_none() {
-                let Some(panel_ix) = dock
-                    .first_enabled_panel_idx(cx)
-                    .log_with_level(log::Level::Info)
-                else {
+                // Find the first enabled panel, excluding AgentPanel if AI is disabled
+                let panel_ix = if DisableAiSettings::get_global(cx).disable_ai {
+                    dock.first_enabled_panel_idx_excluding("AgentPanel", cx)
+                } else {
+                    dock.first_enabled_panel_idx(cx).ok()
+                };
+
+                let Some(panel_ix) = panel_ix else {
                     return;
                 };
                 dock.activate_panel(panel_ix, window, cx);
