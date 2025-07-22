@@ -320,7 +320,39 @@ impl History {
             last_edit_at: now,
             suppress_grouping: false,
         });
-        self.redo_stack.clear();
+    }
+
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    fn push_empty_transaction(
+        &mut self,
+        start: clock::Global,
+        now: Instant,
+        clock: &mut clock::Lamport,
+    ) -> TransactionId {
+        assert_eq!(self.transaction_depth, 0);
+        let id = clock.tick();
+        let transaction = Transaction {
+            id,
+            start,
+            edit_ids: Vec::new(),
+        };
+        self.undo_stack.push(HistoryEntry {
+            transaction,
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: false,
+        });
+        id
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {
@@ -1493,6 +1525,24 @@ impl Buffer {
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
+    }
+
+    /// Differs from `push_transaction` in that it does not clear the redo stack.
+    /// The caller responsible for
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+        self.history
+            .push_empty_transaction(self.version.clone(), now, &mut self.lamport_clock)
     }
 
     pub fn edited_ranges_for_transaction_id<D>(
