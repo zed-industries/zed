@@ -243,7 +243,7 @@ impl State {
 
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
-    handler: tokio::runtime::Handle,
+    handle: tokio::runtime::Handle,
     state: gpui::Entity<State>,
 }
 
@@ -260,7 +260,7 @@ impl BedrockLanguageModelProvider {
 
         Self {
             http_client: AwsHttpClient::new(http_client.clone()),
-            handler: Tokio::handle(cx),
+            handle: Tokio::handle(cx),
             state,
         }
     }
@@ -270,7 +270,7 @@ impl BedrockLanguageModelProvider {
             id: LanguageModelId::from(model.id().to_string()),
             model,
             http_client: self.http_client.clone(),
-            handler: self.handler.clone(),
+            handle: self.handle.clone(),
             state: self.state.clone(),
             client: OnceCell::new(),
             request_limiter: RateLimiter::new(4),
@@ -371,7 +371,7 @@ struct BedrockModel {
     id: LanguageModelId,
     model: Model,
     http_client: AwsHttpClient,
-    handler: tokio::runtime::Handle,
+    handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
     state: gpui::Entity<State>,
     request_limiter: RateLimiter,
@@ -443,7 +443,7 @@ impl BedrockModel {
                     }
                 }
 
-                let config = self.handler.block_on(config_builder.load());
+                let config = self.handle.block_on(config_builder.load());
                 anyhow::Ok(BedrockClient::new(&config))
             })
             .context("initializing Bedrock client")?;
