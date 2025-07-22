@@ -1130,15 +1130,32 @@ impl Workspace {
                 project::Event::CollaboratorLeft(peer_id) => {
                     this.collaborator_left(*peer_id, window, cx);
                 }
-
-                project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
+                project::Event::WorktreeRemoved(_) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+                    // This event could be triggered by `RemoveFromProject`.
                     // So we need to update the history.
                     this.update_history(cx);
-                }
 
+                    // If no worktrees remain, remove this workspace from the session
+                    // so it won't be restored on restart.
+                    if this.visible_worktrees(cx).next().is_none() {
+                        this.remove_from_session(window, cx).detach();
+                    }
+                }
+                project::Event::WorktreeAdded(_) => {
+                    this.update_window_title(window, cx);
+                    this.serialize_workspace(window, cx);
+                    // This event could be triggered by `AddFolderToProject`
+                    // So we need to update the history.
+                    this.update_history(cx);
+
+                    // If this workspace had its session_id removed because all worktrees were removed,
+                    // restore the session_id now that we have worktrees again.
+                    if this.session_id.is_none() {
+                        this.session_id = Some(this.app_state.session.read(cx).id().to_owned());
+                    }
+                }
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(window, cx);
                     let leaders_to_unfollow =
@@ -5245,8 +5262,15 @@ impl Workspace {
             return window.spawn(cx, async move |_| {
                 persistence::DB.save_workspace(serialized_workspace).await;
             });
+        } else {
+            let session_id = self.session_id.clone();
+            return window.spawn(cx, async move |_| {
+                persistence::DB
+                    .set_session_id(database_id, session_id)
+                    .await
+                    .log_err();
+            });
         }
-        Task::ready(())
     }
 
     fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
