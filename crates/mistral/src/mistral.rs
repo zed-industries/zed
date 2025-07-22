@@ -58,6 +58,8 @@ pub enum Model {
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
     OpenCodestralMamba,
+    #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
+    DevstralMediumLatest,
     #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
     DevstralSmallLatest,
     #[serde(rename = "pixtral-12b-latest", alias = "pixtral-12b-latest")]
@@ -91,6 +93,7 @@ impl Model {
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
+            "devstral-medium-latest" => Ok(Self::DevstralMediumLatest),
             "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
             "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
             "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
@@ -106,6 +109,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
@@ -121,6 +125,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
@@ -138,6 +143,7 @@ impl Model {
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
+            Self::DevstralMediumLatest => 128000,
             Self::DevstralSmallLatest => 262144,
             Self::Pixtral12BLatest => 128000,
             Self::PixtralLargeLatest => 128000,
@@ -162,6 +168,7 @@ impl Model {
             | Self::MistralSmallLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
+            | Self::DevstralMediumLatest
             | Self::DevstralSmallLatest
             | Self::Pixtral12BLatest
             | Self::PixtralLargeLatest => true,
@@ -179,6 +186,7 @@ impl Model {
             | Self::MistralLargeLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
+            | Self::DevstralMediumLatest
             | Self::DevstralSmallLatest => false,
             Self::Custom {
                 supports_images, ..
