@@ -314,13 +314,15 @@ impl History {
 
     fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         assert_eq!(self.transaction_depth, 0);
+        if !transaction.edit_ids.is_empty() {
+            self.redo_stack.clear();
+        }
         self.undo_stack.push(HistoryEntry {
             transaction,
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
         });
-        self.redo_stack.clear();
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {

@@ -9623,10 +9623,13 @@ async fn test_redo_after_non_format(cx: &mut TestAppContext) {
     //     },
     // );
 
+    let logger = zlog::scoped!("test");
+    zlog::trace!(logger => "hit enter");
     editor.update_in(cx, |editor, window, cx| {
         editor.handle_input("\n", window, cx)
     });
     cx.run_until_parked();
+    zlog::trace!(logger => "save");
     save(&editor, &project, cx).await;
     assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
 
@@ -9651,12 +9654,15 @@ async fn test_redo_after_non_format(cx: &mut TestAppContext) {
 
     // save(&editor, &project, cx).await;
 
+    zlog::trace!(logger => "undo");
     editor.update_in(cx, |editor, window, cx| {
         editor.undo(&Default::default(), window, cx);
     });
+    zlog::trace!(logger => "save");
     save(&editor, &project, cx).await;
     assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
 
+    zlog::trace!(logger => "redo");
     editor.update_in(cx, |editor, window, cx| {
         editor.redo(&Default::default(), window, cx);
     });
@@ -22802,7 +22808,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         workspace::init_settings(cx);
         crate::init(cx);
     });
-
+    zlog::init_test();
     update_test_language_settings(cx, f);
 }
 
