@@ -1076,6 +1076,10 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
+  // Whether to disable all AI features in Zed.
+  //
+  // Default: false
+  "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,

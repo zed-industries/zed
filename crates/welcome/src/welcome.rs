@@ -1,4 +1,4 @@
-use client::{TelemetrySettings, telemetry::Telemetry};
+use client::{DisableAiSettings, TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -174,23 +174,25 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new(
-                                            "try-zed-edit-prediction",
-                                            edit_prediction_label,
+                                    .when(!DisableAiSettings::get_global(cx).disable_ai, |parent| {
+                                        parent.child(
+                                            Button::new(
+                                                "edit_prediction_onboarding",
+                                                edit_prediction_label,
+                                            )
+                                            .disabled(edit_prediction_provider_is_zed)
+                                            .icon(IconName::ZedPredict)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(
+                                                cx.listener(|_, _, window, cx| {
+                                                    telemetry::event!("Welcome Screen Try Edit Prediction clicked");
+                                                    window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
+                                                }),
+                                            ),
                                         )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-                                            }),
-                                        ),
-                                    )
+                                    })
                                     .child(
                                         Button::new("edit settings", "Edit Settings")
                                             .icon(IconName::Settings)

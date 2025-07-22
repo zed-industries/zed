@@ -43,7 +43,7 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{UserStore, zed_urls};
+use client::{DisableAiSettings, UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -744,6 +744,7 @@ impl AgentPanel {
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
+            && !DisableAiSettings::get_global(cx).disable_ai
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
         }
@@ -1665,7 +1666,10 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
+        (self.enabled(cx)
+            && AgentSettings::get_global(cx).button
+            && !DisableAiSettings::get_global(cx).disable_ai)
+            .then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
