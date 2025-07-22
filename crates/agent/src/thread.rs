@@ -47,7 +47,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, debug_panic, post_inc};
+use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
@@ -1582,20 +1582,18 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Option<PendingToolUse> {
-        let action_log = self.action_log.read(cx);
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
+        let tool = self.tools.read(cx).tool(&tool_name, cx)?;
 
-        if !action_log.has_unnotified_user_edits() {
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
             return None;
         }
 
-        // Represent notification as a simulated `project_notifications` tool call
-        let tool_name = Arc::from("project_notifications");
-        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            debug_panic!("`project_notifications` tool not found");
-            return None;
-        };
-
-        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+        if self
+            .action_log
+            .update(cx, |log, cx| log.unnotified_user_edits(cx).is_none())
+        {
             return None;
         }
 
