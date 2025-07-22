@@ -9571,10 +9571,8 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_redo_after_non_format(cx: &mut TestAppContext) {
+async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
-        // settings.defaults.format_on_save = Some(language_settings::FormatOnSave::Off);
-        // settings.defaults.remove_trailing_whitespace_on_save = Some(false);
         settings.defaults.ensure_final_newline_on_save = Some(false);
     });
 
@@ -9582,19 +9580,6 @@ async fn test_redo_after_non_format(cx: &mut TestAppContext) {
     fs.insert_file(path!("/file.txt"), "foo".into()).await;
 
     let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
-
-    // let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    // language_registry.add(rust_lang());
-    // let mut fake_servers = language_registry.register_fake_lsp(
-    //     "Plain Text",
-    //     FakeLspAdapter {
-    //         capabilities: lsp::ServerCapabilities {
-    //             document_formatting_provider: Some(lsp::OneOf::Left(true)),
-    //             ..Default::default()
-    //         },
-    //         ..Default::default()
-    //     },
-    // );
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -9614,23 +9599,23 @@ async fn test_redo_after_non_format(cx: &mut TestAppContext) {
     });
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 
-    // cx.executor().start_waiting();
-    // let fake_server = fake_servers.next().await.unwrap();
-
-    // fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-    //     move |params, _| async move {
-    //         unreachable!("should not have formatted");
-    //     },
-    // );
-
-    let logger = zlog::scoped!("test");
-    zlog::trace!(logger => "hit enter");
     editor.update_in(cx, |editor, window, cx| {
         editor.handle_input("\n", window, cx)
     });
     cx.run_until_parked();
-    zlog::trace!(logger => "save");
     save(&editor, &project, cx).await;
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+    save(&editor, &project, cx).await;
+    assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.redo(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
     assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
 
     async fn save(editor: &Entity<Editor>, project: &Entity<Project>, cx: &mut VisualTestContext) {
@@ -9651,23 +9636,6 @@ async fn test_redo_after_non_format(cx: &mut TestAppContext) {
         save.await;
         assert!(!cx.read(|cx| editor.is_dirty(cx)));
     }
-
-    // save(&editor, &project, cx).await;
-
-    zlog::trace!(logger => "undo");
-    editor.update_in(cx, |editor, window, cx| {
-        editor.undo(&Default::default(), window, cx);
-    });
-    zlog::trace!(logger => "save");
-    save(&editor, &project, cx).await;
-    assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
-
-    zlog::trace!(logger => "redo");
-    editor.update_in(cx, |editor, window, cx| {
-        editor.redo(&Default::default(), window, cx);
-    });
-    cx.run_until_parked();
-    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
 }
 
 #[gpui::test]
