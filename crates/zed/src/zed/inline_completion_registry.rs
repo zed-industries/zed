@@ -14,10 +14,6 @@ use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    if DisableAiSettings::get_global(cx).disable_ai {
-        return;
-    }
-
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
