@@ -580,6 +580,13 @@
     }
   },
   {
+    "context": "VimControl && (AgentDiff || editor_agent_diff)",
+    "bindings": {
+      "d p": "agent::Reject",
+      "d u": "agent::Keep"
+    }
+  },
+  {
     "context": "vim_operator == gu",
     "bindings": {
       "g u": "vim::CurrentLine",
