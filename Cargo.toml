@@ -482,6 +482,7 @@ heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 http = "1.1"
+http-body = "1.0"
 hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
