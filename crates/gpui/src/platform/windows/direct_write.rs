@@ -786,58 +786,50 @@ impl DirectWriteState {
             )?
         };
 
-        let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
-        let texture_bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
-        let texture_width = (texture_bounds.right - texture_bounds.left) as u32;
-        let texture_height = (texture_bounds.bottom - texture_bounds.top) as u32;
-
-        if texture_width == 0 || texture_height == 0 {
-            return Ok((
-                bitmap_size,
-                vec![
-                    0u8;
-                    bitmap_size.width.0 as usize
-                        * bitmap_size.height.0 as usize
-                        * if params.is_emoji { 4 } else { 1 }
-                ],
-            ));
-        }
-
-        let mut bitmap_data;
         if params.is_emoji {
-            bitmap_data =
-                vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize * 4];
+            // For emoji, we need to handle color glyphs differently
+            // This is a simplified approach - in a full implementation you'd want to
+            // properly handle color glyph runs using TranslateColorGlyphRun
+            let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
+            let texture_bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
 
-            let mut rgba_data = vec![0u8; (texture_width * texture_height * 4) as usize];
+            let width = (texture_bounds.right - texture_bounds.left) as u32;
+            let height = (texture_bounds.bottom - texture_bounds.top) as u32;
+
+            if width == 0 || height == 0 {
+                return Ok((
+                    bitmap_size,
+                    vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize * 4],
+                ));
+            }
+
+            let mut rgba_data = vec![0u8; (width * height * 4) as usize];
+
             unsafe {
                 glyph_analysis.CreateAlphaTexture(texture_type, &texture_bounds, &mut rgba_data)?;
             }
 
-            // Copy texture data into bitmap at correct position
-            let offset_x = texture_bounds.left.max(0) as usize;
-            let offset_y = texture_bounds.top.max(0) as usize;
-            for y in 0..texture_height as usize {
-                for x in 0..texture_width as usize {
-                    let bitmap_x = offset_x + x;
-                    let bitmap_y = offset_y + y;
+            // Resize to match expected bitmap_size if needed
 
-                    if bitmap_x < bitmap_size.width.0 as usize
-                        && bitmap_y < bitmap_size.height.0 as usize
-                    {
-                        let texture_idx = (y * texture_width as usize + x) * 4;
-                        let bitmap_idx = (bitmap_y * bitmap_size.width.0 as usize + bitmap_x) * 4;
-
-                        if texture_idx + 3 < rgba_data.len() && bitmap_idx + 3 < bitmap_data.len() {
-                            bitmap_data[bitmap_idx..bitmap_idx + 4]
-                                .copy_from_slice(&rgba_data[texture_idx..texture_idx + 4]);
-                        }
-                    }
-                }
-            }
+            Ok((bitmap_size, rgba_data))
         } else {
-            bitmap_data = vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
+            // For regular text, use grayscale or cleartype
+            let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
+            let texture_bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
+            println!("glyph id: {:?}, variant: {:?}, size: {:?}, texture_bounds: {:?}", glyph_id, params.subpixel_variant, bitmap_size, texture_bounds);
 
-            let mut alpha_data = vec![0u8; (texture_width * texture_height * 3) as usize];
+            let width = (texture_bounds.right - texture_bounds.left) as u32;
+            let height = (texture_bounds.bottom - texture_bounds.top) as u32;
+
+            if width == 0 || height == 0 {
+                return Ok((
+                    bitmap_size,
+                    vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize],
+                ));
+            }
+
+            let mut alpha_data = vec![0u8; (width * height * 3) as usize];
+
             unsafe {
                 glyph_analysis.CreateAlphaTexture(
                     texture_type,
@@ -846,34 +838,20 @@ impl DirectWriteState {
                 )?;
             }
 
-            // Convert ClearType RGB data to grayscale and place in bitmap
-            let offset_x = texture_bounds.left.max(0) as usize;
-            let offset_y = texture_bounds.top.max(0) as usize;
-
-            for y in 0..texture_height as usize {
-                for x in 0..texture_width as usize {
-                    let bitmap_x = offset_x + x;
-                    let bitmap_y = offset_y + y;
-
-                    if bitmap_x < bitmap_size.width.0 as usize
-                        && bitmap_y < bitmap_size.height.0 as usize
-                    {
-                        let texture_idx = (y * texture_width as usize + x) * 3;
-                        let bitmap_idx = bitmap_y * bitmap_size.width.0 as usize + bitmap_x;
-
-                        if texture_idx + 2 < alpha_data.len() && bitmap_idx < bitmap_data.len() {
-                            let avg = (alpha_data[texture_idx] as u32
-                                + alpha_data[texture_idx + 1] as u32
-                                + alpha_data[texture_idx + 2] as u32)
-                                / 3;
-                            bitmap_data[bitmap_idx] = avg as u8;
-                        }
-                    }
-                }
+            // For cleartype, we need to convert the 3x1 subpixel data to grayscale
+            // This is a simplified conversion - you might want to do proper subpixel rendering
+            let mut grayscale_data = Vec::new();
+            for chunk in alpha_data.chunks_exact(3) {
+                let avg = (chunk[0] as u32 + chunk[1] as u32 + chunk[2] as u32) / 3;
+                grayscale_data.push(avg as u8);
             }
-        }
 
-        Ok((bitmap_size, bitmap_data))
+            // Resize to match expected bitmap_size if needed
+            let expected_size = width as usize * height as usize;
+            grayscale_data.resize(expected_size, 0);
+
+            Ok((size(DevicePixels(width as i32), DevicePixels(height as i32)), grayscale_data))
+        }
     }
 
     fn get_typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
