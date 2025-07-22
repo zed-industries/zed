@@ -3,7 +3,7 @@ struct RasterVertexOutput {
     float2 texcoord : TEXCOORD0;
 };
 
-RasterVertexOutput vertex(uint vertexID : SV_VERTEXID)
+RasterVertexOutput emoji_rasterization_vertex(uint vertexID : SV_VERTEXID)
 {
     RasterVertexOutput output;
     output.texcoord = float2((vertexID << 1) & 2, vertexID & 2);
@@ -31,7 +31,7 @@ cbuffer GlyphLayerTextureParams : register(b0) {
     float4 run_color;
 };
 
-float4 pixel(PixelInput input): SV_Target {
+float4 emoji_rasterization_fragment(PixelInput input): SV_Target {
     float3 sampled = t_layer.Sample(s_layer, input.texcoord.xy).rgb;
     float alpha = (sampled.r + sampled.g + sampled.b) / 3;
 

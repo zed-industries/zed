@@ -13,7 +13,12 @@ use windows::Win32::{
 #[cfg(not(feature = "enable-renderdoc"))]
 use windows::{Win32::Graphics::DirectComposition::*, core::Interface};
 
-use crate::*;
+use crate::{
+    platform::windows::directx_renderer::shader_resources::{
+        RawShaderBytes, ShaderModule, ShaderTarget,
+    },
+    *,
+};
 
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering, and it's guaranteed to be supported by DirectX 11.
@@ -413,7 +418,7 @@ impl DirectXRenderer {
         };
         let driver_version = match desc.VendorId {
             0x10DE => nvidia::get_driver_version(),
-            0x1002 => Err(anyhow::anyhow!("AMD driver info not implemented yet")),
+            0x1002 => amd::get_driver_version(),
             0x8086 => intel::get_driver_version(&self.devices.adapter),
             _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
         }
@@ -481,35 +486,22 @@ impl DirectXResources {
 
 impl DirectXRenderPipelines {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let shadow_pipeline = PipelineState::new(
-            device,
-            "shadow_pipeline",
-            "shadow_vertex",
-            "shadow_fragment",
-            4,
-        )?;
-        let quad_pipeline =
-            PipelineState::new(device, "quad_pipeline", "quad_vertex", "quad_fragment", 64)?;
+        let shadow_pipeline =
+            PipelineState::new(device, "shadow_pipeline", ShaderModule::Shadow, 4)?;
+        let quad_pipeline = PipelineState::new(device, "quad_pipeline", ShaderModule::Quad, 64)?;
         let paths_pipeline = PathsPipelineState::new(device)?;
-        let underline_pipeline = PipelineState::new(
-            device,
-            "underline_pipeline",
-            "underline_vertex",
-            "underline_fragment",
-            4,
-        )?;
+        let underline_pipeline =
+            PipelineState::new(device, "underline_pipeline", ShaderModule::Underline, 4)?;
         let mono_sprites = PipelineState::new(
             device,
             "monochrome_sprite_pipeline",
-            "monochrome_sprite_vertex",
-            "monochrome_sprite_fragment",
+            ShaderModule::MonochromeSprite,
             512,
         )?;
         let poly_sprites = PipelineState::new(
             device,
             "polychrome_sprite_pipeline",
-            "polychrome_sprite_vertex",
-            "polychrome_sprite_fragment",
+            ShaderModule::PolychromeSprite,
             16,
         )?;
 
@@ -625,31 +617,16 @@ impl<T> PipelineState<T> {
     fn new(
         device: &ID3D11Device,
         label: &'static str,
-        vertex_entry: &str,
-        fragment_entry: &str,
+        shader_module: ShaderModule,
         buffer_size: usize,
     ) -> Result<Self> {
         let vertex = {
-            let shader_blob =
-                shader_resources::build_shader_blob("shaders", vertex_entry, "vs_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    shader_blob.GetBufferPointer() as *mut u8,
-                    shader_blob.GetBufferSize(),
-                )
-            };
-            create_vertex_shader(device, bytes)?
+            let raw_shader = RawShaderBytes::new(shader_module, ShaderTarget::Vertex)?;
+            create_vertex_shader(device, raw_shader.as_bytes())?
         };
         let fragment = {
-            let shader_blob =
-                shader_resources::build_shader_blob("shaders", fragment_entry, "ps_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    shader_blob.GetBufferPointer() as *mut u8,
-                    shader_blob.GetBufferSize(),
-                )
-            };
-            create_fragment_shader(device, bytes)?
+            let raw_shader = RawShaderBytes::new(shader_module, ShaderTarget::Fragment)?;
+            create_fragment_shader(device, raw_shader.as_bytes())?
         };
         let buffer = create_buffer(device, std::mem::size_of::<T>(), buffer_size)?;
         let view = create_buffer_view(device, &buffer)?;
@@ -742,26 +719,15 @@ impl<T> PipelineState<T> {
 impl PathsPipelineState {
     fn new(device: &ID3D11Device) -> Result<Self> {
         let (vertex, vertex_shader) = {
-            let shader_blob =
-                shader_resources::build_shader_blob("shaders", "paths_vertex", "vs_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    shader_blob.GetBufferPointer() as *mut u8,
-                    shader_blob.GetBufferSize(),
-                )
-            };
-            (create_vertex_shader(device, bytes)?, shader_blob)
+            let raw_vertex_shader = RawShaderBytes::new(ShaderModule::Paths, ShaderTarget::Vertex)?;
+            (
+                create_vertex_shader(device, raw_vertex_shader.as_bytes())?,
+                raw_vertex_shader,
+            )
         };
         let fragment = {
-            let shader_blob =
-                shader_resources::build_shader_blob("shaders", "paths_fragment", "ps_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    shader_blob.GetBufferPointer() as *mut u8,
-                    shader_blob.GetBufferSize(),
-                )
-            };
-            create_fragment_shader(device, bytes)?
+            let raw_shader = RawShaderBytes::new(ShaderModule::Paths, ShaderTarget::Fragment)?;
+            create_fragment_shader(device, raw_shader.as_bytes())?
         };
         let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), 32)?;
         let view = create_buffer_view(device, &buffer)?;
@@ -773,10 +739,6 @@ impl PathsPipelineState {
         let indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
         // Create input layout
         let input_layout = unsafe {
-            let shader_bytes = std::slice::from_raw_parts(
-                vertex_shader.GetBufferPointer() as *const u8,
-                vertex_shader.GetBufferSize(),
-            );
             let mut layout = None;
             device.CreateInputLayout(
                 &[
@@ -817,7 +779,7 @@ impl PathsPipelineState {
                         InstanceDataStepRate: 0,
                     },
                 ],
-                shader_bytes,
+                vertex_shader.as_bytes(),
                 Some(&mut layout),
             )?;
             layout.unwrap()
@@ -1320,37 +1282,138 @@ const BUFFER_COUNT: usize = 3;
 
 pub(crate) mod shader_resources {
     use anyhow::Result;
-    use windows::Win32::Graphics::Direct3D::{
-        Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
-        ID3DBlob,
-    };
-    use windows_core::{HSTRING, PCSTR};
 
-    pub(crate) fn build_shader_blob(filename: &str, entry: &str, target: &str) -> Result<ID3DBlob> {
+    #[cfg(debug_assertions)]
+    use windows::{
+        Win32::Graphics::Direct3D::{
+            Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
+            ID3DBlob,
+        },
+        core::{HSTRING, PCSTR},
+    };
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub(crate) enum ShaderModule {
+        Quad,
+        Shadow,
+        Underline,
+        Paths,
+        MonochromeSprite,
+        PolychromeSprite,
+        EmojiRasterization,
+    }
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub(crate) enum ShaderTarget {
+        Vertex,
+        Fragment,
+    }
+
+    pub(crate) struct RawShaderBytes<'t> {
+        inner: &'t [u8],
+
+        #[cfg(debug_assertions)]
+        _blob: ID3DBlob,
+    }
+
+    impl<'t> RawShaderBytes<'t> {
+        pub(crate) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
+            #[cfg(not(debug_assertions))]
+            {
+                Ok(Self::from_bytes(module, target))
+            }
+            #[cfg(debug_assertions)]
+            {
+                let blob = build_shader_blob(module, target)?;
+                let inner = unsafe {
+                    std::slice::from_raw_parts(
+                        blob.GetBufferPointer() as *const u8,
+                        blob.GetBufferSize(),
+                    )
+                };
+                Ok(Self { inner, _blob: blob })
+            }
+        }
+
+        pub(crate) fn as_bytes(&'t self) -> &'t [u8] {
+            self.inner
+        }
+
+        #[cfg(not(debug_assertions))]
+        fn from_bytes(module: ShaderModule, target: ShaderTarget) -> Self {
+            let bytes = match module {
+                ShaderModule::Quad => match target {
+                    ShaderTarget::Vertex => QUAD_VERTEX_BYTES,
+                    ShaderTarget::Fragment => QUAD_FRAGMENT_BYTES,
+                },
+                ShaderModule::Shadow => match target {
+                    ShaderTarget::Vertex => SHADOW_VERTEX_BYTES,
+                    ShaderTarget::Fragment => SHADOW_FRAGMENT_BYTES,
+                },
+                ShaderModule::Underline => match target {
+                    ShaderTarget::Vertex => UNDERLINE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => UNDERLINE_FRAGMENT_BYTES,
+                },
+                ShaderModule::Paths => match target {
+                    ShaderTarget::Vertex => PATHS_VERTEX_BYTES,
+                    ShaderTarget::Fragment => PATHS_FRAGMENT_BYTES,
+                },
+                ShaderModule::MonochromeSprite => match target {
+                    ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => MONOCHROME_SPRITE_FRAGMENT_BYTES,
+                },
+                ShaderModule::PolychromeSprite => match target {
+                    ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
+                },
+                ShaderModule::EmojiRasterization => match target {
+                    ShaderTarget::Vertex => EMOJI_RASTERIZATION_VERTEX_BYTES,
+                    ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
+                },
+            };
+            Self { inner: bytes }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
-            let mut entry = entry.to_owned();
-            let mut target = target.to_owned();
+            let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
+                "color_text_raster.hlsl"
+            } else {
+                "shaders.hlsl"
+            };
+
+            let entry = format!(
+                "{}_{}\0",
+                entry.as_str(),
+                match target {
+                    ShaderTarget::Vertex => "vertex",
+                    ShaderTarget::Fragment => "fragment",
+                }
+            );
+            let target = match target {
+                ShaderTarget::Vertex => "vs_5_0\0",
+                ShaderTarget::Fragment => "ps_5_0\0",
+            };
+
             let mut compile_blob = None;
             let mut error_blob = None;
+
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join(&format!("src/platform/windows/{}.hlsl", filename))
-                .canonicalize()
-                .unwrap();
-            entry.push_str("\0");
-            target.push_str("\0");
+                .join(&format!("src/platform/windows/{}", shader_name))
+                .canonicalize()?;
+
             let entry_point = PCSTR::from_raw(entry.as_ptr());
             let target_cstr = PCSTR::from_raw(target.as_ptr());
-            #[cfg(debug_assertions)]
-            let compile_flag = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-            #[cfg(not(debug_assertions))]
-            let compile_flag = 0;
+
             let ret = D3DCompileFromFile(
                 &HSTRING::from(shader_path.to_str().unwrap()),
                 None,
                 None,
                 entry_point,
                 target_cstr,
-                compile_flag,
+                D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION,
                 0,
                 &mut compile_blob,
                 Some(&mut error_blob),
@@ -1359,17 +1422,32 @@ pub(crate) mod shader_resources {
                 let Some(error_blob) = error_blob else {
                     return Err(anyhow::anyhow!("{ret:?}"));
                 };
-                let string_len = error_blob.GetBufferSize();
-                let error_string_encode = Vec::from_raw_parts(
-                    error_blob.GetBufferPointer() as *mut u8,
-                    string_len,
-                    string_len,
-                );
-                let error_string = String::from_utf8_lossy(&error_string_encode).to_string();
+
+                let error_string =
+                    std::ffi::CStr::from_ptr(error_blob.GetBufferPointer() as *const i8)
+                        .to_string_lossy();
                 log::error!("Shader compile error: {}", error_string);
                 return Err(anyhow::anyhow!("Compile error: {}", error_string));
             }
             Ok(compile_blob.unwrap())
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    include!(concat!(env!("OUT_DIR"), "/shaders_bytes.rs"));
+
+    #[cfg(debug_assertions)]
+    impl ShaderModule {
+        pub fn as_str(&self) -> &str {
+            match self {
+                ShaderModule::Quad => "quad",
+                ShaderModule::Shadow => "shadow",
+                ShaderModule::Underline => "underline",
+                ShaderModule::Paths => "paths",
+                ShaderModule::MonochromeSprite => "monochrome_sprite",
+                ShaderModule::PolychromeSprite => "polychrome_sprite",
+                ShaderModule::EmojiRasterization => "emoji_rasterization",
+            }
         }
     }
 }
@@ -1403,7 +1481,13 @@ mod nvidia {
     pub(super) fn get_driver_version() -> Result<String> {
         unsafe {
             // Try to load the NVIDIA driver DLL
-            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
+            #[cfg(target_pointer_width = "64")]
+            let nvidia_dll =
+                LoadLibraryA(s!("nvapi64.dll")).context(format!("Can't load nvapi64.dll"))?;
+            #[cfg(target_pointer_width = "32")]
+            let nvidia_dll =
+                LoadLibraryA(s!("nvapi.dll")).context(format!("Can't load nvapi.dll"))?;
+
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
             let nvapi_query: extern "C" fn(u32) -> *mut () = std::mem::transmute(nvapi_query_addr);
@@ -1438,6 +1522,84 @@ mod nvidia {
                 minor,
                 branch_string.to_string_lossy()
             ))
+        }
+    }
+}
+
+mod amd {
+    use std::os::raw::{c_char, c_int, c_void};
+
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
+    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12) | 0;
+
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L204
+    // This is an opaque type, using struct to represent it properly for FFI
+    #[repr(C)]
+    struct AGSContext {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    pub struct AGSGPUInfo {
+        pub driver_version: *const c_char,
+        pub radeon_software_version: *const c_char,
+        pub num_devices: c_int,
+        pub devices: *mut c_void,
+    }
+
+    unsafe extern "C" {
+        fn agsInitialize(
+            version: c_int,
+            config: *const c_void,
+            context: *mut *mut AGSContext,
+            gpu_info: *mut AGSGPUInfo,
+        ) -> c_int;
+
+        fn agsDeInitialize(context: *mut AGSContext) -> c_int;
+    }
+
+    pub(super) fn get_driver_version() -> anyhow::Result<String> {
+        unsafe {
+            let mut context: *mut AGSContext = std::ptr::null_mut();
+            let mut gpu_info: AGSGPUInfo = AGSGPUInfo {
+                driver_version: std::ptr::null(),
+                radeon_software_version: std::ptr::null(),
+                num_devices: 0,
+                devices: std::ptr::null_mut(),
+            };
+
+            let result = agsInitialize(
+                AGS_CURRENT_VERSION,
+                std::ptr::null(),
+                &mut context,
+                &mut gpu_info,
+            );
+            if result != 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to initialize AGS, error code: {}",
+                    result
+                ));
+            }
+
+            // Vulkan acctually returns this as the driver version
+            let software_version = if !gpu_info.radeon_software_version.is_null() {
+                std::ffi::CStr::from_ptr(gpu_info.radeon_software_version)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "Unknown Radeon Software Version".to_string()
+            };
+
+            let driver_version = if !gpu_info.driver_version.is_null() {
+                std::ffi::CStr::from_ptr(gpu_info.driver_version)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "Unknown Radeon Driver Version".to_string()
+            };
+
+            agsDeInitialize(context);
+            Ok(format!("{} ({})", software_version, driver_version))
         }
     }
 }

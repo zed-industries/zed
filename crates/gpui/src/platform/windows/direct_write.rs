@@ -184,30 +184,22 @@ impl GPUState {
         };
 
         let vertex_shader = {
-            let source =
-                shader_resources::build_shader_blob("color_text_raster", "vertex", "vs_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    source.GetBufferPointer() as *mut u8,
-                    source.GetBufferSize(),
-                )
-            };
+            let source = shader_resources::RawShaderBytes::new(
+                shader_resources::ShaderModule::EmojiRasterization,
+                shader_resources::ShaderTarget::Vertex,
+            )?;
             let mut shader = None;
-            unsafe { device.CreateVertexShader(bytes, None, Some(&mut shader)) }?;
+            unsafe { device.CreateVertexShader(source.as_bytes(), None, Some(&mut shader)) }?;
             shader.unwrap()
         };
 
         let pixel_shader = {
-            let source =
-                shader_resources::build_shader_blob("color_text_raster", "pixel", "ps_5_0")?;
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    source.GetBufferPointer() as *mut u8,
-                    source.GetBufferSize(),
-                )
-            };
+            let source = shader_resources::RawShaderBytes::new(
+                shader_resources::ShaderModule::EmojiRasterization,
+                shader_resources::ShaderTarget::Fragment,
+            )?;
             let mut shader = None;
-            unsafe { device.CreatePixelShader(bytes, None, Some(&mut shader)) }?;
+            unsafe { device.CreatePixelShader(source.as_bytes(), None, Some(&mut shader)) }?;
             shader.unwrap()
         };
 
