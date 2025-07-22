@@ -2116,6 +2116,10 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
                 "foo": "",
                 "bar": "",
                 "sub": {
+                    "bar": "",
+                },
+                "subrepo": {
+                    ".git": {},
                     "bar": ""
                 },
                 "baz": ""
@@ -2140,7 +2144,13 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     cx.run_until_parked();
 
     worktree.update(cx, |worktree, _cx| {
-        check_worktree_entries(worktree, &[], &["foo", "bar"], &["sub/bar", "baz"], &[]);
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["foo", "bar", "subrepo/bar"],
+            &["sub/bar", "baz"],
+            &[],
+        );
     })
 }
 
