@@ -352,6 +352,12 @@ pub struct ThemeColorsContent {
     #[serde(rename = "panel.indent_guide_active")]
     pub panel_indent_guide_active: Option<String>,
 
+    #[serde(rename = "panel.overlay_background")]
+    pub panel_overlay_background: Option<String>,
+
+    #[serde(rename = "panel.overlay_hover")]
+    pub panel_overlay_hover: Option<String>,
+
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
 
@@ -675,6 +681,14 @@ impl ThemeColorsContent {
             .scrollbar_thumb_border
             .as_ref()
             .and_then(|color| try_parse_color(color).ok());
+        let element_hover = self
+            .element_hover
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let panel_background = self
+            .panel_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
             border,
             border_variant: self
@@ -713,10 +727,7 @@ impl ThemeColorsContent {
                 .element_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            element_hover: self
-                .element_hover
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            element_hover,
             element_active: self
                 .element_active
                 .as_ref()
@@ -833,10 +844,7 @@ impl ThemeColorsContent {
                 .search_match_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            panel_background: self
-                .panel_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            panel_background,
             panel_focused_border: self
                 .panel_focused_border
                 .as_ref()
@@ -853,6 +861,16 @@ impl ThemeColorsContent {
                 .panel_indent_guide_active
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            panel_overlay_background: self
+                .panel_overlay_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(panel_background),
+            panel_overlay_hover: self
+                .panel_overlay_hover
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(element_hover),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()
