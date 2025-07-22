@@ -3,7 +3,7 @@ mod dap;
 mod lsp;
 mod slash_command;
 
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
 
 use util::redact::should_redact;
 
@@ -18,7 +18,7 @@ pub type EnvVars = Vec<(String, String)>;
 /// A command.
 pub struct Command {
     /// The command to execute.
-    pub command: String,
+    pub command: PathBuf,
     /// The arguments to pass to the command.
     pub args: Vec<String>,
     /// The environment variables to set for the command.

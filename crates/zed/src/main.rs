@@ -1,6 +1,7 @@
 mod reliability;
 mod zed;
 
+use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -14,7 +15,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -24,7 +25,6 @@ use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
-use onboarding::show_onboarding_view;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{SshSettings, open_ssh_project};
@@ -55,6 +55,8 @@ use zed::{
     handle_settings_changed, handle_settings_file_changes, initialize_workspace,
     inline_completion_registry, open_paths_with_positions,
 };
+
+use crate::zed::OpenRequestKind;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -747,32 +749,46 @@ pub fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
-    if let Some(connection) = request.cli_connection {
-        let app_state = app_state.clone();
-        cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
-            .detach();
-        return;
-    }
+    if let Some(kind) = request.kind {
+        match kind {
+            OpenRequestKind::CliConnection(connection) => {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
+                    .detach();
+            }
+            OpenRequestKind::Extension { extension_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(zed_actions::Extensions {
+                                category_filter: None,
+                                id: Some(extension_id),
+                            }),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::AgentPanel => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |workspace, window, cx| {
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.focus_handle(cx).focus(window);
+                        }
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::DockMenuAction { index } => {
+                cx.perform_dock_menu_action(index);
+            }
+        }
 
-    if let Some(action_index) = request.dock_menu_action {
-        cx.perform_dock_menu_action(action_index);
-        return;
-    }
-
-    if let Some(extension) = request.extension_id {
-        cx.spawn(async move |cx| {
-            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-            workspace.update(cx, |_, window, cx| {
-                window.dispatch_action(
-                    Box::new(zed_actions::Extensions {
-                        category_filter: None,
-                        id: Some(extension),
-                    }),
-                    cx,
-                );
-            })
-        })
-        .detach_and_log_err(cx);
         return;
     }
 
@@ -1041,10 +1057,6 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 );
             }
         }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
-        let state = app_state.clone();
-        cx.update(|cx| show_onboarding_view(state, cx))?.await?;
-        // cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {

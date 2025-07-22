@@ -15,7 +15,7 @@ The PHP extension offers both `phpactor` and `intelephense` language server supp
 
 ## Phpactor
 
-The Zed PHP Extension can install `phpactor` automatically but requires `php` to installed and available in your path:
+The Zed PHP Extension can install `phpactor` automatically but requires `php` to be installed and available in your path:
 
 ```sh
 # brew install php            # macOS

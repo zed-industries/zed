@@ -94,8 +94,7 @@ impl AgentServer for Codex {
             let codex_mcp_client: Arc<ContextServer> = ContextServer::stdio(
                 ContextServerId("codex-mcp-server".into()),
                 ContextServerCommand {
-                    // todo! should we change ContextServerCommand to take a PathBuf?
-                    path: command.path.to_string_lossy().to_string(),
+                    path: command.path,
                     args: command.args,
                     env: command.env,
                 },

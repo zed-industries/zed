@@ -581,7 +581,7 @@ impl Settings for ProjectSettings {
 
         #[derive(Deserialize)]
         struct VsCodeContextServerCommand {
-            command: String,
+            command: PathBuf,
             args: Option<Vec<String>>,
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type
