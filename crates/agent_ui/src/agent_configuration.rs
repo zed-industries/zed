@@ -443,6 +443,22 @@ impl AgentConfiguration {
                         }
                     }),
             )
+    fn render_modifier_to_send(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let use_modifier_to_send = AgentSettings::get_global(cx).use_modifier_to_send;
+        let fs = self.fs.clone();
+
+        SwitchField::new(
+            "modifier-send",
+            "Use modifier to submit a message",
+            "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.",
+            use_modifier_to_send,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_use_modifier_to_send(allow);
+                });
+            },
+        )
     }
 
     fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -456,6 +472,7 @@ impl AgentConfiguration {
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
             .child(self.render_sound_notification(cx))
+            .child(self.render_modifier_to_send(cx))
     }
 
     fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
