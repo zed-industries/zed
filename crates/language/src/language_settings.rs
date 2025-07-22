@@ -213,6 +213,7 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    Codestral,
 }
 
 impl EditPredictionProvider {
@@ -221,7 +222,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            | EditPredictionProvider::Supermaven
+            | EditPredictionProvider::Codestral => false,
         }
     }
 }
@@ -240,6 +242,8 @@ pub struct EditPredictionSettings {
     pub mode: EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
+    /// Settings specific to Codestral.
+    pub codestral: CodestralSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -287,6 +291,16 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CodestralSettings {
+    /// API key for Codestral.
+    pub api_key: Option<String>,
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
 }
 
 /// The settings for all languages.
@@ -615,6 +629,9 @@ pub struct EditPredictionSettingsContent {
     /// Settings specific to GitHub Copilot.
     #[serde(default)]
     pub copilot: CopilotSettingsContent,
+    /// Settings specific to Codestral.
+    #[serde(default)]
+    pub codestral: CodestralSettingsContent,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     #[serde(default = "default_true")]
@@ -638,6 +655,25 @@ pub struct CopilotSettingsContent {
     /// Default: none
     #[serde(default)]
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct CodestralSettingsContent {
+    /// API key for Codestral.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Model to use for completions.
+    ///
+    /// Default: "codestral-latest"
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 150
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// The settings for enabling/disabling features.
@@ -1241,6 +1277,16 @@ impl settings::Settings for AllLanguageSettings {
             })
             .unwrap_or_default();
 
+        let mut codestral_settings = default_value
+            .edit_predictions
+            .as_ref()
+            .map(|settings| CodestralSettings {
+                api_key: settings.codestral.api_key.clone(),
+                model: settings.codestral.model.clone(),
+                max_tokens: settings.codestral.max_tokens,
+            })
+            .unwrap_or_default();
+
         let mut enabled_in_text_threads = default_value
             .edit_predictions
             .as_ref()
@@ -1301,6 +1347,30 @@ impl settings::Settings for AllLanguageSettings {
                 copilot_settings.enterprise_uri = Some(enterprise_uri);
             }
 
+            if let Some(api_key) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.codestral.api_key.clone())
+            {
+                codestral_settings.api_key = Some(api_key);
+            }
+
+            if let Some(model) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.codestral.model.clone())
+            {
+                codestral_settings.model = Some(model);
+            }
+
+            if let Some(max_tokens) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.codestral.max_tokens)
+            {
+                codestral_settings.max_tokens = Some(max_tokens);
+            }
+
             // A user's global settings override the default global settings and
             // all default language-specific settings.
             merge_settings(&mut defaults, &user_settings.defaults);
@@ -1357,6 +1427,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
+                codestral: codestral_settings,
                 enabled_in_text_threads,
             },
             defaults,

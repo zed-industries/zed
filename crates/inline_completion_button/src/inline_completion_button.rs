@@ -1,5 +1,6 @@
 use anyhow::Result;
 use client::{UserStore, zed_urls};
+use codestral::Codestral;
 use copilot::{Copilot, Status};
 use editor::{
     Editor, SelectionEffects,
@@ -356,6 +357,92 @@ impl Render for InlineCompletionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::Codestral => {
+                let Some(codestral) = Codestral::global(cx) else {
+                    return div();
+                };
+
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let status = codestral.read(cx);
+
+                let icon = match status {
+                    Codestral::Error { .. } => IconName::AiMistral,
+                    Codestral::Ready { .. } => {
+                        if enabled {
+                            IconName::AiMistral
+                        } else {
+                            IconName::AiMistral // No disabled variant, use same icon
+                        }
+                    }
+                    _ => IconName::AiMistral,
+                };
+
+                let tooltip_text = match status {
+                    Codestral::Starting => "Codestral is starting...",
+                    Codestral::Authenticating => "Authenticating with Codestral...",
+                    Codestral::Ready { .. } => "Codestral",
+                    Codestral::Error { .. } => "Codestral error",
+                };
+
+                let has_error = matches!(status, Codestral::Error { .. });
+                let is_ready = matches!(status, Codestral::Ready { .. });
+
+                let fs = self.fs.clone();
+                let this = cx.entity().clone();
+
+                return div().child(
+                    PopoverMenu::new("codestral")
+                        .menu(move |window, cx| {
+                            if is_ready {
+                                Some(this.update(cx, |this, cx| {
+                                    this.build_codestral_context_menu(window, cx)
+                                }))
+                            } else {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry(
+                                        "Use Copilot",
+                                        None,
+                                        move |_, cx| {
+                                            set_completion_provider(
+                                                fs.clone(),
+                                                cx,
+                                                EditPredictionProvider::Copilot,
+                                            )
+                                        },
+                                    )
+                                }))
+                            }
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("codestral-icon", icon)
+                                .shape(IconButtonShape::Square)
+                                .when(has_error, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                                })
+                                .when(enabled && !has_error && is_ready, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Muted))
+                                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                                }),
+                            move |window, cx| {
+                                if is_ready {
+                                    Tooltip::for_action(
+                                        tooltip_text,
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text(tooltip_text)(window, cx)
+                                }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                );
+            }
         }
     }
 }
@@ -479,7 +566,7 @@ impl InlineCompletionButton {
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(provider, EditPredictionProvider::Zed | EditPredictionProvider::Codestral) {
             menu = menu
                 .separator()
                 .header("Display Modes")
@@ -797,6 +884,23 @@ impl InlineCompletionButton {
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
+        })
+    }
+
+    fn build_codestral_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Configure API Key", None, |_window, cx| {
+                    cx.dispatch_action(&zed_actions::OpenSettings);
+                })
+                .entry("Sign Out", None, |_window, cx| {
+                    cx.dispatch_action(&codestral::SignOut);
+                })
         })
     }
 
