@@ -25,7 +25,7 @@ use crate::llm::db::subscription_usage_meter::{self, CompletionMode};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
     StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
-    StripeSubscriptionId, UpdateCustomerParams,
+    StripeSubscriptionId,
 };
 use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
@@ -40,7 +40,6 @@ use crate::{
 
 pub fn router() -> Router {
     Router::new()
-        .route("/billing/subscriptions", post(create_billing_subscription))
         .route(
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
@@ -49,122 +48,6 @@ pub fn router() -> Router {
             "/billing/subscriptions/sync",
             post(sync_billing_subscription),
         )
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ProductCode {
-    ZedPro,
-    ZedProTrial,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateBillingSubscriptionBody {
-    github_user_id: i32,
-    product: ProductCode,
-}
-
-#[derive(Debug, Serialize)]
-struct CreateBillingSubscriptionResponse {
-    checkout_session_url: String,
-}
-
-/// Initiates a Stripe Checkout session for creating a billing subscription.
-async fn create_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Json(body): extract::Json<CreateBillingSubscriptionBody>,
-) -> Result<Json<CreateBillingSubscriptionResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let Some(stripe_billing) = app.stripe_billing.clone() else {
-        log::error!("failed to retrieve Stripe billing object");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    if let Some(existing_subscription) = app.db.get_active_billing_subscription(user.id).await? {
-        let is_checkout_allowed = body.product == ProductCode::ZedProTrial
-            && existing_subscription.kind == Some(SubscriptionKind::ZedFree);
-
-        if !is_checkout_allowed {
-            return Err(Error::http(
-                StatusCode::CONFLICT,
-                "user already has an active subscription".into(),
-            ));
-        }
-    }
-
-    let existing_billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
-    if let Some(existing_billing_customer) = &existing_billing_customer {
-        if existing_billing_customer.has_overdue_invoices {
-            return Err(Error::http(
-                StatusCode::PAYMENT_REQUIRED,
-                "user has overdue invoices".into(),
-            ));
-        }
-    }
-
-    let customer_id = if let Some(existing_customer) = &existing_billing_customer {
-        let customer_id = StripeCustomerId(existing_customer.stripe_customer_id.clone().into());
-        if let Some(email) = user.email_address.as_deref() {
-            stripe_billing
-                .client()
-                .update_customer(&customer_id, UpdateCustomerParams { email: Some(email) })
-                .await
-                // Update of email address is best-effort - continue checkout even if it fails
-                .context("error updating stripe customer email address")
-                .log_err();
-        }
-        customer_id
-    } else {
-        stripe_billing
-            .find_or_create_customer_by_email(user.email_address.as_deref())
-            .await?
-    };
-
-    let success_url = format!(
-        "{}/account?checkout_complete=1",
-        app.config.zed_dot_dev_url()
-    );
-
-    let checkout_session_url = match body.product {
-        ProductCode::ZedPro => {
-            stripe_billing
-                .checkout_with_zed_pro(&customer_id, &user.github_login, &success_url)
-                .await?
-        }
-        ProductCode::ZedProTrial => {
-            if let Some(existing_billing_customer) = &existing_billing_customer {
-                if existing_billing_customer.trial_started_at.is_some() {
-                    return Err(Error::http(
-                        StatusCode::FORBIDDEN,
-                        "user already used free trial".into(),
-                    ));
-                }
-            }
-
-            let feature_flags = app.db.get_user_flags(user.id).await?;
-
-            stripe_billing
-                .checkout_with_zed_pro_trial(
-                    &customer_id,
-                    &user.github_login,
-                    feature_flags,
-                    &success_url,
-                )
-                .await?
-        }
-    };
-
-    Ok(Json(CreateBillingSubscriptionResponse {
-        checkout_session_url,
-    }))
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
