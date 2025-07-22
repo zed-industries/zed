@@ -75,6 +75,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
+use settings::SettingsStore;
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1324,31 +1325,14 @@ impl Workspace {
 
         // Observe AI settings changes to hide/show agent panel
         let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let _ai_settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+
+        let _ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_this, cx| {
             let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             if was_ai_disabled != is_ai_disabled {
                 was_ai_disabled = is_ai_disabled;
 
-                if is_ai_disabled {
-                    // Hide agent panel if it's open
-                    for position in [
-                        DockPosition::Left,
-                        DockPosition::Right,
-                        DockPosition::Bottom,
-                    ] {
-                        let dock = this.dock_at_position(position);
-                        dock.update(cx, |dock, cx| {
-                            // Check if the active panel is the agent panel
-                            if let Some(active) = dock.active_panel() {
-                                if active.persistent_name() == "AgentPanel" {
-                                    dock.set_open(false, cx.window(), cx);
-                                }
-                            }
-                        });
-                    }
-                }
-
-                // Update panel buttons visibility
+                // When AI is disabled, a separate mechanism will prevent showing the agent panel
+                // via panel activation. Here we just need to update the UI.
                 cx.notify();
             }
         });
@@ -2903,6 +2887,19 @@ impl Workspace {
                 dock.activate_panel(panel_ix, window, cx);
             }
 
+            // If the active panel is the agent panel and AI is disabled, try to find another panel
+            if DisableAiSettings::get_global(cx).disable_ai {
+                if let Some(active_panel) = dock.active_panel() {
+                    if active_panel.persistent_name() == "AgentPanel" {
+                        if let Some(panel_ix) =
+                            dock.first_enabled_panel_idx_excluding("AgentPanel", cx)
+                        {
+                            dock.activate_panel(panel_ix, window, cx);
+                        }
+                    }
+                }
+            }
+
             if let Some(active_panel) = dock.active_panel() {
                 if was_visible {
                     if active_panel
@@ -3028,7 +3025,12 @@ impl Workspace {
 
                     let panel = dock.active_panel().cloned();
                     if let Some(panel) = panel.as_ref() {
-                        if should_focus(&**panel, window, cx) {
+                        // Don't open AgentPanel if AI is disabled
+                        if panel.persistent_name() == "AgentPanel"
+                            && DisableAiSettings::get_global(cx).disable_ai
+                        {
+                            focus_center = true;
+                        } else if should_focus(&**panel, window, cx) {
                             dock.set_open(true, window, cx);
                             panel.panel_focus_handle(cx).focus(window);
                         } else {

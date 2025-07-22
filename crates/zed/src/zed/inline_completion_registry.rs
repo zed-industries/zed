@@ -113,7 +113,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 was_ai_disabled = is_ai_disabled;
 
                 if is_ai_disabled {
-                    // Clear all edit prediction providers and cancel any active inline completions when AI is disabled
+                    // Clear all edit prediction providers when AI is disabled
                     for (editor, window) in editors.borrow().iter() {
                         _ = window.update(cx, |_window, window, cx| {
                             _ = editor.update(cx, |editor, cx| {

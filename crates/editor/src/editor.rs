@@ -13,6 +13,7 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
+use client::DisableAiSettings;
 mod blink_manager;
 mod clangd_ext;
 pub mod code_context_menus;
@@ -7641,10 +7642,7 @@ impl Editor {
             self.cancel(&Default::default(), window, cx);
         }
     }
-    /// Checks if AI features are disabled by the global setting
-    pub fn is_ai_disabled(&self, cx: &App) -> bool {
-        DisableAiSettings::get_global(cx).disable_ai
-    }
+    // Using the implementation from above
 
     /// Cancels any active inline completion if AI is disabled
     pub fn cancel_inline_completion_if_ai_disabled(
