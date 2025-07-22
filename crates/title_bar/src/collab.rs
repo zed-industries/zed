@@ -11,8 +11,8 @@ use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{
-    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Facepile, PopoverMenu,
-    SplitButton, TintColor, Tooltip, prelude::*,
+    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, Facepile,
+    PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
 use util::maybe;
 use workspace::notifications::DetachAndPromptErr;
@@ -383,6 +383,7 @@ impl TitleBar {
                                 .detach_and_log_err(cx);
                         }),
                 )
+                .child(Divider::vertical())
                 .into_any_element(),
         );
 
@@ -497,6 +498,7 @@ impl TitleBar {
                     trigger.render(window, cx),
                     self.render_screen_list().into_any_element(),
                 )
+                .style(SplitButtonStyle::Outlined)
                 .into_any_element(),
             );
         }
@@ -547,10 +549,17 @@ impl TitleBar {
                                     entry_render: Box::new(move |_, _| {
                                         h_flex()
                                             .gap_2()
-                                            .child(Icon::new(IconName::Screen).when(
-                                                active_screenshare_id == Some(meta.id),
-                                                |this| this.color(Color::Accent),
-                                            ))
+                                            .child(
+                                                Icon::new(IconName::Screen)
+                                                    .size(IconSize::XSmall)
+                                                    .map(|this| {
+                                                        if active_screenshare_id == Some(meta.id) {
+                                                            this.color(Color::Accent)
+                                                        } else {
+                                                            this.color(Color::Muted)
+                                                        }
+                                                    }),
+                                            )
                                             .child(Label::new(label.clone()))
                                             .child(
                                                 Label::new(resolution.clone())
