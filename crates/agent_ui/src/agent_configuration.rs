@@ -313,6 +313,7 @@ impl AgentConfiguration {
                     .pr(DynamicSpacing::Base20.rems(cx))
                     .pb_0()
                     .mb_2p5()
+                    .items_start()
                     .justify_between()
                     .child(
                         v_flex()

@@ -10,7 +10,7 @@ use language_models::{
     provider::open_ai_compatible::AvailableModel,
 };
 use settings::update_settings_file;
-use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use ui::{Banner, KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use ui_input::SingleLineInput;
 use workspace::{ModalView, Workspace};
 
@@ -274,15 +274,6 @@ impl AddLlmProviderModal {
 
     fn render_section(&self) -> Section {
         Section::new()
-            .child(
-                Label::new(match self.provider {
-                    LlmCompatibleProvider::OpenAi => {
-                        "This provider will use an OpenAI compatible API."
-                    }
-                })
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-            )
             .child(self.input.provider_name.clone())
             .child(self.input.api_url.clone())
             .child(self.input.api_key.clone())
@@ -299,7 +290,9 @@ impl AddLlmProviderModal {
                         .child(
                             Button::new("add-model", "Add Model")
                                 .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.input.add_model(window, cx);
@@ -322,12 +315,13 @@ impl AddLlmProviderModal {
         let model = &self.input.models[ix];
 
         v_flex()
+            .p_2()
+            .gap_2()
+            .rounded_sm()
             .border_1()
             .border_dashed()
             .border_color(cx.theme().colors().border.opacity(0.6))
-            .rounded_sm()
-            .p_2()
-            .gap_2()
+            .bg(cx.theme().colors().element_active.opacity(0.15))
             .child(model.name.clone())
             .child(
                 h_flex()
@@ -340,8 +334,12 @@ impl AddLlmProviderModal {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
                         .icon(IconName::Trash)
+                        .icon_position(IconPosition::Start)
                         .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
                         .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .full_width()
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.input.remove_model(ix);
                             cx.notify();
@@ -364,43 +362,47 @@ impl ModalView for AddLlmProviderModal {}
 impl Render for AddLlmProviderModal {
     fn render(&mut self, window: &mut ui::Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-        let window_height = window.viewport_size().height;
-        let max_height = window_height - px(200.);
 
         div()
             .id("add-llm-provider-modal")
-            .elevation_3(cx)
-            .w(rems(34.))
-            .max_h(max_height)
-            .overflow_scroll()
             .key_context("AddLlmProviderModal")
+            .w(rems(34.))
+            .elevation_3(cx)
             .on_action(cx.listener(Self::cancel))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
             }))
             .child(
                 Modal::new("configure-context-server", None)
-                    .header(ModalHeader::new().headline("Add LLM Provider"))
+                    .header(ModalHeader::new().headline("Add LLM Provider").description(
+                        match self.provider {
+                            LlmCompatibleProvider::OpenAi => {
+                                "This provider will use an OpenAI compatible API."
+                            }
+                        },
+                    ))
                     .when_some(self.last_error.clone(), |this, error| {
                         this.section(
                             Section::new().child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Icon::new(IconName::Warning)
-                                            .size(IconSize::Small)
-                                            .color(Color::Warning),
-                                    )
-                                    .child(Label::new(error).size(LabelSize::Small)),
+                                Banner::new()
+                                    .severity(ui::Severity::Warning)
+                                    .child(div().text_xs().child(error)),
                             ),
                         )
                     })
-                    .section(self.render_section())
-                    .section(self.render_model_section(cx))
+                    .child(
+                        v_flex()
+                            .id("modal_content")
+                            .max_h_128()
+                            .overflow_y_scroll()
+                            .gap_2()
+                            .child(self.render_section())
+                            .child(self.render_model_section(cx)),
+                    )
                     .footer(
                         ModalFooter::new().end_slot(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(
                                     Button::new("cancel", "Cancel")
                                         .key_binding(
