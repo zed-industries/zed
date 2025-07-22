@@ -1677,7 +1677,7 @@ impl Render for MessageEditor {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .when(has_existing_providers && !enrolled_in_trial, |this| {
-                this.child(cx.new(|cx| ApiKeysWithProviders::new(cx)))
+                this.child(cx.new(ApiKeysWithProviders::new))
             })
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
