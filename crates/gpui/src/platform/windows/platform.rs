@@ -851,8 +851,9 @@ fn begin_vsync(vsync_event: HANDLE) {
     let event: SafeHandle = vsync_event.into();
     std::thread::spawn(move || unsafe {
         loop {
-            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(*event).log_err();
+            if windows::Win32::Graphics::Dwm::DwmFlush().is_ok() {
+                SetEvent(*event).log_err();
+            }
         }
     });
 }
