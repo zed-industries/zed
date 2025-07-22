@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use agentic_coding_protocol::{
     self as acp, AnyAgentRequest, AnyAgentResult, Client as _, ProtocolVersion,
@@ -214,6 +215,7 @@ impl AgentServer for Codex {
             });
 
             let requested_call_id = Rc::new(RefCell::new(None));
+            let session_id = Rc::new(RefCell::new(None));
 
             cx.new(|cx| {
                 let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
@@ -223,11 +225,13 @@ impl AgentServer for Codex {
                     let delegate = delegate.clone();
                     let tool_id_map = tool_id_map.clone();
                     let requested_call_id = requested_call_id.clone();
+                    let session_id = session_id.clone();
                     async move |_, _cx| {
                         while let Some(notification) = notification_rx.next().await {
                             CodexAgentConnection::handle_acp_notification(
                                 &delegate,
                                 notification,
+                                &session_id,
                                 &tool_id_map,
                                 &requested_call_id,
                             )
@@ -260,15 +264,26 @@ impl AgentServer for Codex {
                     root_dir,
                     codex_mcp: codex_mcp_client,
                     cancel_request_tx: Default::default(),
+                    session_id,
+                    zed_mcp_server,
                     _handler_task: handler_task,
                     _request_task: request_task,
-                    zed_mcp_server,
                 };
 
                 acp_thread::AcpThread::new(connection, title, None, project.clone(), cx)
             })
         })
     }
+}
+
+struct CodexAgentConnection {
+    codex_mcp: Arc<context_server::ContextServer>,
+    root_dir: PathBuf,
+    cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
+    session_id: Rc<RefCell<Option<Uuid>>>,
+    zed_mcp_server: ZedMcpServer,
+    _handler_task: Task<()>,
+    _request_task: Task<()>,
 }
 
 impl AgentConnection for CodexAgentConnection {
@@ -281,6 +296,7 @@ impl AgentConnection for CodexAgentConnection {
         let root_dir = self.root_dir.clone();
         let cancel_request_tx = self.cancel_request_tx.clone();
         let mcp_config = self.zed_mcp_server.server_config();
+        let session_id = self.session_id.clone();
         async move {
             let client = client.context("Codex MCP server is not initialized")?;
 
@@ -299,38 +315,50 @@ impl AgentConnection for CodexAgentConnection {
                     let (new_cancel_tx, cancel_rx) = oneshot::channel();
                     cancel_request_tx.borrow_mut().replace(new_cancel_tx);
 
+                    let prompt = message
+                        .chunks
+                        .into_iter()
+                        .filter_map(|chunk| match chunk {
+                            acp::UserMessageChunk::Text { text } => Some(text),
+                            acp::UserMessageChunk::Path { .. } => {
+                                // todo!
+                                None
+                            }
+                        })
+                        .collect();
+
+                    let params = if let Some(session_id) = *session_id.borrow() {
+                        CallToolParams {
+                            name: "codex-reply".into(),
+                            arguments: Some(serde_json::to_value(CodexToolCallReplyParam {
+                                prompt,
+                                session_id,
+                            })?),
+                            meta: None,
+                        }
+                    } else {
+                        CallToolParams {
+                            name: "codex".into(),
+                            arguments: Some(serde_json::to_value(CodexToolCallParam {
+                                prompt,
+                                cwd: root_dir,
+                                config: Some(CodexConfig {
+                                    mcp_servers: Some(
+                                        mcp_config
+                                            .into_iter()
+                                            .map(|config| {
+                                                (mcp_server::SERVER_NAME.to_string(), config)
+                                            })
+                                            .collect(),
+                                    ),
+                                }),
+                            })?),
+                            meta: None,
+                        }
+                    };
+
                     client
-                        .cancellable_request::<CallTool>(
-                            CallToolParams {
-                                name: "codex".into(),
-                                arguments: Some(serde_json::to_value(CodexToolCallParam {
-                                    prompt: message
-                                        .chunks
-                                        .into_iter()
-                                        .filter_map(|chunk| match chunk {
-                                            acp::UserMessageChunk::Text { text } => Some(text),
-                                            acp::UserMessageChunk::Path { .. } => {
-                                                // todo!
-                                                None
-                                            }
-                                        })
-                                        .collect(),
-                                    cwd: root_dir,
-                                    config: Some(CodexConfig {
-                                        mcp_servers: Some(
-                                            mcp_config
-                                                .into_iter()
-                                                .map(|config| {
-                                                    (mcp_server::SERVER_NAME.to_string(), config)
-                                                })
-                                                .collect(),
-                                        ),
-                                    }),
-                                })?),
-                                meta: None,
-                            },
-                            cancel_rx,
-                        )
+                        .request_with::<CallTool>(params, Some(cancel_rx), None)
                         .await?;
 
                     Ok(AnyAgentResult::SendUserMessageResponse(
@@ -357,15 +385,6 @@ impl AgentConnection for CodexAgentConnection {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CodexConfig {
     mcp_servers: Option<HashMap<String, McpServerConfig>>,
-}
-
-struct CodexAgentConnection {
-    codex_mcp: Arc<context_server::ContextServer>,
-    root_dir: PathBuf,
-    cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
-    _handler_task: Task<()>,
-    _request_task: Task<()>,
-    zed_mcp_server: ZedMcpServer,
 }
 
 impl CodexAgentConnection {
@@ -438,10 +457,14 @@ impl CodexAgentConnection {
     async fn handle_acp_notification(
         delegate: &AcpClientDelegate,
         event: AcpNotification,
+        session_id: &Rc<RefCell<Option<Uuid>>>,
         tool_id_map: &Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         requested_call_id: &Rc<RefCell<Option<acp::ToolCallId>>>,
     ) -> Result<()> {
         match event {
+            AcpNotification::SessionConfigured(sesh) => {
+                session_id.replace(Some(sesh.session_id));
+            }
             AcpNotification::AgentMessage(message) => {
                 delegate
                     .stream_assistant_message_chunk(acp::StreamAssistantMessageChunkParams {
@@ -646,6 +669,13 @@ pub(crate) struct CodexToolCallParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexToolCallReplyParam {
+    pub session_id: Uuid,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodexEvent {
     pub msg: AcpNotification,
 }
@@ -653,6 +683,7 @@ struct CodexEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AcpNotification {
+    SessionConfigured(SessionConfiguredEvent),
     AgentMessage(AgentMessageEvent),
     AgentReasoning(AgentReasoningEvent),
     McpToolCallBegin(McpToolCallBeginEvent),
@@ -702,13 +733,9 @@ pub struct ExecCommandEndEvent {
     pub exit_code: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecApprovalRequestEvent {
-    pub call_id: String,
-    pub command: Vec<String>,
-    pub cwd: PathBuf,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct SessionConfiguredEvent {
+    pub session_id: Uuid,
 }
 
 // Helper functions

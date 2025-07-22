@@ -332,23 +332,16 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_impl(method, params, None).await
+        self.request_with(method, params, None, Some(REQUEST_TIMEOUT))
+            .await
     }
 
-    pub async fn cancellable_request<T: DeserializeOwned>(
-        &self,
-        method: &str,
-        params: impl Serialize,
-        cancel_rx: oneshot::Receiver<()>,
-    ) -> Result<T> {
-        self.request_impl(method, params, Some(cancel_rx)).await
-    }
-
-    pub async fn request_impl<T: DeserializeOwned>(
+    pub async fn request_with<T: DeserializeOwned>(
         &self,
         method: &str,
         params: impl Serialize,
         cancel_rx: Option<oneshot::Receiver<()>>,
+        timeout: Option<Duration>,
     ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
         let request = serde_json::to_string(&Request {
@@ -384,7 +377,15 @@ impl Client {
         handle_response?;
         send?;
 
-        let mut timeout = executor.timer(REQUEST_TIMEOUT).fuse();
+        let mut timeout_fut = pin!(
+            if let Some(timeout) = timeout {
+                future::Either::Left(executor.timer(timeout))
+            } else {
+                future::Either::Right(future::pending())
+            }
+            .fuse()
+        );
+
         let mut cancel_fut = pin!(
             match cancel_rx {
                 Some(rx) => future::Either::Left(async {
@@ -423,8 +424,8 @@ impl Client {
                 ).log_err();
                 anyhow::bail!("Request cancelled")
             }
-            _ = timeout => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", REQUEST_TIMEOUT);
+            _ = timeout_fut => {
+                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout);
                 anyhow::bail!("Context server request timeout");
             }
         }
