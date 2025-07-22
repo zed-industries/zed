@@ -197,6 +197,11 @@ impl ModelUsageContext {
     }
 }
 
+pub fn init_settings(cx: &mut App) {
+    AgentSettings::register(cx);
+    SlashCommandSettings::register(cx);
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -206,8 +211,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AgentSettings::register(cx);
-    SlashCommandSettings::register(cx);
+    init_settings(cx);
 
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);

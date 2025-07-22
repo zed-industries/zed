@@ -29,6 +29,7 @@ impl VimTestContext {
             editor::init_settings(cx);
             project::Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            agent_ui::init_settings(cx);
         });
     }
 

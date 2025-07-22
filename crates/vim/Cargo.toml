@@ -52,6 +52,7 @@ zed_actions.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+agent_ui.workspace = true
 assets.workspace = true
 command_palette.workspace = true
 editor = { workspace = true, features = ["test-support"] }
