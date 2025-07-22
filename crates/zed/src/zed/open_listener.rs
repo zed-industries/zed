@@ -30,17 +30,17 @@ use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
-    pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
+    pub kind: Option<OpenRequestKind>,
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
-    pub kind: Option<OpenRequestKind>,
 }
 
 #[derive(Debug)]
 pub enum OpenRequestKind {
+    CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
     Extension { extension_id: String },
     DockMenuAction { index: usize },
 }
@@ -50,7 +50,7 @@ impl OpenRequest {
         let mut this = Self::default();
         for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
-                this.cli_connection = Some(connect_to_cli(server_name)?);
+                this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
                 this.kind = Some(OpenRequestKind::DockMenuAction {
                     index: action_index.parse()?,

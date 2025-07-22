@@ -748,15 +748,13 @@ pub fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
-    if let Some(connection) = request.cli_connection {
-        let app_state = app_state.clone();
-        cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
-            .detach();
-        return;
-    }
-
     if let Some(kind) = request.kind {
         match kind {
+            OpenRequestKind::CliConnection(connection) => {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
+                    .detach();
+            }
             OpenRequestKind::Extension { extension_id } => {
                 cx.spawn(async move |cx| {
                     let workspace =
