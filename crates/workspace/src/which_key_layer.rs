@@ -159,12 +159,18 @@ impl Render for WhichKeyLayer {
             }
             text_a.cmp(&text_b)
         });
+        // Remove duplicates
+        binding_data.dedup();
 
-        // Find the longest text width
-        let longest_text = binding_data
+        // Calculate column width based on UI font size (as maximum)
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let max_column_width = ui_font_size * 125.0;
+
+        // Calculate actual column width based on largest binding element
+        let actual_column_width = binding_data
             .iter()
             .map(|(remaining_keystrokes, action_name)| {
-                create_binding_element(remaining_keystrokes, action_name, cx)
+                create_aligned_binding_element(remaining_keystrokes, action_name, None, cx)
                     .into_any_element()
                     .layout_as_root(AvailableSpace::min_size(), window, cx)
                     .width
@@ -172,43 +178,60 @@ impl Render for WhichKeyLayer {
             .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
             .unwrap_or(Pixels::ZERO);
 
+        // Final width of the columns
+        let column_width = actual_column_width.min(max_column_width);
+
         // Calculate available width (window width minus padding)
         let window_width = window.viewport_size().width;
         let available_width =
             window_width - (left_margin + right_margin + (margin * 2.0) + (padding * 2.0));
 
         // Calculate number of columns that can fit
-        let gap_width = DynamicSpacing::Base20.px(cx);
-        let columns = ((available_width + gap_width) / (longest_text + gap_width))
+        let gap_width = DynamicSpacing::Base32.px(cx);
+        let columns = ((available_width + gap_width) / (column_width + gap_width))
             .floor()
             .max(1.0) as usize;
 
-        // Create rows for grid
-        let chunks = binding_data.chunks(columns);
-        let mut largest_chunk = 0;
-        let mut rows = Vec::new();
-        for chunk in chunks {
-            let mut row = h_flex().gap(gap_width).children(chunk.iter().map(
+        // Calculate rows per column
+        let total_items = binding_data.len();
+        let rows_per_column = (total_items + columns - 1) / columns; // Ceiling division
+
+        // Create columns
+        let mut column_elements = Vec::new();
+        for col in 0..columns {
+            let start_idx = col * rows_per_column;
+            let end_idx = ((col + 1) * rows_per_column).min(total_items);
+
+            if start_idx >= total_items {
+                break;
+            }
+
+            let column_items = &binding_data[start_idx..end_idx];
+
+            // Find the longest keystroke text width for this column
+            let column_longest_keystroke_width = column_items
+                .iter()
+                .map(|(remaining_keystrokes, _)| {
+                    Label::new(text_for_keystrokes(remaining_keystrokes, cx))
+                        .weight(FontWeight::BOLD)
+                        .into_any_element()
+                        .layout_as_root(AvailableSpace::min_size(), window, cx)
+                        .width
+                })
+                .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+
+            let column = v_flex().gap_1().children(column_items.iter().map(
                 |(remaining_keystrokes, action_name)| {
-                    div()
-                        .child(create_binding_element(
-                            remaining_keystrokes,
-                            action_name,
-                            cx,
-                        ))
-                        .min_w(longest_text)
+                    create_aligned_binding_element(
+                        remaining_keystrokes,
+                        action_name,
+                        column_longest_keystroke_width,
+                        cx,
+                    )
                 },
             ));
 
-            if chunk.len() > largest_chunk {
-                largest_chunk = chunk.len();
-            }
-            // Ensure all rows have equal number of children
-            for _ in 0..(largest_chunk - chunk.len()) {
-                row = row.child(div().min_w(longest_text));
-            }
-
-            rows.push(row);
+            column_elements.push(column);
         }
 
         div()
@@ -225,7 +248,12 @@ impl Render for WhichKeyLayer {
                     .child(
                         Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
                     )
-                    .child(v_flex().gap_2().children(rows)),
+                    .child(
+                        h_flex()
+                            .gap(gap_width)
+                            .items_start()
+                            .children(column_elements),
+                    ),
             )
     }
 }
@@ -247,6 +275,9 @@ fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keyst
     let mut result = Vec::new();
 
     for (first_key, mut group_bindings) in groups {
+        // Remove duplicates within each group
+        group_bindings.dedup_by_key(|(keystrokes, _)| keystrokes.clone());
+
         if group_bindings.len() > 1 && first_key.is_some() {
             // This is a group - create a single entry with just the first keystroke
             let first_keystroke = vec![first_key.unwrap()];
@@ -261,13 +292,33 @@ fn group_bindings(binding_data: Vec<(Vec<Keystroke>, String)>) -> Vec<(Vec<Keyst
     result
 }
 
-fn create_binding_element(
+fn create_aligned_binding_element(
     remaining_keystrokes: &[Keystroke],
     action_name: &str,
+    keystroke_width: Option<Pixels>,
     cx: &Context<WhichKeyLayer>,
 ) -> impl IntoElement {
-    h_flex().children([
-        Label::new(text_for_keystrokes(remaining_keystrokes, cx)).weight(FontWeight::BOLD),
-        Label::new(format!(": {}", action_name)),
+    let keystroke = div()
+        .when_some(keystroke_width, |div, width| div.w(width))
+        .child(
+            Label::new(text_for_keystrokes(remaining_keystrokes, cx)).color({
+                if action_name.starts_with('+') {
+                    Color::Success
+                } else {
+                    Color::Accent
+                }
+            }),
+        )
+        .text_align(gpui::TextAlign::Right);
+
+    h_flex().items_center().gap_1().children([
+        keystroke.into_any_element(),
+        div()
+            .child(Label::new("🡒").color(Color::Muted))
+            .pt_1() // Align with lowercase text. Makes it look more "right"
+            .into_any_element(),
+        Label::new(action_name.to_string())
+            .truncate()
+            .into_any_element(),
     ])
 }
