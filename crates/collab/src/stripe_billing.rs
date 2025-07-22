@@ -11,16 +11,16 @@ use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeBillingAddressCollection, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    RealStripeClient, StripeAutomaticTax, StripeBillingAddressCollection,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
     StripeCustomerId, StripeCustomerUpdate, StripeCustomerUpdateAddress, StripeCustomerUpdateName,
     StripeMeter, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
     StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
-    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
-    UpdateSubscriptionParams,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, StripeTaxIdCollection,
+    UpdateSubscriptionItems, UpdateSubscriptionParams,
 };
 
 pub struct StripeBilling {
@@ -252,6 +252,7 @@ impl StripeBilling {
             name: Some(StripeCustomerUpdateName::Auto),
             shipping: None,
         });
+        params.tax_id_collection = Some(StripeTaxIdCollection { enabled: true });
 
         let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
@@ -311,6 +312,7 @@ impl StripeBilling {
             name: Some(StripeCustomerUpdateName::Auto),
             shipping: None,
         });
+        params.tax_id_collection = Some(StripeTaxIdCollection { enabled: true });
 
         let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
@@ -342,6 +344,7 @@ impl StripeBilling {
                 price: Some(zed_free_price_id),
                 quantity: Some(1),
             }],
+            automatic_tax: Some(StripeAutomaticTax { enabled: true }),
         };
 
         let subscription = self.client.create_subscription(params).await?;

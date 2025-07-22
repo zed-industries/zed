@@ -70,12 +70,12 @@ fn is_null_value<T: Serialize>(value: &T) -> bool {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Request<'a, T> {
-    jsonrpc: &'static str,
-    id: RequestId,
-    method: &'a str,
+pub struct Request<'a, T> {
+    pub jsonrpc: &'static str,
+    pub id: RequestId,
+    pub method: &'a str,
     #[serde(skip_serializing_if = "is_null_value")]
-    params: T,
+    pub params: T,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -88,18 +88,18 @@ struct AnyResponse<'a> {
     result: Option<&'a RawValue>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[allow(dead_code)]
-struct Response<T> {
-    jsonrpc: &'static str,
-    id: RequestId,
+pub(crate) struct Response<T> {
+    pub jsonrpc: &'static str,
+    pub id: RequestId,
     #[serde(flatten)]
-    value: CspResult<T>,
+    pub value: CspResult<T>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum CspResult<T> {
+pub(crate) enum CspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
     #[allow(dead_code)]
@@ -123,8 +123,9 @@ struct AnyNotification<'a> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Error {
-    message: String,
+pub(crate) struct Error {
+    pub message: String,
+    pub code: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

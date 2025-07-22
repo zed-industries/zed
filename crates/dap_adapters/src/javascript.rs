@@ -1,9 +1,10 @@
 use adapters::latest_github_release;
 use anyhow::Context as _;
+use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use serde_json::Value;
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
 use util::{ResultExt, maybe};
 
@@ -53,22 +54,10 @@ impl JsDebugAdapter {
         user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Couldn't find JavaScript dap directory")?
-        };
-
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
+        let mut envs = HashMap::default();
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
@@ -110,6 +99,12 @@ impl JsDebugAdapter {
                 }
             }
 
+            if let Some(env) = configuration.get("env").cloned() {
+                if let Ok(env) = serde_json::from_value(env) {
+                    envs = env;
+                }
+            }
+
             configuration
                 .entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
@@ -127,21 +122,27 @@ impl JsDebugAdapter {
                 .or_insert(true.into());
         }
 
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+
+            let file_name_prefix = format!("{}_", self.name());
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .context("Couldn't find JavaScript dap directory")?
+            .join(Self::ADAPTER_PATH)
+        };
+
         let arguments = if let Some(mut args) = user_args {
-            args.insert(
-                0,
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-            );
+            args.insert(0, adapter_path.to_string_lossy().to_string());
             args
         } else {
             vec![
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
+                adapter_path.to_string_lossy().to_string(),
                 port.to_string(),
                 host.to_string(),
             ]
@@ -158,7 +159,7 @@ impl JsDebugAdapter {
             ),
             arguments,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: HashMap::default(),
+            envs,
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
@@ -245,7 +246,7 @@ impl DebugAdapter for JsDebugAdapter {
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge"],
+                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge", "node-terminal"],
                                     "description": "The type of debug session",
                                     "default": "pwa-node"
                                 },
@@ -379,10 +380,6 @@ impl DebugAdapter for JsDebugAdapter {
                                     }
                                 }
                             },
-                            "oneOf": [
-                                { "required": ["program"] },
-                                { "required": ["url"] }
-                            ]
                         }
                     ]
                 },
@@ -528,6 +525,14 @@ impl DebugAdapter for JsDebugAdapter {
             .as_str()
             .filter(|name| !name.is_empty())?;
         Some(label.to_owned())
+    }
+
+    fn compact_child_session(&self) -> bool {
+        true
+    }
+
+    fn prefer_thread_name(&self) -> bool {
+        true
     }
 }
 

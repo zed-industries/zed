@@ -48,9 +48,10 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile, KeymapFileLoadResult,
-    Settings, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
+    KeymapFileLoadResult, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
@@ -62,7 +63,7 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
+use welcome::{DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -3956,6 +3957,7 @@ mod tests {
             language::init(cx);
             workspace::init(app_state.clone(), cx);
             welcome::init(cx);
+            onboarding::init(cx);
             Project::init_settings(cx);
             app_state
         })
@@ -4326,6 +4328,7 @@ mod tests {
                 "jj",
                 "journal",
                 "keymap_editor",
+                "keystroke_input",
                 "language_selector",
                 "lsp_tool",
                 "markdown",

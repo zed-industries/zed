@@ -12,18 +12,13 @@ use std::{
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
-    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let b = (hex & 0xFF) as f32 / 255.0;
+    let [_, r, g, b] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
-    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex & 0xFF) as f32 / 255.0;
+    let [r, g, b, a] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a }
 }
 
@@ -63,14 +58,14 @@ impl Rgba {
         if other.a >= 1.0 {
             other
         } else if other.a <= 0.0 {
-            return *self;
+            *self
         } else {
-            return Rgba {
+            Rgba {
                 r: (self.r * (1.0 - other.a)) + (other.r * other.a),
                 g: (self.g * (1.0 - other.a)) + (other.g * other.a),
                 b: (self.b * (1.0 - other.a)) + (other.b * other.a),
                 a: self.a,
-            };
+            }
         }
     }
 }
@@ -494,12 +489,12 @@ impl Hsla {
         if alpha >= 1.0 {
             other
         } else if alpha <= 0.0 {
-            return self;
+            self
         } else {
             let converted_self = Rgba::from(self);
             let converted_other = Rgba::from(other);
             let blended_rgb = converted_self.blend(converted_other);
-            return Hsla::from(blended_rgb);
+            Hsla::from(blended_rgb)
         }
     }
 

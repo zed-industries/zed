@@ -1,3 +1,4 @@
+mod acp;
 mod active_thread;
 mod agent_configuration;
 mod agent_diff;
@@ -24,6 +25,7 @@ mod thread_history;
 mod tool_compatibility;
 mod ui;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
@@ -39,7 +41,7 @@ use language_model::{
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 
 pub use crate::active_thread::ActiveThread;
@@ -76,8 +78,6 @@ actions!(
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
-        /// Starts a chat conversation with the agent.
-        Chat,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
@@ -130,6 +130,32 @@ actions!(
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
+}
+
+/// Creates a new external agent conversation thread.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewExternalAgentThread {
+    /// Which agent to use for the conversation.
+    agent: Option<ExternalAgent>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExternalAgent {
+    #[default]
+    Gemini,
+    ClaudeCode,
+}
+
+impl ExternalAgent {
+    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
+            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+        }
+    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
