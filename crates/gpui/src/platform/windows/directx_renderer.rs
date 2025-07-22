@@ -25,13 +25,14 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 const MULTISAMPLE_COUNT: u32 = 4;
 
 pub(crate) struct DirectXRenderer {
+    hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
     devices: DirectXDevices,
     resources: DirectXResources,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     #[cfg(not(feature = "enable-renderdoc"))]
-    _direct_composition: DirectComposition,
+    _direct_composition: ManuallyDrop<DirectComposition>,
 }
 
 /// Direct3D objects
@@ -121,19 +122,22 @@ impl DirectXRenderer {
         ));
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(devices)?;
+        let resources = DirectXResources::new(devices).unwrap();
         #[cfg(feature = "enable-renderdoc")]
         let resources = DirectXResources::new(devices, hwnd)?;
 
-        let globals = DirectXGlobalElements::new(&devices.device)?;
-        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
+        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
+        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd).unwrap();
         #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition.set_swap_chain(&resources.swap_chain)?;
+        direct_composition
+            .set_swap_chain(&resources.swap_chain)
+            .unwrap();
 
         Ok(DirectXRenderer {
+            hwnd,
             atlas,
             devices: devices.clone(),
             resources,
@@ -208,6 +212,34 @@ impl DirectXRenderer {
     }
 
     fn handle_device_lost(&mut self) -> Result<()> {
+        let devices = DirectXDevices::new().context("Recreating DirectX devices")?;
+        unsafe {
+            ManuallyDrop::drop(&mut self._direct_composition);
+        }
+        self.atlas
+            .handle_device_lost(devices.device.clone(), devices.device_context.clone());
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let resources = DirectXResources::new(&devices).unwrap();
+        #[cfg(feature = "enable-renderdoc")]
+        let resources = DirectXResources::new(devices, hwnd)?;
+        let globals = DirectXGlobalElements::new(&devices.device).unwrap();
+        let pipelines = DirectXRenderPipelines::new(&devices.device).unwrap();
+
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, self.hwnd).unwrap();
+        #[cfg(not(feature = "enable-renderdoc"))]
+        direct_composition
+            .set_swap_chain(&resources.swap_chain)
+            .unwrap();
+
+        self.devices = devices;
+        self.resources = resources;
+        self.globals = globals;
+        self.pipelines = pipelines;
+        #[cfg(not(feature = "enable-renderdoc"))]
+        {
+            self._direct_composition = direct_composition;
+        }
         Ok(())
     }
 
@@ -553,16 +585,16 @@ impl DirectXRenderPipelines {
 
 #[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
-        let comp_device = get_comp_device(&dxgi_device)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
-        let comp_visual = unsafe { comp_device.CreateVisual() }?;
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<ManuallyDrop<Self>> {
+        let comp_device = get_comp_device(&dxgi_device).unwrap();
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }.unwrap();
+        let comp_visual = unsafe { comp_device.CreateVisual() }.unwrap();
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             comp_device,
             comp_target,
             comp_visual,
-        })
+        }))
     }
 
     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
@@ -943,6 +975,14 @@ struct DirectXPathVertex {
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
     color: Background,
+}
+
+impl Drop for DirectXRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self._direct_composition);
+        }
+    }
 }
 
 impl Drop for DirectXResources {

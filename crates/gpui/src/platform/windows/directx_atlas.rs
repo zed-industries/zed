@@ -53,6 +53,20 @@ impl DirectXAtlas {
         let tex = lock.texture(id);
         tex.view.clone()
     }
+
+    pub(crate) fn handle_device_lost(
+        &self,
+        device: ID3D11Device,
+        device_context: ID3D11DeviceContext,
+    ) -> anyhow::Result<()> {
+        let mut lock = self.0.lock();
+        lock.device = device;
+        lock.device_context = device_context;
+        lock.monochrome_textures = AtlasTextureList::default();
+        lock.polychrome_textures = AtlasTextureList::default();
+        lock.tiles_by_key.clear();
+        Ok(())
+    }
 }
 
 impl PlatformAtlas for DirectXAtlas {
