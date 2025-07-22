@@ -1016,6 +1016,15 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+enum WorkspaceLocation {
+    // Valid local paths or SSH project to serialize
+    Location(SerializedWorkspaceLocation),
+    // No valid location found but should update session id
+    SessionOnly,
+    // No valid location found to serialize
+    None,
+}
+
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
@@ -1131,30 +1140,30 @@ impl Workspace {
                     this.collaborator_left(*peer_id, window, cx);
                 }
                 project::Event::WorktreeRemoved(_) => {
+                    // If no worktrees remain, remove this workspace from the session
+                    // so it won't be restored on restart.
+                    if let Some(local_paths) = this.local_paths(cx) {
+                        if local_paths.is_empty() {
+                            this.session_id.take();
+                        }
+                    }
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `RemoveFromProject`.
                     // So we need to update the history.
                     this.update_history(cx);
-
-                    // If no worktrees remain, remove this workspace from the session
-                    // so it won't be restored on restart.
-                    if this.visible_worktrees(cx).next().is_none() {
-                        this.remove_from_session(window, cx).detach();
-                    }
                 }
                 project::Event::WorktreeAdded(_) => {
-                    this.update_window_title(window, cx);
-                    this.serialize_workspace(window, cx);
-                    // This event could be triggered by `AddFolderToProject`
-                    // So we need to update the history.
-                    this.update_history(cx);
-
                     // If this workspace had its session_id removed because all worktrees were removed,
                     // restore the session_id now that we have worktrees again.
                     if this.session_id.is_none() {
                         this.session_id = Some(this.app_state.session.read(cx).id().to_owned());
                     }
+                    this.update_window_title(window, cx);
+                    this.serialize_workspace(window, cx);
+                    // This event could be triggered by `AddFolderToProject`
+                    // So we need to update the history.
+                    this.update_history(cx);
                 }
                 project::Event::DisconnectedFromHost => {
                     this.update_window_edited(window, cx);
@@ -5235,55 +5244,61 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.serialize_workspace_location(cx) {
-            let breakpoints = self.project.update(cx, |project, cx| {
-                project
-                    .breakpoint_store()
-                    .read(cx)
-                    .all_source_breakpoints(cx)
-            });
+        match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => {
+                let breakpoints = self.project.update(cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .read(cx)
+                        .all_source_breakpoints(cx)
+                });
 
-            let center_group = build_serialized_pane_group(&self.center.root, window, cx);
-            let docks = build_serialized_docks(self, window, cx);
-            let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
-            let serialized_workspace = SerializedWorkspace {
-                id: database_id,
-                location,
-                center_group,
-                window_bounds,
-                display: Default::default(),
-                docks,
-                centered_layout: self.centered_layout,
-                session_id: self.session_id.clone(),
-                breakpoints,
-                window_id: Some(window.window_handle().window_id().as_u64()),
-            };
+                let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+                let docks = build_serialized_docks(self, window, cx);
+                let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+                let serialized_workspace = SerializedWorkspace {
+                    id: database_id,
+                    location,
+                    center_group,
+                    window_bounds,
+                    display: Default::default(),
+                    docks,
+                    centered_layout: self.centered_layout,
+                    session_id: self.session_id.clone(),
+                    breakpoints,
+                    window_id: Some(window.window_handle().window_id().as_u64()),
+                };
 
-            return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await;
-            });
-        } else {
-            let session_id = self.session_id.clone();
-            return window.spawn(cx, async move |_| {
-                persistence::DB
-                    .set_session_id(database_id, session_id)
-                    .await
-                    .log_err();
-            });
+                window.spawn(cx, async move |_| {
+                    persistence::DB.save_workspace(serialized_workspace).await;
+                })
+            }
+            WorkspaceLocation::SessionOnly => {
+                let session_id = self.session_id.clone();
+                window.spawn(cx, async move |_| {
+                    persistence::DB
+                        .set_session_id(database_id, session_id)
+                        .await
+                        .log_err();
+                })
+            }
+            WorkspaceLocation::None => Task::ready(()),
         }
     }
 
-    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
+    fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+            WorkspaceLocation::Location(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+                WorkspaceLocation::Location(SerializedWorkspaceLocation::from_local_paths(
+                    local_paths,
+                ))
             } else {
-                None
+                WorkspaceLocation::SessionOnly
             }
         } else {
-            None
+            WorkspaceLocation::None
         }
     }
 
@@ -5291,8 +5306,9 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        let Some(location) = self.serialize_workspace_location(cx) else {
-            return;
+        let location = match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => location,
+            _ => return,
         };
         if let Some(manager) = HistoryManager::global(cx) {
             manager.update(cx, |this, cx| {
