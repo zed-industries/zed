@@ -43,17 +43,15 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
-            if !DisableAiSettings::get_global(cx).disable_ai {
-                let provider = all_language_settings(None, cx).edit_predictions.provider;
-                assign_edit_prediction_provider(
-                    editor,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    window,
-                    cx,
-                );
-            }
+            let provider = all_language_settings(None, cx).edit_predictions.provider;
+            assign_edit_prediction_provider(
+                editor,
+                provider,
+                &client,
+                user_store.clone(),
+                window,
+                cx,
+            );
         }
     })
     .detach();
@@ -61,6 +59,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.on_action(clear_zeta_edit_history);
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
+    let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+
     cx.spawn({
         let user_store = user_store.clone();
         let editors = editors.clone();
@@ -70,13 +70,17 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             let mut status = client.status();
             while let Some(_status) = status.next().await {
                 cx.update(|cx| {
-                    assign_edit_prediction_providers(
-                        &editors,
-                        provider,
-                        &client,
-                        user_store.clone(),
-                        cx,
-                    );
+                    // Only assign providers if AI is not disabled
+                    if !DisableAiSettings::get_global(cx).disable_ai {
+                        let provider = all_language_settings(None, cx).edit_predictions.provider;
+                        assign_edit_prediction_providers(
+                            &editors,
+                            provider,
+                            &client,
+                            user_store.clone(),
+                            cx,
+                        );
+                    }
                 })
                 .log_err();
             }
@@ -90,8 +94,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
+            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
 
-            if new_provider != provider {
+            if new_provider != provider || is_ai_disabled != was_ai_disabled {
                 let tos_accepted = user_store
                     .read(cx)
                     .current_user_has_accepted_terms()
@@ -105,15 +110,31 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 );
 
                 provider = new_provider;
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
+                was_ai_disabled = is_ai_disabled;
 
-                if !tos_accepted {
+                if is_ai_disabled {
+                    // Clear all edit prediction providers when AI is disabled
+                    for (editor, window) in editors.borrow().iter() {
+                        _ = window.update(cx, |_window, window, cx| {
+                            _ = editor.update(cx, |editor, cx| {
+                                editor
+                                    .set_edit_prediction_provider::<ZetaInlineCompletionProvider>(
+                                        None, window, cx,
+                                    );
+                            });
+                        });
+                    }
+                } else {
+                    assign_edit_prediction_providers(
+                        &editors,
+                        provider,
+                        &client,
+                        user_store.clone(),
+                        cx,
+                    );
+                }
+
+                if !tos_accepted && !is_ai_disabled {
                     match provider {
                         EditPredictionProvider::Zed => {
                             let Some(window) = cx.active_window() else {
@@ -217,6 +238,11 @@ fn assign_edit_prediction_provider(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    // Don't assign providers if AI is disabled
+    if DisableAiSettings::get_global(cx).disable_ai {
+        editor.set_edit_prediction_provider::<ZetaInlineCompletionProvider>(None, window, cx);
+        return;
+    }
     // TODO: Do we really want to collect data only for singleton buffers?
     let singleton_buffer = editor.buffer().read(cx).as_singleton();
 
