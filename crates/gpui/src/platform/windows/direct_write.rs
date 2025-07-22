@@ -810,13 +810,14 @@ impl DirectWriteState {
             }
 
             // Resize to match expected bitmap_size if needed
+            let expected_size = bitmap_size.width.0 as usize * bitmap_size.height.0 as usize * 4;
+            rgba_data.resize(expected_size, 0);
 
             Ok((bitmap_size, rgba_data))
         } else {
             // For regular text, use grayscale or cleartype
             let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
             let texture_bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
-            println!("glyph id: {:?}, variant: {:?}, size: {:?}, texture_bounds: {:?}", glyph_id, params.subpixel_variant, bitmap_size, texture_bounds);
 
             let width = (texture_bounds.right - texture_bounds.left) as u32;
             let height = (texture_bounds.bottom - texture_bounds.top) as u32;
@@ -847,10 +848,10 @@ impl DirectWriteState {
             }
 
             // Resize to match expected bitmap_size if needed
-            let expected_size = width as usize * height as usize;
+            let expected_size = bitmap_size.width.0 as usize * bitmap_size.height.0 as usize;
             grayscale_data.resize(expected_size, 0);
 
-            Ok((size(DevicePixels(width as i32), DevicePixels(height as i32)), grayscale_data))
+            Ok((bitmap_size, grayscale_data))
         }
     }
 
