@@ -382,71 +382,51 @@ where
     D: Dimension<'a, T::Summary>,
 {
     #[track_caller]
-    pub fn seek<Target>(
-        &mut self,
-        pos: &Target,
-        bias: Bias,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> bool
+    pub fn seek<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
     {
         self.reset();
-        self.seek_internal(pos, bias, &mut (), cx)
+        self.seek_internal(pos, bias, &mut ())
     }
 
     #[track_caller]
-    pub fn seek_forward<Target>(
-        &mut self,
-        pos: &Target,
-        bias: Bias,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> bool
+    pub fn seek_forward<Target>(&mut self, pos: &Target, bias: Bias) -> bool
     where
         Target: SeekTarget<'a, T::Summary, D>,
     {
-        self.seek_internal(pos, bias, &mut (), cx)
+        self.seek_internal(pos, bias, &mut ())
     }
 
     /// Advances the cursor and returns traversed items as a tree.
     #[track_caller]
-    pub fn slice<Target>(
-        &mut self,
-        end: &Target,
-        bias: Bias,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> SumTree<T>
+    pub fn slice<Target>(&mut self, end: &Target, bias: Bias) -> SumTree<T>
     where
         Target: SeekTarget<'a, T::Summary, D>,
     {
         let mut slice = SliceSeekAggregate {
-            tree: SumTree::new(cx),
+            tree: SumTree::new(self.cx),
             leaf_items: ArrayVec::new(),
             leaf_item_summaries: ArrayVec::new(),
-            leaf_summary: <T::Summary as Summary>::zero(cx),
+            leaf_summary: <T::Summary as Summary>::zero(self.cx),
         };
-        self.seek_internal(end, bias, &mut slice, cx);
+        self.seek_internal(end, bias, &mut slice);
         slice.tree
     }
 
     #[track_caller]
-    pub fn suffix(&mut self, cx: &<T::Summary as Summary>::Context) -> SumTree<T> {
-        self.slice(&End::new(), Bias::Right, cx)
+    pub fn suffix(&mut self) -> SumTree<T> {
+        self.slice(&End::new(), Bias::Right)
     }
 
     #[track_caller]
-    pub fn summary<Target, Output>(
-        &mut self,
-        end: &Target,
-        bias: Bias,
-        cx: &<T::Summary as Summary>::Context,
-    ) -> Output
+    pub fn summary<Target, Output>(&mut self, end: &Target, bias: Bias) -> Output
     where
         Target: SeekTarget<'a, T::Summary, D>,
         Output: Dimension<'a, T::Summary>,
     {
-        let mut summary = SummarySeekAggregate(Output::zero(cx));
-        self.seek_internal(end, bias, &mut summary, cx);
+        let mut summary = SummarySeekAggregate(Output::zero(self.cx));
+        self.seek_internal(end, bias, &mut summary);
         summary.0
     }
 
@@ -457,10 +437,9 @@ where
         target: &dyn SeekTarget<'a, T::Summary, D>,
         bias: Bias,
         aggregate: &mut dyn SeekAggregate<'a, T>,
-        cx: &<T::Summary as Summary>::Context,
     ) -> bool {
         assert!(
-            target.cmp(&self.position, cx) >= Ordering::Equal,
+            target.cmp(&self.position, self.cx) >= Ordering::Equal,
             "cannot seek backward",
         );
 
@@ -469,7 +448,7 @@ where
             self.stack.push(StackEntry {
                 tree: self.tree,
                 index: 0,
-                position: D::zero(cx),
+                position: D::zero(self.cx),
             });
         }
 
@@ -491,14 +470,14 @@ where
                         .zip(&child_summaries[entry.index..])
                     {
                         let mut child_end = self.position.clone();
-                        child_end.add_summary(child_summary, cx);
+                        child_end.add_summary(child_summary, self.cx);
 
-                        let comparison = target.cmp(&child_end, cx);
+                        let comparison = target.cmp(&child_end, self.cx);
                         if comparison == Ordering::Greater
                             || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
                             self.position = child_end;
-                            aggregate.push_tree(child_tree, child_summary, cx);
+                            aggregate.push_tree(child_tree, child_summary, self.cx);
                             entry.index += 1;
                             entry.position = self.position.clone();
                         } else {
@@ -524,22 +503,22 @@ where
                         .zip(&item_summaries[entry.index..])
                     {
                         let mut child_end = self.position.clone();
-                        child_end.add_summary(item_summary, cx);
+                        child_end.add_summary(item_summary, self.cx);
 
-                        let comparison = target.cmp(&child_end, cx);
+                        let comparison = target.cmp(&child_end, self.cx);
                         if comparison == Ordering::Greater
                             || (comparison == Ordering::Equal && bias == Bias::Right)
                         {
                             self.position = child_end;
-                            aggregate.push_item(item, item_summary, cx);
+                            aggregate.push_item(item, item_summary, self.cx);
                             entry.index += 1;
                         } else {
-                            aggregate.end_leaf(cx);
+                            aggregate.end_leaf(self.cx);
                             break 'outer;
                         }
                     }
 
-                    aggregate.end_leaf(cx);
+                    aggregate.end_leaf(self.cx);
                 }
             }
 
@@ -553,11 +532,11 @@ where
         let mut end = self.position.clone();
         if bias == Bias::Left {
             if let Some(summary) = self.item_summary() {
-                end.add_summary(summary, cx);
+                end.add_summary(summary, self.cx);
             }
         }
 
-        target.cmp(&end, cx) == Ordering::Equal
+        target.cmp(&end, self.cx) == Ordering::Equal
     }
 }
 

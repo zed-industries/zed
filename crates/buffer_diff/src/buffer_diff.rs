@@ -343,8 +343,7 @@ impl BufferDiffInner {
             ..
         } in hunks.iter().cloned()
         {
-            let preceding_pending_hunks =
-                old_pending_hunks.slice(&buffer_range.start, Bias::Left, buffer);
+            let preceding_pending_hunks = old_pending_hunks.slice(&buffer_range.start, Bias::Left);
             pending_hunks.append(preceding_pending_hunks, buffer);
 
             // Skip all overlapping or adjacent old pending hunks
@@ -379,7 +378,7 @@ impl BufferDiffInner {
             );
         }
         // append the remainder
-        pending_hunks.append(old_pending_hunks.suffix(buffer), buffer);
+        pending_hunks.append(old_pending_hunks.suffix(), buffer);
 
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next();
@@ -397,8 +396,7 @@ impl BufferDiffInner {
         }) = pending_hunks_iter.next()
         {
             // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
-            let skipped_unstaged =
-                unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left, buffer);
+            let skipped_unstaged = unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left);
 
             if let Some(unstaged_hunk) = skipped_unstaged.last() {
                 prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
@@ -564,7 +562,7 @@ impl BufferDiffInner {
                     .cmp(&pending_hunks_cursor.start().buffer_range.start, buffer)
                     .is_gt()
                 {
-                    pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                    pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left);
                 }
 
                 if let Some(pending_hunk) = pending_hunks_cursor.item() {
@@ -590,7 +588,7 @@ impl BufferDiffInner {
                         .cmp(&secondary_cursor.start().buffer_range.start, buffer)
                         .is_gt()
                     {
-                        secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                        secondary_cursor.seek_forward(&start_anchor, Bias::Left);
                     }
 
                     if let Some(secondary_hunk) = secondary_cursor.item() {

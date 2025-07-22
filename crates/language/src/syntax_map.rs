@@ -313,7 +313,7 @@ impl SyntaxSnapshot {
                     position: edit_range.start,
                 };
                 if target.cmp(cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&target, Bias::Left, text);
+                    let slice = cursor.slice(&target, Bias::Left);
                     layers.append(slice, text);
                 }
             }
@@ -327,7 +327,6 @@ impl SyntaxSnapshot {
                         language: None,
                     },
                     Bias::Left,
-                    text,
                 );
                 layers.append(slice, text);
                 continue;
@@ -397,7 +396,7 @@ impl SyntaxSnapshot {
             cursor.next();
         }
 
-        layers.append(cursor.suffix(text), text);
+        layers.append(cursor.suffix(), text);
         drop(cursor);
         self.layers = layers;
     }
@@ -522,7 +521,7 @@ impl SyntaxSnapshot {
                     change: changed_regions.start_position(),
                 };
                 if bounded_position.cmp(cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&bounded_position, Bias::Left, text);
+                    let slice = cursor.slice(&bounded_position, Bias::Left);
                     if !slice.is_empty() {
                         layers.append(slice, text);
                         if changed_regions.prune(cursor.end(), text) {

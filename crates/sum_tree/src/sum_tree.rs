@@ -680,7 +680,7 @@ impl<T: KeyedItem> SumTree<T> {
         let mut replaced = None;
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
-            let mut new_tree = cursor.slice(&item.key(), Bias::Left, cx);
+            let mut new_tree = cursor.slice(&item.key(), Bias::Left);
             if let Some(cursor_item) = cursor.item() {
                 if cursor_item.key() == item.key() {
                     replaced = Some(cursor_item.clone());
@@ -688,7 +688,7 @@ impl<T: KeyedItem> SumTree<T> {
                 }
             }
             new_tree.push(item, cx);
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
         replaced
@@ -698,14 +698,14 @@ impl<T: KeyedItem> SumTree<T> {
         let mut removed = None;
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
-            let mut new_tree = cursor.slice(key, Bias::Left, cx);
+            let mut new_tree = cursor.slice(key, Bias::Left);
             if let Some(item) = cursor.item() {
                 if item.key() == *key {
                     removed = Some(item.clone());
                     cursor.next();
                 }
             }
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
         removed
@@ -728,7 +728,7 @@ impl<T: KeyedItem> SumTree<T> {
             let mut new_tree = SumTree::new(cx);
             let mut buffered_items = Vec::new();
 
-            cursor.seek(&T::Key::zero(cx), Bias::Left, cx);
+            cursor.seek(&T::Key::zero(cx), Bias::Left);
             for edit in edits {
                 let new_key = edit.key();
                 let mut old_item = cursor.item();
@@ -738,7 +738,7 @@ impl<T: KeyedItem> SumTree<T> {
                     .map_or(false, |old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
-                    let slice = cursor.slice(&new_key, Bias::Left, cx);
+                    let slice = cursor.slice(&new_key, Bias::Left);
                     new_tree.append(slice, cx);
                     old_item = cursor.item();
                 }
@@ -759,7 +759,7 @@ impl<T: KeyedItem> SumTree<T> {
             }
 
             new_tree.extend(buffered_items, cx);
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
 
@@ -772,7 +772,7 @@ impl<T: KeyedItem> SumTree<T> {
         cx: &'a <T::Summary as Summary>::Context,
     ) -> Option<&'a T> {
         let mut cursor = self.cursor::<T::Key>(cx);
-        if cursor.seek(key, Bias::Left, cx) {
+        if cursor.seek(key, Bias::Left) {
             cursor.item()
         } else {
             None

@@ -43,7 +43,7 @@ impl Rope {
                 let mut chunks = rope.chunks.cursor::<()>(&());
                 chunks.next();
                 chunks.next();
-                self.chunks.append(chunks.suffix(&()), &());
+                self.chunks.append(chunks.suffix(), &());
                 self.check_invariants();
                 return;
             }
@@ -283,7 +283,7 @@ impl Rope {
             return self.summary().len_utf16;
         }
         let mut cursor = self.chunks.cursor::<(usize, OffsetUtf16)>(&());
-        cursor.seek(&offset, Bias::Left, &());
+        cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(Default::default(), |chunk| {
@@ -296,7 +296,7 @@ impl Rope {
             return self.summary().len;
         }
         let mut cursor = self.chunks.cursor::<(OffsetUtf16, usize)>(&());
-        cursor.seek(&offset, Bias::Left, &());
+        cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(Default::default(), |chunk| {
@@ -309,7 +309,7 @@ impl Rope {
             return self.summary().lines;
         }
         let mut cursor = self.chunks.cursor::<(usize, Point)>(&());
-        cursor.seek(&offset, Bias::Left, &());
+        cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(Point::zero(), |chunk| {
@@ -322,7 +322,7 @@ impl Rope {
             return self.summary().lines_utf16();
         }
         let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>(&());
-        cursor.seek(&offset, Bias::Left, &());
+        cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(PointUtf16::zero(), |chunk| {
@@ -335,7 +335,7 @@ impl Rope {
             return self.summary().lines_utf16();
         }
         let mut cursor = self.chunks.cursor::<(Point, PointUtf16)>(&());
-        cursor.seek(&point, Bias::Left, &());
+        cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(PointUtf16::zero(), |chunk| {
@@ -348,7 +348,7 @@ impl Rope {
             return self.summary().len;
         }
         let mut cursor = self.chunks.cursor::<(Point, usize)>(&());
-        cursor.seek(&point, Bias::Left, &());
+        cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
             + cursor
@@ -369,7 +369,7 @@ impl Rope {
             return self.summary().len;
         }
         let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>(&());
-        cursor.seek(&point, Bias::Left, &());
+        cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
             + cursor.item().map_or(0, |chunk| {
@@ -382,7 +382,7 @@ impl Rope {
             return self.summary().lines;
         }
         let mut cursor = self.chunks.cursor::<(PointUtf16, Point)>(&());
-        cursor.seek(&point.0, Bias::Left, &());
+        cursor.seek(&point.0, Bias::Left);
         let overshoot = Unclipped(point.0 - cursor.start().0);
         cursor.start().1
             + cursor.item().map_or(Point::zero(), |chunk| {
@@ -392,7 +392,7 @@ impl Rope {
 
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize>(&());
-        cursor.seek(&offset, Bias::Left, &());
+        cursor.seek(&offset, Bias::Left);
         if let Some(chunk) = cursor.item() {
             let mut ix = offset - cursor.start();
             while !chunk.text.is_char_boundary(ix) {
@@ -415,7 +415,7 @@ impl Rope {
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
         let mut cursor = self.chunks.cursor::<OffsetUtf16>(&());
-        cursor.seek(&offset, Bias::Right, &());
+        cursor.seek(&offset, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = offset - cursor.start();
             *cursor.start() + chunk.as_slice().clip_offset_utf16(overshoot, bias)
@@ -426,7 +426,7 @@ impl Rope {
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let mut cursor = self.chunks.cursor::<Point>(&());
-        cursor.seek(&point, Bias::Right, &());
+        cursor.seek(&point, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = point - cursor.start();
             *cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
@@ -437,7 +437,7 @@ impl Rope {
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         let mut cursor = self.chunks.cursor::<PointUtf16>(&());
-        cursor.seek(&point.0, Bias::Right, &());
+        cursor.seek(&point.0, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = Unclipped(point.0 - cursor.start());
             *cursor.start() + chunk.as_slice().clip_point_utf16(overshoot, bias)
@@ -510,7 +510,7 @@ pub struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     pub fn new(rope: &'a Rope, offset: usize) -> Self {
         let mut chunks = rope.chunks.cursor(&());
-        chunks.seek(&offset, Bias::Right, &());
+        chunks.seek(&offset, Bias::Right);
         Self {
             rope,
             chunks,
@@ -521,7 +521,7 @@ impl<'a> Cursor<'a> {
     pub fn seek_forward(&mut self, end_offset: usize) {
         debug_assert!(end_offset >= self.offset);
 
-        self.chunks.seek_forward(&end_offset, Bias::Right, &());
+        self.chunks.seek_forward(&end_offset, Bias::Right);
         self.offset = end_offset;
     }
 
@@ -543,7 +543,7 @@ impl<'a> Cursor<'a> {
         if end_offset > self.chunks.end() {
             self.chunks.next();
             slice.append(Rope {
-                chunks: self.chunks.slice(&end_offset, Bias::Right, &()),
+                chunks: self.chunks.slice(&end_offset, Bias::Right),
             });
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
@@ -567,7 +567,7 @@ impl<'a> Cursor<'a> {
 
         if end_offset > self.chunks.end() {
             self.chunks.next();
-            summary.add_assign(&self.chunks.summary(&end_offset, Bias::Right, &()));
+            summary.add_assign(&self.chunks.summary(&end_offset, Bias::Right));
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
                 summary.add_assign(&D::from_chunk(end_chunk.slice(0..end_ix)));
@@ -599,10 +599,10 @@ impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor(&());
         let offset = if reversed {
-            chunks.seek(&range.end, Bias::Left, &());
+            chunks.seek(&range.end, Bias::Left);
             range.end
         } else {
-            chunks.seek(&range.start, Bias::Right, &());
+            chunks.seek(&range.start, Bias::Right);
             range.start
         };
         Self {
@@ -639,9 +639,9 @@ impl<'a> Chunks<'a> {
         };
 
         if offset >= self.chunks.end() {
-            self.chunks.seek_forward(&offset, bias, &());
+            self.chunks.seek_forward(&offset, bias);
         } else {
-            self.chunks.seek(&offset, bias, &());
+            self.chunks.seek(&offset, bias);
         }
 
         self.offset = offset;
@@ -688,7 +688,7 @@ impl<'a> Chunks<'a> {
 
         if self.offset > self.range.end {
             self.offset = cmp::min(self.offset, self.range.end);
-            self.chunks.seek(&self.offset, Bias::Right, &());
+            self.chunks.seek(&self.offset, Bias::Right);
         }
 
         found
@@ -742,7 +742,7 @@ impl<'a> Chunks<'a> {
 
         if !self.offset_is_valid() || self.chunks.item().is_none() {
             self.offset = self.range.start;
-            self.chunks.seek(&self.offset, Bias::Right, &());
+            self.chunks.seek(&self.offset, Bias::Right);
         }
 
         self.offset < initial_offset && self.offset == 0
@@ -844,9 +844,9 @@ impl<'a> Bytes<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor(&());
         if reversed {
-            chunks.seek(&range.end, Bias::Left, &());
+            chunks.seek(&range.end, Bias::Left);
         } else {
-            chunks.seek(&range.start, Bias::Right, &());
+            chunks.seek(&range.start, Bias::Right);
         }
         Self {
             chunks,

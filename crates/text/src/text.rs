@@ -824,8 +824,7 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
-        let mut new_fragments =
-            old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right, &None);
+        let mut new_fragments = old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right);
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
@@ -850,7 +849,7 @@ impl Buffer {
                     old_fragments.next();
                 }
 
-                let slice = old_fragments.slice(&range.start, Bias::Right, &None);
+                let slice = old_fragments.slice(&range.start, Bias::Right);
                 new_ropes.append(slice.summary().text);
                 new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().visible;
@@ -954,7 +953,7 @@ impl Buffer {
             old_fragments.next();
         }
 
-        let suffix = old_fragments.suffix(&None);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
@@ -1041,11 +1040,8 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>(&cx);
-        let mut new_fragments = old_fragments.slice(
-            &VersionedFullOffset::Offset(ranges[0].start),
-            Bias::Left,
-            &cx,
-        );
+        let mut new_fragments =
+            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
@@ -1071,7 +1067,7 @@ impl Buffer {
                 }
 
                 let slice =
-                    old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left, &cx);
+                    old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left);
                 new_ropes.append(slice.summary().text);
                 new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().0.full_offset();
@@ -1201,7 +1197,7 @@ impl Buffer {
             old_fragments.next();
         }
 
-        let suffix = old_fragments.suffix(&cx);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
@@ -1250,7 +1246,6 @@ impl Buffer {
                         split_offset: insertion_slice.range.start,
                     },
                     Bias::Left,
-                    &(),
                 );
             }
             while let Some(item) = insertions_cursor.item() {
@@ -1277,7 +1272,7 @@ impl Buffer {
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
         for fragment_id in self.fragment_ids_for_edits(undo.counts.keys()) {
-            let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left, &None);
+            let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left);
             new_ropes.append(preceding_fragments.summary().text);
             new_fragments.append(preceding_fragments, &None);
 
@@ -1308,7 +1303,7 @@ impl Buffer {
             }
         }
 
-        let suffix = old_fragments.suffix(&None);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
 
@@ -1521,7 +1516,7 @@ impl Buffer {
             .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
             .filter_map(move |fragment_id| {
-                cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
+                cursor.seek_forward(&Some(fragment_id), Bias::Left);
                 let fragment = cursor.item()?;
                 let start_offset = cursor.start().1;
                 let end_offset = start_offset + if fragment.visible { fragment.len } else { 0 };
@@ -2202,7 +2197,7 @@ impl BufferSnapshot {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
             };
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2218,7 +2213,7 @@ impl BufferSnapshot {
             let insertion = insertion_cursor.item().expect("invalid insertion");
             assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
-            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
+            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
@@ -2249,7 +2244,7 @@ impl BufferSnapshot {
                 split_offset: anchor.offset,
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2274,7 +2269,7 @@ impl BufferSnapshot {
             };
 
             let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
-            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
+            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
@@ -2295,7 +2290,7 @@ impl BufferSnapshot {
                 split_offset: anchor.offset,
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2345,7 +2340,7 @@ impl BufferSnapshot {
             Anchor::MAX
         } else {
             let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
-            fragment_cursor.seek(&offset, bias, &None);
+            fragment_cursor.seek(&offset, bias);
             let fragment = fragment_cursor.item().unwrap();
             let overshoot = offset - *fragment_cursor.start();
             Anchor {
@@ -2433,7 +2428,7 @@ impl BufferSnapshot {
             .cursor::<(Option<&Locator>, FragmentTextSummary)>(&None);
 
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
-        cursor.seek(&Some(start_fragment_id), Bias::Left, &None);
+        cursor.seek(&Some(start_fragment_id), Bias::Left);
         let mut visible_start = cursor.start().1.visible;
         let mut deleted_start = cursor.start().1.deleted;
         if let Some(fragment) = cursor.item() {
