@@ -32,6 +32,7 @@ use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::{Client, DisableAiSettings};
+use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, actions};
@@ -43,6 +44,7 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use std::any::TypeId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -52,6 +54,7 @@ use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub use ui::preview::{all_agent_previews, get_agent_preview};
+use zed_actions;
 
 actions!(
     agent,
@@ -241,6 +244,69 @@ pub fn init(
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
+
+    // Update command palette filter based on AI settings
+    update_command_palette_filter(cx);
+
+    // Watch for settings changes
+    cx.observe_global::<SettingsStore>(|cx| {
+        update_command_palette_filter(cx);
+    })
+    .detach();
+}
+
+fn update_command_palette_filter(cx: &mut App) {
+    let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        if disable_ai {
+            // Hide agent/assistant namespaces
+            filter.hide_namespace("agent");
+            filter.hide_namespace("assistant");
+            filter.hide_namespace("zed_predict_onboarding");
+
+            // Hide edit prediction actions
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.hide_action_types(&edit_prediction_actions);
+
+            // Hide other AI-related actions
+            filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+        } else {
+            // Show agent/assistant namespaces
+            filter.show_namespace("agent");
+            filter.show_namespace("assistant");
+            filter.show_namespace("zed_predict_onboarding");
+
+            // Show edit prediction actions
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.show_action_types(edit_prediction_actions.iter());
+
+            // Show other AI-related actions
+            filter
+                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+        }
+    });
 }
 
 fn init_language_model_settings(cx: &mut App) {
