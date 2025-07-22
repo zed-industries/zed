@@ -82,11 +82,7 @@ impl TabHandles {
             ix.saturating_sub(1)
         };
 
-        if let Some(prev_handle) = group_handles.get(prev_ix) {
-            Some(prev_handle.clone())
-        } else {
-            None
-        }
+        group_handles.get(prev_ix).cloned()
     }
 }
 
