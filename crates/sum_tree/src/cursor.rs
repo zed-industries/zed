@@ -605,10 +605,8 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T, S, D> Iterator for Cursor<'a, T, D>
+impl<'a, T: Item, D> Iterator for Cursor<'a, T, D>
 where
-    T: Item<Summary = S>,
-    S: Summary<Context = ()>,
     D: Dimension<'a, T::Summary>,
 {
     type Item = &'a T;
@@ -632,7 +630,7 @@ pub struct FilterCursor<'a, F, T: Item, D> {
     filter_node: F,
 }
 
-impl<'a, F, T, D> FilterCursor<'a, F, T, D>
+impl<'a, F, T: Item, D> FilterCursor<'a, F, T, D>
 where
     F: FnMut(&T::Summary) -> bool,
     T: Item,
@@ -675,11 +673,9 @@ where
     }
 }
 
-impl<'a, F, T, S, U> Iterator for FilterCursor<'a, F, T, U>
+impl<'a, F, T: Item, U> Iterator for FilterCursor<'a, F, T, U>
 where
     F: FnMut(&T::Summary) -> bool,
-    T: Item<Summary = S>,
-    S: Summary<Context = ()>, //Context for the summary must be unit type, as .next() doesn't take arguments
     U: Dimension<'a, T::Summary>,
 {
     type Item = &'a T;
