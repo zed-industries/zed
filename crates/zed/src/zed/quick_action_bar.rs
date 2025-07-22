@@ -33,6 +33,7 @@ const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    _ai_settings_subscription: Subscription,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
@@ -47,8 +48,29 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Set up AI settings subscription
+        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
+        let mut was_agent_button = AgentSettings::get_global(cx).button;
+
+        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
+            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let agent_settings = AgentSettings::get_global(cx);
+
+            if was_ai_disabled != is_ai_disabled
+                || was_agent_enabled != agent_settings.enabled
+                || was_agent_button != agent_settings.button
+            {
+                was_ai_disabled = is_ai_disabled;
+                was_agent_enabled = agent_settings.enabled;
+                was_agent_button = agent_settings.button;
+                cx.notify();
+            }
+        });
+
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
+            _ai_settings_subscription: ai_settings_subscription,
             active_item: None,
             buffer_search_bar,
             show: true,

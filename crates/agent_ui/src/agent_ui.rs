@@ -207,9 +207,6 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    if DisableAiSettings::get_global(cx).disable_ai {
-        return;
-    }
     SlashCommandSettings::register(cx);
 
     assistant_context::init(client.clone(), cx);
