@@ -73,6 +73,8 @@ extend-ignore-re = [
     # Stripped version of reserved keyword `type`
     "typ",
     # AMD GPU Services
-    "ags"
+    "ags",
+    # AMD GPU Services
+    "AGS"
 ]
 check-filename = true
