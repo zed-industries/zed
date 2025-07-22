@@ -179,7 +179,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    fn present(&self) -> Result<()> {
+    fn present(&mut self) -> Result<()> {
         unsafe {
             self.devices.device_context.ResolveSubresource(
                 &*self.resources.render_target,
@@ -191,8 +191,23 @@ impl DirectXRenderer {
             self.devices
                 .device_context
                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
-            self.resources.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
+            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
+            // Presenting the swap chain can fail if the DirectX device was removed or reset.
+            if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
+                let reason = self.devices.device.GetDeviceRemovedReason();
+                log::error!(
+                    "DirectX device removed or reset when drawing. Reason: {:?}",
+                    reason
+                );
+                self.handle_device_lost()?;
+            } else {
+                result.ok()?;
+            }
         }
+        Ok(())
+    }
+
+    fn handle_device_lost(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -237,13 +252,33 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.resources.render_target);
             drop(self.resources.render_target_view[0].take().unwrap());
 
-            self.resources.swap_chain.ResizeBuffers(
+            let result = self.resources.swap_chain.ResizeBuffers(
                 BUFFER_COUNT as u32,
                 width,
                 height,
                 RENDER_TARGET_FORMAT,
                 DXGI_SWAP_CHAIN_FLAG(0),
-            )?;
+            );
+            // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
+            // The app might have moved to a monitor that's attached to a different graphics device.
+            // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    if e.code() == DXGI_ERROR_DEVICE_REMOVED || e.code() == DXGI_ERROR_DEVICE_RESET
+                    {
+                        let reason = self.devices.device.GetDeviceRemovedReason();
+                        log::error!(
+                            "DirectX device removed or reset when resizing. Reason: {:?}",
+                            reason
+                        );
+                        self.handle_device_lost()?;
+                        return Ok(());
+                    }
+                    log::error!("Failed to resize swap chain: {:?}", e);
+                    return Err(e.into());
+                }
+            }
 
             self.resources
                 .recreate_resources(&self.devices, width, height)?;
