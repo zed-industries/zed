@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use gpui::{Action, ClickEvent, Entity, IntoElement, ParentElement};
+use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
-use ui::{Divider, List, prelude::*};
-use zed_actions::agent::{OpenConfiguration, ToggleModelSelector};
+use ui::prelude::*;
 
-use crate::{AgentPanelOnboardingCard, BulletItem, ZedAiOnboarding};
+use crate::{AgentPanelOnboardingCard, ApiKeysWithoutProviders, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
@@ -53,84 +52,6 @@ impl AgentPanelOnboarding {
             .map(|provider| (provider.icon(), provider.name().0.clone()))
             .collect()
     }
-
-    fn configure_providers(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
-        cx.notify();
-    }
-
-    fn render_api_keys_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_existing_providers = self.configured_providers.len() > 0;
-        let configure_provider_label = if has_existing_providers {
-            "Configure Other Provider"
-        } else {
-            "Configure Providers"
-        };
-
-        let configured_providers = h_flex().pl_6().gap_2().flex_wrap().children(
-            self.configured_providers
-                .iter()
-                .cloned()
-                .map(|(icon, name)| {
-                    h_flex()
-                        .gap_1p5()
-                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                        .child(Label::new(name))
-                }),
-        );
-
-        let content = List::new()
-            .map(|this| {
-                if has_existing_providers {
-                    this.child(BulletItem::new(
-                        "Or start now using API keys from your environment for the following providers:",
-                    ))
-                    .child(configured_providers)
-                } else {
-                    this.child(BulletItem::new(
-                        "You can also use AI in Zed by bringing your own API keys",
-                    ))
-                }
-            })
-            .child(BulletItem::new(
-                "No need for any of the plans or even to sign in",
-            ))
-            .child(BulletItem::new(
-                "Add more LLM providers at any time via the panel settings",
-            ));
-
-        v_flex()
-            .mt_2()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Label::new("API Keys")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .child(Divider::horizontal()),
-            )
-            .child(content)
-            .when(has_existing_providers, |this| {
-                this.child(
-                    Button::new("pick-model", "Choose Model")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .on_click(|_event, window, cx| {
-                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
-                        }),
-                )
-            })
-            .child(
-                Button::new("configure-providers", configure_provider_label)
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click(cx.listener(Self::configure_providers)),
-            )
-    }
 }
 
 impl Render for AgentPanelOnboarding {
@@ -141,17 +62,23 @@ impl Render for AgentPanelOnboarding {
         );
 
         AgentPanelOnboardingCard::new()
-            .child(ZedAiOnboarding::new(
-                self.client.clone(),
-                &self.user_store,
-                self.continue_with_zed_ai.clone(),
-                cx,
-            ))
+            .child(
+                ZedAiOnboarding::new(
+                    self.client.clone(),
+                    &self.user_store,
+                    self.continue_with_zed_ai.clone(),
+                    cx,
+                )
+                .with_dismiss({
+                    let callback = self.continue_with_zed_ai.clone();
+                    move |window, cx| callback(window, cx)
+                }),
+            )
             .map(|this| {
-                if enrolled_in_trial {
+                if enrolled_in_trial || self.configured_providers.len() >= 1 {
                     this
                 } else {
-                    this.child(self.render_api_keys_section(cx))
+                    this.child(ApiKeysWithoutProviders::new())
                 }
             })
     }
