@@ -50,6 +50,9 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use client::DisableAiSettings;
+use settings::SettingsStore;
+
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
@@ -2153,6 +2156,16 @@ impl Editor {
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
                         cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                        // Observe AI settings changes to cancel inline completions when AI is disabled
+                        cx.observe_global::<SettingsStore>(move |editor, cx| {
+                            if DisableAiSettings::get_global(cx).disable_ai &&
+                               editor.has_active_inline_completion() {
+                                // Cancel any active inline completion when AI is disabled
+                                editor.update_in(window, |editor, window, cx| {
+                                    editor.cancel(&Default::default(), window, cx);
+                                }).ok();
+                            }
+                        }),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
@@ -2846,12 +2859,46 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn toggle_edit_predictions(
+    pub fn toggle_edit_prediction(
         &mut self,
         _: &ToggleEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't toggle edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+        // Don't toggle edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        if self.show_inline_completions_override.is_some() {
+        // Don't toggle edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        // Don't toggle edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        // Don't toggle if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
+        // Don't toggle if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+        // Don't toggle if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
+        let language_settings = all_language_settings(None, cx);
         if self.show_inline_completions_override.is_some() {
             self.set_show_edit_predictions(None, window, cx);
         } else {
@@ -7140,6 +7187,26 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't show inline completions if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+        // Don't show inline completions if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        if !self.has_active_inline_completion() {
+
+        // Don't show inline completions if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        // Don't show inline completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
@@ -7171,12 +7238,42 @@ impl Editor {
         .detach();
     }
 
-    pub fn next_edit_prediction(
+    pub fn accept_edit_prediction(
         &mut self,
-        _: &NextEditPrediction,
+        _: &AcceptEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't accept edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        // Don't accept edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        if self.show_edit_predictions_in_menu() {
+        // Don't accept edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        // Don't navigate to next edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
+        // Don't navigate to next edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        // Don't cycle through completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         if self.has_active_inline_completion() {
             self.cycle_inline_completion(Direction::Next, window, cx);
         } else {
@@ -7195,6 +7292,27 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't navigate to previous edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+        // Don't navigate to previous edit prediction if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        if self.has_active_inline_completion() {
+
+
+        // Don't navigate to previous edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        // Don't cycle through completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         if self.has_active_inline_completion() {
             self.cycle_inline_completion(Direction::Prev, window, cx);
         } else {
@@ -7209,10 +7327,23 @@ impl Editor {
 
     pub fn accept_edit_prediction(
         &mut self,
-        _: &AcceptEditPrediction,
+        modifiers: &AcceptEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't accept edit prediction if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+        // Don't accept completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+        // Don't accept completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         if self.show_edit_predictions_in_menu() {
             self.hide_context_menu(window, cx);
         }
@@ -7316,6 +7447,29 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't accept partial inline completion if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+        // Don't accept partial inline completion if AI is disabled
+        if self.is_ai_disabled(cx) {
+            return;
+        }
+
+        let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
+            return;
+        };
+
+
+        // Don't accept partial completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+        // Don't accept partial completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
         };
@@ -7436,8 +7590,127 @@ impl Editor {
         );
     }
 
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn are_edit_predictions_disabled(&self, cx: &App) -> bool {
+        client::DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion when AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.are_edit_predictions_disabled(cx) && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn are_edit_predictions_disabled(&self, cx: &App) -> bool {
+        client::DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion when AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.are_edit_predictions_disabled(cx) && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+
     pub fn has_active_inline_completion(&self) -> bool {
         self.active_inline_completion.is_some()
+    }
+
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn is_ai_disabled(&self, cx: &App) -> bool {
+        DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion if AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_ai_disabled(cx) && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+    /// Checks if AI features are disabled by the global setting
+    pub fn is_ai_disabled(&self, cx: &App) -> bool {
+        DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion if AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if DisableAiSettings::get_global(cx).disable_ai && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn are_edit_predictions_disabled(&self, cx: &App) -> bool {
+        DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion when AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.are_edit_predictions_disabled(cx) && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn are_edit_predictions_disabled(&self, cx: &App) -> bool {
+        client::DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion when AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Don't show inline completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
+        if !self.has_active_inline_completion() {
+        {
+            self.cancel(&Default::default(), window, cx);
+        }
+    }
+
+
+
+    /// Checks if edit predictions are disabled due to global AI settings
+    pub fn are_edit_predictions_disabled(&self, cx: &App) -> bool {
+        DisableAiSettings::get_global(cx).disable_ai
+    }
+
+    /// Cancels any active inline completion if AI is disabled
+    pub fn cancel_inline_completion_if_ai_disabled(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if DisableAiSettings::get_global(cx).disable_ai && self.has_active_inline_completion() {
+            self.cancel(&Default::default(), window, cx);
+        }
     }
 
     fn take_active_inline_completion(&mut self, cx: &mut Context<Self>) -> bool {
@@ -7476,6 +7749,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Don't accept completions if AI is disabled
+        if self.are_edit_predictions_disabled(cx) {
+            return;
+        }
+
         if self.show_edit_predictions_in_menu() {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
