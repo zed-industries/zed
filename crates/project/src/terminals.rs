@@ -662,7 +662,7 @@ pub fn wrap_for_ssh(
 
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
-            format!("cd {path}; {env_changes} {to_run}")
+            format!("cd \"{path}\"; {env_changes} {to_run}")
         }
     } else {
         format!("cd; {env_changes} {to_run}")

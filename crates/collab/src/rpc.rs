@@ -4167,6 +4167,13 @@ async fn accept_terms_of_service(
     response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
+
+    // When the user accepts the terms of service, we want to refresh their LLM
+    // token to grant access.
+    session
+        .peer
+        .send(session.connection_id, proto::RefreshLlmToken {})?;
+
     Ok(())
 }
 

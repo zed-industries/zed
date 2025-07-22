@@ -150,7 +150,9 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "libc",
  "log",
+ "nix 0.29.0",
  "paths",
  "project",
  "schemars",
@@ -162,6 +164,7 @@ dependencies = [
  "tempfile",
  "ui",
  "util",
+ "uuid",
  "watch",
  "which 6.0.3",
  "workspace-hack",
@@ -279,9 +282,9 @@ dependencies = [
 
 [[package]]
 name = "agentic-coding-protocol"
-version = "0.0.9"
+version = "0.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e276b798eddd02562a339340a96919d90bbfcf78de118fdddc932524646fac7"
+checksum = "a3e6ae951b36fa2f8d9dd6e1af6da2fcaba13d7c866cf6a9e65deda9dc6c5fe4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7396,9 +7399,9 @@ dependencies = [
 
 [[package]]
 name = "grid"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d196ffc1627db18a531359249b2bf8416178d84b729f3cebeb278f285fb9b58c"
+checksum = "be136d9dacc2a13cc70bb6c8f902b414fb2641f8db1314637c6b7933411a8f82"
 
 [[package]]
 name = "group"
@@ -9165,7 +9168,6 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -10980,6 +10982,23 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
+name = "onboarding"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette_hooks",
+ "db",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -14185,7 +14204,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=270538dc780f5240723233ff901e1054641ed318#270538dc780f5240723233ff901e1054641ed318"
+source = "git+https://github.com/zed-industries/scap?rev=808aa5c45b41e8f44729d02e38fd00a2fe2722e7#808aa5c45b41e8f44729d02e38fd00a2fe2722e7"
 dependencies = [
  "anyhow",
  "cocoa 0.25.0",
@@ -14768,6 +14787,7 @@ dependencies = [
  "serde_json",
  "settings",
  "telemetry",
+ "tempfile",
  "theme",
  "tree-sitter-json",
  "tree-sitter-rust",
@@ -15935,9 +15955,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.4.4"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ec17858c2d465b2f734b798b920818a974faf0babb15d7fef81818a4b2d16f1"
+checksum = "e8b61630cba2afd2c851821add2e1bb1b7851a2436e839ab73b56558b009035e"
 dependencies = [
  "arrayvec",
  "grid",
@@ -16483,6 +16503,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "title_bar"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "auto_update",
  "call",
  "chrono",
@@ -18728,8 +18749,7 @@ dependencies = [
 [[package]]
 name = "windows-capture"
 version = "1.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59d10b4be8b907c7055bc7270dd68d2b920978ffacc1599dcb563a79f0e68d16"
+source = "git+https://github.com/zed-industries/windows-capture.git?rev=f0d6c1b6691db75461b732f6d5ff56eed002eeb9#f0d6c1b6691db75461b732f6d5ff56eed002eeb9"
 dependencies = [
  "clap",
  "ctrlc",
@@ -20222,6 +20242,7 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "onboarding",
  "outline",
  "outline_panel",
  "parking_lot",

@@ -56,7 +56,7 @@ pub trait LinuxClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -245,7 +245,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 
@@ -827,6 +827,13 @@ impl crate::Keystroke {
             Keysym::Tab => "tab".to_owned(),
             Keysym::Delete => "delete".to_owned(),
             Keysym::Escape => "escape".to_owned(),
+
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+            Keysym::Home => "home".to_owned(),
+            Keysym::End => "end".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
