@@ -1126,21 +1126,27 @@ impl AcpThreadView {
                 ))
                 .into_any(),
             ToolCallConfirmation::Execute {
-                command,
+                command: _,
                 root_command,
                 description,
             } => confirmation_container
-                .child(v_flex().px_2().pb_1p5().child(command.clone()).children(
-                    description.clone().map(|description| {
-                        self.render_markdown(description, default_markdown_style(false, window, cx))
+                .child(
+                    v_flex()
+                        .px_2()
+                        .pb_1p5()
+                        .children(description.clone().map(|description| {
+                            self.render_markdown(
+                                description,
+                                default_markdown_style(false, window, cx),
+                            )
                             .on_url_click({
                                 let workspace = self.workspace.clone();
                                 move |text, window, cx| {
                                     Self::open_link(text, &workspace, window, cx);
                                 }
                             })
-                    }),
-                ))
+                        })),
+                )
                 .children(content.map(|content| self.render_tool_call_content(content, window, cx)))
                 .child(self.render_confirmation_buttons(
                     &[AlwaysAllowOption {

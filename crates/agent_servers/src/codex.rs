@@ -68,7 +68,7 @@ pub struct PatchApprovalRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "codex_elicitation", rename_all = "snake_case")]
+#[serde(tag = "codex_elicitation", rename_all = "kebab-case")]
 pub enum CodexElicitation {
     ExecApproval(ExecApprovalRequest),
     PatchApproval(PatchApprovalRequest),
