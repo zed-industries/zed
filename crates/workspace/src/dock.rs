@@ -242,6 +242,7 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -371,6 +372,12 @@ impl Dock {
                     self.position.label()
                 )
             })
+    }
+
+    pub fn first_enabled_panel_idx_excluding(&self, exclude_name: &str, cx: &App) -> Option<usize> {
+        self.panel_entries.iter().position(|entry| {
+            entry.panel.persistent_name() != exclude_name && entry.panel.enabled(cx)
+        })
     }
 
     fn active_panel_entry(&self) -> Option<&PanelEntry> {
@@ -833,7 +840,11 @@ impl Render for Dock {
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-        Self { dock }
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+        Self {
+            dock,
+            _settings_subscription: settings_subscription,
+        }
     }
 }
 

@@ -158,17 +158,17 @@ impl DiagnosticSet {
         });
 
         if reversed {
-            cursor.prev(buffer);
+            cursor.prev();
         } else {
-            cursor.next(buffer);
+            cursor.next();
         }
         iter::from_fn({
             move || {
                 if let Some(diagnostic) = cursor.item() {
                     if reversed {
-                        cursor.prev(buffer);
+                        cursor.prev();
                     } else {
-                        cursor.next(buffer);
+                        cursor.next();
                     }
                     Some(diagnostic.resolve(buffer))
                 } else {

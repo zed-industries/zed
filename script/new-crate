@@ -39,7 +39,7 @@ CRATE_PATH="crates/$CRATE_NAME"
 mkdir -p "$CRATE_PATH/src"
 
 # Symlink the license
-ln -sf "../../../$LICENSE_FILE" "$CRATE_PATH/$LICENSE_FILE"
+ln -sf "../../$LICENSE_FILE" "$CRATE_PATH/$LICENSE_FILE"
 
 CARGO_TOML_TEMPLATE=$(cat << 'EOF'
 [package]
