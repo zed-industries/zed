@@ -1140,19 +1140,19 @@ impl RenderOnce for ZedAiConfiguration {
         let is_pro = self.plan == Some(proto::Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
             (Some(proto::Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Pro subscription."
+                "You have access to Zed's hosted models through your Pro subscription."
             }
             (Some(proto::Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Pro trial."
+                "You have access to Zed's hosted models through your Pro trial."
             }
             (Some(proto::Plan::Free), Some(_)) => {
-                "You have basic access to Zed's hosted LLMs through the Free plan."
+                "You have basic access to Zed's hosted models through the Free plan."
             }
             _ => {
                 if self.eligible_for_trial {
-                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
                 } else {
-                    "Subscribe for access to Zed's hosted LLMs."
+                    "Subscribe for access to Zed's hosted models."
                 }
             }
         };
@@ -1166,7 +1166,7 @@ impl RenderOnce for ZedAiConfiguration {
             Button::new("start_trial", "Start 14-day Free Pro Trial")
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .full_width()
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
                 .into_any_element()
         } else {
             Button::new("upgrade", "Upgrade to Pro")

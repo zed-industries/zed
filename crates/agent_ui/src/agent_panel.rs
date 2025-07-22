@@ -2300,7 +2300,20 @@ impl AgentPanel {
             return None;
         }
 
-        Some(div().size_full().child(self.onboarding.clone()))
+        let thread_view = matches!(&self.active_view, ActiveView::Thread { .. });
+        let text_thread_view = matches!(&self.active_view, ActiveView::TextThread { .. });
+
+        Some(
+            div()
+                .size_full()
+                .when(thread_view, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                })
+                .when(text_thread_view, |this| {
+                    this.bg(cx.theme().colors().editor_background)
+                })
+                .child(self.onboarding.clone()),
+        )
     }
 
     fn render_trial_end_upsell(
@@ -3237,7 +3250,20 @@ impl Render for AgentPanel {
                                 .into_any(),
                         )
                     })
-                    .child(h_flex().child(message_editor.clone()))
+                    .child(h_flex().relative().child(message_editor.clone()).when(
+                        !LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx),
+                        |this| {
+                            this.child(
+                                div()
+                                    .size_full()
+                                    .absolute()
+                                    .inset_0()
+                                    .bg(cx.theme().colors().panel_background)
+                                    .opacity(0.8)
+                                    .block_mouse_except_scroll(),
+                            )
+                        },
+                    ))
                     .child(self.render_drag_target(cx)),
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
                     .relative()
