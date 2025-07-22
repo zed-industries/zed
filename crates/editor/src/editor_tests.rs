@@ -9571,6 +9571,74 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.txt"), "foo".into()).await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
+    });
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\n", window, cx)
+    });
+    cx.run_until_parked();
+    save(&editor, &project, cx).await;
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+    save(&editor, &project, cx).await;
+    assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.redo(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    async fn save(editor: &Entity<Editor>, project: &Entity<Project>, cx: &mut VisualTestContext) {
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
+}
+
+#[gpui::test]
 async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22708,7 +22776,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         workspace::init_settings(cx);
         crate::init(cx);
     });
-
+    zlog::init_test();
     update_test_language_settings(cx, f);
 }
 

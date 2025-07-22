@@ -1274,15 +1274,11 @@ impl LocalLspStore {
                 // grouped with the previous transaction in the history
                 // based on the transaction group interval
                 buffer.finalize_last_transaction();
-                let transaction_id = buffer
+                buffer
                     .start_transaction()
                     .context("transaction already open")?;
-                let transaction = buffer
-                    .get_transaction(transaction_id)
-                    .expect("transaction started")
-                    .clone();
                 buffer.end_transaction(cx);
-                buffer.push_transaction(transaction, cx.background_executor().now());
+                let transaction_id = buffer.push_empty_transaction(cx.background_executor().now());
                 buffer.finalize_last_transaction();
                 anyhow::Ok(transaction_id)
             })??;
