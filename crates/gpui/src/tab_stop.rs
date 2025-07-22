@@ -35,7 +35,7 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    pub(crate) fn with_group<'a>(&'a self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
+    pub(crate) fn with_group(&self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
         if let Some(focused_id) = focused_id {
             if let Some(handle) = self.handles.iter().find(|h| &h.id == focused_id) {
                 return self
