@@ -795,3 +795,23 @@ where
         self.0.add_summary(summary, cx);
     }
 }
+
+struct End<D>(PhantomData<D>);
+
+impl<D> End<D> {
+    fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<'a, S: Summary, D: Dimension<'a, S>> SeekTarget<'a, S, D> for End<D> {
+    fn cmp(&self, _: &D, _: &S::Context) -> Ordering {
+        Ordering::Greater
+    }
+}
+
+impl<D> fmt::Debug for End<D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("End").finish()
+    }
+}
