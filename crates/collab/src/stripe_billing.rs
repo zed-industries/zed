@@ -30,7 +30,6 @@ pub struct StripeBilling {
 
 #[derive(Default)]
 struct StripeBillingState {
-    price_ids_by_meter_id: HashMap<String, StripePriceId>,
     prices_by_lookup_key: HashMap<String, StripePrice>,
 }
 
@@ -63,13 +62,7 @@ impl StripeBilling {
 
         for price in prices {
             if let Some(lookup_key) = price.lookup_key.clone() {
-                state.prices_by_lookup_key.insert(lookup_key, price.clone());
-            }
-
-            if let Some(recurring) = price.recurring {
-                if let Some(meter) = recurring.meter {
-                    state.price_ids_by_meter_id.insert(meter, price.id);
-                }
+                state.prices_by_lookup_key.insert(lookup_key, price);
             }
         }
 
