@@ -96,19 +96,14 @@ pub fn init(
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
 
-        // Check if AI features are disabled globally
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-
-        // Get filter after checking settings to avoid borrowing conflict
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
-            // Hide all Copilot actions when AI is disabled
             filter.hide_action_types(&copilot_action_types);
             filter.hide_action_types(&copilot_auth_action_types);
             filter.hide_action_types(&copilot_no_auth_action_types);
         } else {
-            // Normal filtering based on Copilot status
             match status {
                 Status::Disabled => {
                     filter.hide_action_types(&copilot_action_types);
@@ -129,15 +124,6 @@ pub fn init(
                     filter.show_action_types(copilot_no_auth_action_types.iter());
                 }
             }
-        }
-    })
-    .detach();
-
-    // Observe AI settings changes to update command palette filtering
-    cx.observe_global::<SettingsStore>(move |cx| {
-        // Directly update the global Copilot entity to trigger the filter update callback
-        if let Some(handle) = Copilot::global(cx) {
-            handle.update(cx, |_, _| {});
         }
     })
     .detach();

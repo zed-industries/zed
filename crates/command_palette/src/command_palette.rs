@@ -94,12 +94,6 @@ impl CommandPalette {
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
-        // Force a re-evaluation of the filter by checking settings state
-        // This ensures actions like edit predictions are properly hidden when AI is disabled
-        if let Some(filter) = filter {
-            let _ = filter; // Access the filter to ensure it's up to date
-        }
-
         let commands = window
             .available_actions(cx)
             .into_iter()
@@ -294,10 +288,6 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        // Ensure we're using the latest filter settings when updating matches
-        // This is particularly important for AI disabled state
-        let _ = CommandPaletteFilter::try_global(cx);
-
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
             query = alias.to_string();
