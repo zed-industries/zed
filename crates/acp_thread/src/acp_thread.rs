@@ -1,7 +1,7 @@
 mod connection;
 pub use connection::*;
 
-use agent_client_protocol::{self as acp};
+use agent_client_protocol as acp;
 use agentic_coding_protocol as acp_old;
 use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
@@ -16,16 +16,18 @@ use language::{
 };
 use markdown::Markdown;
 use project::{AgentLocation, Project};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Formatter;
+use std::rc::Rc;
 use std::{
     fmt::Display,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{App, IconName};
+use ui::App;
 use util::ResultExt;
 
 #[derive(Debug)]
@@ -146,13 +148,10 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn diff(&self) -> Option<&Diff> {
-        if let AgentThreadEntry::ToolCall(ToolCall {
-            content: Some(ToolCallContent::Diff { diff }),
-            ..
-        }) = self
-        {
-            Some(&diff)
+    // todo! return all diffs?
+    pub fn first_diff(&self) -> Option<&Diff> {
+        if let AgentThreadEntry::ToolCall(call) = self {
+            call.first_diff()
         } else {
             None
         }
@@ -172,8 +171,7 @@ pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
     pub kind: acp::ToolKind,
-    // todo! Should this be a vec?
-    pub content: Option<ToolCallContent>,
+    pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
 }
@@ -196,21 +194,30 @@ impl ToolCall {
                 )
             }),
             kind: tool_call.kind,
-            // todo! Do we assume there is either a coalesced content OR diff?
-            content: ToolCallContent::from_acp_contents(tool_call.content, language_registry, cx)
+            content: tool_call
+                .content
                 .into_iter()
-                .next(),
+                .map(|content| ToolCallContent::from_acp(content, language_registry.clone(), cx))
+                .collect(),
             locations: tool_call.locations,
             status,
         }
     }
+
+    pub fn first_diff(&self) -> Option<&Diff> {
+        self.content.iter().find_map(|content| match content {
+            ToolCallContent::ContentBlock { .. } => None,
+            ToolCallContent::Diff { diff } => Some(diff),
+        })
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
             self.label.read(cx).source(),
             self.status
         );
-        if let Some(content) = &self.content {
+        for content in &self.content {
             markdown.push_str(content.to_markdown(cx).as_str());
             markdown.push_str("\n\n");
         }
@@ -269,12 +276,12 @@ impl ContentBlock {
 
     pub fn new_combined(
         blocks: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: &Arc<LanguageRegistry>,
+        language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
         let mut this = Self::Empty;
         for block in blocks {
-            this.append(block, language_registry, cx);
+            this.append(block, &language_registry, cx);
         }
         this
     }
@@ -647,15 +654,7 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status:
-                        ToolCallStatus::Allowed {
-                            status: acp::ToolCallStatus::InProgress,
-                            ..
-                        },
-                    content: Some(ToolCallContent::Diff { .. }),
-                    ..
-                }) => return true,
+                AgentThreadEntry::ToolCall(call) if call.first_diff().is_some() => return true,
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
             }
         }
@@ -749,7 +748,25 @@ impl AcpThread {
         Ok(())
     }
 
+    fn tool_call(&mut self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+        // todo! use map
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, tool_call)| {
+                if let AgentThreadEntry::ToolCall(tool_call) = tool_call
+                    && &tool_call.id == id
+                {
+                    Some((index, tool_call))
+                } else {
+                    None
+                }
+            })
+    }
+
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
+        // todo! use map
         self.entries
             .iter_mut()
             .enumerate()
@@ -908,14 +925,8 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp_old::InitializeResponse>> {
-        self.request(acp_old::InitializeParams {
-            protocol_version: acp_old::ProtocolVersion::latest(),
-        })
-    }
-
     pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
-        self.request(acp_old::AuthenticateParams)
+        self.connection.authenticate()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1220,8 +1231,17 @@ impl OldAcpClientDelegate {
         let content = self
             .cx
             .update(|cx| {
-                self.thread
-                    .update(cx, |thread, cx| thread.read_text_file(request, true, cx))
+                self.thread.update(cx, |thread, cx| {
+                    thread.read_text_file(
+                        acp::ReadTextFileArguments {
+                            path: request.path,
+                            line: request.line,
+                            limit: request.limit,
+                        },
+                        true,
+                        cx,
+                    )
+                })
             })?
             .context("Failed to update thread")?
             .await?;
@@ -1238,8 +1258,13 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         cx.update(|cx| {
             self.thread
-                .update(cx, |thread, cx| {
-                    thread.push_assistant_chunk(params.chunk, cx)
+                .update(cx, |thread, cx| match params.chunk {
+                    acp_old::AssistantMessageChunk::Text { text } => {
+                        thread.push_assistant_chunk(text.into(), false, cx)
+                    }
+                    acp_old::AssistantMessageChunk::Thought { thought } => {
+                        thread.push_assistant_chunk(thought.into(), true, cx)
+                    }
                 })
                 .ok();
         })?;
@@ -1271,29 +1296,22 @@ impl acp_old::Client for OldAcpClientDelegate {
     ) -> Result<acp_old::PushToolCallResponse, acp_old::Error> {
         let cx = &mut self.cx.clone();
 
-        let new_id = acp::ToolCallId(
-            util::post_inc(self.next_tool_call_id.borrow_mut())
-                .to_string()
-                .into(),
-        );
+        let old_acp_id = *self.next_tool_call_id.borrow() + 1;
+        self.next_tool_call_id.replace(old_acp_id);
 
-        let new_tool_call = acp::ToolCall {
-            id: new_id,
-            label: request.label,
-            kind: acp_kind_from_icon(request.icon),
-            status: acp::ToolCallStatus::InProgress,
-            content: into_new_acp_content(request.content),
-            locations: request.locations.into_iter().map(into_new_acp_location).collect(),
-        };
+        cx.update(|cx| {
+            self.thread.update(cx, |thread, cx| {
+                thread.update_tool_call(
+                    into_new_tool_call(acp::ToolCallId(old_acp_id.to_string().into()), request),
+                    cx,
+                )
+            })
+        })?
+        .context("Failed to update thread")?;
 
-        let id = cx
-            .update(|cx| {
-                self.thread
-                    .update(cx, |thread, cx| thread.update_tool_call(request, cx))
-            })?
-            .context("Failed to update thread")?;
-
-        Ok(acp_old::PushToolCallResponse { id })
+        Ok(acp_old::PushToolCallResponse {
+            id: acp_old::ToolCallId(old_acp_id),
+        })
     }
 
     async fn update_tool_call(
@@ -1304,7 +1322,31 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         cx.update(|cx| {
             self.thread.update(cx, |thread, cx| {
-                thread.update_tool_call(request.tool_call_id, request.status, request.content, cx)
+                let languages = thread.project.read(cx).languages().clone();
+
+                if let Some((ix, tool_call)) = thread
+                    .tool_call_mut(&acp::ToolCallId(request.tool_call_id.0.to_string().into()))
+                {
+                    tool_call.status = ToolCallStatus::Allowed {
+                        status: into_new_tool_call_status(request.status),
+                    };
+                    tool_call.content = request
+                        .content
+                        .into_iter()
+                        .map(|content| {
+                            ToolCallContent::from_acp(
+                                into_new_tool_call_content(content),
+                                languages.clone(),
+                                cx,
+                            )
+                        })
+                        .collect();
+
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    anyhow::Ok(())
+                } else {
+                    anyhow::bail!("Tool call not found")
+                }
             })
         })?
         .context("Failed to update thread")??;
@@ -1316,8 +1358,18 @@ impl acp_old::Client for OldAcpClientDelegate {
         let cx = &mut self.cx.clone();
 
         cx.update(|cx| {
-            self.thread
-                .update(cx, |thread, cx| thread.update_plan(request, cx))
+            self.thread.update(cx, |thread, cx| {
+                thread.update_plan(
+                    acp::Plan {
+                        entries: request
+                            .entries
+                            .into_iter()
+                            .map(into_new_plan_entry)
+                            .collect(),
+                    },
+                    cx,
+                )
+            })
         })?
         .context("Failed to update thread")?;
 
@@ -1331,8 +1383,17 @@ impl acp_old::Client for OldAcpClientDelegate {
         let content = self
             .cx
             .update(|cx| {
-                self.thread
-                    .update(cx, |thread, cx| thread.read_text_file(request, false, cx))
+                self.thread.update(cx, |thread, cx| {
+                    thread.read_text_file(
+                        acp::ReadTextFileArguments {
+                            path: request.path,
+                            line: request.line,
+                            limit: request.limit,
+                        },
+                        false,
+                        cx,
+                    )
+                })
             })?
             .context("Failed to update thread")?
             .await?;
@@ -1346,7 +1407,13 @@ impl acp_old::Client for OldAcpClientDelegate {
         self.cx
             .update(|cx| {
                 self.thread.update(cx, |thread, cx| {
-                    thread.write_text_file(request.path, request.content, cx)
+                    thread.write_text_file(
+                        acp::WriteTextFileToolArguments {
+                            path: request.path,
+                            content: request.content,
+                        },
+                        cx,
+                    )
                 })
             })?
             .context("Failed to update thread")?
@@ -1356,16 +1423,106 @@ impl acp_old::Client for OldAcpClientDelegate {
     }
 }
 
-fn acp_icon_to_ui_icon(icon: acp_old::Icon) -> IconName {
+fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
+    acp::ToolCall {
+        id: id,
+        label: request.label,
+        kind: acp_kind_from_old_icon(request.icon),
+        status: acp::ToolCallStatus::InProgress,
+        content: request
+            .content
+            .into_iter()
+            .map(into_new_tool_call_content)
+            .collect(),
+        locations: request
+            .locations
+            .into_iter()
+            .map(into_new_tool_call_location)
+            .collect(),
+    }
+}
+
+fn acp_kind_from_old_icon(icon: acp_old::Icon) -> acp::ToolKind {
     match icon {
-        acp_old::Icon::FileSearch => IconName::ToolSearch,
-        acp_old::Icon::Folder => IconName::ToolFolder,
-        acp_old::Icon::Globe => IconName::ToolWeb,
-        acp_old::Icon::Hammer => IconName::ToolHammer,
-        acp_old::Icon::LightBulb => IconName::ToolBulb,
-        acp_old::Icon::Pencil => IconName::ToolPencil,
-        acp_old::Icon::Regex => IconName::ToolRegex,
-        acp_old::Icon::Terminal => IconName::ToolTerminal,
+        acp_old::Icon::FileSearch => acp::ToolKind::Search,
+        acp_old::Icon::Folder => acp::ToolKind::Search,
+        acp_old::Icon::Globe => acp::ToolKind::Search,
+        acp_old::Icon::Hammer => acp::ToolKind::Other,
+        acp_old::Icon::LightBulb => acp::ToolKind::Think,
+        acp_old::Icon::Pencil => acp::ToolKind::Edit,
+        acp_old::Icon::Regex => acp::ToolKind::Search,
+        acp_old::Icon::Terminal => acp::ToolKind::Execute,
+    }
+}
+
+fn into_new_tool_call_status(status: acp_old::ToolCallStatus) -> acp::ToolCallStatus {
+    match status {
+        acp_old::ToolCallStatus::Running => acp::ToolCallStatus::InProgress,
+        acp_old::ToolCallStatus::Finished => acp::ToolCallStatus::Completed,
+        acp_old::ToolCallStatus::Error => acp::ToolCallStatus::Failed,
+    }
+}
+
+fn into_new_tool_call_content(content: acp_old::ToolCallContent) -> acp::ToolCallContent {
+    match content {
+        acp_old::ToolCallContent::Markdown { markdown } => acp::ToolCallContent::ContentBlock {
+            content: acp::ContentBlock::Text(acp::TextContent {
+                annotations: None,
+                text: markdown,
+            }),
+        },
+        acp_old::ToolCallContent::Diff { diff } => acp::ToolCallContent::Diff {
+            diff: into_new_diff(diff),
+        },
+    }
+}
+
+fn into_new_diff(diff: acp_old::Diff) -> acp::Diff {
+    acp::Diff {
+        path: diff.path,
+        old_text: diff.old_text,
+        new_text: diff.new_text,
+    }
+}
+
+fn into_new_tool_call_location(location: acp_old::ToolCallLocation) -> acp::ToolCallLocation {
+    acp::ToolCallLocation {
+        path: location.path,
+        line: location.line,
+    }
+}
+
+fn into_new_plan(request: acp_old::UpdatePlanParams) -> acp::Plan {
+    acp::Plan {
+        entries: request
+            .entries
+            .into_iter()
+            .map(into_new_plan_entry)
+            .collect(),
+    }
+}
+
+fn into_new_plan_entry(entry: acp_old::PlanEntry) -> acp::PlanEntry {
+    acp::PlanEntry {
+        content: entry.content,
+        priority: into_new_plan_priority(entry.priority),
+        status: into_new_plan_status(entry.status),
+    }
+}
+
+fn into_new_plan_priority(priority: acp_old::PlanEntryPriority) -> acp::PlanEntryPriority {
+    match priority {
+        acp_old::PlanEntryPriority::Low => acp::PlanEntryPriority::Low,
+        acp_old::PlanEntryPriority::Medium => acp::PlanEntryPriority::Medium,
+        acp_old::PlanEntryPriority::High => acp::PlanEntryPriority::High,
+    }
+}
+
+fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatus {
+    match status {
+        acp_old::PlanEntryStatus::Pending => acp::PlanEntryStatus::Pending,
+        acp_old::PlanEntryStatus::InProgress => acp::PlanEntryStatus::InProgress,
+        acp_old::PlanEntryStatus::Completed => acp::PlanEntryStatus::Completed,
     }
 }
 
@@ -1678,7 +1835,14 @@ mod tests {
                     Ok(())
                 }
             });
-            AcpThread::new(connection, "Test".into(), Some(io_task), project, cx)
+            AcpThread::new(
+                connection,
+                "Test".into(),
+                Some(io_task),
+                project,
+                acp::SessionId("test".into()),
+                cx,
+            )
         });
         let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
         (thread, agent)

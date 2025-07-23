@@ -646,7 +646,7 @@ impl AcpThreadView {
 
     fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        entry.diff().map(|diff| diff.multibuffer.clone())
+        entry.first_diff().map(|diff| diff.multibuffer.clone())
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -1506,7 +1506,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .last()
-                    .and_then(|entry| entry.diff())
+                    .and_then(|entry| entry.first_diff())
                     .is_some()
                 {
                     self.update_reviewing_editors(workspace, window, cx);
@@ -1517,7 +1517,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .get(*ix)
-                    .and_then(|entry| entry.diff())
+                    .and_then(|entry| entry.first_diff())
                     .is_some()
                 {
                     self.update_reviewing_editors(workspace, window, cx);
