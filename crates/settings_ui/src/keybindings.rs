@@ -67,6 +67,8 @@ actions!(
         ToggleKeystrokeSearch,
         /// Toggles exact matching for keystroke search
         ToggleExactKeystrokeMatching,
+        /// Shows matching keystrokes for the currently selected binding
+        ShowMatchingKeybinds
     ]
 );
 
@@ -481,24 +483,6 @@ impl KeymapEditor {
         }
     }
 
-    fn filter_on_selected_binding_keystrokes(&mut self, cx: &mut Context<Self>) {
-        let Some(selected_binding) = self.selected_binding() else {
-            return;
-        };
-
-        let keystrokes = selected_binding
-            .keystrokes()
-            .map(Vec::from)
-            .unwrap_or_default();
-
-        self.filter_state = FilterState::All;
-        self.search_mode = SearchMode::KeyStroke { exact_match: true };
-
-        self.keystroke_editor.update(cx, |editor, cx| {
-            editor.set_keystrokes(keystrokes, cx);
-        });
-    }
-
     fn on_query_changed(&mut self, cx: &mut Context<Self>) {
         let action_query = self.current_action_query(cx);
         let keystroke_query = self.current_keystroke_query(cx);
@@ -875,14 +859,13 @@ impl KeymapEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let weak = cx.weak_entity();
         self.context_menu = self.selected_binding().map(|selected_binding| {
             let selected_binding_has_no_context = selected_binding
                 .context()
                 .and_then(KeybindContextString::local)
                 .is_none();
 
-            let selected_binding_is_unbound = selected_binding.keystrokes().is_none();
+            let selected_binding_is_unbound = selected_binding.is_unbound();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.context(self.focus_handle.clone())
@@ -905,14 +888,11 @@ impl KeymapEditor {
                         Box::new(CopyContext),
                     )
                     .separator()
-                    .entry("Show Matching Keybindings", None, {
-                        move |_, cx| {
-                            weak.update(cx, |this, cx| {
-                                this.filter_on_selected_binding_keystrokes(cx);
-                            })
-                            .ok();
-                        }
-                    })
+                    .action_disabled_when(
+                        selected_binding_has_no_context,
+                        "Show Matching Keybindings",
+                        Box::new(ShowMatchingKeybinds),
+                    )
             });
 
             let context_menu_handle = context_menu.focus_handle(cx);
@@ -1186,6 +1166,29 @@ impl KeymapEditor {
         *exact_match = !(*exact_match);
         self.on_query_changed(cx);
     }
+
+    fn show_matching_keystrokes(
+        &mut self,
+        _: &ShowMatchingKeybinds,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selected_binding) = self.selected_binding() else {
+            return;
+        };
+
+        let keystrokes = selected_binding
+            .keystrokes()
+            .map(Vec::from)
+            .unwrap_or_default();
+
+        self.filter_state = FilterState::All;
+        self.search_mode = SearchMode::KeyStroke { exact_match: true };
+
+        self.keystroke_editor.update(cx, |editor, cx| {
+            editor.set_keystrokes(keystrokes, cx);
+        });
+    }
 }
 
 struct HumanizedActionNameCache {
@@ -1278,6 +1281,10 @@ impl ProcessedBinding {
             },
             action_information,
         )
+    }
+
+    fn is_unbound(&self) -> bool {
+        matches!(self, Self::Unmapped(_))
     }
 
     fn get_action_mapping(&self) -> Option<ActionMapping> {
@@ -1414,6 +1421,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::toggle_conflict_filter))
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
+            .on_action(cx.listener(Self::show_matching_keystrokes))
             .on_mouse_move(cx.listener(|this, _, _window, _cx| {
                 this.show_hover_menus = true;
             }))
