@@ -911,7 +911,7 @@ impl AcpThreadView {
         let content = if is_open {
             match &tool_call.status {
                 ToolCallStatus::WaitingForConfirmation {
-                    possible_grants,
+                    options,
                     respond_tx,
                 } => {
                     // Some(self.render_tool_call_confirmation(

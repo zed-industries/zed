@@ -221,8 +221,8 @@ impl ToolCall {
 #[derive(Debug)]
 pub enum ToolCallStatus {
     WaitingForConfirmation {
-        possible_grants: Vec<acp::Grant>,
-        respond_tx: oneshot::Sender<acp::GrantId>,
+        options: Vec<acp::PermissionOption>,
+        respond_tx: oneshot::Sender<acp::PermissionOutcome>,
     },
     Allowed {
         status: acp::ToolCallStatus,
@@ -550,6 +550,7 @@ pub struct AcpThread {
     send_task: Option<Task<()>>,
     connection: Arc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
+    session_id: acp::SessionId,
 }
 
 pub enum AcpThreadEvent {
@@ -595,6 +596,7 @@ impl AcpThread {
         title: SharedString,
         child_status: Option<Task<Result<()>>>,
         project: Entity<Project>,
+        session_id: acp::SessionId,
         cx: &mut Context<Self>,
     ) -> Self {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -609,19 +611,7 @@ impl AcpThread {
             send_task: None,
             connection: Arc::new(connection),
             child_status,
-        }
-    }
-
-    /// Send a request to the agent and wait for a response.
-    pub fn request<R: acp_old::AgentRequest + 'static>(
-        &self,
-        params: R,
-    ) -> impl use<R> + Future<Output = Result<R::Response>> {
-        let params = params.into_any();
-        let result = self.connection.request_any(params);
-        async move {
-            let result = result.await?;
-            Ok(R::response_from_any(result)?)
+            session_id,
         }
     }
 
@@ -778,13 +768,13 @@ impl AcpThread {
     pub fn request_tool_call_permission(
         &mut self,
         tool_call: acp::ToolCall,
-        possible_grants: Vec<acp::Grant>,
+        options: Vec<acp::PermissionOption>,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<acp::GrantId> {
+    ) -> oneshot::Receiver<acp::PermissionOutcome> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
-            possible_grants,
+            options,
             respond_tx: tx,
         };
 
@@ -812,25 +802,32 @@ impl AcpThread {
     pub fn authorize_tool_call(
         &mut self,
         id: acp::ToolCallId,
-        grant: acp::Grant,
+        option: acp::PermissionOption,
         cx: &mut Context<Self>,
     ) {
         let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
         };
 
-        let new_status = if grant.is_allowed {
-            ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::InProgress,
+        let new_status = match option.kind {
+            acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
+                ToolCallStatus::Rejected
             }
-        } else {
-            ToolCallStatus::Rejected
+            acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways => {
+                ToolCallStatus::Allowed {
+                    status: acp::ToolCallStatus::InProgress,
+                }
+            }
         };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(grant.id).log_err();
+            respond_tx
+                .send(acp::PermissionOutcome::Selected {
+                    option_id: option.id,
+                })
+                .log_err();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
         }
@@ -941,8 +938,11 @@ impl AcpThread {
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
-        let block =
-            ContentBlock::new_combined(message.clone(), self.project.read(cx).languages(), cx);
+        let block = ContentBlock::new_combined(
+            message.clone(),
+            self.project.read(cx).languages().clone(),
+            cx,
+        );
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage { content: block }),
             cx,
@@ -955,7 +955,14 @@ impl AcpThread {
             async {
                 cancel.await.log_err();
 
-                let result = this.update(cx, |this, _| this.request(message))?.await;
+                let result = this
+                    .update(cx, |this, _| {
+                        this.connection.prompt(acp::PromptToolArguments {
+                            prompt: message,
+                            session_id: this.session_id.clone(),
+                        })
+                    })?
+                    .await;
                 tx.send(result).log_err();
                 this.update(cx, |this, _cx| this.send_task.take())?;
                 anyhow::Ok(())
@@ -975,7 +982,7 @@ impl AcpThread {
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<(), acp_old::Error>> {
         if self.send_task.take().is_some() {
-            let request = self.request(acp_old::CancelSendMessageParams);
+            let request = self.connection.cancel();
             cx.spawn(async move |this, cx| {
                 request.await?;
                 this.update(cx, |this, _cx| {
@@ -994,17 +1001,10 @@ impl AcpThread {
                                     mem::replace(&mut call.status, ToolCallStatus::Canceled);
 
                                 if let ToolCallStatus::WaitingForConfirmation {
-                                    respond_tx,
-                                    possible_grants,
+                                    respond_tx, ..
                                 } = curr_status
                                 {
-                                    if let Some(grant_id) = possible_grants
-                                        .iter()
-                                        .find_map(|g| (!g.is_allowed).then(|| g.id.clone()))
-                                    {
-                                        // todo! do we need a way to cancel rather than reject?
-                                        respond_tx.send(grant_id).ok();
-                                    }
+                                    respond_tx.send(acp::PermissionOutcome::Canceled).ok();
                                 }
                             }
                         }
@@ -1171,12 +1171,17 @@ impl AcpThread {
 pub struct OldAcpClientDelegate {
     thread: WeakEntity<AcpThread>,
     cx: AsyncApp,
+    next_tool_call_id: Rc<RefCell<u64>>,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
 impl OldAcpClientDelegate {
     pub fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
-        Self { thread, cx }
+        Self {
+            thread,
+            cx,
+            next_tool_call_id: Rc::new(RefCell::new(0)),
+        }
     }
 
     pub async fn clear_completed_plan_entries(&self) -> Result<()> {
@@ -1196,10 +1201,11 @@ impl OldAcpClientDelegate {
         confirmation: acp_old::ToolCallConfirmation,
     ) -> Result<acp_old::ToolCallConfirmationOutcome> {
         let cx = &mut self.cx.clone();
+
         let ToolCallRequest { outcome, .. } = cx
             .update(|cx| {
                 self.thread.update(cx, |thread, cx| {
-                    thread.request_tool_call_confirmation(tool_call_id, confirmation, cx)
+                    thread.request_tool_call_permission(acp_new_tool_call, confirmation, cx)
                 })
             })?
             .context("Failed to update thread")??;
@@ -1264,10 +1270,26 @@ impl acp_old::Client for OldAcpClientDelegate {
         request: acp_old::PushToolCallParams,
     ) -> Result<acp_old::PushToolCallResponse, acp_old::Error> {
         let cx = &mut self.cx.clone();
+
+        let new_id = acp::ToolCallId(
+            util::post_inc(self.next_tool_call_id.borrow_mut())
+                .to_string()
+                .into(),
+        );
+
+        let new_tool_call = acp::ToolCall {
+            id: new_id,
+            label: request.label,
+            kind: acp_kind_from_icon(request.icon),
+            status: acp::ToolCallStatus::InProgress,
+            content: into_new_acp_content(request.content),
+            locations: request.locations.into_iter().map(into_new_acp_location).collect(),
+        };
+
         let id = cx
             .update(|cx| {
                 self.thread
-                    .update(cx, |thread, cx| thread.push_tool_call(request, cx))
+                    .update(cx, |thread, cx| thread.update_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
