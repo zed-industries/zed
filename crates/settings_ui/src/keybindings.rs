@@ -14,8 +14,8 @@ use gpui::{
     Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
     KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity, actions,
-    anchored, deferred, div,
+    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
+    actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -35,7 +35,7 @@ use workspace::{
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
-    ui_components::table::{Table, TableInteractionState},
+    ui_components::table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
@@ -343,6 +343,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
+    current_widths: Entity<ColumnWidths<6>>,
     show_hover_menus: bool,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
@@ -459,6 +460,7 @@ impl KeymapEditor {
             show_hover_menus: true,
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
+            current_widths: cx.new(|cx| ColumnWidths::new(cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -1676,6 +1678,18 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.45),
                         DefiniteLength::Fraction(0.08),
                     ])
+                    .resizable_columns(
+                        [
+                            ResizeBehavior::None,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable,
+                            ResizeBehavior::Resizable, // this column doesn't matter
+                        ],
+                        &self.current_widths,
+                        cx,
+                    )
                     .header(["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
@@ -1793,14 +1807,15 @@ impl Render for KeymapEditor {
                                 .collect()
                         }),
                     )
-                    .map_row(
-                        cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
-                            let conflict = this.get_conflict(row_index);
+                    .map_row(cx.processor(
+                        |this, (row_index, row): (usize, Stateful<Div>), _window, cx| {
+                        let conflict = this.get_conflict(row_index);
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row_id = row_group_id(row_index);
 
                             div()
+                                .id(("keymap-row-wrapper", row_index))
                                 .child(
                                     row.id(row_id.clone())
                                         .on_any_mouse_down(cx.listener(

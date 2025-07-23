@@ -370,7 +370,7 @@ impl std::fmt::Debug for AnyEntity {
     }
 }
 
-/// A strong, well typed reference to a struct which is managed
+/// A strong, well-typed reference to a struct which is managed
 /// by GPUI
 #[derive(Deref, DerefMut)]
 pub struct Entity<T> {
