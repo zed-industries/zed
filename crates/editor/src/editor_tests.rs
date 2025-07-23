@@ -5072,9 +5072,6 @@ fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
         let buffer = MultiBuffer::build_simple(text, cx);
         build_editor(buffer, window, cx)
     });
-    // 6 class A:
-    // 7     def __init__():
-    // 8         print(\"init\")
     _ = editor.update(cx, |editor, window, cx| {
         editor.fold_creases(
             vec![
@@ -5094,10 +5091,10 @@ fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
         assert_eq!(editor.display_text(cx), "\n\n\n\n\n\nclass A:⋯\n");
         editor.move_line_up(&MoveLineUp, window, cx);
         let buffer_text = editor.buffer.read(cx).snapshot(cx).text();
-        // assert_eq!(
-        //     buffer_text,
-        //     "\n\n\n\n\n\n        print(\"init\")\nclass A:\n    def __init__():\n"
-        // );
+        assert_eq!(
+            buffer_text,
+            "\n\n\n\n\nclass A:\n    def __init__():\n        print(\"init\")\n\n"
+        );
     });
 }
 
