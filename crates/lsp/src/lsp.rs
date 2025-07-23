@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
     channel::oneshot::{self, Canceled},
@@ -40,7 +40,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ConnectionResult, ResultExt, TryFutureExt};
+use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -1445,6 +1445,33 @@ impl fmt::Debug for LanguageServer {
             .field("id", &self.server_id.0)
             .field("name", &self.name)
             .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for LanguageServerBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("LanguageServerBinary");
+        debug.field("path", &self.path);
+        debug.field("arguments", &self.arguments);
+
+        if let Some(env) = &self.env {
+            let redacted_env: BTreeMap<String, String> = env
+                .iter()
+                .map(|(key, value)| {
+                    let redacted_value = if redact::should_redact(key) {
+                        "REDACTED".to_string()
+                    } else {
+                        value.clone()
+                    };
+                    (key.clone(), redacted_value)
+                })
+                .collect();
+            debug.field("env", &Some(redacted_env));
+        } else {
+            debug.field("env", &self.env);
+        }
+
+        debug.finish()
     }
 }
 
