@@ -13,7 +13,7 @@ use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledExt as _,
+    Scrollbar, ScrollbarState, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
@@ -200,6 +200,8 @@ impl TableInteractionState {
         &self,
         column_widths: &[Length; COLS],
         resizable_columns: &[ResizeBehavior; COLS],
+        initial_sizes: [DefiniteLength; COLS],
+        columns: Option<Entity<ColumnWidths<COLS>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -238,8 +240,23 @@ impl TableInteractionState {
                     resize_handle = resize_handle
                         .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                         .cursor_col_resize()
-                        .on_drag(DraggedColumn(column_ix), |ix, _offset, _window, cx| {
-                            eprintln!("Start resizing column {:?}", ix);
+                        .when_some(columns.clone(), |this, columns| {
+                            this.on_click(move |event, window, cx| {
+                                if event.down.click_count >= 2 {
+                                    columns.update(cx, |columns, cx| {
+                                        columns.on_double_click(
+                                            column_ix,
+                                            &initial_sizes,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                }
+
+                                cx.stop_propagation();
+                            })
+                        })
+                        .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
                             cx.new(|_cx| gpui::Empty)
                         })
                 }
@@ -481,6 +498,16 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         }
     }
 
+    fn on_double_click(
+        &mut self,
+        _double_click_position: usize,
+        initial_sizes: &[DefiniteLength; COLS],
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        self.widths = *initial_sizes;
+    }
+
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
@@ -546,6 +573,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             curr_column = col_idx;
             while diff_left < 0.0 && curr_column > 0 {
                 // todo! When resize is none and dragging to the left this doesn't work correctly
+                // This could be done by making min_size equal to current size if resizable is None
                 let Some(min_size) = resize_behavior[curr_column].min_size() else {
                     curr_column -= 1;
                     continue;
@@ -584,7 +612,7 @@ impl<const COLS: usize> TableWidths<COLS> {
         let widths = widths.map(Into::into);
 
         TableWidths {
-            initial: widths.clone(),
+            initial: widths,
             current: None,
             resizable: [ResizeBehavior::None; COLS],
         }
@@ -593,8 +621,8 @@ impl<const COLS: usize> TableWidths<COLS> {
     fn lengths(&self, cx: &App) -> [Length; COLS] {
         self.current
             .as_ref()
-            .map(|entity| entity.read(cx).widths.map(|w| Length::Definite(w)))
-            .unwrap_or(self.initial.map(|w| Length::Definite(w)))
+            .map(|entity| entity.read(cx).widths.map(Length::Definite))
+            .unwrap_or(self.initial.map(Length::Definite))
     }
 }
 
@@ -705,7 +733,7 @@ impl<const COLS: usize> Table<COLS> {
             column_widths.update(cx, |widths, _| {
                 if !widths.initialized {
                     widths.initialized = true;
-                    widths.widths = table_widths.initial.clone();
+                    widths.widths = table_widths.initial;
                 }
             })
         }
@@ -939,9 +967,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             parent.child(state.update(cx, |state, cx| {
                                 let resizable_columns = table_widths.resizable;
                                 let column_widths = table_widths.lengths(cx);
+                                let columns = table_widths.current.clone();
+                                let initial_sizes = table_widths.initial;
                                 state.render_resize_handles(
                                     &column_widths,
                                     &resizable_columns,
+                                    initial_sizes,
+                                    columns,
                                     window,
                                     cx,
                                 )
