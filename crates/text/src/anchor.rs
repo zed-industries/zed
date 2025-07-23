@@ -101,7 +101,7 @@ impl Anchor {
         } else {
             let fragment_id = buffer.fragment_id_for_anchor(self);
             let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
-            fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
+            fragment_cursor.seek(&Some(fragment_id), Bias::Left);
             fragment_cursor
                 .item()
                 .map_or(false, |fragment| fragment.visible)

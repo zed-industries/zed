@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use util::debug_panic;
 
 // todo! use shared tool inference?
-use crate::claude::tools::{
-    ClaudeTool, EditToolParams, EditToolResponse, ReadToolParams, ReadToolResponse,
+use crate::claude::{
+    McpServerConfig,
+    tools::{ClaudeTool, EditToolParams, ReadToolParams},
 };
 
 pub struct ZedMcpServer {
@@ -174,11 +175,9 @@ impl ZedMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let result = Self::handle_read_tool_call(input, delegate, cx).await?;
+                let content = Self::handle_read_tool_call(input, delegate, cx).await?;
                 Ok(CallToolResponse {
-                    content: vec![ToolResponseContent::Text {
-                        text: serde_json::to_string(&result)?,
-                    }],
+                    content,
                     is_error: None,
                     meta: None,
                 })
@@ -186,11 +185,9 @@ impl ZedMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let result = Self::handle_edit_tool_call(input, delegate, cx).await?;
+                Self::handle_edit_tool_call(input, delegate, cx).await?;
                 Ok(CallToolResponse {
-                    content: vec![ToolResponseContent::Text {
-                        text: serde_json::to_string(&result)?,
-                    }],
+                    content: vec![],
                     is_error: None,
                     meta: None,
                 })
@@ -204,7 +201,7 @@ impl ZedMcpServer {
         params: ReadToolParams,
         delegate: OldAcpClientDelegate,
         cx: &AsyncApp,
-    ) -> Task<Result<ReadToolResponse>> {
+    ) -> Task<Result<Vec<ToolResponseContent>>> {
         cx.foreground_executor().spawn(async move {
             let response = delegate
                 .read_text_file(acp_old::ReadTextFileParams {
@@ -214,9 +211,9 @@ impl ZedMcpServer {
                 })
                 .await?;
 
-            Ok(ReadToolResponse {
-                content: response.content,
-            })
+            Ok(vec![ToolResponseContent::Text {
+                text: response.content,
+            }])
         })
     }
 
@@ -224,7 +221,7 @@ impl ZedMcpServer {
         params: EditToolParams,
         delegate: OldAcpClientDelegate,
         cx: &AsyncApp,
-    ) -> Task<Result<EditToolResponse>> {
+    ) -> Task<Result<()>> {
         cx.foreground_executor().spawn(async move {
             let response = delegate
                 .read_text_file_reusing_snapshot(acp_old::ReadTextFileParams {
@@ -246,7 +243,7 @@ impl ZedMcpServer {
                 })
                 .await?;
 
-            Ok(EditToolResponse)
+            Ok(())
         })
     }
 

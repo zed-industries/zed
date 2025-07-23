@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::ops::Range;
+use std::ops::{Not, Range};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{UserStore, zed_urls};
+use client::{DisableAiSettings, UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -744,6 +744,7 @@ impl AgentPanel {
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
+            && !DisableAiSettings::get_global(cx).disable_ai
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
         }
@@ -1681,7 +1682,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AgentSettings::get_global(cx).enabled
+        DisableAiSettings::get_global(cx).disable_ai.not() && AgentSettings::get_global(cx).enabled
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {

@@ -4279,7 +4279,7 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
-                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left) {
                                 if cursor.item().is_some_and(|entry| entry.status == *status) {
                                     continue;
                                 }
@@ -4292,7 +4292,7 @@ impl Repository {
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
                         for path in changed_paths.into_iter() {
-                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
                                 changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
