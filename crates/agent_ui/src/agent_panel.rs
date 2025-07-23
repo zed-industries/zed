@@ -1901,85 +1901,96 @@ impl AgentPanel {
             )
             .anchor(Corner::TopRight)
             .with_handle(self.new_thread_menu_handle.clone())
-            .menu(move |window, cx| {
-                let active_thread = active_thread.clone();
-                Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
-                    menu = menu
-                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                            this.header("Zed Agent")
-                        })
-                        .item(
-                            ContextMenuEntry::new("New Thread")
-                                .icon(IconName::NewThread)
-                                .icon_color(Color::Muted)
-                                .handler(move |window, cx| {
-                                    window.dispatch_action(NewThread::default().boxed_clone(), cx);
-                                }),
-                        )
-                        .item(
-                            ContextMenuEntry::new("New Text Thread")
-                                .icon(IconName::NewTextThread)
-                                .icon_color(Color::Muted)
-                                .handler(move |window, cx| {
-                                    window.dispatch_action(NewTextThread.boxed_clone(), cx);
-                                }),
-                        )
-                        .when_some(active_thread, |this, active_thread| {
-                            let thread = active_thread.read(cx);
+            .menu({
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    let active_thread = active_thread.clone();
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
+                        menu = menu
+                            .context(focus_handle.clone())
+                            .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                                this.header("Zed Agent")
+                            })
+                            .item(
+                                ContextMenuEntry::new("New Thread")
+                                    .icon(IconName::NewThread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewThread::default().boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewThread::default().boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Text Thread")
+                                    .icon(IconName::NewTextThread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewTextThread.boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(NewTextThread.boxed_clone(), cx);
+                                    }),
+                            )
+                            .when_some(active_thread, |this, active_thread| {
+                                let thread = active_thread.read(cx);
 
-                            if !thread.is_empty() {
-                                let thread_id = thread.id().clone();
-                                this.item(
-                                    ContextMenuEntry::new("New From Summary")
-                                        .icon(IconName::NewFromSummary)
-                                        .icon_color(Color::Muted)
-                                        .handler(move |window, cx| {
-                                            window.dispatch_action(
-                                                Box::new(NewThread {
-                                                    from_thread_id: Some(thread_id.clone()),
-                                                }),
-                                                cx,
-                                            );
-                                        }),
-                                )
-                            } else {
-                                this
-                            }
-                        })
-                        .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                            this.separator()
-                                .header("External Agents")
-                                .item(
-                                    ContextMenuEntry::new("New Gemini Thread")
-                                        .icon(IconName::AiGemini)
-                                        .icon_color(Color::Muted)
-                                        .handler(move |window, cx| {
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::Gemini),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
-                                        }),
-                                )
-                                .item(
-                                    ContextMenuEntry::new("New Claude Code Thread")
-                                        .icon(IconName::AiClaude)
-                                        .icon_color(Color::Muted)
-                                        .handler(move |window, cx| {
-                                            window.dispatch_action(
-                                                NewExternalAgentThread {
-                                                    agent: Some(crate::ExternalAgent::ClaudeCode),
-                                                }
-                                                .boxed_clone(),
-                                                cx,
-                                            );
-                                        }),
-                                )
-                        });
-                    menu
-                }))
+                                if !thread.is_empty() {
+                                    let thread_id = thread.id().clone();
+                                    this.item(
+                                        ContextMenuEntry::new("New From Summary")
+                                            .icon(IconName::NewFromSummary)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(NewThread {
+                                                        from_thread_id: Some(thread_id.clone()),
+                                                    }),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                                } else {
+                                    this
+                                }
+                            })
+                            .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                                this.separator()
+                                    .header("External Agents")
+                                    .item(
+                                        ContextMenuEntry::new("New Gemini Thread")
+                                            .icon(IconName::AiGemini)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    NewExternalAgentThread {
+                                                        agent: Some(crate::ExternalAgent::Gemini),
+                                                    }
+                                                    .boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                                    .item(
+                                        ContextMenuEntry::new("New Claude Code Thread")
+                                            .icon(IconName::AiClaude)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    NewExternalAgentThread {
+                                                        agent: Some(
+                                                            crate::ExternalAgent::ClaudeCode,
+                                                        ),
+                                                    }
+                                                    .boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                            });
+                        menu
+                    }))
+                }
             });
 
         let agent_panel_menu = PopoverMenu::new("agent-options-menu")
