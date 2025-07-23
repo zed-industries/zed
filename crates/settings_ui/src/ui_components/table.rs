@@ -1403,6 +1403,14 @@ mod test {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
         }
 
+        #[track_caller]
+        fn assert_almost_eq(a: &[f32], b: &[f32]) {
+            if !is_almost_eq(a, b) {
+                assert_eq!(a, b);
+            }
+        }
+
+        #[track_caller]
         fn check<const COLS: usize>(
             initial_sizes: &str,
             widths: &str,
@@ -1479,10 +1487,10 @@ mod test {
             if !is_eq {
                 let factor = total_1;
                 let result_str = result
-                    .map(|f| "*".repeat(f32::round(f * factor) as usize))
+                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
                     .join("|");
                 let expected_str = expected
-                    .map(|f| "*".repeat(f32::round(f * factor) as usize))
+                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
                     .join("|");
                 panic!(
                     "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
@@ -1494,25 +1502,12 @@ mod test {
             (columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
                 check::<$cols>($initial, $current, $expected, $resizing);
             };
-            ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
+            ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
                 #[test]
                 fn $name() {
                     check::<$cols>($initial, $current, $expected, $resizing);
                 }
             };
-        }
-
-        #[test]
-        fn basic() {
-            let widths = [0.25, 0.30, 0.20, 0.25];
-            let initial_sizes = [0.25, 0.25, 0.25, 0.25];
-            let updated_widths = ColumnWidths::reset_to_initial_size(
-                1,
-                widths,
-                initial_sizes,
-                &[ResizeBehavior::Resizable; 4],
-            );
-            assert_eq!(updated_widths, initial_sizes);
         }
 
         check!(
@@ -1521,7 +1516,7 @@ mod test {
             starting: "**|**|**|**|**",
             snapshot: "**|**|X|***|**",
             expected: "**|**|**|**|**",
-            resizing: "X|*|*|*|*",
+            minimums: "X|*|*|*|*",
         );
 
         check!(
@@ -1530,7 +1525,7 @@ mod test {
             starting: "**|**|**|**|**",
             snapshot: "**|**|***|X|**",
             expected: "**|**|**|**|**",
-            resizing: "X|*|*|*|**",
+            minimums: "X|*|*|*|**",
         );
 
         check!(
@@ -1539,7 +1534,7 @@ mod test {
             starting: "*|***|**|**|****|*",
             snapshot: "*|*|X|*|*|********",
             expected: "*|*|**|*|*|*******",
-            resizing: "X|*|*|*|*|*",
+            minimums: "X|*|*|*|*|*",
         );
 
         check!(
@@ -1548,16 +1543,16 @@ mod test {
             starting: "*|***|****|**|***|*",
             snapshot: "*|***|X|**|**|*****",
             expected: "*|***|****|*|*|****",
-            resizing: "X|*|*|*|*|*",
+            minimums: "X|*|*|*|*|*",
         );
 
         check!(
-            squashed_right_reset_col4,
-            columns: 6,
-            starting: "*|***|**|**|****|*",
-            snapshot: "*|********|*|*|X|*",
-            expected: "*|*****|*|*|****|*",
-            resizing: "X|*|*|*|*|*",
+           squashed_right_reset_col4,
+           columns: 6,
+           starting: "*|***|**|**|****|*",
+           snapshot: "*|********|*|*|X|*",
+           expected: "*|*****|*|*|****|*",
+           minimums: "X|*|*|*|*|*",
         );
 
         check!(
@@ -1566,7 +1561,7 @@ mod test {
             starting: "*|***|**|***|***|**",
             snapshot: "*|***|**|***|**|X**",
             expected: "*|***|**|***|***|**",
-            resizing: "X|*|*|*|*|*",
+            minimums: "X|*|*|*|*|*",
         );
 
         check!(
@@ -1575,99 +1570,43 @@ mod test {
             starting: "*|***|**|***|***|**",
             snapshot: "*|***|**|***|****|X",
             expected: "*|***|**|***|***|**",
-            resizing: "X|*|*|*|*|*",
+            minimums: "X|*|*|*|*|*",
         );
 
-        #[test]
-        fn basic_should_go_left() {
-            // if we've increased middle column by 5%, then should be reset to initial sizes
-            let widths = [0.25, 0.20, 0.30, 0.25];
-            let initial_sizes = [0.25, 0.25, 0.25, 0.25];
-            let updated_widths = ColumnWidths::reset_to_initial_size(
-                1,
-                widths,
-                initial_sizes,
-                &[ResizeBehavior::Resizable; 4],
-            );
-            assert_eq!(updated_widths, initial_sizes);
-        }
+        check!(
+            last_column_grow_cascading,
+            columns: 6,
+            starting: "*|***|**|**|**|***",
+            snapshot: "*|*******|*|**|*|X",
+            expected: "*|******|*|*|*|***",
+            minimums: "X|*|*|*|*|*",
+        );
 
-        #[test]
-        fn test_reset_column_size() {
-            let resize_behavior = [
-                ResizeBehavior::None,
-                ResizeBehavior::Resizable,
-                ResizeBehavior::Resizable,
-                ResizeBehavior::Resizable,
-                ResizeBehavior::Resizable,
-                ResizeBehavior::Resizable,
-            ];
+        check!(
+            goes_left_when_left_has_extreme_diff,
+            columns: 6,
+            starting: "*|***|****|**|**|***",
+            snapshot: "*|********|X|*|**|**",
+            expected: "*|*****|****|*|**|**",
+            minimums: "X|*|*|*|*|*",
+        );
 
-            let initial_sizes = [0.032467533, 0.25, 0.2, 0.14, 0.45, 0.08];
+        check!(
+            basic_shrink_right,
+            columns: 6,
+            starting: "**|**|**|**|**|**",
+            snapshot: "**|**|XXX|*|**|**",
+            expected: "**|**|**|**|**|**",
+            minimums: "X|*|*|*|*|*",
+        );
 
-            // Case where we move the second column to the left and want to reset it back to the right
-            let col_idx = 1;
-            let widths = [0.032467533, 0.18981016, 0.26018983, 0.14, 0.45, 0.08];
-
-            let expected_widths = [0.032467533, 0.25, 0.19999999, 0.14, 0.45, 0.08];
-            assert_eq!(
-                ColumnWidths::reset_to_initial_size(
-                    col_idx,
-                    widths,
-                    initial_sizes,
-                    &resize_behavior
-                ),
-                expected_widths
-            );
-
-            // If all columns are squashed to the left and we want to resize col 2
-            let col_idx = 2;
-
-            let widths = [0.032467533, 0.05, 0.05, 0.05, 0.05, 0.9199999];
-            let expected_widths = [0.032467533, 0.05, 0.2, 0.05, 0.05, 0.76999986];
-
-            assert_eq!(
-                ColumnWidths::reset_to_initial_size(
-                    col_idx,
-                    widths,
-                    initial_sizes,
-                    &resize_behavior
-                ),
-                expected_widths
-            );
-
-            // if all columns are squashed to the right and we want to resize col 4
-            let col_idx = 4;
-            let widths = [0.032467533, 0.92, 0.05, 0.05, 0.05, 0.05];
-            let initial_sizes = [0.032467533, 0.25, 0.2, 0.14, 0.45, 0.08];
-            let expected_widths = [0.032467533, 0.52000004, 0.05, 0.05, 0.45, 0.05];
-
-            // todo! change this back to eq
-            assert_eq!(
-                ColumnWidths::reset_to_initial_size(
-                    col_idx,
-                    widths,
-                    initial_sizes,
-                    &resize_behavior
-                ),
-                expected_widths
-            );
-
-            // If we want to move the second column to the left
-            let col_idx = 1;
-            let widths = [0.032467533, 0.36783326, 0.082166746, 0.14, 0.45, 0.08];
-            let initial_sizes = [0.032467533, 0.25, 0.2, 0.14, 0.45, 0.08];
-            let expected_widths = [0.032467533, 0.25, 0.2, 0.14, 0.45, 0.08];
-
-            assert_eq!(
-                ColumnWidths::reset_to_initial_size(
-                    col_idx,
-                    widths,
-                    initial_sizes,
-                    &resize_behavior
-                ),
-                expected_widths
-            );
-        }
+        check!(
+            complex_shrink_right,
+            columns: 6,
+            starting: "*|***|**|*|*|*",
+            snapshot: "*|*|XXX|**|*|*",
+            expected: "*|*|**|***|*|*",
+            minimums: "X|*|*|*|*|*",
+        );
     }
 }
