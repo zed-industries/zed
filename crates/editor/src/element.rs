@@ -4010,6 +4010,7 @@ impl EditorElement {
         let available_width = hitbox.bounds.size.width - right_margin;
 
         let mut header = v_flex()
+            .w_full()
             .relative()
             .child(
                 div()
