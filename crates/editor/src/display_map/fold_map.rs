@@ -146,8 +146,6 @@ impl FoldMapWriter<'_> {
         for (range, fold_text) in ranges.into_iter() {
             let buffer = &snapshot.buffer;
 
-            dbg!(&range.start, &range.end);
-
             let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
 
             // Ignore any empty ranges.

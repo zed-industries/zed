@@ -2969,8 +2969,6 @@ impl Editor {
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, window, cx);
 
-        dbg!(self.selections.all::<Point>(cx));
-
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
@@ -11376,8 +11374,6 @@ impl Editor {
 
         let selections = self.selections.all::<Point>(cx);
 
-        dbg!(&selections);
-
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -11391,6 +11387,14 @@ impl Editor {
                 &mut selections,
             );
 
+            // [crates/editor/src/editor.rs:11390:13] &start_row = MultiBufferRow(
+            //     8,
+            // )
+            // [crates/editor/src/editor.rs:11390:13] &end_row = MultiBufferRow(
+            //     9,
+            // )
+            dbg!(&start_row, &end_row);
+
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row.0 > 0 {
                 let range_to_move = Point::new(
@@ -11401,9 +11405,20 @@ impl Editor {
                         end_row.previous_row().0,
                         buffer.line_len(end_row.previous_row()),
                     );
+                // [crates/editor/src/editor.rs:11402:17] &range_to_move = Point {
+                //     row: 7,
+                //     column: 19,
+                // }..Point {
+                //     row: 8,
+                //     column: 21,
+                // }
+                dbg!(&range_to_move);
+                // correct so far
                 let insertion_point = display_map
                     .prev_line_boundary(Point::new(start_row.previous_row().0, 0))
                     .0;
+                dbg!(&insertion_point);
+                // insertion_point = 7
 
                 // Don't move lines across excerpts
                 if buffer
@@ -11417,6 +11432,8 @@ impl Editor {
                         .chain(['\n'])
                         .collect::<String>();
 
+                    dbg!(&text);
+
                     edits.push((
                         buffer.anchor_after(range_to_move.start)
                             ..buffer.anchor_before(range_to_move.end),
@@ -11425,7 +11442,9 @@ impl Editor {
                     let insertion_anchor = buffer.anchor_after(insertion_point);
                     edits.push((insertion_anchor..insertion_anchor, text));
 
+                    dbg!(&insertion_point.row);
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
+                    dbg!(&row_delta);
 
                     // Move selections up
                     new_selections.extend(contiguous_row_selections.drain(..).map(
@@ -11444,8 +11463,12 @@ impl Editor {
                     ) {
                         let mut start = fold.range.start.to_point(&buffer);
                         let mut end = fold.range.end.to_point(&buffer);
+                        println!("before:");
+                        dbg!(&start, &end);
                         start.row -= row_delta;
                         end.row -= row_delta;
+                        println!("after:");
+                        dbg!(&start, &end);
                         refold_creases.push(Crease::simple(start..end, fold.placeholder.clone()));
                     }
                 }
@@ -11456,15 +11479,12 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            dbg!(&unfold_ranges);
             this.unfold_ranges(&unfold_ranges, true, true, cx);
-            dbg!(&edits);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            dbg!(&refold_creases);
             this.fold_creases(refold_creases, true, window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select(new_selections);

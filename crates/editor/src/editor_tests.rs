@@ -5072,8 +5072,10 @@ fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
         let buffer = MultiBuffer::build_simple(text, cx);
         build_editor(buffer, window, cx)
     });
+    // 6 class A:
+    // 7     def __init__():
+    // 8         print(\"init\")
     _ = editor.update(cx, |editor, window, cx| {
-        println!("before fold");
         editor.fold_creases(
             vec![
                 Crease::simple(Point::new(6, 8)..Point::new(8, 21), FoldPlaceholder::test()),
@@ -5086,14 +5088,16 @@ fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        println!("after fold");
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(8, 21)..Point::new(8, 21)])
         });
-        println!("after selection");
-        dbg!(&editor.selections.all::<Point>(cx));
         assert_eq!(editor.display_text(cx), "\n\n\n\n\n\nclass A:⋯\n");
         editor.move_line_up(&MoveLineUp, window, cx);
+        let buffer_text = editor.buffer.read(cx).snapshot(cx).text();
+        // assert_eq!(
+        //     buffer_text,
+        //     "\n\n\n\n\n\n        print(\"init\")\nclass A:\n    def __init__():\n"
+        // );
     });
 }
 
