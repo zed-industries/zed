@@ -2875,11 +2875,11 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                documentation: Some(language::DocumentationConfig {
+                documentation_comment: Some(language::BlockCommentConfig {
                     start: "/**".into(),
                     end: "*/".into(),
                     prefix: "* ".into(),
-                    tab_size: NonZeroU32::new(1).unwrap(),
+                    tab_size: 1,
                 }),
 
                 ..LanguageConfig::default()
@@ -3089,7 +3089,12 @@ async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
     let lua_language = Arc::new(Language::new(
         LanguageConfig {
             line_comments: vec!["--".into()],
-            block_comment: Some(("--[[".into(), "]]".into())),
+            block_comment: Some(language::BlockCommentConfig {
+                start: "--[[".into(),
+                prefix: "".into(),
+                end: "]]".into(),
+                tab_size: 0,
+            }),
             ..LanguageConfig::default()
         },
         None,
@@ -13806,7 +13811,12 @@ async fn test_toggle_block_comment(cx: &mut TestAppContext) {
         Language::new(
             LanguageConfig {
                 name: "HTML".into(),
-                block_comment: Some(("<!-- ".into(), " -->".into())),
+                block_comment: Some(BlockCommentConfig {
+                    start: "<!-- ".into(),
+                    prefix: "".into(),
+                    end: " -->".into(),
+                    tab_size: 0,
+                }),
                 ..Default::default()
             },
             Some(tree_sitter_html::LANGUAGE.into()),

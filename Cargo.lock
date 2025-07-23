@@ -9018,6 +9018,7 @@ dependencies = [
  "task",
  "text",
  "theme",
+ "toml 0.8.20",
  "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
