@@ -540,6 +540,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         let go_left_first = left_diff < right_diff;
 
+        let shrinking = diff < 0.0;
         if go_left_first != (diff < 0.0) {
             diff = -diff;
         }
@@ -557,8 +558,12 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 );
             }
         } else if col_idx > 0 {
-            let diff_remaining =
-                Self::propagate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
+            let diff_remaining = Self::propagate_resize_diff_left(
+                diff,
+                if shrinking { col_idx } else { col_idx - 1 },
+                &mut widths,
+                resize_behavior,
+            );
 
             if diff_remaining < 0.0 {
                 Self::propagate_resize_diff_right(
@@ -1337,10 +1342,13 @@ mod test {
     mod reset_column_size {
         use super::*;
 
+        fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+        }
+
         #[track_caller]
         fn assert_almost_eq(a: &[f32], b: &[f32]) {
-            let all_eq = a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
-            if !all_eq {
+            if !is_almost_eq(a, b) {
                 assert_eq!(a, b);
             }
         }
@@ -1380,8 +1388,6 @@ mod test {
                     if col.starts_with('X') || col.is_empty() {
                         resize_behavior[index] = ResizeBehavior::None;
                     } else if col.starts_with('*') {
-                        resize_behavior[index] = ResizeBehavior::Resizable;
-                    } else if col.starts_with('X') {
                         resize_behavior[index] =
                             ResizeBehavior::MinSize(col.len() as f32 / total_size);
                     } else {
@@ -1413,15 +1419,37 @@ mod test {
                 "invalid test input: total width not the same"
             );
             let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
-            assert_almost_eq(
-                &ColumnWidths::reset_to_initial_size(
-                    column_index,
-                    widths,
-                    initial_sizes,
-                    &resize_behavior,
-                ),
-                &expected,
+            let result = ColumnWidths::reset_to_initial_size(
+                column_index,
+                widths,
+                initial_sizes,
+                &resize_behavior,
             );
+            let is_eq = is_almost_eq(&result, &expected);
+            if !is_eq {
+                let factor = dbg!(total_1);
+                let result_str = result
+                    .map(|f| "*".repeat(f32::round(f * factor) as usize))
+                    .join("|");
+                let expected_str = expected
+                    .map(|f| "*".repeat(f32::round(f * factor) as usize))
+                    .join("|");
+                panic!(
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                );
+            }
+        }
+
+        macro_rules! check {
+            (columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
+                check::<$cols>($initial, $current, $expected, $resizing);
+            };
+            ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
+                #[test]
+                fn $name() {
+                    check::<$cols>($initial, $current, $expected, $resizing);
+                }
+            };
         }
 
         #[test]
@@ -1437,15 +1465,50 @@ mod test {
             assert_eq!(updated_widths, initial_sizes);
         }
 
-        #[test]
-        fn try_check() {
-            check::<5>(
-                "**|**|**|**|**",
-                "**|**|X|***|**",
-                "**|**|**|**|**",
-                "X|*|*|*|*",
-            );
-        }
+        check!(
+            basic_right,
+            columns: 5,
+            starting: "**|**|**|**|**",
+            snapshot: "**|**|X|***|**",
+            expected: "**|**|**|**|**",
+            resizing: "X|*|*|*|*",
+        );
+
+        check!(
+            basic_left,
+            columns: 5,
+            starting: "**|**|**|**|**",
+            snapshot: "**|**|***|X|**",
+            expected: "**|**|**|**|**",
+            resizing: "X|*|*|*|**",
+        );
+
+        check!(
+            squashed_left_reset_col2,
+            columns: 6,
+            starting: "*|***|**|**|****|*",
+            snapshot: "*|*|X|*|*|********",
+            expected: "*|*|**|*|*|*******",
+            resizing: "X|*|*|*|*|*",
+        );
+
+        check!(
+            grow_cascading_right,
+            columns: 6,
+            starting: "*|***|****|**|***|*",
+            snapshot: "*|***|X|**|**|*****",
+            expected: "*|***|****|*|*|****",
+            resizing: "X|*|*|*|*|*",
+        );
+
+        check!(
+            squashed_right_reset_col4,
+            columns: 6,
+            starting: "*|***|**|**|****|*",
+            snapshot: "*|********|*|*|X|*",
+            expected: "*|*****|*|*|****|*",
+            resizing: "X|*|*|*|*|*",
+        );
 
         #[test]
         #[ignore = "todo! not working right now"]
@@ -1463,6 +1526,7 @@ mod test {
         }
 
         #[test]
+        #[ignore = "todo! remove if check! works"]
         fn test_reset_column_size() {
             let resize_behavior = [
                 ResizeBehavior::None,
