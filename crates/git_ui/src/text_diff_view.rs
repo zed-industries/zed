@@ -434,8 +434,6 @@ impl Render for TextDiffView {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
 
     use editor::{actions, test::editor_test_context::assert_state_with_diff};
@@ -444,6 +442,7 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use unindent::unindent;
+    use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -474,7 +473,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 "a": {
                     "b": {
@@ -485,14 +484,14 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let (workspace, mut cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(Path::new("/test/a/b/text.txt"), cx)
+                project.open_local_buffer(path!("/test/a/b/text.txt"), cx)
             })
             .await
             .unwrap();

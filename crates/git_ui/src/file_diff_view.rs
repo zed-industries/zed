@@ -507,7 +507,11 @@ mod tests {
             );
             assert_eq!(
                 diff_view.tab_tooltip_text(cx).unwrap(),
-                path!("test/old_file.txt ↔ test/new_file.txt")
+                format!(
+                    "{} ↔ {}",
+                    path!("test/old_file.txt"),
+                    path!("test/new_file.txt")
+                )
             );
         })
     }
