@@ -727,9 +727,12 @@ pub struct LanguageConfig {
     /// used for comment continuations on the next line, but only the first one is used for Editor::ToggleComments.
     #[serde(default)]
     pub line_comments: Vec<Arc<str>>,
-    /// Starting and closing characters of a block comment.
+    /// Delimiters and configuration for recognizing and formatting block comments.
     #[serde(default)]
-    pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    pub block_comment: Option<BlockCommentConfig>,
+    /// Delimiters and configuration for recognizing and formatting documentation comments.
+    #[serde(default)]
+    pub documentation_comment: Option<BlockCommentConfig>,
     /// A list of additional regex patterns that should be treated as prefixes
     /// for creating boundaries during rewrapping, ensuring content from one
     /// prefixed section doesn't merge with another (e.g., markdown list items).
@@ -774,10 +777,6 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
-    /// Whether to treat documentation comment of this language differently by
-    /// auto adding prefix on new line, adjusting the indenting , etc.
-    #[serde(default)]
-    pub documentation: Option<DocumentationConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -837,17 +836,17 @@ pub struct JsxTagAutoCloseConfig {
     pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
-/// The configuration for documentation block for this language.
-#[derive(Clone, Deserialize, JsonSchema)]
-pub struct DocumentationConfig {
-    /// A start tag of documentation block.
+/// The configuration for block comments for this language.
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+pub struct BlockCommentConfig {
+    /// A start tag of block comment.
     pub start: Arc<str>,
-    /// A end tag of documentation block.
+    /// A end tag of block comment.
     pub end: Arc<str>,
-    /// A character to add as a prefix when a new line is added to a documentation block.
+    /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
-    pub tab_size: NonZeroU32,
+    pub tab_size: u32,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -864,7 +863,7 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
-    pub block_comment: Override<(Arc<str>, Arc<str>)>,
+    pub block_comment: Override<BlockCommentConfig>,
     #[serde(skip)]
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
@@ -916,6 +915,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comments: Default::default(),
             block_comment: Default::default(),
+            documentation_comment: Default::default(),
             rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -929,7 +929,6 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
-            documentation: None,
         }
     }
 }
@@ -1847,12 +1846,17 @@ impl LanguageScope {
         .map_or([].as_slice(), |e| e.as_slice())
     }
 
-    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
+    /// Config for block comments for this language.
+    pub fn block_comment(&self) -> Option<&BlockCommentConfig> {
         Override::as_option(
             self.config_override().map(|o| &o.block_comment),
             self.language.config.block_comment.as_ref(),
         )
-        .map(|e| (&e.0, &e.1))
+    }
+
+    /// Config for documentation-style block comments for this language.
+    pub fn documentation_comment(&self) -> Option<&BlockCommentConfig> {
+        self.language.config.documentation_comment.as_ref()
     }
 
     /// Returns additional regex patterns that act as prefix markers for creating
@@ -1895,14 +1899,6 @@ impl LanguageScope {
         self.config_override()
             .and_then(|o| o.prefer_label_for_snippet)
             .unwrap_or(false)
-    }
-
-    /// Returns config to documentation block for this language.
-    ///
-    /// Used for documentation styles that require a leading character on each line,
-    /// such as the asterisk in JSDoc, Javadoc, etc.
-    pub fn documentation(&self) -> Option<&DocumentationConfig> {
-        self.language.config.documentation.as_ref()
     }
 
     /// Returns a list of bracket pairs for a given language with an additional
