@@ -12,7 +12,6 @@ use editor::{
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
     actions::{Backtab, Tab},
 };
-use fancy_regex::Regex;
 use futures::channel::oneshot;
 use gpui::{
     Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -24,6 +23,7 @@ use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -749,7 +749,7 @@ impl BufferSearchBar {
         let pattern_items_regex = Regex::new(
             &PATTERN_ITEMS
                 .iter()
-                .map(|(pattern, _, _)| fancy_regex::escape(pattern))
+                .map(|(pattern, _, _)| regex::escape(pattern))
                 .collect::<Vec<_>>()
                 .join("|"),
         )
