@@ -50,9 +50,7 @@ impl TextDiffView {
             let source_buffer = multibuffer.as_singleton()?.clone();
             let selections = editor.selections.all::<Point>(cx);
             let buffer_snapshot = source_buffer.read(cx);
-            let Some(first_selection) = selections.first() else {
-                return None;
-            };
+            let first_selection = selections.first()?;
             let selection_range = if first_selection.is_empty() {
                 Point::new(0, 0)..buffer_snapshot.max_point()
             } else {
@@ -169,12 +167,11 @@ impl TextDiffView {
             .buffer()
             .read(cx)
             .as_singleton()
-            .map(|b| {
+            .and_then(|b| {
                 b.read(cx)
                     .file()
                     .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
             })
-            .flatten()
             .unwrap_or("untitled".into());
 
         let selection_location_path = selection_location_text
@@ -396,9 +393,7 @@ impl Item for TextDiffView {
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
     let buffer = editor.buffer().read(cx);
     let buffer_snapshot = buffer.snapshot(cx);
-    let Some(first_selection) = editor.selections.disjoint.first() else {
-        return None;
-    };
+    let first_selection = editor.selections.disjoint.first()?;
 
     let (start_row, start_column, end_row, end_column) =
         if first_selection.start == first_selection.end {
