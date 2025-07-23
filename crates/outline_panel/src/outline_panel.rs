@@ -819,13 +819,7 @@ impl OutlinePanel {
                             for (buffer_id, excerpts) in &outline_panel.excerpts {
                                 for (excerpt_id, excerpt) in excerpts {
                                     if let ExcerptOutlines::Outlines(outlines) = &excerpt.outlines {
-                                        for outline in outlines.iter() {
-                                            let _outline_entry = OutlineEntryOutline {
-                                                buffer_id: *buffer_id,
-                                                excerpt_id: *excerpt_id,
-                                                outline: outline.clone(),
-                                            };
-
+                                        for outline in outlines {
                                             if outline_panel
                                                 .outline_children_cache
                                                 .get(buffer_id)
@@ -2579,19 +2573,9 @@ impl OutlinePanel {
                     if event.down.button == MouseButton::Right || event.down.first_mouse {
                         return;
                     }
+
                     let change_focus = event.down.click_count > 1;
-
-                    if outline_panel.is_singleton_active(cx) {
-                        let is_already_selected = outline_panel
-                            .selected_entry()
-                            .is_some_and(|selected| selected == &clicked_entry);
-
-                        if is_already_selected && outline_panel.can_toggle(&clicked_entry, cx) {
-                            outline_panel.toggle_expanded(&clicked_entry, window, cx);
-                        }
-                    } else {
-                        outline_panel.toggle_expanded(&clicked_entry, window, cx);
-                    }
+                    outline_panel.toggle_expanded(&clicked_entry, window, cx);
 
                     outline_panel.scroll_editor_to_entry(
                         &clicked_entry,
@@ -4974,28 +4958,6 @@ impl OutlinePanel {
                 _ => None,
             })
             .collect()
-    }
-
-    fn can_toggle(&self, entry: &PanelEntry, _cx: &App) -> bool {
-        match entry {
-            PanelEntry::FoldedDirs(_) => true,
-            PanelEntry::Fs(FsEntry::Directory(_)) => true,
-            PanelEntry::Fs(FsEntry::File(file)) => self.excerpts.contains_key(&file.buffer_id),
-            PanelEntry::Fs(FsEntry::ExternalFile(external_file)) => {
-                self.excerpts.contains_key(&external_file.buffer_id)
-            }
-            PanelEntry::Outline(OutlineEntry::Excerpt(_)) => true,
-            PanelEntry::Outline(OutlineEntry::Outline(outline)) => self
-                .outline_children_cache
-                .get(&outline.buffer_id)
-                .and_then(|children_map| {
-                    let key = (outline.outline.range.clone(), outline.outline.depth);
-                    children_map.get(&key)
-                })
-                .copied()
-                .unwrap_or(false),
-            PanelEntry::Search(_) => false,
-        }
     }
 }
 
