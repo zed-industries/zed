@@ -64,7 +64,7 @@ impl AgentServer for ClaudeCode {
         let project = project.clone();
         let root_dir = root_dir.to_path_buf();
         cx.spawn(async move |cx| {
-            let mut threads_map = Rc::new(RefCell::new(HashMap::default()));
+            let threads_map = Rc::new(RefCell::new(HashMap::default()));
             let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
 
             let permission_mcp_server =
