@@ -183,6 +183,7 @@ impl ZedAiOnboarding {
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Upgrade To Pro Clicked", state = "young-account");
                             cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
                         }),
                 )
@@ -210,6 +211,7 @@ impl ZedAiOnboarding {
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "post-sign-in");
                             cx.open_url(&zed_urls::start_trial_url(cx))
                         }),
                 )
@@ -234,7 +236,10 @@ impl ZedAiOnboarding {
                     .icon(IconName::ArrowUpRight)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::XSmall)
-                    .on_click(move |_, _window, cx| cx.open_url(&zed_urls::terms_of_service(cx))),
+                    .on_click(move |_, _window, cx| {
+                        telemetry::event!("Review Terms of Service Click");
+                        cx.open_url(&zed_urls::terms_of_service(cx))
+                    }),
             )
             .child(
                 Button::new("accept_terms", "Accept")
@@ -242,7 +247,9 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
-                        move |_, window, cx| (callback)(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Accepted Terms of Service");
+                            (callback)(window, cx)}
                     }),
             )
             .into_any_element()
@@ -267,7 +274,10 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click({
                         let callback = self.sign_in.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "pre-sign-in");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()
@@ -294,7 +304,13 @@ impl ZedAiOnboarding {
                                     IconButton::new("dismiss_onboarding", IconName::Close)
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text("Dismiss"))
-                                        .on_click(move |_, window, cx| callback(window, cx)),
+                                        .on_click(move |_, window, cx| {
+                                            telemetry::event!(
+                                                "Banner Dismissed",
+                                                source = "AI Onboarding",
+                                            );
+                                            callback(window, cx)
+                                        }),
                                 ),
                             )
                         },
@@ -331,7 +347,13 @@ impl ZedAiOnboarding {
                             IconButton::new("dismiss_onboarding", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(move |_, window, cx| callback(window, cx)),
+                                .on_click(move |_, window, cx| {
+                                    telemetry::event!(
+                                        "Banner Dismissed",
+                                        source = "AI Onboarding",
+                                    );
+                                    callback(window, cx)
+                                }),
                         ),
                     )
                 },
@@ -359,7 +381,10 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Outlined)
                     .on_click({
                         let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()
