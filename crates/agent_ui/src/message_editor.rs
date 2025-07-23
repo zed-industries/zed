@@ -910,6 +910,10 @@ impl MessageEditor {
                                                         .on_click({
                                                             let focus_handle = focus_handle.clone();
                                                             move |_event, window, cx| {
+                                                                telemetry::event!(
+                                                                    "Agent Message Sent",
+                                                                    agent = "zed",
+                                                                );
                                                                 focus_handle.dispatch_action(
                                                                     &Chat, window, cx,
                                                                 );

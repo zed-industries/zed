@@ -347,6 +347,7 @@ dependencies = [
  "proto",
  "serde",
  "smallvec",
+ "telemetry",
  "ui",
  "workspace-hack",
  "zed_actions",
