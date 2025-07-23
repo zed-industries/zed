@@ -283,7 +283,7 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
+            Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
         }
     }
 }
@@ -292,7 +292,7 @@ impl ToTaffy<taffy::style::Dimension> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::Dimension {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::Dimension::auto(),
+            Length::Auto => taffy::prelude::Dimension::Auto,
         }
     }
 }
@@ -302,14 +302,14 @@ impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentage::length(pixels.into())
+                    taffy::style::LengthPercentage::Length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentage::length((*rems * rem_size).into())
+                    taffy::style::LengthPercentage::Length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentage::percent(*fraction)
+                taffy::style::LengthPercentage::Percent(*fraction)
             }
         }
     }
@@ -320,14 +320,14 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentageAuto::length(pixels.into())
+                    taffy::style::LengthPercentageAuto::Length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentageAuto::length((*rems * rem_size).into())
+                    taffy::style::LengthPercentageAuto::Length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentageAuto::percent(*fraction)
+                taffy::style::LengthPercentageAuto::Percent(*fraction)
             }
         }
     }
@@ -337,12 +337,12 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Dimension {
         match self {
             DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::length(pixels.into()),
+                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::Length(pixels.into()),
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::Dimension::length((*rems * rem_size).into())
+                    taffy::style::Dimension::Length((*rems * rem_size).into())
                 }
             },
-            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
+            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::Percent(*fraction),
         }
     }
 }
@@ -350,9 +350,9 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
 impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentage {
         match self {
-            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::length(pixels.into()),
+            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(pixels.into()),
             AbsoluteLength::Rems(rems) => {
-                taffy::style::LengthPercentage::length((*rems * rem_size).into())
+                taffy::style::LengthPercentage::Length((*rems * rem_size).into())
             }
         }
     }
