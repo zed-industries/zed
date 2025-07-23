@@ -953,9 +953,6 @@ pub fn render_header<const COLS: usize>(
                         columns_widths.as_ref().cloned(),
                         |this, (column_widths, resizables, initial_sizes)| {
                             if resizables[header_idx].is_resizable() {
-                                let column_widths = column_widths.clone();
-                                let resizables = resizables.clone();
-
                                 this.on_click(move |event, window, cx| {
                                     if event.down.click_count > 1 {
                                         column_widths
@@ -1480,7 +1477,7 @@ mod test {
             );
             let is_eq = is_almost_eq(&result, &expected);
             if !is_eq {
-                let factor = dbg!(total_1);
+                let factor = total_1;
                 let result_str = result
                     .map(|f| "*".repeat(f32::round(f * factor) as usize))
                     .join("|");
