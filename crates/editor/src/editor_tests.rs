@@ -5070,6 +5070,33 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("\n\n\n\n\n\naaaa\nbbbb\ncccc", cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(6, 4)..Point::new(7, 4),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(7, 4)..Point::new(7, 4)])
+        });
+        assert_eq!(editor.display_text(cx), "\n\n\n\n\n\naaaa⋯\ncccc");
+        editor.move_line_up(&MoveLineUp, window, cx);
+        let buffer_text = editor.buffer.read(cx).snapshot(cx).text();
+        assert_eq!(buffer_text, "\n\n\n\n\naaaa\nbbbb\n\ncccc");
+    });
+}
+
+#[gpui::test]
 fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
