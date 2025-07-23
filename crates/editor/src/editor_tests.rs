@@ -5073,36 +5073,27 @@ fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
     _ = editor.update(cx, |editor, window, cx| {
+        println!("before fold");
         editor.fold_creases(
             vec![
-                Crease::simple(Point::new(6, 8)..Point::new(9, 0), FoldPlaceholder::test()),
-                Crease::simple(Point::new(7, 15)..Point::new(9, 0), FoldPlaceholder::test()),
+                Crease::simple(Point::new(6, 8)..Point::new(8, 21), FoldPlaceholder::test()),
+                Crease::simple(
+                    Point::new(7, 15)..Point::new(8, 21),
+                    FoldPlaceholder::test(),
+                ),
             ],
             true,
             window,
             cx,
         );
+        println!("after fold");
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(8, 21)..Point::new(8, 21)])
         });
-        assert_eq!(editor.display_text(cx), "\n\n\n\n\n\nclass A:⋯");
-
-        // // Test move_line_up - should move the folded class up one line
-        // editor.move_line_up(&MoveLineUp, window, cx);
-
-        // // Verify the folded class moved up and folds are preserved
-        // assert_eq!(
-        //     editor.display_text(cx),
-        //     "\n\n\n\n\nclass A:⋯\n"
-        // );
-
-        // // Verify cursor position adjusted correctly
-        // assert_eq!(
-        //     editor.selections.display_ranges(cx),
-        //     vec![
-        //         DisplayPoint::new(DisplayRow(5), 21)..DisplayPoint::new(DisplayRow(5), 21),
-        //     ]
-        // );
+        println!("after selection");
+        dbg!(&editor.selections.all::<Point>(cx));
+        assert_eq!(editor.display_text(cx), "\n\n\n\n\n\nclass A:⋯\n");
+        editor.move_line_up(&MoveLineUp, window, cx);
     });
 }
 
