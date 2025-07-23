@@ -11379,27 +11379,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            let (mut start_row, mut end_row) = consume_contiguous_rows(
+            let (start_row, end_row) = consume_contiguous_rows(
                 &mut contiguous_row_selections,
                 selection,
                 &display_map,
                 &mut selections,
             );
-
-            let folds_in_range = display_map
-                .folds_in_range(
-                    buffer.anchor_before(Point::new(start_row.0, 0))
-                        ..buffer.anchor_after(Point::new(end_row.0, 0)),
-                )
-                .collect::<Vec<_>>();
-            if let Some(fold) = folds_in_range.first() {
-                let fold_start = fold.range.start.to_point(&buffer);
-                start_row = start_row.min(MultiBufferRow(fold_start.row));
-            }
-            if let Some(fold) = folds_in_range.last() {
-                let fold_end = fold.range.end.to_point(&buffer);
-                end_row = end_row.max(MultiBufferRow(fold_end.row));
-            }
 
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row.0 > 0 {
@@ -11505,27 +11490,12 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            let (mut start_row, mut end_row) = consume_contiguous_rows(
+            let (start_row, end_row) = consume_contiguous_rows(
                 &mut contiguous_row_selections,
                 selection,
                 &display_map,
                 &mut selections,
             );
-
-            let folds_in_range = display_map
-                .folds_in_range(
-                    buffer.anchor_before(Point::new(start_row.0, 0))
-                        ..buffer.anchor_after(Point::new(end_row.0, 0)),
-                )
-                .collect::<Vec<_>>();
-            if let Some(fold) = folds_in_range.first() {
-                let fold_start = fold.range.start.to_point(&buffer);
-                start_row = start_row.min(MultiBufferRow(fold_start.row));
-            }
-            if let Some(fold) = folds_in_range.last() {
-                let fold_end = fold.range.end.to_point(&buffer);
-                end_row = end_row.max(MultiBufferRow(fold_end.row));
-            }
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row.0 <= buffer.max_point().row {
@@ -22284,7 +22254,7 @@ fn consume_contiguous_rows(
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
     contiguous_row_selections.push(selection.clone());
-    let start_row = MultiBufferRow(selection.start.row);
+    let start_row = starting_row(selection, display_map);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
@@ -22296,6 +22266,14 @@ fn consume_contiguous_rows(
         }
     }
     (start_row, end_row)
+}
+
+fn starting_row(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
+    if selection.start.column > 0 {
+        MultiBufferRow(display_map.prev_line_boundary(selection.start).0.row)
+    } else {
+        MultiBufferRow(selection.start.row)
+    }
 }
 
 fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
