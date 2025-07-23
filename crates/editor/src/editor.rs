@@ -11380,20 +11380,27 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            let (start_row, end_row) = consume_contiguous_rows(
+            let (mut start_row, mut end_row) = consume_contiguous_rows(
                 &mut contiguous_row_selections,
                 selection,
                 &display_map,
                 &mut selections,
             );
 
-            // [crates/editor/src/editor.rs:11390:13] &start_row = MultiBufferRow(
-            //     8,
-            // )
-            // [crates/editor/src/editor.rs:11390:13] &end_row = MultiBufferRow(
-            //     9,
-            // )
-            dbg!(&start_row, &end_row);
+            let folds_in_range = display_map
+                .folds_in_range(
+                    buffer.anchor_before(Point::new(start_row.0, 0))
+                        ..buffer.anchor_after(Point::new(end_row.0, 0)),
+                )
+                .collect::<Vec<_>>();
+            if let Some(fold) = folds_in_range.first() {
+                let fold_start = fold.range.start.to_point(&buffer);
+                start_row = start_row.min(MultiBufferRow(fold_start.row));
+            }
+            if let Some(fold) = folds_in_range.last() {
+                let fold_end = fold.range.end.to_point(&buffer);
+                end_row = end_row.max(MultiBufferRow(fold_end.row));
+            }
 
             // Move the text spanned by the row range to be before the line preceding the row range
             if start_row.0 > 0 {
@@ -11405,20 +11412,9 @@ impl Editor {
                         end_row.previous_row().0,
                         buffer.line_len(end_row.previous_row()),
                     );
-                // [crates/editor/src/editor.rs:11402:17] &range_to_move = Point {
-                //     row: 7,
-                //     column: 19,
-                // }..Point {
-                //     row: 8,
-                //     column: 21,
-                // }
-                dbg!(&range_to_move);
-                // correct so far
                 let insertion_point = display_map
                     .prev_line_boundary(Point::new(start_row.previous_row().0, 0))
                     .0;
-                dbg!(&insertion_point);
-                // insertion_point = 7
 
                 // Don't move lines across excerpts
                 if buffer
@@ -11432,8 +11428,6 @@ impl Editor {
                         .chain(['\n'])
                         .collect::<String>();
 
-                    dbg!(&text);
-
                     edits.push((
                         buffer.anchor_after(range_to_move.start)
                             ..buffer.anchor_before(range_to_move.end),
@@ -11442,9 +11436,7 @@ impl Editor {
                     let insertion_anchor = buffer.anchor_after(insertion_point);
                     edits.push((insertion_anchor..insertion_anchor, text));
 
-                    dbg!(&insertion_point.row);
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
-                    dbg!(&row_delta);
 
                     // Move selections up
                     new_selections.extend(contiguous_row_selections.drain(..).map(
@@ -11463,12 +11455,8 @@ impl Editor {
                     ) {
                         let mut start = fold.range.start.to_point(&buffer);
                         let mut end = fold.range.end.to_point(&buffer);
-                        println!("before:");
-                        dbg!(&start, &end);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        println!("after:");
-                        dbg!(&start, &end);
                         refold_creases.push(Crease::simple(start..end, fold.placeholder.clone()));
                     }
                 }
@@ -11518,12 +11506,27 @@ impl Editor {
 
         while let Some(selection) = selections.next() {
             // Find all the selections that span a contiguous row range
-            let (start_row, end_row) = consume_contiguous_rows(
+            let (mut start_row, mut end_row) = consume_contiguous_rows(
                 &mut contiguous_row_selections,
                 selection,
                 &display_map,
                 &mut selections,
             );
+
+            let folds_in_range = display_map
+                .folds_in_range(
+                    buffer.anchor_before(Point::new(start_row.0, 0))
+                        ..buffer.anchor_after(Point::new(end_row.0, 0)),
+                )
+                .collect::<Vec<_>>();
+            if let Some(fold) = folds_in_range.first() {
+                let fold_start = fold.range.start.to_point(&buffer);
+                start_row = start_row.min(MultiBufferRow(fold_start.row));
+            }
+            if let Some(fold) = folds_in_range.last() {
+                let fold_end = fold.range.end.to_point(&buffer);
+                end_row = end_row.max(MultiBufferRow(fold_end.row));
+            }
 
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row.0 <= buffer.max_point().row {
