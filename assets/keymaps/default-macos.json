@@ -1239,7 +1239,10 @@
       "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
       "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
-      "alt-enter": "keymap_editor::CreateBinding"
+      "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-c": "keymap_editor::CopyAction",
+      "cmd-shift-c": "keymap_editor::CopyContext",
+      "cmd-t": "keymap_editor::ShowMatchingKeybinds"
     }
   },
   {
