@@ -191,7 +191,7 @@ impl DirectXRenderer {
             self.devices
                 .device_context
                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
-            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
+            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
                 let reason = self.devices.device.GetDeviceRemovedReason();
@@ -506,6 +506,14 @@ impl DirectXRenderer {
         .context("Failed to get gpu driver info")
         .log_err()
         .unwrap_or("Unknown Driver".to_string());
+        match unsafe {
+            self.devices
+                .device
+                .CheckMultisampleQualityLevels(RENDER_TARGET_FORMAT, MULTISAMPLE_COUNT)
+        } {
+            Ok(level) => println!("=> Multisample quality levels: {}", level),
+            Err(err) => println!("Failed to check multisample quality levels: {:?}", err),
+        }
         Ok(GpuSpecs {
             is_software_emulated,
             device_name,
