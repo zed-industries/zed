@@ -1560,6 +1560,24 @@ mod test {
             resizing: "X|*|*|*|*|*",
         );
 
+        check!(
+            reset_col6_right,
+            columns: 6,
+            starting: "*|***|**|***|***|**",
+            snapshot: "*|***|**|***|**|X**",
+            expected: "*|***|**|***|***|**",
+            resizing: "X|*|*|*|*|*",
+        );
+
+        check!(
+            reset_col6_left,
+            columns: 6,
+            starting: "*|***|**|***|***|**",
+            snapshot: "*|***|**|***|****|X",
+            expected: "*|***|**|***|***|**",
+            resizing: "X|*|*|*|*|*",
+        );
+
         #[test]
         #[ignore = "todo! not working right now"]
         fn basic_should_go_left() {
