@@ -844,7 +844,7 @@ impl CompletionsMenu {
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .w(rems(34.));
 
-        Popover::new().child(list).into_any_element()
+        Popover::new().child(div().child(list)).into_any_element()
     }
 
     fn render_aside(
