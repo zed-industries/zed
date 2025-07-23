@@ -111,9 +111,9 @@ impl AssistantMessageChunk {
     pub fn from_str(chunk: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) -> Self {
         Self::Message {
             block: ContentBlock::new(
-                &acp::ContentBlock::TextContent(acp::TextContent {
+                &acp::ContentBlock::Text(acp::TextContent {
                     text: chunk.to_owned().into(),
-                    ..Default::default()
+                    annotations: None,
                 }),
                 language_registry,
                 cx,
@@ -123,9 +123,9 @@ impl AssistantMessageChunk {
 
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Message { block: chunk } => chunk.read(cx).source().to_string(),
-            Self::Thought { block: chunk } => {
-                format!("<thinking>\n{}\n</thinking>", chunk.read(cx).source())
+            Self::Message { block } => block.to_markdown(cx).to_string(),
+            Self::Thought { block } => {
+                format!("<thinking>\n{}\n</thinking>", block.to_markdown(cx))
             }
         }
     }
@@ -159,7 +159,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn locations(&self) -> Option<&[acp_old::ToolCallLocation]> {
+    pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
         if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
             Some(locations)
         } else {
@@ -173,7 +173,7 @@ pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
     pub kind: acp::ToolKind,
-    pub content: Vec<ToolCallContent>,
+    pub content: Option<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
 }
@@ -197,7 +197,7 @@ impl ToolCall {
 pub enum ToolCallStatus {
     WaitingForConfirmation {
         possible_grants: Vec<acp::Grant>,
-        respond_tx: oneshot::Sender<Option<acp::GrantId>>,
+        respond_tx: oneshot::Sender<acp::GrantId>,
     },
     Allowed {
         status: acp::ToolCallStatus,
@@ -214,9 +214,9 @@ impl Display for ToolCallStatus {
             match self {
                 ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
                 ToolCallStatus::Allowed { status } => match status {
-                    acp_old::ToolCallStatus::Running => "Running",
-                    acp_old::ToolCallStatus::Finished => "Finished",
-                    acp_old::ToolCallStatus::Error => "Error",
+                    acp::ToolCallStatus::InProgress => "In Progress",
+                    acp::ToolCallStatus::Completed => "Completed",
+                    acp::ToolCallStatus::Failed => "Failed",
                 },
                 ToolCallStatus::Rejected => "Rejected",
                 ToolCallStatus::Canceled => "Canceled",
@@ -319,6 +319,18 @@ impl ContentBlock {
         this
     }
 
+    pub fn new_combined(
+        blocks: &[acp::ContentBlock],
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        let mut this = Self::Empty;
+        for block in blocks {
+            this.append(block, language_registry, cx);
+        }
+        this
+    }
+
     pub fn append(
         &mut self,
         block: &acp::ContentBlock,
@@ -326,17 +338,17 @@ impl ContentBlock {
         cx: &mut App,
     ) {
         let new_content = match block {
-            acp::ContentBlock::TextContent(text_content) => text_content.text,
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
                 if let Some(path) = resource_link.uri.strip_prefix("file://") {
                     format!("{}", MentionPath(path.as_ref()))
                 } else {
-                    resource_link.uri
+                    resource_link.uri.clone()
                 }
             }
-            acp::ContentBlock::ImageContent(_)
-            | acp::ContentBlock::AudioContent(_)
-            | acp::ContentBlock::EmbeddedResource(_) => String::new(),
+            acp::ContentBlock::Image(_)
+            | acp::ContentBlock::Audio(_)
+            | acp::ContentBlock::Resource(_) => String::new(),
         };
 
         match self {
@@ -358,7 +370,7 @@ impl ContentBlock {
         }
     }
 
-    fn to_markdown(&self, cx: &App) -> &str {
+    fn to_markdown<'a>(&'a self, cx: &'a App) -> &'a str {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
@@ -673,7 +685,7 @@ impl AcpThread {
                 AgentThreadEntry::ToolCall(ToolCall {
                     status:
                         ToolCallStatus::Allowed {
-                            status: acp_old::ToolCallStatus::Running,
+                            status: acp::ToolCallStatus::InProgress,
                             ..
                         },
                     content: Some(ToolCallContent::Diff { .. }),
@@ -919,26 +931,26 @@ impl AcpThread {
 
     pub fn authorize_tool_call(
         &mut self,
-        id: acp_old::ToolCallId,
-        outcome: acp_old::ToolCallConfirmationOutcome,
+        id: acp::ToolCallId,
+        grant: acp::Grant,
         cx: &mut Context<Self>,
     ) {
         let Some((ix, call)) = self.tool_call_mut(id) else {
             return;
         };
 
-        let new_status = if outcome == acp_old::ToolCallConfirmationOutcome::Reject {
-            ToolCallStatus::Rejected
-        } else {
+        let new_status = if grant.is_allowed {
             ToolCallStatus::Allowed {
-                status: acp_old::ToolCallStatus::Running,
+                status: acp::ToolCallStatus::InProgress,
             }
+        } else {
+            ToolCallStatus::Rejected
         };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(outcome).log_err();
+            respond_tx.send(grant.id).log_err();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
         }
@@ -1036,26 +1048,22 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
         self.send(
-            acp_old::SendUserMessageParams {
-                chunks: vec![acp_old::UserMessageChunk::Text {
-                    text: message.to_string(),
-                }],
-            },
+            vec![acp::ContentBlock::Text(acp::TextContent {
+                text: message.to_string(),
+                annotations: None,
+            })],
             cx,
         )
     }
 
     pub fn send(
         &mut self,
-        message: acp_old::SendUserMessageParams,
+        message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
+        let block = ContentBlock::new_combined(&message, self.project.read(cx).languages(), cx);
         self.push_entry(
-            AgentThreadEntry::UserMessage(UserMessage::from_acp(
-                &message,
-                self.project.read(cx).languages().clone(),
-                cx,
-            )),
+            AgentThreadEntry::UserMessage(UserMessage { content: block }),
             cx,
         );
 
