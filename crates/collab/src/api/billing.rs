@@ -785,7 +785,7 @@ async fn handle_customer_subscription_event(
 
     // When the user's subscription changes, push down any changes to their plan.
     rpc_server
-        .update_plan_for_user(billing_customer.user_id)
+        .update_plan_for_user_legacy(billing_customer.user_id)
         .await
         .trace_err();
 
