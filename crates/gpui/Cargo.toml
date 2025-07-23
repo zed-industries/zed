@@ -297,6 +297,10 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
+name = "tree"
+path = "examples/tree.rs"
+
+[[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
 
