@@ -237,7 +237,7 @@ impl ZedAiOnboarding {
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::XSmall)
                     .on_click(move |_, _window, cx| {
-                        telemetry::event!("Review Terms of Service Click");
+                        telemetry::event!("Review Terms of Service Clicked");
                         cx.open_url(&zed_urls::terms_of_service(cx))
                     }),
             )
@@ -248,7 +248,7 @@ impl ZedAiOnboarding {
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
                         move |_, window, cx| {
-                            telemetry::event!("Accepted Terms of Service");
+                            telemetry::event!("Terms of Service Accepted");
                             (callback)(window, cx)}
                     }),
             )
