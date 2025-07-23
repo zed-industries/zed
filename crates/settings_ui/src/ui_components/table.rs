@@ -2,9 +2,9 @@ use std::{ops::Range, rc::Rc, time::Duration};
 
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
-    AbsoluteLength, AppContext, Axis, Context, DefiniteLength, DragMoveEvent, Entity, FocusHandle,
-    Length, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Point, Stateful, Task,
-    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    AbsoluteLength, AppContext, Axis, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Point,
+    Stateful, Task, UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 
 use itertools::intersperse_with;
@@ -13,7 +13,7 @@ use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    Scrollbar, ScrollbarState, StatefulInteractiveElement, Styled, StyledExt as _,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
@@ -526,7 +526,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     }
 
     fn reset_to_initial_size(
-        col_idx: usize,
+        mut col_idx: usize,
         mut widths: [f32; COLS],
         initial_sizes: [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
@@ -540,9 +540,14 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         let go_left_first = left_diff < right_diff;
 
-        let shrinking = diff < 0.0;
+        let mut shrinking = diff < 0.0;
         if go_left_first != (diff < 0.0) {
             diff = -diff;
+        }
+
+        if col_idx == COLS - 1 {
+            shrinking = !shrinking;
+            col_idx -= 1;
         }
 
         if diff > 0.0 {
@@ -909,11 +914,24 @@ pub fn render_row<const COLS: usize>(
 pub fn render_header<const COLS: usize>(
     headers: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
+    columns_widths: Option<(
+        WeakEntity<ColumnWidths<COLS>>,
+        [ResizeBehavior; COLS],
+        [DefiniteLength; COLS],
+    )>,
+    entity_id: Option<EntityId>,
     cx: &mut App,
 ) -> impl IntoElement {
     let column_widths = table_context
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
+
+    let element_id = entity_id
+        .map(|entity| entity.to_string())
+        .unwrap_or_default();
+
+    let shared_element_id: SharedString = format!("table-{}", element_id).into();
+
     div()
         .flex()
         .flex_row()
@@ -923,12 +941,42 @@ pub fn render_header<const COLS: usize>(
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .children(
-            headers
-                .into_iter()
-                .zip(column_widths)
-                .map(|(h, width)| base_cell_style_text(width, cx).child(h)),
-        )
+        .children(headers.into_iter().enumerate().zip(column_widths).map(
+            |((header_idx, h), width)| {
+                base_cell_style_text(width, cx)
+                    .child(h)
+                    .id(ElementId::NamedInteger(
+                        shared_element_id.clone(),
+                        header_idx as u64,
+                    ))
+                    .when_some(
+                        columns_widths.as_ref().cloned(),
+                        |this, (column_widths, resizables, initial_sizes)| {
+                            if resizables[header_idx].is_resizable() {
+                                let column_widths = column_widths.clone();
+                                let resizables = resizables.clone();
+
+                                this.on_click(move |event, window, cx| {
+                                    if event.down.click_count > 1 {
+                                        column_widths
+                                            .update(cx, |column, _| {
+                                                column.on_double_click(
+                                                    header_idx,
+                                                    &initial_sizes,
+                                                    &resizables,
+                                                    window,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                })
+                            } else {
+                                this
+                            }
+                        },
+                    )
+            },
+        ))
 }
 
 #[derive(Clone)]
@@ -960,6 +1008,12 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable)))
             .map(|(curr, resize_behavior)| (curr.downgrade(), resize_behavior));
 
+        let current_widths_with_initial_sizes = self
+            .col_widths
+            .as_ref()
+            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable, widths.initial)))
+            .map(|(curr, resize_behavior, initial)| (curr.downgrade(), resize_behavior, initial));
+
         let scroll_track_size = px(16.);
         let h_scroll_offset = if interaction_state
             .as_ref()
@@ -979,7 +1033,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(headers, table_context.clone(), cx))
+                this.child(render_header(
+                    headers,
+                    table_context.clone(),
+                    current_widths_with_initial_sizes,
+                    interaction_state.as_ref().map(Entity::entity_id),
+                    cx,
+                ))
             })
             .when_some(current_widths, {
                 |this, (widths, resize_behavior)| {
@@ -1344,13 +1404,6 @@ mod test {
 
         fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
-        }
-
-        #[track_caller]
-        fn assert_almost_eq(a: &[f32], b: &[f32]) {
-            if !is_almost_eq(a, b) {
-                assert_eq!(a, b);
-            }
         }
 
         fn check<const COLS: usize>(
