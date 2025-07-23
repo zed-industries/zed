@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::ops::Range;
+use std::ops::{Not, Range};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1666,10 +1666,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx)
-            && AgentSettings::get_global(cx).button
-            && !DisableAiSettings::get_global(cx).disable_ai)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -1685,7 +1682,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AgentSettings::get_global(cx).enabled
+        DisableAiSettings::get_global(cx).disable_ai.not() && AgentSettings::get_global(cx).enabled
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
