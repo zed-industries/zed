@@ -266,27 +266,28 @@ impl ZedMcpServer {
                 None => delegate.push_tool_call(claude_tool.as_acp()).await?.id,
             };
 
-            let outcome = delegate
-                .request_existing_tool_call_confirmation(
-                    tool_call_id,
-                    claude_tool.confirmation(None),
-                )
-                .await?;
+            todo!("use regular request_tool_call_confirmation")
+            // let outcome = delegate
+            //     .request_existing_tool_call_confirmation(
+            //         tool_call_id,
+            //         claude_tool.confirmation(None),
+            //     )
+            //     .await?;
 
-            match outcome {
-                acp::ToolCallConfirmationOutcome::Allow
-                | acp::ToolCallConfirmationOutcome::AlwaysAllow
-                | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
-                | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => Ok(PermissionToolResponse {
-                    behavior: PermissionToolBehavior::Allow,
-                    updated_input: params.input,
-                }),
-                acp::ToolCallConfirmationOutcome::Reject
-                | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
-                    behavior: PermissionToolBehavior::Deny,
-                    updated_input: params.input,
-                }),
-            }
+            // match outcome {
+            //     acp::ToolCallConfirmationOutcome::Allow
+            //     | acp::ToolCallConfirmationOutcome::AlwaysAllow
+            //     | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
+            //     | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => Ok(PermissionToolResponse {
+            //         behavior: PermissionToolBehavior::Allow,
+            //         updated_input: params.input,
+            //     }),
+            //     acp::ToolCallConfirmationOutcome::Reject
+            //     | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
+            //         behavior: PermissionToolBehavior::Deny,
+            //         updated_input: params.input,
+            //     }),
+            // }
         })
     }
 }

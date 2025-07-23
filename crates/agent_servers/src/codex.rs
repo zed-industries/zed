@@ -247,14 +247,14 @@ impl AgentServer for Codex {
                                     let inner_command =
                                         strip_bash_lc_and_escape(&exec.codex_command);
 
-                                    acp::RequestToolCallConfirmationParams {
-                                        tool_call: acp::PushToolCallParams {
+                                    acp_old::RequestToolCallConfirmationParams {
+                                        tool_call: acp_old::PushToolCallParams {
                                             label: todo!(),
-                                            icon: acp::Icon::Terminal,
+                                            icon: acp_old::Icon::Terminal,
                                             content: None,
                                             locations: vec![],
                                         },
-                                        confirmation: acp::ToolCallConfirmation::Execute {
+                                        confirmation: acp_old::ToolCallConfirmation::Execute {
                                             root_command: inner_command
                                                 .split(" ")
                                                 .next()
@@ -266,21 +266,21 @@ impl AgentServer for Codex {
                                     }
                                 }
                                 CodexElicitation::PatchApproval(patch) => {
-                                    acp::RequestToolCallConfirmationParams {
-                                        tool_call: acp::PushToolCallParams {
+                                    acp_old::RequestToolCallConfirmationParams {
+                                        tool_call: acp_old::PushToolCallParams {
                                             label: "Edit".to_string(),
-                                            icon: acp::Icon::Pencil,
+                                            icon: acp_old::Icon::Pencil,
                                             content: None, // todo!()
                                             locations: patch
                                                 .codex_changes
                                                 .keys()
-                                                .map(|path| acp::ToolCallLocation {
+                                                .map(|path| acp_old::ToolCallLocation {
                                                     path: path.clone(),
                                                     line: None,
                                                 })
                                                 .collect(),
                                         },
-                                        confirmation: acp::ToolCallConfirmation::Edit {
+                                        confirmation: acp_old::ToolCallConfirmation::Edit {
                                             description: Some(patch.message),
                                         },
                                     }
@@ -293,18 +293,18 @@ impl AgentServer for Codex {
                                     .await?;
 
                                 let decision = match response.outcome {
-                                    acp::ToolCallConfirmationOutcome::Allow => {
+                                    acp_old::ToolCallConfirmationOutcome::Allow => {
                                         ReviewDecision::Approved
                                     }
-                                    acp::ToolCallConfirmationOutcome::AlwaysAllow
-                                    | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
-                                    | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => {
+                                    acp_old::ToolCallConfirmationOutcome::AlwaysAllow
+                                    | acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
+                                    | acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool => {
                                         ReviewDecision::ApprovedForSession
                                     }
-                                    acp::ToolCallConfirmationOutcome::Reject => {
+                                    acp_old::ToolCallConfirmationOutcome::Reject => {
                                         ReviewDecision::Denied
                                     }
-                                    acp::ToolCallConfirmationOutcome::Cancel => {
+                                    acp_old::ToolCallConfirmationOutcome::Cancel => {
                                         ReviewDecision::Abort
                                     }
                                 };
@@ -340,7 +340,7 @@ impl AgentConnection for CodexAgentConnection {
     fn request_any(
         &self,
         params: acp_old::AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::acp_old::AnyAgentResult>> {
+    ) -> LocalBoxFuture<'static, Result<acp_old::acp_old::AnyAgentResult>> {
         let client = self.codex_mcp.client();
         let root_dir = self.root_dir.clone();
         let cancel_request_tx = self.cancel_request_tx.clone();
@@ -350,7 +350,7 @@ impl AgentConnection for CodexAgentConnection {
             match params {
                 // todo: consider sending an empty request so we get the init response?
                 acp_old::AnyAgentRequest::InitializeParams(_) => Ok(
-                    acp_old::AnyAgentResult::InitializeResponse(acp::InitializeResponse {
+                    acp_old::AnyAgentResult::InitializeResponse(acp_old::InitializeResponse {
                         is_authenticated: true,
                         protocol_version: acp_old::ProtocolVersion::latest(),
                     }),
@@ -371,8 +371,8 @@ impl AgentConnection for CodexAgentConnection {
                                         .chunks
                                         .into_iter()
                                         .filter_map(|chunk| match chunk {
-                                            acp::UserMessageChunk::Text { text } => Some(text),
-                                            acp::UserMessageChunk::Path { .. } => {
+                                            acp_old::UserMessageChunk::Text { text } => Some(text),
+                                            acp_old::UserMessageChunk::Path { .. } => {
                                                 // todo!
                                                 None
                                             }
@@ -387,7 +387,7 @@ impl AgentConnection for CodexAgentConnection {
                         .await?;
 
                     Ok(acp_old::AnyAgentResult::SendUserMessageResponse(
-                        acp::SendUserMessageResponse,
+                        acp_old::SendUserMessageResponse,
                     ))
                 }
                 acp_old::AnyAgentRequest::CancelSendMessageParams(_) => {
@@ -398,7 +398,7 @@ impl AgentConnection for CodexAgentConnection {
                     }
 
                     Ok(acp_old::AnyAgentResult::CancelSendMessageResponse(
-                        acp::CancelSendMessageResponse,
+                        acp_old::CancelSendMessageResponse,
                     ))
                 }
             }
@@ -411,7 +411,7 @@ struct CodexAgentConnection {
     codex_mcp: Arc<context_server::ContextServer>,
     root_dir: PathBuf,
     cancel_request_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
-    tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+    tool_id_map: Rc<RefCell<HashMap<String, acp_old::ToolCallId>>>,
     _handler_task: Task<()>,
     _request_task: Task<()>,
     _zed_mcp: ZedMcpServer,
@@ -421,13 +421,13 @@ impl CodexAgentConnection {
     async fn handle_acp_notification(
         delegate: &OldAcpClientDelegate,
         event: AcpNotification,
-        tool_id_map: &Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        tool_id_map: &Rc<RefCell<HashMap<String, acp_old::ToolCallId>>>,
     ) -> Result<()> {
         match event {
             AcpNotification::AgentMessage(message) => {
                 delegate
-                    .stream_assistant_message_chunk(acp::StreamAssistantMessageChunkParams {
-                        chunk: acp::AssistantMessageChunk::Text {
+                    .stream_assistant_message_chunk(acp_old::StreamAssistantMessageChunkParams {
+                        chunk: acp_old::AssistantMessageChunk::Text {
                             text: message.message,
                         },
                     })
@@ -435,8 +435,8 @@ impl CodexAgentConnection {
             }
             AcpNotification::AgentReasoning(message) => {
                 delegate
-                    .stream_assistant_message_chunk(acp::StreamAssistantMessageChunkParams {
-                        chunk: acp::AssistantMessageChunk::Thought {
+                    .stream_assistant_message_chunk(acp_old::StreamAssistantMessageChunkParams {
+                        chunk: acp_old::AssistantMessageChunk::Thought {
                             thought: message.text,
                         },
                     })
@@ -444,11 +444,11 @@ impl CodexAgentConnection {
             }
             AcpNotification::McpToolCallBegin(event) => {
                 let result = delegate
-                    .push_tool_call(acp::PushToolCallParams {
+                    .push_tool_call(acp_old::PushToolCallParams {
                         label: format!("`{}: {}`", event.server, event.tool),
-                        icon: acp::Icon::Hammer,
+                        icon: acp_old::Icon::Hammer,
                         content: event.arguments.and_then(|args| {
-                            Some(acp::ToolCallContent::Markdown {
+                            Some(acp_old::ToolCallContent::Markdown {
                                 markdown: md_codeblock(
                                     "json",
                                     &serde_json::to_string_pretty(&args).ok()?,
@@ -473,26 +473,26 @@ impl CodexAgentConnection {
                             serde_json::from_value::<context_server::types::CallToolResponse>(value)
                         {
                             (
-                                acp::ToolCallStatus::Finished,
+                                acp_old::ToolCallStatus::Finished,
                                 mcp_tool_content_to_acp(response.content),
                             )
                         } else {
                             (
-                                acp::ToolCallStatus::Error,
-                                Some(acp::ToolCallContent::Markdown {
+                                acp_old::ToolCallStatus::Error,
+                                Some(acp_old::ToolCallContent::Markdown {
                                     markdown: "Failed to parse tool response".to_string(),
                                 }),
                             )
                         }
                     }
                     Err(error) => (
-                        acp::ToolCallStatus::Error,
-                        Some(acp::ToolCallContent::Markdown { markdown: error }),
+                        acp_old::ToolCallStatus::Error,
+                        Some(acp_old::ToolCallContent::Markdown { markdown: error }),
                     ),
                 };
 
                 delegate
-                    .update_tool_call(acp::UpdateToolCallParams {
+                    .update_tool_call(acp_old::UpdateToolCallParams {
                         tool_call_id: acp_call_id,
                         status,
                         content,
@@ -503,9 +503,9 @@ impl CodexAgentConnection {
                 let inner_command = strip_bash_lc_and_escape(&event.command);
 
                 let result = delegate
-                    .push_tool_call(acp::PushToolCallParams {
+                    .push_tool_call(acp_old::PushToolCallParams {
                         label: format!("`{}`", inner_command),
-                        icon: acp::Icon::Terminal,
+                        icon: acp_old::Icon::Terminal,
                         content: None,
                         locations: vec![],
                     })
@@ -549,14 +549,14 @@ impl CodexAgentConnection {
                 }
 
                 delegate
-                    .update_tool_call(acp::UpdateToolCallParams {
+                    .update_tool_call(acp_old::UpdateToolCallParams {
                         tool_call_id: acp_call_id,
                         status: if success {
-                            acp::ToolCallStatus::Finished
+                            acp_old::ToolCallStatus::Finished
                         } else {
-                            acp::ToolCallStatus::Error
+                            acp_old::ToolCallStatus::Error
                         },
-                        content: Some(acp::ToolCallContent::Markdown { markdown: content }),
+                        content: Some(acp_old::ToolCallContent::Markdown { markdown: content }),
                     })
                     .await?;
             }
@@ -569,14 +569,14 @@ impl CodexAgentConnection {
                     .unwrap_or_default();
 
                 let response = delegate
-                    .request_tool_call_confirmation(acp::RequestToolCallConfirmationParams {
-                        tool_call: acp::PushToolCallParams {
+                    .request_tool_call_confirmation(acp_old::RequestToolCallConfirmationParams {
+                        tool_call: acp_old::PushToolCallParams {
                             label: format!("`{}`", inner_command),
-                            icon: acp::Icon::Terminal,
+                            icon: acp_old::Icon::Terminal,
                             content: None,
                             locations: vec![],
                         },
-                        confirmation: acp::ToolCallConfirmation::Execute {
+                        confirmation: acp_old::ToolCallConfirmation::Execute {
                             command: inner_command,
                             root_command,
                             description: event.reason,
@@ -697,7 +697,7 @@ fn escape_command(command: &[String]) -> String {
     shlex::try_join(command.iter().map(|s| s.as_str())).unwrap_or_else(|_| command.join(" "))
 }
 
-fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp::ToolCallContent> {
+fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp_old::ToolCallContent> {
     let mut content = String::new();
 
     for chunk in chunks {
@@ -716,7 +716,7 @@ fn mcp_tool_content_to_acp(chunks: Vec<ToolResponseContent>) -> Option<acp::Tool
     }
 
     if !content.is_empty() {
-        Some(acp::ToolCallContent::Markdown { markdown: content })
+        Some(acp_old::ToolCallContent::Markdown { markdown: content })
     } else {
         None
     }

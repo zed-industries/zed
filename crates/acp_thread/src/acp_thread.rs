@@ -2,7 +2,7 @@ mod connection;
 pub use connection::*;
 
 use agent_client_protocol as acp;
-use agentic_coding_protocol::{self as acp_old, ToolCallConfirmationOutcome};
+use agentic_coding_protocol as acp_old;
 use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
@@ -715,10 +715,19 @@ impl AcpThread {
         tool_call: acp::ToolCall,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let language_registry = self.project.read(cx).languages().clone();
         let status = ToolCallStatus::Allowed {
             status: tool_call.status,
         };
+        self.update_tool_call_inner(tool_call, status, cx)
+    }
+
+    pub fn update_tool_call_inner(
+        &mut self,
+        tool_call: acp::ToolCall,
+        status: ToolCallStatus,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let language_registry = self.project.read(cx).languages().clone();
         let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
 
         let location = call.locations.last().cloned();
@@ -795,25 +804,8 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        self.insert_tool_call(tool_call, status, cx);
+        self.update_tool_call_inner(tool_call, status, cx);
         rx
-    }
-
-    fn insert_tool_call(
-        &mut self,
-        tool_call: acp::ToolCall,
-        status: ToolCallStatus,
-        cx: &mut Context<Self>,
-    ) {
-        let language_registry = self.project.read(cx).languages().clone();
-        let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
-
-        let location = call.locations.last().cloned();
-        if let Some(location) = location {
-            self.set_project_location(location, cx)
-        }
-
-        self.push_entry(AgentThreadEntry::ToolCall(call), cx);
     }
 
     pub fn authorize_tool_call(
@@ -1194,80 +1186,6 @@ impl OldAcpClientDelegate {
         Ok(())
     }
 
-    pub async fn request_existing_tool_call_confirmation(
-        &self,
-        tool_call_id: acp_old::ToolCallId,
-        confirmation: acp_old::ToolCallConfirmation,
-    ) -> Result<acp_old::ToolCallConfirmationOutcome> {
-        let cx = &mut self.cx.clone();
-
-        let tool_call = into_new_tool_call(
-            acp::ToolCallId(tool_call_id.0.to_string().into()),
-            confirmation,
-        );
-
-        let options = [
-            acp_old::ToolCallConfirmationOutcome::Allow,
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer,
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool,
-            acp_old::ToolCallConfirmationOutcome::Reject,
-        ]
-        .into_iter()
-        .map(|outcome| match outcome {
-            acp_old::ToolCallConfirmationOutcome::Allow => acp::PermissionOption {
-                id: acp::PermissionOptionId(Arc::from("allow")),
-                label: "Allow".to_string(),
-                kind: acp::PermissionOptionKind::AllowOnce,
-            },
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllow => acp::PermissionOption {
-                id: acp::PermissionOptionId(Arc::from("always-allow")),
-                label: "Always Allow".to_string(),
-                kind: acp::PermissionOptionKind::AllowOnce,
-            },
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer => acp::PermissionOption {
-                id: acp::PermissionOptionId(Arc::from("always-allow-mcp-server")),
-                label: "Always Allow MCP Server".to_string(),
-                kind: acp::PermissionOptionKind::AllowOnce,
-            },
-            acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool => acp::PermissionOption {
-                id: acp::PermissionOptionId(Arc::from("always-allow-tool")),
-                label: "Always Allow Tool".to_string(),
-                kind: acp::PermissionOptionKind::AllowOnce,
-            },
-            acp_old::ToolCallConfirmationOutcome::Reject => acp::PermissionOption {
-                id: acp::PermissionOptionId(Arc::from("reject")),
-                label: "Reject".to_string(),
-                kind: acp::PermissionOptionKind::AllowOnce,
-            },
-            acp_old::ToolCallConfirmationOutcome::Cancel => unreachable!(),
-        })
-        .collect();
-
-        let outcome = cx
-            .update(|cx| {
-                self.thread.update(cx, |thread, cx| {
-                    thread.request_tool_call_permission(tool_call, options, cx)
-                })
-            })?
-            .context("Failed to update thread")?;
-
-        let response = match outcome.await {
-            Ok(result) => match result.0.as_ref() {
-                "allow" => acp_old::ToolCallConfirmationOutcome::Allow,
-                "always-allow" => acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
-                "always-allow-tool" => acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool,
-                "always-allow-mcp-server" => {
-                    acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
-                }
-                "reject" => acp_old::ToolCallConfirmationOutcome::Reject,
-            },
-            Err(oneshot::Canceled) => acp_old::ToolCallConfirmationOutcome::Cancel,
-        };
-
-        Ok(response)
-    }
-
     pub async fn read_text_file_reusing_snapshot(
         &self,
         request: acp_old::ReadTextFileParams,
@@ -1320,16 +1238,96 @@ impl acp_old::Client for OldAcpClientDelegate {
         request: acp_old::RequestToolCallConfirmationParams,
     ) -> Result<acp_old::RequestToolCallConfirmationResponse, acp_old::Error> {
         let cx = &mut self.cx.clone();
-        let ToolCallRequest { id, outcome } = cx
+
+        let old_acp_id = *self.next_tool_call_id.borrow() + 1;
+        self.next_tool_call_id.replace(old_acp_id);
+
+        let tool_call = into_new_tool_call(
+            acp::ToolCallId(old_acp_id.to_string().into()),
+            request.tool_call,
+        );
+
+        let mut options = match request.confirmation {
+            acp_old::ToolCallConfirmation::Edit { .. } => vec![(
+                acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
+                acp::PermissionOptionKind::AllowAlways,
+                "Always Allow Edits".to_string(),
+            )],
+            acp_old::ToolCallConfirmation::Execute { root_command, .. } => vec![(
+                acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
+                acp::PermissionOptionKind::AllowAlways,
+                format!("Always Allow {}", root_command),
+            )],
+            acp_old::ToolCallConfirmation::Mcp {
+                server_name,
+                tool_name,
+                ..
+            } => vec![
+                (
+                    acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer,
+                    acp::PermissionOptionKind::AllowAlways,
+                    format!("Always Allow {}", server_name),
+                ),
+                (
+                    acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool,
+                    acp::PermissionOptionKind::AllowAlways,
+                    format!("Always Allow {}", tool_name),
+                ),
+            ],
+            acp_old::ToolCallConfirmation::Fetch { .. } => vec![(
+                acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
+                acp::PermissionOptionKind::AllowAlways,
+                "Always Allow".to_string(),
+            )],
+            acp_old::ToolCallConfirmation::Other { .. } => vec![(
+                acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
+                acp::PermissionOptionKind::AllowAlways,
+                "Always Allow".to_string(),
+            )],
+        };
+
+        options.extend([
+            (
+                acp_old::ToolCallConfirmationOutcome::Allow,
+                acp::PermissionOptionKind::AllowOnce,
+                "Allow".to_string(),
+            ),
+            (
+                acp_old::ToolCallConfirmationOutcome::Reject,
+                acp::PermissionOptionKind::RejectOnce,
+                "Reject".to_string(),
+            ),
+        ]);
+
+        let mut outcomes = Vec::with_capacity(options.len());
+        let mut acp_options = Vec::with_capacity(options.len());
+
+        for (index, (outcome, kind, label)) in options.into_iter().enumerate() {
+            outcomes.push(outcome);
+            acp_options.push(acp::PermissionOption {
+                id: acp::PermissionOptionId(index.to_string().into()),
+                label,
+                kind,
+            })
+        }
+
+        let response = cx
             .update(|cx| {
-                self.thread
-                    .update(cx, |thread, cx| thread.request_new_tool_call(request, cx))
+                self.thread.update(cx, |thread, cx| {
+                    thread.request_tool_call_permission(tool_call, acp_options, cx)
+                })
             })?
-            .context("Failed to update thread")?;
+            .context("Failed to update thread")?
+            .await;
+
+        let outcome = match response {
+            Ok(option_id) => outcomes[option_id.0.parse::<usize>().unwrap_or(0)].clone(),
+            Err(oneshot::Canceled) => acp_old::ToolCallConfirmationOutcome::Cancel,
+        };
 
         Ok(acp_old::RequestToolCallConfirmationResponse {
-            id,
-            outcome: outcome.await.map_err(acp_old::Error::into_internal_error)?,
+            id: acp_old::ToolCallId(old_acp_id),
+            outcome: outcome,
         })
     }
 
@@ -1350,7 +1348,7 @@ impl acp_old::Client for OldAcpClientDelegate {
                 )
             })
         })?
-        .context("Failed to update thread")?;
+        .context("Failed to update thread")??;
 
         Ok(acp_old::PushToolCallResponse {
             id: acp_old::ToolCallId(old_acp_id),
