@@ -518,22 +518,42 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 rem_size,
             ) - Self::get_fraction(&self.widths[double_click_position], bounds_width, rem_size);
 
-        let diff_remaining = self.propogate_resize_diff_right(
-            diff,
-            double_click_position,
-            bounds_width,
-            rem_size,
-            resize_behavior,
-        );
-
-        if diff_remaining > 0.0 && double_click_position > 0 {
-            self.propogate_resize_diff_left(
-                -diff_remaining,
-                double_click_position - 1,
+        if diff > 0.0 {
+            let diff_remaining = self.propogate_resize_diff_right(
+                diff,
+                double_click_position,
                 bounds_width,
                 rem_size,
                 resize_behavior,
             );
+
+            if diff_remaining > 0.0 && double_click_position > 0 {
+                self.propogate_resize_diff_left(
+                    -diff_remaining,
+                    double_click_position - 1,
+                    bounds_width,
+                    rem_size,
+                    resize_behavior,
+                );
+            }
+        } else if double_click_position > 0 {
+            let diff_remaining = self.propogate_resize_diff_left(
+                diff,
+                double_click_position,
+                bounds_width,
+                rem_size,
+                resize_behavior,
+            );
+
+            if diff_remaining < 0.0 {
+                self.propogate_resize_diff_right(
+                    -diff_remaining,
+                    double_click_position,
+                    bounds_width,
+                    rem_size,
+                    resize_behavior,
+                );
+            }
         }
     }
 
