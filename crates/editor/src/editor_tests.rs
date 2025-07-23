@@ -5065,6 +5065,48 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_move_line_up_with_nested_folds(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let editor = cx.add_window(|window, cx| {
+        let text = "\n\n\n\n\n\nclass A:\n    def __init__():\n        print(\"init\")\n";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_creases(
+            vec![
+                Crease::simple(Point::new(6, 8)..Point::new(9, 0), FoldPlaceholder::test()),
+                Crease::simple(Point::new(7, 15)..Point::new(9, 0), FoldPlaceholder::test()),
+            ],
+            true,
+            window,
+            cx,
+        );
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(8, 21)..Point::new(8, 21)])
+        });
+        assert_eq!(editor.display_text(cx), "\n\n\n\n\n\nclass A:⋯");
+
+        // // Test move_line_up - should move the folded class up one line
+        // editor.move_line_up(&MoveLineUp, window, cx);
+
+        // // Verify the folded class moved up and folds are preserved
+        // assert_eq!(
+        //     editor.display_text(cx),
+        //     "\n\n\n\n\nclass A:⋯\n"
+        // );
+
+        // // Verify cursor position adjusted correctly
+        // assert_eq!(
+        //     editor.selections.display_ranges(cx),
+        //     vec![
+        //         DisplayPoint::new(DisplayRow(5), 21)..DisplayPoint::new(DisplayRow(5), 21),
+        //     ]
+        // );
+    });
+}
+
+#[gpui::test]
 fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

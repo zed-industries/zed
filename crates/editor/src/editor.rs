@@ -2969,6 +2969,8 @@ impl Editor {
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, window, cx);
 
+        dbg!(self.selections.all::<Point>(cx));
+
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
@@ -11373,6 +11375,9 @@ impl Editor {
         let mut refold_creases = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
+
+        dbg!(&selections);
+
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();
@@ -11451,12 +11456,15 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
+            dbg!(&unfold_ranges);
             this.unfold_ranges(&unfold_ranges, true, true, cx);
+            dbg!(&edits);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
+            dbg!(&refold_creases);
             this.fold_creases(refold_creases, true, window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select(new_selections);
