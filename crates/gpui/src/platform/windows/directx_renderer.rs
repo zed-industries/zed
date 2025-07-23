@@ -506,14 +506,6 @@ impl DirectXRenderer {
         .context("Failed to get gpu driver info")
         .log_err()
         .unwrap_or("Unknown Driver".to_string());
-        match unsafe {
-            self.devices
-                .device
-                .CheckMultisampleQualityLevels(RENDER_TARGET_FORMAT, MULTISAMPLE_COUNT)
-        } {
-            Ok(level) => println!("=> Multisample quality levels: {}", level),
-            Err(err) => println!("Failed to check multisample quality levels: {:?}", err),
-        }
         Ok(GpuSpecs {
             is_software_emulated,
             device_name,
