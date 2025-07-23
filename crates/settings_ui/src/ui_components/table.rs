@@ -607,8 +607,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             curr_column = col_idx;
             // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
             while diff_left < 0.0 {
-                let Some(min_size) = resize_behavior[curr_column.saturating_sub(1)].min_size()
-                else {
+                let Some(min_size) = resize_behavior[curr_column].min_size() else {
                     if curr_column == 0 {
                         break;
                     }
