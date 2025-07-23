@@ -13,19 +13,18 @@ use crate::{InlayHint, buffer_store::BufferStore};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InlayHintId(usize);
 
-#[derive(Debug)]
-pub struct InlayHintCache {
-    buffer_store: Entity<BufferStore>,
-    hints_for_version: Global,
-    hints: HashMap<LanguageServerId, Hints>,
+#[derive(Debug, Default)]
+pub struct BufferInlayHints {
+    all_hints: HashMap<InlayHintId, InlayHint>,
+    hints: HashMap<LanguageServerId, HintChunks>,
+    chunks_for_version: Global,
     cache_version: usize,
 }
 
 #[derive(Debug, Default)]
-struct Hints {
-    hints: HashMap<InlayHintId, InlayHint>,
+struct HintChunks {
     hints_by_chunks: BTreeMap<Range<BufferRow>, Option<Vec<InlayHintId>>>,
-    hint_updates: HashMap<Range<BufferRow>, Shared<Task<InlayHints>>>,
+    chunk_updates: HashMap<Range<BufferRow>, Shared<Task<InlayHints>>>,
 }
 
 pub struct InlayHints {
@@ -39,7 +38,7 @@ pub enum HintFetchStrategy {
     UseCache { known_cache_version: Option<usize> },
 }
 
-impl InlayHintCache {
+impl BufferInlayHints {
     pub fn remove_server_data(&mut self, for_server: LanguageServerId) -> bool {
         let removed = self.hints.remove(&for_server).is_some();
         if removed {
@@ -50,6 +49,7 @@ impl InlayHintCache {
 
     pub fn hints(
         &self,
+        buffer_store: Entity<BufferStore>,
         buffer: BufferId,
         strategy: HintFetchStrategy,
         range: impl text::ToOffset,
