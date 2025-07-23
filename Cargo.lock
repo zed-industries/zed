@@ -20211,6 +20211,7 @@ dependencies = [
  "extension",
  "extension_host",
  "extensions_ui",
+ "feature_flags",
  "feedback",
  "file_finder",
  "fs",
