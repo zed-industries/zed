@@ -519,7 +519,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let diff = initial_sizes[double_click_position] - widths[double_click_position];
 
         if diff > 0.0 {
-            let diff_remaining = self.propogate_resize_diff_right(
+            let diff_remaining = self.propagate_resize_diff_right(
                 diff,
                 double_click_position,
                 &mut widths,
@@ -527,7 +527,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             );
 
             if diff_remaining > 0.0 && double_click_position > 0 {
-                self.propogate_resize_diff_left(
+                self.propagate_resize_diff_left(
                     -diff_remaining,
                     double_click_position - 1,
                     &mut widths,
@@ -535,7 +535,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 );
             }
         } else if double_click_position > 0 {
-            let diff_remaining = self.propogate_resize_diff_left(
+            let diff_remaining = self.propagate_resize_diff_left(
                 diff,
                 double_click_position,
                 &mut widths,
@@ -543,7 +543,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             );
 
             if diff_remaining < 0.0 {
-                self.propogate_resize_diff_right(
+                self.propagate_resize_diff_right(
                     -diff_remaining,
                     double_click_position,
                     &mut widths,
@@ -551,7 +551,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 );
             }
         }
-        self.widths = widths.map(|fraction| DefiniteLength::Fraction(fraction));
+        self.widths = widths.map(DefiniteLength::Fraction);
     }
 
     fn on_drag_move(
@@ -589,15 +589,15 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let is_dragging_right = diff > 0.0;
 
         if is_dragging_right {
-            self.propogate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
+            self.propagate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
         } else {
             // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
-            self.propogate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
+            self.propagate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
         }
         self.widths = widths.map(DefiniteLength::Fraction);
     }
 
-    fn propogate_resize_diff_right(
+    fn propagate_resize_diff_right(
         &self,
         diff: f32,
         col_idx: usize,
@@ -628,7 +628,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         return diff_remaining;
     }
 
-    fn propogate_resize_diff_left(
+    fn propagate_resize_diff_left(
         &mut self,
         diff: f32,
         mut curr_column: usize,
