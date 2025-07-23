@@ -510,20 +510,19 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     ) {
         let bounds_width = self.cached_bounds_width;
         let rem_size = window.rem_size();
+        let initial_sizes =
+            initial_sizes.map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+        let mut widths = self
+            .widths
+            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
 
-        let diff =
-            Self::get_fraction(
-                &initial_sizes[double_click_position],
-                bounds_width,
-                rem_size,
-            ) - Self::get_fraction(&self.widths[double_click_position], bounds_width, rem_size);
+        let diff = initial_sizes[double_click_position] - widths[double_click_position];
 
         if diff > 0.0 {
             let diff_remaining = self.propogate_resize_diff_right(
                 diff,
                 double_click_position,
-                bounds_width,
-                rem_size,
+                &mut widths,
                 resize_behavior,
             );
 
@@ -531,8 +530,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 self.propogate_resize_diff_left(
                     -diff_remaining,
                     double_click_position - 1,
-                    bounds_width,
-                    rem_size,
+                    &mut widths,
                     resize_behavior,
                 );
             }
@@ -540,8 +538,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             let diff_remaining = self.propogate_resize_diff_left(
                 diff,
                 double_click_position,
-                bounds_width,
-                rem_size,
+                &mut widths,
                 resize_behavior,
             );
 
@@ -549,12 +546,12 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 self.propogate_resize_diff_right(
                     -diff_remaining,
                     double_click_position,
-                    bounds_width,
-                    rem_size,
+                    &mut widths,
                     resize_behavior,
                 );
             }
         }
+        self.widths = widths.map(|fraction| DefiniteLength::Fraction(fraction));
     }
 
     fn on_drag_move(
@@ -572,13 +569,17 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let bounds_width = bounds.right() - bounds.left();
         let col_idx = drag_event.drag(cx).0;
 
-        for length in self.widths[0..=col_idx].iter() {
-            col_position += Self::get_fraction(length, bounds_width, rem_size);
+        let mut widths = self
+            .widths
+            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+
+        for length in widths[0..=col_idx].iter() {
+            col_position += length;
         }
 
         let mut total_length_ratio = col_position;
-        for length in self.widths[col_idx + 1..].iter() {
-            total_length_ratio += Self::get_fraction(length, bounds_width, rem_size);
+        for length in widths[col_idx + 1..].iter() {
+            total_length_ratio += length;
         }
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
@@ -588,25 +589,19 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let is_dragging_right = diff > 0.0;
 
         if is_dragging_right {
-            self.propogate_resize_diff_right(
-                diff,
-                col_idx,
-                bounds_width,
-                rem_size,
-                resize_behavior,
-            );
+            self.propogate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
         } else {
             // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
-            self.propogate_resize_diff_left(diff, col_idx, bounds_width, rem_size, resize_behavior);
+            self.propogate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
         }
+        self.widths = widths.map(DefiniteLength::Fraction);
     }
 
     fn propogate_resize_diff_right(
-        &mut self,
+        &self,
         diff: f32,
         col_idx: usize,
-        bounds_width: Pixels,
-        rem_size: Pixels,
+        widths: &mut [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -618,23 +613,18 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 continue;
             };
 
-            let mut curr_width =
-                Self::get_fraction(&self.widths[curr_column], bounds_width, rem_size)
-                    - diff_remaining;
+            let mut curr_width = widths[curr_column] - diff_remaining;
 
             diff_remaining = 0.0;
             if min_size > curr_width {
                 diff_remaining += min_size - curr_width;
                 curr_width = min_size;
             }
-            self.widths[curr_column] = DefiniteLength::Fraction(curr_width);
+            widths[curr_column] = curr_width;
             curr_column += 1;
         }
 
-        self.widths[col_idx] = DefiniteLength::Fraction(
-            Self::get_fraction(&self.widths[col_idx], bounds_width, rem_size)
-                + (diff - diff_remaining),
-        );
+        widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
         return diff_remaining;
     }
 
@@ -642,8 +632,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         &mut self,
         diff: f32,
         mut curr_column: usize,
-        bounds_width: Pixels,
-        rem_size: Pixels,
+        widths: &mut [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -657,9 +646,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 continue;
             };
 
-            let mut curr_width =
-                Self::get_fraction(&self.widths[curr_column], bounds_width, rem_size)
-                    + diff_remaining;
+            let mut curr_width = widths[curr_column] + diff_remaining;
 
             diff_remaining = 0.0;
             if curr_width < min_size {
@@ -667,17 +654,13 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 curr_width = min_size
             }
 
-            self.widths[curr_column] = DefiniteLength::Fraction(curr_width);
+            widths[curr_column] = curr_width;
             if curr_column == 0 {
                 break;
             }
             curr_column -= 1;
         }
-
-        self.widths[col_idx + 1] = DefiniteLength::Fraction(
-            Self::get_fraction(&self.widths[col_idx + 1], bounds_width, rem_size)
-                - (diff - diff_remaining),
-        );
+        widths[col_idx + 1] = widths[col_idx + 1] - (diff - diff_remaining);
 
         return diff_remaining;
     }
