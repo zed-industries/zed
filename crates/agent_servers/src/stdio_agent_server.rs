@@ -1,5 +1,5 @@
 use crate::{AgentServer, AgentServerCommand, AgentServerVersion};
-use acp_thread::{AcpClientDelegate, AcpThread, LoadError};
+use acp_thread::{OldAcpClientDelegate, AcpThread, LoadError};
 use agentic_coding_protocol as acp;
 use anyhow::{Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task, prelude::*};
@@ -77,7 +77,7 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
                 let foreground_executor = cx.foreground_executor().clone();
 
                 let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-                    AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+                    OldAcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
                     stdin,
                     stdout,
                     move |fut| foreground_executor.spawn(fut).detach(),

@@ -732,16 +732,11 @@ impl AcpThreadView {
                     .gap_2p5()
                     .children(chunks.iter().enumerate().map(|(chunk_ix, chunk)| {
                         match chunk {
-                            AssistantMessageChunk::Text { chunk } => self
+                            AssistantMessageChunk::Message { block: chunk } => self
                                 .render_markdown(chunk.clone(), style.clone())
                                 .into_any_element(),
-                            AssistantMessageChunk::Thought { chunk } => self.render_thinking_block(
-                                index,
-                                chunk_ix,
-                                chunk.clone(),
-                                window,
-                                cx,
-                            ),
+                            AssistantMessageChunk::Thought { block: chunk } => self
+                                .render_thinking_block(index, chunk_ix, chunk.clone(), window, cx),
                         }
                     }))
                     .into_any();

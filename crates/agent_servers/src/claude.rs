@@ -32,7 +32,7 @@ use util::ResultExt;
 use crate::claude::tools::ClaudeTool;
 use crate::mcp_server::{self, McpConfig, ZedMcpServer};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
+use acp_thread::{OldAcpClientDelegate, AcpThread, AgentConnection};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -157,7 +157,7 @@ impl AgentServer for ClaudeCode {
 
             cx.new(|cx| {
                 let end_turn_tx = Rc::new(RefCell::new(None));
-                let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
+                let delegate = OldAcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
                 delegate_tx.send(Some(delegate.clone())).log_err();
 
                 let handler_task = cx.foreground_executor().spawn({
@@ -328,7 +328,7 @@ async fn spawn_claude(
 }
 
 struct ClaudeAgentConnection {
-    delegate: AcpClientDelegate,
+    delegate: OldAcpClientDelegate,
     session_id: Uuid,
     outgoing_tx: UnboundedSender<SdkMessage>,
     end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
@@ -339,7 +339,7 @@ struct ClaudeAgentConnection {
 
 impl ClaudeAgentConnection {
     async fn handle_message(
-        delegate: AcpClientDelegate,
+        delegate: OldAcpClientDelegate,
         message: SdkMessage,
         end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,

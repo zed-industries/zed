@@ -6,6 +6,7 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
@@ -133,6 +134,15 @@ dependencies = [
  "workspace-hack",
  "zed_llm_client",
  "zstd",
+]
+
+[[package]]
+name = "agent-client-protocol"
+version = "0.0.10"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
-use acp_thread::AcpClientDelegate;
+use acp_thread::OldAcpClientDelegate;
 use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -51,7 +51,7 @@ enum PermissionToolBehavior {
 
 impl ZedMcpServer {
     pub async fn new(
-        delegate: watch::Receiver<Option<AcpClientDelegate>>,
+        delegate: watch::Receiver<Option<OldAcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
@@ -147,7 +147,7 @@ impl ZedMcpServer {
 
     fn handle_call_tool(
         request: CallToolParams,
-        mut delegate_watch: watch::Receiver<Option<AcpClientDelegate>>,
+        mut delegate_watch: watch::Receiver<Option<OldAcpClientDelegate>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
@@ -202,7 +202,7 @@ impl ZedMcpServer {
 
     fn handle_read_tool_call(
         params: ReadToolParams,
-        delegate: AcpClientDelegate,
+        delegate: OldAcpClientDelegate,
         cx: &AsyncApp,
     ) -> Task<Result<ReadToolResponse>> {
         cx.foreground_executor().spawn(async move {
@@ -222,7 +222,7 @@ impl ZedMcpServer {
 
     fn handle_edit_tool_call(
         params: EditToolParams,
-        delegate: AcpClientDelegate,
+        delegate: OldAcpClientDelegate,
         cx: &AsyncApp,
     ) -> Task<Result<EditToolResponse>> {
         cx.foreground_executor().spawn(async move {
@@ -252,7 +252,7 @@ impl ZedMcpServer {
 
     fn handle_permissions_tool_call(
         params: PermissionToolParams,
-        delegate: AcpClientDelegate,
+        delegate: OldAcpClientDelegate,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {

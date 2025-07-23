@@ -25,7 +25,7 @@ use util::ResultExt;
 
 use crate::mcp_server::{McpConfig, ZedMcpServer};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpClientDelegate, AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, OldAcpClientDelegate};
 
 #[derive(Clone)]
 pub struct Codex;
@@ -220,7 +220,7 @@ impl AgentServer for Codex {
             });
 
             cx.new(|cx| {
-                let delegate = AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
+                let delegate = OldAcpClientDelegate::new(cx.entity().downgrade(), cx.to_async());
                 delegate_tx.send(Some(delegate.clone())).log_err();
 
                 let handler_task = cx.spawn({
@@ -421,7 +421,7 @@ struct CodexAgentConnection {
 
 impl CodexAgentConnection {
     async fn handle_acp_notification(
-        delegate: &AcpClientDelegate,
+        delegate: &OldAcpClientDelegate,
         event: AcpNotification,
         tool_id_map: &Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
     ) -> Result<()> {
