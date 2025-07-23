@@ -1579,13 +1579,12 @@ mod test {
         );
 
         #[test]
-        #[ignore = "todo! not working right now"]
         fn basic_should_go_left() {
             // if we've increased middle column by 5%, then should be reset to initial sizes
             let widths = [0.25, 0.20, 0.30, 0.25];
             let initial_sizes = [0.25, 0.25, 0.25, 0.25];
             let updated_widths = ColumnWidths::reset_to_initial_size(
-                3,
+                1,
                 widths,
                 initial_sizes,
                 &[ResizeBehavior::Resizable; 4],
@@ -1594,7 +1593,6 @@ mod test {
         }
 
         #[test]
-        #[ignore = "todo! remove if check! works"]
         fn test_reset_column_size() {
             let resize_behavior = [
                 ResizeBehavior::None,
