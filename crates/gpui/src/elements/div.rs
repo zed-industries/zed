@@ -619,6 +619,13 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Set index of the tab stop order.
+    fn tab_index(mut self, index: isize) -> Self {
+        self.interactivity().focusable = true;
+        self.interactivity().tab_index = Some(index);
+        self
+    }
+
     /// Set the keymap context for this element. This will be used to determine
     /// which action to dispatch from the keymap.
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -1462,6 +1469,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) tab_index: Option<isize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1521,12 +1529,17 @@ impl Interactivity {
                 // as frames contain an element with this id.
                 if self.focusable && self.tracked_focus_handle.is_none() {
                     if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
+                        let mut handle = element_state
+                            .focus_handle
+                            .get_or_insert_with(|| cx.focus_handle())
+                            .clone()
+                            .tab_stop(false);
+
+                        if let Some(index) = self.tab_index {
+                            handle = handle.tab_index(index).tab_stop(true);
+                        }
+
+                        self.tracked_focus_handle = Some(handle);
                     }
                 }
 
@@ -1651,6 +1664,11 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
+        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
+            const ROUNDING_FACTOR: f32 = 100.0;
+            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
+        }
+
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
             let mut tracked_scroll_handle = self
@@ -1665,8 +1683,16 @@ impl Interactivity {
             let rem_size = window.rem_size();
             let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            // The floating point values produced by Taffy and ours often vary
+            // slightly after ~5 decimal places. This can lead to cases where after
+            // subtracting these, the container becomes scrollable for less than
+            // 0.00000x pixels. As we generally don't benefit from a precision that
+            // high for the maximum scroll, we round the scroll max to 2 decimal
+            // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
+            let scroll_max = (padded_content_size - bounds.size)
+                .map(round_to_two_decimals)
+                .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1679,7 +1705,7 @@ impl Interactivity {
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
-                scroll_handle_state.padded_content_size = padded_content_size;
+                scroll_handle_state.max_offset = scroll_max;
             }
 
             *scroll_offset
@@ -1727,6 +1753,10 @@ impl Interactivity {
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
+                }
+
+                if let Some(focus_handle) = &self.tracked_focus_handle {
+                    window.next_frame.tab_handles.insert(focus_handle);
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
@@ -2919,7 +2949,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    padded_content_size: Size<Pixels>,
+    max_offset: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2946,6 +2976,11 @@ impl ScrollHandle {
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
         *self.0.borrow().offset.borrow()
+    }
+
+    /// Get the maximum scroll offset.
+    pub fn max_offset(&self) -> Size<Pixels> {
+        self.0.borrow().max_offset
     }
 
     /// Get the top child that's scrolled into view.
@@ -2980,11 +3015,6 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
-    }
-
-    /// Get the size of the content with padding of the container.
-    pub fn padded_content_size(&self) -> Size<Pixels> {
-        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is

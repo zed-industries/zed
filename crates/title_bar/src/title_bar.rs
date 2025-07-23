@@ -20,22 +20,23 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
-    WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
+use settings_ui::keybindings;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
+    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
@@ -130,6 +131,7 @@ pub struct TitleBar {
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     banner: Entity<OnboardingBanner>,
+    screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl Render for TitleBar {
@@ -294,6 +296,7 @@ impl TitleBar {
             client,
             _subscriptions: subscriptions,
             banner,
+            screen_share_popover_handle: Default::default(),
         }
     }
 
@@ -503,7 +506,8 @@ impl TitleBar {
                     )
                 })
                 .on_click(move |_, window, cx| {
-                    let _ = workspace.update(cx, |_this, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        window.focus(&this.active_pane().focus_handle(cx));
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 })
@@ -654,8 +658,9 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None => ("None", Color::Default, free_chip_bg),
-                            Some(proto::Plan::Free) => ("Free", Color::Default, free_chip_bg),
+                            None | Some(proto::Plan::Free) => {
+                                ("Free", Color::Default, free_chip_bg)
+                            }
                             Some(proto::Plan::ZedProTrial) => {
                                 ("Pro Trial", Color::Accent, pro_chip_bg)
                             }
@@ -678,12 +683,12 @@ impl TitleBar {
                                     .into_any_element()
                             },
                             move |_, cx| {
-                                cx.open_url("https://zed.dev/account");
+                                cx.open_url(&zed_urls::account_url(cx));
                             },
                         )
                         .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -727,7 +732,7 @@ impl TitleBar {
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                            .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

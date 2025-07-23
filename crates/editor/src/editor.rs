@@ -109,10 +109,10 @@ use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, Capability, CharKind,
+    CodeLabel, CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -213,6 +213,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
+use zed_actions;
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -950,6 +951,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
+    keyboard_grace: bool,
 }
 
 enum SelectionDragState {
@@ -2382,13 +2384,17 @@ impl Editor {
         }
 
         match self.context_menu.borrow().as_ref() {
-            Some(CodeContextMenu::Completions(_)) => {
-                key_context.add("menu");
-                key_context.add("showing_completions");
+            Some(CodeContextMenu::Completions(menu)) => {
+                if menu.visible() {
+                    key_context.add("menu");
+                    key_context.add("showing_completions");
+                }
             }
-            Some(CodeContextMenu::CodeActions(_)) => {
-                key_context.add("menu");
-                key_context.add("showing_code_actions")
+            Some(CodeContextMenu::CodeActions(menu)) => {
+                if menu.visible() {
+                    key_context.add("menu");
+                    key_context.add("showing_code_actions")
+                }
             }
             None => {}
         }
@@ -4402,7 +4408,9 @@ impl Editor {
                                     })
                                     .max_by_key(|(_, len)| *len)?;
 
-                                if let Some((block_start, _)) = language.block_comment_delimiters()
+                                if let Some(BlockCommentConfig {
+                                    start: block_start, ..
+                                }) = language.block_comment()
                                 {
                                     let block_start_trimmed = block_start.trim_end();
                                     if block_start_trimmed.starts_with(delimiter.trim_end()) {
@@ -4439,13 +4447,12 @@ impl Editor {
                                     return None;
                                 }
 
-                                let DocumentationConfig {
+                                let BlockCommentConfig {
                                     start: start_tag,
                                     end: end_tag,
                                     prefix: delimiter,
                                     tab_size: len,
-                                } = language.documentation()?;
-
+                                } = language.documentation_comment()?;
                                 let is_within_block_comment = buffer
                                     .language_scope_at(start_point)
                                     .is_some_and(|scope| scope.override_name() == Some("comment"));
@@ -4515,7 +4522,7 @@ impl Editor {
                                             let cursor_is_at_start_of_end_tag =
                                                 column == end_tag_offset;
                                             if cursor_is_at_start_of_end_tag {
-                                                indent_on_extra_newline.len = (*len).into();
+                                                indent_on_extra_newline.len = *len;
                                             }
                                         }
                                         cursor_is_before_end_tag
@@ -4528,7 +4535,7 @@ impl Editor {
                                     && cursor_is_before_end_tag_if_exists
                                 {
                                     if cursor_is_after_start_tag {
-                                        indent_on_newline.len = (*len).into();
+                                        indent_on_newline.len = *len;
                                     }
                                     Some(delimiter.clone())
                                 } else {
@@ -5447,7 +5454,7 @@ impl Editor {
         };
 
         let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
-            buffer_snapshot.surrounding_word(buffer_position)
+            buffer_snapshot.surrounding_word(buffer_position, false)
         {
             let word_to_exclude = buffer_snapshot
                 .text_for_range(word_range.clone())
@@ -6513,21 +6520,55 @@ impl Editor {
         }
     }
 
+    pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let Some((buffer, point, _)) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)
+        else {
+            return;
+        };
+
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(point.row),
+            ..Default::default()
+        };
+        let Some(blame_entry) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
+        let anchor = self.selections.newest_anchor().head();
+        let position = self.to_pixel_point(anchor, &snapshot, window);
+        if let (Some(position), Some(last_bounds)) = (position, self.last_bounds) {
+            self.show_blame_popover(&blame_entry, position + last_bounds.origin, true, cx);
+        };
+    }
+
     fn show_blame_popover(
         &mut self,
         blame_entry: &BlameEntry,
         position: gpui::Point<Pixels>,
+        ignore_timeout: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
-            let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
             let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(delay))
-                    .await;
+                if !ignore_timeout {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(blame_popover_delay))
+                        .await;
+                }
                 editor
                     .update(cx, |editor, cx| {
                         editor.inline_blame_popover_show_task.take();
@@ -6556,6 +6597,7 @@ impl Editor {
                                 commit_message: details,
                                 markdown,
                             },
+                            keyboard_grace: ignore_timeout,
                         });
                         cx.notify();
                     })
@@ -6601,8 +6643,8 @@ impl Editor {
         }
 
         let snapshot = cursor_buffer.read(cx).snapshot();
-        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position);
-        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position);
+        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position, false);
+        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position, false);
         if start_word_range != end_word_range {
             self.document_highlights_task.take();
             self.clear_background_highlights::<DocumentHighlightRead>(cx);
@@ -12123,6 +12165,41 @@ impl Editor {
         });
     }
 
+    pub fn diff_clipboard_with_selection(
+        &mut self,
+        _: &DiffClipboardWithSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self.selections.all::<usize>(cx);
+
+        if selections.is_empty() {
+            log::warn!("There should always be at least one selection in Zed. This is a bug.");
+            return;
+        };
+
+        let clipboard_text = match cx.read_from_clipboard() {
+            Some(item) => match item.entries().first() {
+                Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                _ => None,
+            },
+            None => None,
+        };
+
+        let Some(clipboard_text) = clipboard_text else {
+            log::warn!("Clipboard doesn't contain text.");
+            return;
+        };
+
+        window.dispatch_action(
+            Box::new(DiffClipboardWithSelectionData {
+                clipboard_text,
+                editor: cx.entity(),
+            }),
+            cx,
+        );
+    }
+
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         if let Some(item) = cx.read_from_clipboard() {
@@ -14293,8 +14370,11 @@ impl Editor {
                             (position..position, first_prefix.clone())
                         }));
                     }
-                } else if let Some((full_comment_prefix, comment_suffix)) =
-                    language.block_comment_delimiters()
+                } else if let Some(BlockCommentConfig {
+                    start: full_comment_prefix,
+                    end: comment_suffix,
+                    ..
+                }) = language.block_comment()
                 {
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
                     let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
@@ -20582,6 +20662,7 @@ impl Editor {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.selection_drag_state = SelectionDragState::None;
         self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
@@ -22152,7 +22233,7 @@ impl SemanticsProvider for Entity<Project> {
                         // Fallback on using TreeSitter info to determine identifier range
                         buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
-                            let (range, kind) = snapshot.surrounding_word(position);
+                            let (range, kind) = snapshot.surrounding_word(position, false);
                             if kind != Some(CharKind::Word) {
                                 return None;
                             }

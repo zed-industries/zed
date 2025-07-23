@@ -2,10 +2,11 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
-    "crates/acp",
+    "crates/acp_thread",
     "crates/agent_ui",
     "crates/agent",
     "crates/agent_settings",
+    "crates/ai_onboarding",
     "crates/agent_servers",
     "crates/anthropic",
     "crates/askpass",
@@ -102,10 +103,12 @@ members = [
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
+    "crates/nc",
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
+    "crates/onboarding",
     "crates/open_ai",
     "crates/open_router",
     "crates/outline",
@@ -219,13 +222,14 @@ edition = "2024"
 # Workspace member crates
 #
 
-acp = { path = "crates/acp" }
+acp_thread = { path = "crates/acp_thread" }
 agent = { path = "crates/agent" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
 agent_servers = { path = "crates/agent_servers" }
 ai = { path = "crates/ai" }
+ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
@@ -317,10 +321,12 @@ menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
+nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
+onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
@@ -406,7 +412,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agentic-coding-protocol = { version = "0.0.9" }
+agentic-coding-protocol = "0.0.10"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -434,9 +440,9 @@ aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -476,6 +482,7 @@ heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 http = "1.1"
+http-body = "1.0"
 hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
@@ -489,18 +496,18 @@ json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
-jupyter-websocket-client = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "6add7052b598ea1f40f7e8913622c3958b009b60" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
-nbformat = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
+nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
@@ -541,7 +548,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
+runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
@@ -549,8 +556,7 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-# When updating scap rev, also update it in .config/hakari.toml
-scap = { git = "https://github.com/zed-industries/scap", rev = "270538dc780f5240723233ff901e1054641ed318", default-features = false }
+scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -704,6 +710,7 @@ features = [
 [patch.crates-io]
 notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }

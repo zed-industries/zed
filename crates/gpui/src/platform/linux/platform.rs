@@ -56,7 +56,7 @@ pub trait LinuxClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -245,7 +245,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 
@@ -822,11 +822,35 @@ impl crate::Keystroke {
             Keysym::underscore => "_".to_owned(),
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
+            Keysym::space => "space".to_owned(),
+            Keysym::BackSpace => "backspace".to_owned(),
+            Keysym::Tab => "tab".to_owned(),
+            Keysym::Delete => "delete".to_owned(),
+            Keysym::Escape => "escape".to_owned(),
+
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+            Keysym::Home => "home".to_owned(),
+            Keysym::End => "end".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if let Some(key) = key_utf8.chars().next()
+                    && key_utf8.len() == 1
+                    && key.is_ascii()
+                {
+                    if key.is_ascii_graphic() {
+                        key_utf8.to_lowercase()
+                    // map ctrl-a to a
+                    } else if key_utf32 <= 0x1f {
+                        ((key_utf32 as u8 + 0x60) as char).to_string()
+                    } else {
+                        name
+                    }
                 } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
                     String::from(key_en)
                 } else {

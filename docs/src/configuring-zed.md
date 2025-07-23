@@ -639,6 +639,12 @@ List of `string` values
 "snippet_sort_order": "bottom"
 ```
 
+4. Do not show snippets in the completion list at all:
+
+```json
+"snippet_sort_order": "none"
+```
+
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.
@@ -2688,6 +2694,54 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Cursor Shape
+
+- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Setting: `cursor_shape`
+- Default: `null` (defaults to block)
+
+**Options**
+
+1. A block that surrounds the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "block"
+  }
+}
+```
+
+2. A vertical bar
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "bar"
+  }
+}
+```
+
+3. An underline / underscore that runs along the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "underline"
+  }
+}
+```
+
+4. A box drawn around the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "hollow"
   }
 }
 ```

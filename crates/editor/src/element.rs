@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(editor, window, Editor::newline_above);
         register_action(editor, window, Editor::newline_below);
         register_action(editor, window, Editor::backspace);
+        register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
         register_action(editor, window, Editor::backtab);
@@ -261,6 +262,7 @@ impl EditorElement {
         register_action(editor, window, Editor::kill_ring_yank);
         register_action(editor, window, Editor::copy);
         register_action(editor, window, Editor::copy_and_trim);
+        register_action(editor, window, Editor::diff_clipboard_with_selection);
         register_action(editor, window, Editor::paste);
         register_action(editor, window, Editor::undo);
         register_action(editor, window, Editor::redo);
@@ -949,6 +951,7 @@ impl EditorElement {
         if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
 
             cx.stop_propagation();
         }
@@ -1142,10 +1145,14 @@ impl EditorElement {
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
                 .map_or(false, |bounds| bounds.contains(&event.position));
+            let keyboard_grace = editor
+                .inline_blame_popover
+                .as_ref()
+                .map_or(false, |state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, event.position, cx);
-            } else {
+                editor.show_blame_popover(&blame_entry, event.position, false, cx);
+            } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
         } else {

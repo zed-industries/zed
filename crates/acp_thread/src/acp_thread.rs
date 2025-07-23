@@ -1,7 +1,12 @@
+mod connection;
+pub use connection::*;
+
 pub use acp::ToolCallId;
-use agent_servers::AgentServer;
-use agentic_coding_protocol::{self as acp, ToolCallLocation, UserMessageChunk};
-use anyhow::{Context as _, Result, anyhow};
+use agentic_coding_protocol::{
+    self as acp, AgentRequest, ProtocolVersion, ToolCallConfirmationOutcome, ToolCallLocation,
+    UserMessageChunk,
+};
+use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
@@ -97,7 +102,7 @@ pub struct AssistantMessage {
 }
 
 impl AssistantMessage {
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         format!(
             "## Assistant\n\n{}\n\n",
             self.chunks
@@ -448,16 +453,75 @@ impl Diff {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub entries: Vec<PlanEntry>,
+}
+
+#[derive(Debug)]
+pub struct PlanStats<'a> {
+    pub in_progress_entry: Option<&'a PlanEntry>,
+    pub pending: u32,
+    pub completed: u32,
+}
+
+impl Plan {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn stats(&self) -> PlanStats<'_> {
+        let mut stats = PlanStats {
+            in_progress_entry: None,
+            pending: 0,
+            completed: 0,
+        };
+
+        for entry in &self.entries {
+            match &entry.status {
+                acp::PlanEntryStatus::Pending => {
+                    stats.pending += 1;
+                }
+                acp::PlanEntryStatus::InProgress => {
+                    stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
+                }
+                acp::PlanEntryStatus::Completed => {
+                    stats.completed += 1;
+                }
+            }
+        }
+
+        stats
+    }
+}
+
+#[derive(Debug)]
+pub struct PlanEntry {
+    pub content: Entity<Markdown>,
+    pub priority: acp::PlanEntryPriority,
+    pub status: acp::PlanEntryStatus,
+}
+
+impl PlanEntry {
+    pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
+        Self {
+            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            priority: entry.priority,
+            status: entry.status,
+        }
+    }
+}
+
 pub struct AcpThread {
-    entries: Vec<AgentThreadEntry>,
     title: SharedString,
+    entries: Vec<AgentThreadEntry>,
+    plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    connection: Arc<acp::AgentConnection>,
+    connection: Arc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
-    _io_task: Task<()>,
 }
 
 pub enum AcpThreadEvent {
@@ -476,7 +540,11 @@ pub enum ThreadStatus {
 
 #[derive(Debug, Clone)]
 pub enum LoadError {
-    Unsupported { current_version: SharedString },
+    Unsupported {
+        error_message: SharedString,
+        upgrade_message: SharedString,
+        upgrade_command: String,
+    },
     Exited(i32),
     Other(SharedString),
 }
@@ -484,13 +552,7 @@ pub enum LoadError {
 impl Display for LoadError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoadError::Unsupported { current_version } => {
-                write!(
-                    f,
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                    current_version
-                )
-            }
+            LoadError::Unsupported { error_message, .. } => write!(f, "{}", error_message),
             LoadError::Exited(status) => write!(f, "Server exited with status {}", status),
             LoadError::Other(msg) => write!(f, "{}", msg),
         }
@@ -500,75 +562,39 @@ impl Display for LoadError {
 impl Error for LoadError {}
 
 impl AcpThread {
-    pub async fn spawn(
-        server: impl AgentServer + 'static,
-        root_dir: &Path,
+    pub fn new(
+        connection: impl AgentConnection + 'static,
+        title: SharedString,
+        child_status: Option<Task<Result<()>>>,
         project: Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Self>> {
-        let command = match server.command(&project, cx).await {
-            Ok(command) => command,
-            Err(e) => return Err(anyhow!(LoadError::Other(format!("{e}").into()))),
-        };
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        let mut child = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .current_dir(root_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .spawn()?;
+        Self {
+            action_log,
+            shared_buffers: Default::default(),
+            entries: Default::default(),
+            plan: Default::default(),
+            title,
+            project,
+            send_task: None,
+            connection: Arc::new(connection),
+            child_status,
+        }
+    }
 
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-
-        cx.new(|cx| {
-            let foreground_executor = cx.foreground_executor().clone();
-
-            let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-                AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-                stdin,
-                stdout,
-                move |fut| foreground_executor.spawn(fut).detach(),
-            );
-
-            let io_task = cx.background_spawn(async move {
-                io_fut.await.log_err();
-            });
-
-            let child_status = cx.background_spawn(async move {
-                match child.status().await {
-                    Err(e) => Err(anyhow!(e)),
-                    Ok(result) if result.success() => Ok(()),
-                    Ok(result) => {
-                        if let Some(version) = server.version(&command).await.log_err()
-                            && !version.supported
-                        {
-                            Err(anyhow!(LoadError::Unsupported {
-                                current_version: version.current_version
-                            }))
-                        } else {
-                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-                        }
-                    }
-                }
-            });
-
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-            Self {
-                action_log,
-                shared_buffers: Default::default(),
-                entries: Default::default(),
-                title: "ACP Thread".into(),
-                project,
-                send_task: None,
-                connection: Arc::new(connection),
-                child_status: Some(child_status),
-                _io_task: io_task,
-            }
-        })
+    /// Send a request to the agent and wait for a response.
+    pub fn request<R: AgentRequest + 'static>(
+        &self,
+        params: R,
+    ) -> impl use<R> + Future<Output = Result<R::Response>> {
+        let params = params.into_any();
+        let result = self.connection.request_any(params);
+        async move {
+            let result = result.await?;
+            Ok(R::response_from_any(result)?)
+        }
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
@@ -577,45 +603,6 @@ impl AcpThread {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    #[cfg(test)]
-    pub fn fake(
-        stdin: async_pipe::PipeWriter,
-        stdout: async_pipe::PipeReader,
-        project: Entity<Project>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let foreground_executor = cx.foreground_executor().clone();
-
-        let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
-            AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-            stdin,
-            stdout,
-            move |fut| {
-                foreground_executor.spawn(fut).detach();
-            },
-        );
-
-        let io_task = cx.background_spawn({
-            async move {
-                io_fut.await.log_err();
-            }
-        });
-
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        Self {
-            action_log,
-            shared_buffers: Default::default(),
-            entries: Default::default(),
-            title: "ACP Thread".into(),
-            project,
-            send_task: None,
-            connection: Arc::new(connection),
-            child_status: None,
-            _io_task: io_task,
-        }
     }
 
     pub fn title(&self) -> SharedString {
@@ -711,7 +698,7 @@ impl AcpThread {
         }
     }
 
-    pub fn request_tool_call(
+    pub fn request_new_tool_call(
         &mut self,
         tool_call: acp::RequestToolCallConfirmationParams,
         cx: &mut Context<Self>,
@@ -729,6 +716,32 @@ impl AcpThread {
 
         let id = self.insert_tool_call(tool_call.tool_call, status, cx);
         ToolCallRequest { id, outcome: rx }
+    }
+
+    pub fn request_tool_call_confirmation(
+        &mut self,
+        tool_call_id: ToolCallId,
+        confirmation: acp::ToolCallConfirmation,
+        cx: &mut Context<Self>,
+    ) -> Result<ToolCallRequest> {
+        let project = self.project.read(cx).languages().clone();
+        let Some((idx, call)) = self.tool_call_mut(tool_call_id) else {
+            anyhow::bail!("Tool call not found");
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        call.status = ToolCallStatus::WaitingForConfirmation {
+            confirmation: ToolCallConfirmation::from_acp(confirmation, project, cx),
+            respond_tx: tx,
+        };
+
+        cx.emit(AcpThreadEvent::EntryUpdated(idx));
+
+        Ok(ToolCallRequest {
+            id: tool_call_id,
+            outcome: rx,
+        })
     }
 
     pub fn push_tool_call(
@@ -818,8 +831,13 @@ impl AcpThread {
         let language_registry = self.project.read(cx).languages().clone();
         let (ix, call) = self.tool_call_mut(id).context("Entry not found")?;
 
-        call.content = new_content
-            .map(|new_content| ToolCallContent::from_acp(new_content, language_registry, cx));
+        if let Some(new_content) = new_content {
+            call.content = Some(ToolCallContent::from_acp(
+                new_content,
+                language_registry,
+                cx,
+            ));
+        }
 
         match &mut call.status {
             ToolCallStatus::Allowed { status } => {
@@ -860,6 +878,29 @@ impl AcpThread {
                 None
             }
         }
+    }
+
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    pub fn update_plan(&mut self, request: acp::UpdatePlanParams, cx: &mut Context<Self>) {
+        self.plan = Plan {
+            entries: request
+                .entries
+                .into_iter()
+                .map(|entry| PlanEntry::from_acp(entry, cx))
+                .collect(),
+        };
+
+        cx.notify();
+    }
+
+    pub fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
+        self.plan
+            .entries
+            .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
+        cx.notify();
     }
 
     pub fn set_project_location(&self, location: ToolCallLocation, cx: &mut Context<Self>) {
@@ -912,19 +953,17 @@ impl AcpThread {
         false
     }
 
-    pub fn initialize(
-        &self,
-    ) -> impl use<> + Future<Output = Result<acp::InitializeResponse, acp::Error>> {
-        let connection = self.connection.clone();
-        async move { connection.initialize().await }
+    pub fn initialize(&self) -> impl use<> + Future<Output = Result<acp::InitializeResponse>> {
+        self.request(acp::InitializeParams {
+            protocol_version: ProtocolVersion::latest(),
+        })
     }
 
-    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<(), acp::Error>> {
-        let connection = self.connection.clone();
-        async move { connection.request(acp::AuthenticateParams).await }
+    pub fn authenticate(&self) -> impl use<> + Future<Output = Result<()>> {
+        self.request(acp::AuthenticateParams)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,
         message: &str,
@@ -945,7 +984,6 @@ impl AcpThread {
         message: acp::SendUserMessageParams,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp::Error>> {
-        let agent = self.connection.clone();
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage::from_acp(
                 &message,
@@ -959,11 +997,16 @@ impl AcpThread {
         let cancel = self.cancel(cx);
 
         self.send_task = Some(cx.spawn(async move |this, cx| {
-            cancel.await.log_err();
+            async {
+                cancel.await.log_err();
 
-            let result = agent.request(message).await;
-            tx.send(result).log_err();
-            this.update(cx, |this, _cx| this.send_task.take()).log_err();
+                let result = this.update(cx, |this, _| this.request(message))?.await;
+                tx.send(result).log_err();
+                this.update(cx, |this, _cx| this.send_task.take())?;
+                anyhow::Ok(())
+            }
+            .await
+            .log_err();
         }));
 
         async move {
@@ -976,12 +1019,10 @@ impl AcpThread {
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<Result<(), acp::Error>> {
-        let agent = self.connection.clone();
-
         if self.send_task.take().is_some() {
+            let request = self.request(acp::CancelSendMessageParams);
             cx.spawn(async move |this, cx| {
-                agent.request(acp::CancelSendMessageParams).await?;
-
+                request.await?;
                 this.update(cx, |this, _cx| {
                     for entry in this.entries.iter_mut() {
                         if let AgentThreadEntry::ToolCall(call) = entry {
@@ -1019,6 +1060,7 @@ impl AcpThread {
     pub fn read_text_file(
         &self,
         request: acp::ReadTextFileParams,
+        reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
         let project = self.project.clone();
@@ -1032,28 +1074,60 @@ impl AcpThread {
             });
             let buffer = load??.await?;
 
-            action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
-            })?;
-            project.update(cx, |project, cx| {
-                let position = buffer
-                    .read(cx)
-                    .snapshot()
-                    .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position,
-                    }),
-                    cx,
-                );
-            })?;
-            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let snapshot = if reuse_shared_snapshot {
+                this.read_with(cx, |this, _| {
+                    this.shared_buffers.get(&buffer.clone()).cloned()
+                })
+                .log_err()
+                .flatten()
+            } else {
+                None
+            };
+
+            let snapshot = if let Some(snapshot) = snapshot {
+                snapshot
+            } else {
+                action_log.update(cx, |action_log, cx| {
+                    action_log.buffer_read(buffer.clone(), cx);
+                })?;
+                project.update(cx, |project, cx| {
+                    let position = buffer
+                        .read(cx)
+                        .snapshot()
+                        .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })?;
+
+                buffer.update(cx, |buffer, _| buffer.snapshot())?
+            };
+
             this.update(cx, |this, _| {
                 let text = snapshot.text();
                 this.shared_buffers.insert(buffer.clone(), snapshot);
-                text
-            })
+                if request.line.is_none() && request.limit.is_none() {
+                    return Ok(text);
+                }
+                let limit = request.limit.unwrap_or(u32::MAX) as usize;
+                let Some(line) = request.line else {
+                    return Ok(text.lines().take(limit).collect::<String>());
+                };
+
+                let count = text.lines().count();
+                if count < line as usize {
+                    anyhow::bail!("There are only {} lines", count);
+                }
+                Ok(text
+                    .lines()
+                    .skip(line as usize + 1)
+                    .take(limit)
+                    .collect::<String>())
+            })?
         })
     }
 
@@ -1134,15 +1208,59 @@ impl AcpThread {
     }
 }
 
-struct AcpClientDelegate {
+#[derive(Clone)]
+pub struct AcpClientDelegate {
     thread: WeakEntity<AcpThread>,
     cx: AsyncApp,
     // sent_buffer_versions: HashMap<Entity<Buffer>, HashMap<u64, BufferSnapshot>>,
 }
 
 impl AcpClientDelegate {
-    fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
+    pub fn new(thread: WeakEntity<AcpThread>, cx: AsyncApp) -> Self {
         Self { thread, cx }
+    }
+
+    pub async fn clear_completed_plan_entries(&self) -> Result<()> {
+        let cx = &mut self.cx.clone();
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.clear_completed_plan_entries(cx))
+        })?
+        .context("Failed to update thread")?;
+
+        Ok(())
+    }
+
+    pub async fn request_existing_tool_call_confirmation(
+        &self,
+        tool_call_id: ToolCallId,
+        confirmation: acp::ToolCallConfirmation,
+    ) -> Result<ToolCallConfirmationOutcome> {
+        let cx = &mut self.cx.clone();
+        let ToolCallRequest { outcome, .. } = cx
+            .update(|cx| {
+                self.thread.update(cx, |thread, cx| {
+                    thread.request_tool_call_confirmation(tool_call_id, confirmation, cx)
+                })
+            })?
+            .context("Failed to update thread")??;
+
+        Ok(outcome.await?)
+    }
+
+    pub async fn read_text_file_reusing_snapshot(
+        &self,
+        request: acp::ReadTextFileParams,
+    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
+        let content = self
+            .cx
+            .update(|cx| {
+                self.thread
+                    .update(cx, |thread, cx| thread.read_text_file(request, true, cx))
+            })?
+            .context("Failed to update thread")?
+            .await?;
+        Ok(acp::ReadTextFileResponse { content })
     }
 }
 
@@ -1172,7 +1290,7 @@ impl acp::Client for AcpClientDelegate {
         let ToolCallRequest { id, outcome } = cx
             .update(|cx| {
                 self.thread
-                    .update(cx, |thread, cx| thread.request_tool_call(request, cx))
+                    .update(cx, |thread, cx| thread.request_new_tool_call(request, cx))
             })?
             .context("Failed to update thread")?;
 
@@ -1210,6 +1328,18 @@ impl acp::Client for AcpClientDelegate {
         Ok(())
     }
 
+    async fn update_plan(&self, request: acp::UpdatePlanParams) -> Result<(), acp::Error> {
+        let cx = &mut self.cx.clone();
+
+        cx.update(|cx| {
+            self.thread
+                .update(cx, |thread, cx| thread.update_plan(request, cx))
+        })?
+        .context("Failed to update thread")?;
+
+        Ok(())
+    }
+
     async fn read_text_file(
         &self,
         request: acp::ReadTextFileParams,
@@ -1218,7 +1348,7 @@ impl acp::Client for AcpClientDelegate {
             .cx
             .update(|cx| {
                 self.thread
-                    .update(cx, |thread, cx| thread.read_text_file(request, cx))
+                    .update(cx, |thread, cx| thread.read_text_file(request, false, cx))
             })?
             .context("Failed to update thread")?
             .await?;
@@ -1260,7 +1390,7 @@ pub struct ToolCallRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_servers::{AgentServerCommand, AgentServerVersion};
+    use anyhow::anyhow;
     use async_pipe::{PipeReader, PipeWriter};
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext};
@@ -1269,7 +1399,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::{future::BoxedLocal, stream::StreamExt as _};
-    use std::{cell::RefCell, env, path::Path, rc::Rc, time::Duration};
+    use std::{cell::RefCell, rc::Rc, time::Duration};
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1515,265 +1645,6 @@ mod tests {
         });
     }
 
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_basic(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        thread
-            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
-            .await
-            .unwrap();
-
-        thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.entries.len(), 2);
-            assert!(matches!(
-                thread.entries[0],
-                AgentThreadEntry::UserMessage(_)
-            ));
-            assert!(matches!(
-                thread.entries[1],
-                AgentThreadEntry::AssistantMessage(_)
-            ));
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_path_mentions(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-        let tempdir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tempdir.path().join("foo.rs"),
-            indoc! {"
-                fn main() {
-                    println!(\"Hello, world!\");
-                }
-            "},
-        )
-        .expect("failed to write file");
-        let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-        let thread = gemini_acp_thread(project.clone(), tempdir.path(), cx).await;
-        thread
-            .update(cx, |thread, cx| {
-                thread.send(
-                    acp::SendUserMessageParams {
-                        chunks: vec![
-                            acp::UserMessageChunk::Text {
-                                text: "Read the file ".into(),
-                            },
-                            acp::UserMessageChunk::Path {
-                                path: Path::new("foo.rs").into(),
-                            },
-                            acp::UserMessageChunk::Text {
-                                text: " and tell me what the content of the println! is".into(),
-                            },
-                        ],
-                    },
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-
-        thread.read_with(cx, |thread, cx| {
-            assert_eq!(thread.entries.len(), 3);
-            assert!(matches!(
-                thread.entries[0],
-                AgentThreadEntry::UserMessage(_)
-            ));
-            assert!(matches!(thread.entries[1], AgentThreadEntry::ToolCall(_)));
-            let AgentThreadEntry::AssistantMessage(assistant_message) = &thread.entries[2] else {
-                panic!("Expected AssistantMessage")
-            };
-            assert!(
-                assistant_message.to_markdown(cx).contains("Hello, world!"),
-                "unexpected assistant message: {:?}",
-                assistant_message.to_markdown(cx)
-            );
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_tool_call(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/private/tmp"),
-            json!({"foo": "Lorem ipsum dolor", "bar": "bar", "baz": "baz"}),
-        )
-        .await;
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        thread
-            .update(cx, |thread, cx| {
-                thread.send_raw(
-                    "Read the '/private/tmp/foo' file and tell me what you see.",
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, _cx| {
-            assert!(matches!(
-                &thread.entries()[2],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
-                    ..
-                })
-            ));
-
-            assert!(matches!(
-                thread.entries[3],
-                AgentThreadEntry::AssistantMessage(_)
-            ));
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_tool_call_with_confirmation(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        let full_turn = thread.update(cx, |thread, cx| {
-            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
-        });
-
-        run_until_first_tool_call(&thread, cx).await;
-
-        let tool_call_id = thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                status:
-                    ToolCallStatus::WaitingForConfirmation {
-                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                        ..
-                    },
-                ..
-            }) = &thread.entries()[2]
-            else {
-                panic!();
-            };
-
-            assert_eq!(root_command, "echo");
-
-            *id
-        });
-
-        thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
-
-            assert!(matches!(
-                &thread.entries()[2],
-                AgentThreadEntry::ToolCall(ToolCall {
-                    status: ToolCallStatus::Allowed { .. },
-                    ..
-                })
-            ));
-        });
-
-        full_turn.await.unwrap();
-
-        thread.read_with(cx, |thread, cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                content: Some(ToolCallContent::Markdown { markdown }),
-                status: ToolCallStatus::Allowed { .. },
-                ..
-            }) = &thread.entries()[2]
-            else {
-                panic!();
-            };
-
-            markdown.read_with(cx, |md, _cx| {
-                assert!(
-                    md.source().contains("Hello, world!"),
-                    r#"Expected '{}' to contain "Hello, world!""#,
-                    md.source()
-                );
-            });
-        });
-    }
-
-    #[gpui::test]
-    #[cfg_attr(not(feature = "gemini"), ignore)]
-    async fn test_gemini_cancel(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.executor().allow_parking();
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-        let thread = gemini_acp_thread(project.clone(), "/private/tmp", cx).await;
-        let full_turn = thread.update(cx, |thread, cx| {
-            thread.send_raw(r#"Run `echo "Hello, world!"`"#, cx)
-        });
-
-        let first_tool_call_ix = run_until_first_tool_call(&thread, cx).await;
-
-        thread.read_with(cx, |thread, _cx| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                id,
-                status:
-                    ToolCallStatus::WaitingForConfirmation {
-                        confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                        ..
-                    },
-                ..
-            }) = &thread.entries()[first_tool_call_ix]
-            else {
-                panic!("{:?}", thread.entries()[1]);
-            };
-
-            assert_eq!(root_command, "echo");
-
-            *id
-        });
-
-        thread
-            .update(cx, |thread, cx| thread.cancel(cx))
-            .await
-            .unwrap();
-        full_turn.await.unwrap();
-        thread.read_with(cx, |thread, _| {
-            let AgentThreadEntry::ToolCall(ToolCall {
-                status: ToolCallStatus::Canceled,
-                ..
-            }) = &thread.entries()[first_tool_call_ix]
-            else {
-                panic!();
-            };
-        });
-
-        thread
-            .update(cx, |thread, cx| {
-                thread.send_raw(r#"Stop running and say goodbye to me."#, cx)
-            })
-            .await
-            .unwrap();
-        thread.read_with(cx, |thread, _| {
-            assert!(matches!(
-                &thread.entries().last().unwrap(),
-                AgentThreadEntry::AssistantMessage(..),
-            ))
-        });
-    }
-
     async fn run_until_first_tool_call(
         thread: &Entity<AcpThread>,
         cx: &mut TestAppContext,
@@ -1801,66 +1672,39 @@ mod tests {
         }
     }
 
-    pub async fn gemini_acp_thread(
-        project: Entity<Project>,
-        current_dir: impl AsRef<Path>,
-        cx: &mut TestAppContext,
-    ) -> Entity<AcpThread> {
-        struct DevGemini;
-
-        impl agent_servers::AgentServer for DevGemini {
-            async fn command(
-                &self,
-                _project: &Entity<Project>,
-                _cx: &mut AsyncApp,
-            ) -> Result<agent_servers::AgentServerCommand> {
-                let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../gemini-cli/packages/cli")
-                    .to_string_lossy()
-                    .to_string();
-
-                Ok(AgentServerCommand {
-                    path: "node".into(),
-                    args: vec![cli_path, "--experimental-acp".into()],
-                    env: None,
-                })
-            }
-
-            async fn version(
-                &self,
-                _command: &agent_servers::AgentServerCommand,
-            ) -> Result<AgentServerVersion> {
-                Ok(AgentServerVersion {
-                    current_version: "0.1.0".into(),
-                    supported: true,
-                })
-            }
-        }
-
-        let thread = AcpThread::spawn(DevGemini, current_dir.as_ref(), project, &mut cx.to_async())
-            .await
-            .unwrap();
-
-        thread
-            .update(cx, |thread, _| thread.initialize())
-            .await
-            .unwrap();
-        thread
-    }
-
     pub fn fake_acp_thread(
         project: Entity<Project>,
         cx: &mut TestAppContext,
     ) -> (Entity<AcpThread>, Entity<FakeAcpServer>) {
         let (stdin_tx, stdin_rx) = async_pipe::pipe();
         let (stdout_tx, stdout_rx) = async_pipe::pipe();
-        let thread = cx.update(|cx| cx.new(|cx| AcpThread::fake(stdin_tx, stdout_rx, project, cx)));
+
+        let thread = cx.new(|cx| {
+            let foreground_executor = cx.foreground_executor().clone();
+            let (connection, io_fut) = acp::AgentConnection::connect_to_agent(
+                AcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
+                stdin_tx,
+                stdout_rx,
+                move |fut| {
+                    foreground_executor.spawn(fut).detach();
+                },
+            );
+
+            let io_task = cx.background_spawn({
+                async move {
+                    io_fut.await.log_err();
+                    Ok(())
+                }
+            });
+            AcpThread::new(connection, "Test".into(), Some(io_task), project, cx)
+        });
         let agent = cx.update(|cx| cx.new(|cx| FakeAcpServer::new(stdin_rx, stdout_tx, cx)));
         (thread, agent)
     }
 
     pub struct FakeAcpServer {
         connection: acp::ClientConnection,
+
         _io_task: Task<()>,
         on_user_message: Option<
             Rc<

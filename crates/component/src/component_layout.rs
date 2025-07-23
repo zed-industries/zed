@@ -118,8 +118,8 @@ impl RenderOnce for ComponentExampleGroup {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .pb_1()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
+                        .mt_4()
+                        .mb_1()
                         .child(
                             div()
                                 .flex_none()

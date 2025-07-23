@@ -59,6 +59,7 @@ pub(crate) fn zed_default_dark() -> Theme {
     let bg = hsla(215. / 360., 12. / 100., 15. / 100., 1.);
     let editor = hsla(220. / 360., 12. / 100., 18. / 100., 1.);
     let elevated_surface = hsla(225. / 360., 12. / 100., 17. / 100., 1.);
+    let hover = hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0);
 
     let blue = hsla(207.8 / 360., 81. / 100., 66. / 100., 1.0);
     let gray = hsla(218.8 / 360., 10. / 100., 40. / 100., 1.0);
@@ -108,14 +109,14 @@ pub(crate) fn zed_default_dark() -> Theme {
                 surface_background: bg,
                 background: bg,
                 element_background: hsla(223.0 / 360., 13. / 100., 21. / 100., 1.0),
-                element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                element_hover: hover,
                 element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
                 element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
                 element_disabled: SystemColors::default().transparent,
                 element_selection_background: player.local().selection.alpha(0.25),
                 drop_target_background: hsla(220.0 / 360., 8.3 / 100., 21.4 / 100., 1.0),
                 ghost_element_background: SystemColors::default().transparent,
-                ghost_element_hover: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                ghost_element_hover: hover,
                 ghost_element_active: hsla(220.0 / 360., 11.8 / 100., 20.0 / 100., 1.0),
                 ghost_element_selected: hsla(224.0 / 360., 11.3 / 100., 26.1 / 100., 1.0),
                 ghost_element_disabled: SystemColors::default().transparent,
@@ -202,10 +203,12 @@ pub(crate) fn zed_default_dark() -> Theme {
                 panel_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 panel_indent_guide_hover: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 panel_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
+                panel_overlay_background: bg,
+                panel_overlay_hover: hover,
                 pane_focused_border: blue,
                 pane_group_border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 scrollbar_thumb_background: gpui::transparent_black(),
-                scrollbar_thumb_hover_background: hsla(225.0 / 360., 11.8 / 100., 26.7 / 100., 1.0),
+                scrollbar_thumb_hover_background: hover,
                 scrollbar_thumb_active_background: hsla(
                     225.0 / 360.,
                     11.8 / 100.,

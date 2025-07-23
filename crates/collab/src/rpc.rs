@@ -1002,7 +1002,26 @@ impl Server {
         Ok(())
     }
 
-    pub async fn update_plan_for_user(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+    pub async fn update_plan_for_user(
+        self: &Arc<Self>,
+        user_id: UserId,
+        update_user_plan: proto::UpdateUserPlan,
+    ) -> Result<()> {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, update_user_plan.clone())
+                .trace_err();
+        }
+
+        Ok(())
+    }
+
+    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
+    /// message on the Collab server.
+    ///
+    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
+    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
         let user = self
             .app_state
             .db
@@ -1018,14 +1037,7 @@ impl Server {
         )
         .await?;
 
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
+        self.update_plan_for_user(user_id, update_user_plan).await
     }
 
     pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
@@ -4167,6 +4179,13 @@ async fn accept_terms_of_service(
     response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
+
+    // When the user accepts the terms of service, we want to refresh their LLM
+    // token to grant access.
+    session
+        .peer
+        .send(session.connection_id, proto::RefreshLlmToken {})?;
+
     Ok(())
 }
 
