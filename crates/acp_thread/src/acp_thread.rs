@@ -507,13 +507,13 @@ impl Plan {
 
         for entry in &self.entries {
             match &entry.status {
-                acp_old::PlanEntryStatus::Pending => {
+                acp::PlanEntryStatus::Pending => {
                     stats.pending += 1;
                 }
-                acp_old::PlanEntryStatus::InProgress => {
+                acp::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
                 }
-                acp_old::PlanEntryStatus::Completed => {
+                acp::PlanEntryStatus::Completed => {
                     stats.completed += 1;
                 }
             }
@@ -526,12 +526,12 @@ impl Plan {
 #[derive(Debug)]
 pub struct PlanEntry {
     pub content: Entity<Markdown>,
-    pub priority: acp_old::PlanEntryPriority,
-    pub status: acp_old::PlanEntryStatus,
+    pub priority: acp::PlanEntryPriority,
+    pub status: acp::PlanEntryStatus,
 }
 
 impl PlanEntry {
-    pub fn from_acp(entry: acp_old::PlanEntry, cx: &mut App) -> Self {
+    pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
         Self {
             content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
             priority: entry.priority,
@@ -842,7 +842,7 @@ impl AcpThread {
         &self.plan
     }
 
-    pub fn update_plan(&mut self, request: acp_old::UpdatePlanParams, cx: &mut Context<Self>) {
+    pub fn update_plan(&mut self, request: acp::Plan, cx: &mut Context<Self>) {
         self.plan = Plan {
             entries: request
                 .entries
@@ -857,7 +857,7 @@ impl AcpThread {
     pub fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         self.plan
             .entries
-            .retain(|entry| !matches!(entry.status, acp_old::PlanEntryStatus::Completed));
+            .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
         cx.notify();
     }
 
@@ -1019,7 +1019,7 @@ impl AcpThread {
 
     pub fn read_text_file(
         &self,
-        request: acp_old::ReadTextFileParams,
+        request: acp::ReadTextFileArguments,
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
@@ -1093,8 +1093,7 @@ impl AcpThread {
 
     pub fn write_text_file(
         &self,
-        path: PathBuf,
-        content: String,
+        request: acp::WriteTextFileToolArguments,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
@@ -1102,7 +1101,7 @@ impl AcpThread {
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
-                    .project_path_for_absolute_path(&path, cx)
+                    .project_path_for_absolute_path(&request.path, cx)
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
@@ -1117,7 +1116,7 @@ impl AcpThread {
                 .background_executor()
                 .spawn(async move {
                     let old_text = snapshot.text();
-                    text_diff(old_text.as_str(), &content)
+                    text_diff(old_text.as_str(), &request.content)
                         .into_iter()
                         .map(|(range, replacement)| {
                             (
