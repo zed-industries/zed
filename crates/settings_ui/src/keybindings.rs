@@ -920,6 +920,94 @@ impl KeymapEditor {
         self.context_menu.is_some()
     }
 
+    fn create_row_button(
+        &self,
+        index: usize,
+        conflict: Option<ConflictOrigin>,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        if self.filter_state != FilterState::Conflicts
+            && let Some(conflict) = conflict
+        {
+            if conflict.is_user_keybind_conflict() {
+                base_button_style(index, IconName::Warning)
+                    .icon_color(Color::Warning)
+                    .tooltip(|window, cx| {
+                        Tooltip::with_meta(
+                            "View conflicts",
+                            Some(&ToggleConflictFilter),
+                            "Use alt+click to show all conflicts",
+                            window,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        if click.modifiers().alt {
+                            this.set_filter_state(FilterState::Conflicts, cx);
+                        } else {
+                            this.select_index(index, None, window, cx);
+                            this.open_edit_keybinding_modal(false, window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+            } else if self.search_mode.exact_match() {
+                base_button_style(index, IconName::Info)
+                    .tooltip(|window, cx| {
+                        Tooltip::with_meta(
+                            "Edit this binding",
+                            Some(&ShowMatchingKeybinds),
+                            "This binding is overridden by other bindings.",
+                            window,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.select_index(index, None, window, cx);
+                        this.open_edit_keybinding_modal(false, window, cx);
+                        cx.stop_propagation();
+                    }))
+            } else {
+                base_button_style(index, IconName::Info)
+                    .tooltip(|window, cx| {
+                        Tooltip::with_meta(
+                            "Show matching keybinds",
+                            Some(&ShowMatchingKeybinds),
+                            "This binding is overridden by other bindings.\nUse alt+click to edit this binding",
+                            window,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(move |this, click: &ClickEvent, window, cx| {
+                        if click.modifiers().alt {
+                            this.select_index(index, None, window, cx);
+                            this.open_edit_keybinding_modal(false, window, cx);
+                            cx.stop_propagation();
+                        } else {
+                            this.show_matching_keystrokes(&Default::default(), window, cx);
+                        }
+                    }))
+            }
+        } else {
+            base_button_style(index, IconName::Pencil)
+                .visible_on_hover(if self.selected_index == Some(index) {
+                    "".into()
+                } else if self.show_hover_menus {
+                    row_group_id(index)
+                } else {
+                    "never-show".into()
+                })
+                .when(
+                    self.show_hover_menus && !self.context_menu_deployed(),
+                    |this| this.tooltip(Tooltip::for_action_title("Edit Keybinding", &EditBinding)),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_index(index, None, window, cx);
+                    this.open_edit_keybinding_modal(false, window, cx);
+                    cx.stop_propagation();
+                }))
+        }
+    }
+
     fn render_no_matches_hint(&self, _window: &mut Window, _cx: &App) -> AnyElement {
         let hint = match (self.filter_state, &self.search_mode) {
             (FilterState::Conflicts, _) => {
@@ -1604,70 +1692,7 @@ impl Render for KeymapEditor {
                                         !conflict.is_user_keybind_conflict()
                                     });
 
-                                    let icon = if this.filter_state != FilterState::Conflicts
-                                        && let Some(conflict) = conflict
-                                    {
-                                        let (icon, color) = if conflict.is_user_keybind_conflict() {
-                                            (IconName::Warning, Color::Warning)
-                                        } else {
-                                            (IconName::Info, Color::Default)
-                                        };
-
-                                        base_button_style(index, icon)
-                                            .icon_color(color)
-                                            .tooltip(|window, cx| {
-                                                Tooltip::with_meta(
-                                                    "View conflicts",
-                                                    Some(&ToggleConflictFilter),
-                                                    "Use alt+click to show all conflicts",
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(cx.listener(
-                                                move |this, click: &ClickEvent, window, cx| {
-                                                    if click.modifiers().alt {
-                                                        this.set_filter_state(
-                                                            FilterState::Conflicts,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        this.select_index(index, None, window, cx);
-                                                        this.open_edit_keybinding_modal(
-                                                            false, window, cx,
-                                                        );
-                                                        cx.stop_propagation();
-                                                    }
-                                                },
-                                            ))
-                                            .into_any_element()
-                                    } else {
-                                        base_button_style(index, IconName::Pencil)
-                                            .visible_on_hover(
-                                                if this.selected_index == Some(index) {
-                                                    "".into()
-                                                } else if this.show_hover_menus {
-                                                    row_group_id(index)
-                                                } else {
-                                                    "never-show".into()
-                                                },
-                                            )
-                                            .when(
-                                                this.show_hover_menus && !context_menu_deployed,
-                                                |this| {
-                                                    this.tooltip(Tooltip::for_action_title(
-                                                        "Edit Keybinding",
-                                                        &EditBinding,
-                                                    ))
-                                                },
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.select_index(index, None, window, cx);
-                                                this.open_edit_keybinding_modal(false, window, cx);
-                                                cx.stop_propagation();
-                                            }))
-                                            .into_any_element()
-                                    };
+                                    let icon = this.create_row_button(index, conflict, cx);
 
                                     let action = div()
                                         .id(("keymap action", index))
@@ -1757,7 +1782,7 @@ impl Render for KeymapEditor {
                                         .unwrap_or_default()
                                         .into_any_element();
                                     Some([
-                                        icon,
+                                        icon.into_any_element(),
                                         action,
                                         action_arguments,
                                         keystrokes,
@@ -1820,14 +1845,23 @@ impl Render for KeymapEditor {
                                         )
                                         .when_some(
                                             conflict.filter(|conflict| {
+                                                !this.context_menu_deployed() &&
                                                 !conflict.is_user_keybind_conflict()
                                             }),
                                             |row, conflict| {
                                                 let overriding_binding = this.keybindings.get(conflict.index);
-                                                let context = match overriding_binding {
-                                                    Some(binding) => format!("This keybinding is overridden by the '{}' action", binding.action().humanized_name),
-                                                    None => "This binding is overridden.".to_string()
-                                                };
+                                                let context = overriding_binding.and_then(|binding| {
+                                                    match conflict.override_source {
+                                                        KeybindSource::User  => Some("your keymap"),
+                                                        KeybindSource::Vim => Some("the vim keymap"),
+                                                        KeybindSource::Base => Some("your base keymap"),
+                                                        _ => {
+                                                            log::error!("Unexpected override from the {} keymap", conflict.override_source.name());
+                                                            None
+                                                        }
+                                                    }.map(|source| format!("This keybinding is overridden by the '{}' binding from {}.", binding.action().humanized_name, source))
+                                                }).unwrap_or_else(|| "This binding is overridden.".to_string());
+
                                                 row.tooltip(Tooltip::text(context))},
                                         ),
                                 )
