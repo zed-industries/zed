@@ -16864,7 +16864,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
+async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;
