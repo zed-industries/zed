@@ -180,6 +180,31 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
+    fn from_acp(
+        tool_call: acp::ToolCall,
+        status: ToolCallStatus,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Self {
+        Self {
+            id: tool_call.id,
+            label: cx.new(|cx| {
+                Markdown::new(
+                    tool_call.label.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            }),
+            kind: tool_call.kind,
+            // todo! Do we assume there is either a coalesced content OR diff?
+            content: ToolCallContent::from_acp_contents(tool_call.content, language_registry, cx)
+                .into_iter()
+                .next(),
+            locations: tool_call.locations,
+            status,
+        }
+    }
     fn to_markdown(&self, cx: &App) -> String {
         let mut markdown = format!(
             "**Tool Call: {}**\nStatus: {}\n\n",
@@ -780,98 +805,46 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let language_registry = self.project.read(cx).languages().clone();
-
-        let new_tool_call = ToolCall {
-            id: tool_call.id,
-            label: cx.new(|cx| {
-                Markdown::new(
-                    tool_call.label.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    cx,
-                )
-            }),
-            kind: tool_call.kind,
-            // todo! Do we assume there is either a coalesced content OR diff?
-            content: ToolCallContent::from_acp_contents(tool_call.content, language_registry, cx)
-                .into_iter()
-                .next(),
-            locations: tool_call.locations,
-            status: ToolCallStatus::Allowed {
-                status: tool_call.status,
-            },
+        let status = ToolCallStatus::Allowed {
+            status: tool_call.status,
         };
+        let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
 
-        if let Some((ix, current_call)) = self.tool_call_mut(tool_call.id) {
-            match &mut current_call.status {
-                ToolCallStatus::Allowed { status } => {
-                    *status = tool_call.status;
-                }
+        let location = call.locations.last().cloned();
+
+        if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
+            match &current_call.status {
                 ToolCallStatus::WaitingForConfirmation { .. } => {
                     anyhow::bail!("Tool call hasn't been authorized yet")
                 }
                 ToolCallStatus::Rejected => {
                     anyhow::bail!("Tool call was rejected and therefore can't be updated")
                 }
-                ToolCallStatus::Canceled => {
-                    current_call.status = ToolCallStatus::Allowed { status: new_status };
-                }
+                ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {}
             }
 
-            *current_call = new_tool_call;
-
-            let location = current_call.locations.last().cloned();
-            if let Some(location) = location {
-                self.set_project_location(location, cx)
-            }
+            *current_call = call;
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
-            let language_registry = self.project.read(cx).languages().clone();
-            let call = ToolCall {
-                id: tool_call.id,
-                label: cx.new(|cx| {
-                    Markdown::new(
-                        tool_call.label.into(),
-                        Some(language_registry.clone()),
-                        None,
-                        cx,
-                    )
-                }),
-                kind: tool_call.kind,
-                // todo! Do we assume there is either a coalesced content OR diff?
-                content: ToolCallContent::from_acp_contents(
-                    tool_call.content,
-                    language_registry,
-                    cx,
-                )
-                .into_iter()
-                .next(),
-                locations: tool_call.locations,
-                status: ToolCallStatus::Allowed {
-                    status: tool_call.status,
-                },
-            };
-
-            let location = call.locations.last().cloned();
-            if let Some(location) = location {
-                self.set_project_location(location, cx)
-            }
-
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
+        }
+
+        if let Some(location) = location {
+            self.set_project_location(location, cx)
         }
 
         Ok(())
     }
 
-    fn tool_call_mut(&mut self, id: acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
+    fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
         self.entries
             .iter_mut()
             .enumerate()
             .rev()
             .find_map(|(index, tool_call)| {
                 if let AgentThreadEntry::ToolCall(tool_call) = tool_call
-                    && tool_call.id == id
+                    && &tool_call.id == id
                 {
                     Some((index, tool_call))
                 } else {
@@ -885,7 +858,7 @@ impl AcpThread {
         tool_call: acp::ToolCall,
         possible_grants: Vec<acp::Grant>,
         cx: &mut Context<Self>,
-    ) -> ToolCallRequest {
+    ) -> oneshot::Receiver<acp::GrantId> {
         let (tx, rx) = oneshot::channel();
 
         let status = ToolCallStatus::WaitingForConfirmation {
@@ -893,61 +866,18 @@ impl AcpThread {
             respond_tx: tx,
         };
 
-        let id = self.insert_tool_call(tool_call, status, cx);
-        ToolCallRequest { id, outcome: rx }
-    }
-
-    pub fn request_tool_call_confirmation(
-        &mut self,
-        tool_call_id: ToolCallId,
-        confirmation: acp_old::ToolCallConfirmation,
-        cx: &mut Context<Self>,
-    ) -> Result<ToolCallRequest> {
-        let project = self.project.read(cx).languages().clone();
-        let Some((idx, call)) = self.tool_call_mut(tool_call_id) else {
-            anyhow::bail!("Tool call not found");
-        };
-
-        let (tx, rx) = oneshot::channel();
-
-        call.status = ToolCallStatus::WaitingForConfirmation {
-            confirmation: ToolCallConfirmation::from_acp(confirmation, project, cx),
-            respond_tx: tx,
-        };
-
-        cx.emit(AcpThreadEvent::EntryUpdated(idx));
-
-        Ok(ToolCallRequest {
-            id: tool_call_id,
-            outcome: rx,
-        })
+        self.insert_tool_call(tool_call, status, cx);
+        rx
     }
 
     fn insert_tool_call(
         &mut self,
-        tool_call: acp_old::PushToolCallParams,
+        tool_call: acp::ToolCall,
         status: ToolCallStatus,
         cx: &mut Context<Self>,
-    ) -> acp_old::ToolCallId {
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
-        let id = acp_old::ToolCallId(self.entries.len() as u64);
-        let call = ToolCall {
-            id,
-            label: cx.new(|cx| {
-                Markdown::new(
-                    tool_call.label.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    cx,
-                )
-            }),
-            icon: acp_icon_to_ui_icon(tool_call.icon),
-            content: tool_call
-                .content
-                .map(|content| ToolCallContent::from_acp(content, language_registry, cx)),
-            locations: tool_call.locations,
-            status,
-        };
+        let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
 
         let location = call.locations.last().cloned();
         if let Some(location) = location {
@@ -955,8 +885,6 @@ impl AcpThread {
         }
 
         self.push_entry(AgentThreadEntry::ToolCall(call), cx);
-
-        id
     }
 
     pub fn authorize_tool_call(
@@ -965,7 +893,7 @@ impl AcpThread {
         grant: acp::Grant,
         cx: &mut Context<Self>,
     ) {
-        let Some((ix, call)) = self.tool_call_mut(id) else {
+        let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
         };
 
@@ -1135,7 +1063,7 @@ impl AcpThread {
                                 call.status,
                                 ToolCallStatus::WaitingForConfirmation { .. }
                                     | ToolCallStatus::Allowed {
-                                        status: acp_old::ToolCallStatus::Running
+                                        status: acp::ToolCallStatus::InProgress
                                     }
                             );
 
@@ -1147,6 +1075,7 @@ impl AcpThread {
                                     respond_tx, ..
                                 } = curr_status
                                 {
+                                    // todo! do we need a way to cancel rather than reject?
                                     respond_tx
                                         .send(acp_old::ToolCallConfirmationOutcome::Cancel)
                                         .ok();
@@ -1698,7 +1627,7 @@ mod tests {
                 thread.entries[1],
                 AgentThreadEntry::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed {
-                        status: acp_old::ToolCallStatus::Running,
+                        status: acp::ToolCallStatus::InProgress,
                         ..
                     },
                     ..
@@ -1742,7 +1671,7 @@ mod tests {
                 thread.entries[1],
                 AgentThreadEntry::ToolCall(ToolCall {
                     status: ToolCallStatus::Allowed {
-                        status: acp_old::ToolCallStatus::Finished,
+                        status: acp::ToolCallStatus::Completed,
                         ..
                     },
                     ..
