@@ -13113,7 +13113,7 @@ impl Editor {
                 window,
                 cx,
             );
-            if !action.keep_newlines {
+            if !action.stop_at_newlines {
                 this.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|_, sel| {
                         if sel.is_empty() {

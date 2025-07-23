@@ -251,7 +251,7 @@ pub struct DeleteToPreviousWordStart {
 #[serde(deny_unknown_fields)]
 pub struct CutToEndOfLine {
     #[serde(default)]
-    pub keep_newlines: bool,
+    pub stop_at_newlines: bool,
 }
 
 /// Folds all code blocks at the specified indentation level.

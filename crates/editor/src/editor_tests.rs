@@ -5790,7 +5790,7 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| {
         e.cut_to_end_of_line(
             &CutToEndOfLine {
-                keep_newlines: true,
+                stop_at_newlines: true,
             },
             window,
             cx,
