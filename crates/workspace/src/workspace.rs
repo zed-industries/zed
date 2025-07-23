@@ -7378,6 +7378,17 @@ async fn open_ssh_project_inner(
         return Err(project_path_errors.pop().context("no paths given")?);
     }
 
+    if let Some(detach_session_task) = window
+        .update(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, async move |this, cx| {
+                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))
+            })
+        })
+        .ok()
+    {
+        detach_session_task.await.ok();
+    }
+
     cx.update_window(window.into(), |_, window, cx| {
         window.replace_root(cx, |window, cx| {
             telemetry::event!("SSH Project Opened");
