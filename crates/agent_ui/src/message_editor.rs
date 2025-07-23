@@ -625,7 +625,7 @@ impl MessageEditor {
             .unwrap_or(false);
 
         IconButton::new("follow-agent", IconName::Crosshair)
-            .disabled(is_model_selected)
+            .disabled(!is_model_selected)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
