@@ -943,6 +943,8 @@ mod element {
     pub struct PaneAxisElement {
         axis: Axis,
         basis: usize,
+        /// Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
+        /// For example, flexes "1.33, 1, 1", instead of "40%, 30%, 30%"
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
@@ -995,8 +997,6 @@ mod element {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
                 Axis::Vertical => px(VERTICAL_MIN_SIZE),
             };
-            // Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
-            // Flexes make this annoying, because we have to output "1.33, 1, 1", instead of "40%, 30%, 30%"
             let mut flexes = flexes.lock();
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
