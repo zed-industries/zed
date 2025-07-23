@@ -11,10 +11,7 @@ use std::pin::pin;
 use std::rc::Rc;
 use uuid::Uuid;
 
-use agentic_coding_protocol::{
-    self as acp, AnyAgentRequest, AnyAgentResult, Client, ProtocolVersion,
-    StreamAssistantMessageChunkParams, ToolCallContent, UpdateToolCallParams,
-};
+use agentic_coding_protocol as acp_old;
 use anyhow::{Result, anyhow};
 use futures::channel::oneshot;
 use futures::future::LocalBoxFuture;
@@ -32,7 +29,7 @@ use util::ResultExt;
 use crate::claude::tools::ClaudeTool;
 use crate::mcp_server::{self, McpConfig, ZedMcpServer};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{OldAcpClientDelegate, AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, OldAcpClientDelegate};
 
 #[derive(Clone)]
 pub struct ClaudeCode;
@@ -211,8 +208,8 @@ impl AgentConnection for ClaudeAgentConnection {
     /// Send a request to the agent and wait for a response.
     fn request_any(
         &self,
-        params: AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
+        params: acp_old::AnyAgentRequest,
+    ) -> LocalBoxFuture<'static, Result<acp_old::AnyAgentResult>> {
         let delegate = self.delegate.clone();
         let end_turn_tx = self.end_turn_tx.clone();
         let outgoing_tx = self.outgoing_tx.clone();
@@ -221,16 +218,16 @@ impl AgentConnection for ClaudeAgentConnection {
         async move {
             match params {
                 // todo: consider sending an empty request so we get the init response?
-                AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
-                    acp::InitializeResponse {
+                acp_old::AnyAgentRequest::InitializeParams(_) => Ok(
+                    acp_old::AnyAgentResult::InitializeResponse(acp::InitializeResponse {
                         is_authenticated: true,
-                        protocol_version: ProtocolVersion::latest(),
-                    },
-                )),
-                AnyAgentRequest::AuthenticateParams(_) => {
+                        protocol_version: acp_old::ProtocolVersion::latest(),
+                    }),
+                ),
+                acp_old::AnyAgentRequest::AuthenticateParams(_) => {
                     Err(anyhow!("Authentication not supported"))
                 }
-                AnyAgentRequest::SendUserMessageParams(message) => {
+                acp_old::AnyAgentRequest::SendUserMessageParams(message) => {
                     delegate.clear_completed_plan_entries().await?;
 
                     let (tx, rx) = oneshot::channel();
@@ -238,10 +235,8 @@ impl AgentConnection for ClaudeAgentConnection {
                     let mut content = String::new();
                     for chunk in message.chunks {
                         match chunk {
-                            agentic_coding_protocol::UserMessageChunk::Text { text } => {
-                                content.push_str(&text)
-                            }
-                            agentic_coding_protocol::UserMessageChunk::Path { path } => {
+                            acp_old::UserMessageChunk::Text { text } => content.push_str(&text),
+                            acp_old::UserMessageChunk::Path { path } => {
                                 content.push_str(&format!("@{path:?}"))
                             }
                         }
@@ -259,16 +254,16 @@ impl AgentConnection for ClaudeAgentConnection {
                         session_id: Some(session_id),
                     })?;
                     rx.await??;
-                    Ok(AnyAgentResult::SendUserMessageResponse(
+                    Ok(acp_old::AnyAgentResult::SendUserMessageResponse(
                         acp::SendUserMessageResponse,
                     ))
                 }
-                AnyAgentRequest::CancelSendMessageParams(_) => {
+                acp_old::AnyAgentRequest::CancelSendMessageParams(_) => {
                     let (done_tx, done_rx) = oneshot::channel();
                     cancel_tx.send(done_tx).await?;
                     done_rx.await??;
 
-                    Ok(AnyAgentResult::CancelSendMessageResponse(
+                    Ok(acp_old::AnyAgentResult::CancelSendMessageResponse(
                         acp::CancelSendMessageResponse,
                     ))
                 }
@@ -350,9 +345,11 @@ impl ClaudeAgentConnection {
                     match chunk {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
                             delegate
-                                .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
-                                    chunk: acp::AssistantMessageChunk::Text { text },
-                                })
+                                .stream_assistant_message_chunk(
+                                    acp_old::StreamAssistantMessageChunkParams {
+                                        chunk: acp::AssistantMessageChunk::Text { text },
+                                    },
+                                )
                                 .await
                                 .log_err();
                         }
@@ -382,12 +379,12 @@ impl ClaudeAgentConnection {
                             if let Some(id) = id {
                                 let content = content.to_string();
                                 delegate
-                                    .update_tool_call(UpdateToolCallParams {
+                                    .update_tool_call(acp_old::UpdateToolCallParams {
                                         tool_call_id: id,
                                         status: acp::ToolCallStatus::Finished,
                                         // Don't unset existing content
                                         content: (!content.is_empty()).then_some(
-                                            ToolCallContent::Markdown {
+                                            acp_old::ToolCallContent::Markdown {
                                                 // For now we only include text content
                                                 markdown: content,
                                             },
@@ -403,11 +400,13 @@ impl ClaudeAgentConnection {
                         | ContentChunk::RedactedThinking
                         | ContentChunk::WebSearchToolResult => {
                             delegate
-                                .stream_assistant_message_chunk(StreamAssistantMessageChunkParams {
-                                    chunk: acp::AssistantMessageChunk::Text {
-                                        text: format!("Unsupported content: {:?}", chunk),
+                                .stream_assistant_message_chunk(
+                                    acp_old::StreamAssistantMessageChunkParams {
+                                        chunk: acp::AssistantMessageChunk::Text {
+                                            text: format!("Unsupported content: {:?}", chunk),
+                                        },
                                     },
-                                })
+                                )
                                 .await
                                 .log_err();
                         }

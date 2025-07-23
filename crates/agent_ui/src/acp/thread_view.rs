@@ -7,7 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentic_coding_protocol::{self as acp};
+use agent_client_protocol as acp;
+use agentic_coding_protocol as acp_old;
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -69,7 +70,7 @@ pub struct AcpThreadView {
     edits_expanded: bool,
     plan_expanded: bool,
     editor_expanded: bool,
-    message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
+    message_history: Rc<RefCell<MessageHistory<acp_old::SendUserMessageParams>>>,
 }
 
 enum ThreadState {
@@ -89,7 +90,7 @@ enum ThreadState {
 struct AlwaysAllowOption {
     id: &'static str,
     label: SharedString,
-    outcome: acp::ToolCallConfirmationOutcome,
+    outcome: acp_old::ToolCallConfirmationOutcome,
 }
 
 impl AcpThreadView {
@@ -97,7 +98,7 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        message_history: Rc<RefCell<MessageHistory<acp::SendUserMessageParams>>>,
+        message_history: Rc<RefCell<MessageHistory<acp_old::SendUserMessageParams>>>,
         min_lines: usize,
         max_lines: Option<usize>,
         window: &mut Window,
@@ -362,7 +363,7 @@ impl AcpThreadView {
         self.last_error.take();
 
         let mut ix = 0;
-        let mut chunks: Vec<acp::UserMessageChunk> = Vec::new();
+        let mut chunks: Vec<acp_old::UserMessageChunk> = Vec::new();
         let project = self.project.clone();
         self.message_editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -374,12 +375,12 @@ impl AcpThreadView {
                     {
                         let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
                         if crease_range.start > ix {
-                            chunks.push(acp::UserMessageChunk::Text {
+                            chunks.push(acp_old::UserMessageChunk::Text {
                                 text: text[ix..crease_range.start].to_string(),
                             });
                         }
                         if let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) {
-                            chunks.push(acp::UserMessageChunk::Path { path: abs_path });
+                            chunks.push(acp_old::UserMessageChunk::Path { path: abs_path });
                         }
                         ix = crease_range.end;
                     }
@@ -388,7 +389,7 @@ impl AcpThreadView {
                 if ix < text.len() {
                     let last_chunk = text[ix..].trim();
                     if !last_chunk.is_empty() {
-                        chunks.push(acp::UserMessageChunk::Text {
+                        chunks.push(acp_old::UserMessageChunk::Text {
                             text: last_chunk.into(),
                         });
                     }
@@ -401,7 +402,7 @@ impl AcpThreadView {
         }
 
         let Some(thread) = self.thread() else { return };
-        let message = acp::SendUserMessageParams { chunks };
+        let message = acp_old::SendUserMessageParams { chunks };
         let task = thread.update(cx, |thread, cx| thread.send(message.clone(), cx));
 
         cx.spawn(async move |this, cx| {
@@ -490,7 +491,7 @@ impl AcpThreadView {
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         project: Entity<Project>,
-        message: Option<&acp::SendUserMessageParams>,
+        message: Option<&acp_old::SendUserMessageParams>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -505,10 +506,10 @@ impl AcpThreadView {
 
         for chunk in &message.chunks {
             match chunk {
-                acp::UserMessageChunk::Text { text: chunk } => {
+                acp_old::UserMessageChunk::Text { text: chunk } => {
                     text.push_str(&chunk);
                 }
-                acp::UserMessageChunk::Path { path } => {
+                acp_old::UserMessageChunk::Path { path } => {
                     let start = text.len();
                     let content = MentionPath::new(path).to_string();
                     text.push_str(&content);
@@ -685,7 +686,7 @@ impl AcpThreadView {
     fn authorize_tool_call(
         &mut self,
         id: ToolCallId,
-        outcome: acp::ToolCallConfirmationOutcome,
+        outcome: acp_old::ToolCallConfirmationOutcome,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.thread() else {
@@ -866,7 +867,7 @@ impl AcpThreadView {
         let status_icon = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { .. } => None,
             ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Running,
+                status: acp::ToolCallStatus::InProgress,
                 ..
             } => Some(
                 Icon::new(IconName::ArrowCircle)
@@ -880,13 +881,13 @@ impl AcpThreadView {
                     .into_any(),
             ),
             ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Finished,
+                status: acp::ToolCallStatus::Completed,
                 ..
             } => None,
             ToolCallStatus::Rejected
             | ToolCallStatus::Canceled
             | ToolCallStatus::Allowed {
-                status: acp::ToolCallStatus::Error,
+                status: acp::ToolCallStatus::Failed,
                 ..
             } => Some(
                 Icon::new(IconName::X)
@@ -909,14 +910,24 @@ impl AcpThreadView {
 
         let content = if is_open {
             match &tool_call.status {
-                ToolCallStatus::WaitingForConfirmation { confirmation, .. } => {
-                    Some(self.render_tool_call_confirmation(
-                        tool_call.id,
-                        confirmation,
-                        tool_call.content.as_ref(),
-                        window,
-                        cx,
-                    ))
+                ToolCallStatus::WaitingForConfirmation {
+                    possible_grants,
+                    respond_tx,
+                } => {
+                    // Some(self.render_tool_call_confirmation(
+                    //     tool_call.id,
+                    //     confirmation,
+                    //     tool_call.content.as_ref(),
+                    //     window,
+                    //     cx,
+                    // ))
+                    // todo! render buttons based on grants
+                    tool_call.content.as_ref().map(|content| {
+                        div()
+                            .py_1p5()
+                            .child(self.render_tool_call_content(content, window, cx))
+                            .into_any_element()
+                    })
                 }
                 ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
                     tool_call.content.as_ref().map(|content| {
@@ -1114,7 +1125,7 @@ impl AcpThreadView {
                     &[AlwaysAllowOption {
                         id: "always_allow",
                         label: "Always Allow Edits".into(),
-                        outcome: acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                        outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
                     }],
                     tool_call_id,
                     cx,
@@ -1141,7 +1152,7 @@ impl AcpThreadView {
                     &[AlwaysAllowOption {
                         id: "always_allow",
                         label: format!("Always Allow {root_command}").into(),
-                        outcome: acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                        outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
                     }],
                     tool_call_id,
                     cx,
@@ -1171,12 +1182,12 @@ impl AcpThreadView {
                         AlwaysAllowOption {
                             id: "always_allow_server",
                             label: format!("Always Allow {server_name}").into(),
-                            outcome: acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer,
+                            outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllowMcpServer,
                         },
                         AlwaysAllowOption {
                             id: "always_allow_tool",
                             label: format!("Always Allow {tool_display_name}").into(),
-                            outcome: acp::ToolCallConfirmationOutcome::AlwaysAllowTool,
+                            outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllowTool,
                         },
                     ],
                     tool_call_id,
@@ -1213,7 +1224,7 @@ impl AcpThreadView {
                     &[AlwaysAllowOption {
                         id: "always_allow",
                         label: "Always Allow".into(),
-                        outcome: acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                        outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
                     }],
                     tool_call_id,
                     cx,
@@ -1229,7 +1240,7 @@ impl AcpThreadView {
                     &[AlwaysAllowOption {
                         id: "always_allow",
                         label: "Always Allow".into(),
-                        outcome: acp::ToolCallConfirmationOutcome::AlwaysAllow,
+                        outcome: acp_old::ToolCallConfirmationOutcome::AlwaysAllow,
                     }],
                     tool_call_id,
                     cx,
@@ -1281,7 +1292,7 @@ impl AcpThreadView {
                         move |this, _, _, cx| {
                             this.authorize_tool_call(
                                 id,
-                                acp::ToolCallConfirmationOutcome::Allow,
+                                acp_old::ToolCallConfirmationOutcome::Allow,
                                 cx,
                             );
                         }
@@ -1298,7 +1309,7 @@ impl AcpThreadView {
                         move |this, _, _, cx| {
                             this.authorize_tool_call(
                                 id,
-                                acp::ToolCallConfirmationOutcome::Reject,
+                                acp_old::ToolCallConfirmationOutcome::Reject,
                                 cx,
                             );
                         }
@@ -1638,21 +1649,25 @@ impl AcpThreadView {
                         .text_xs()
                         .text_color(cx.theme().colors().text_muted)
                         .child(match entry.status {
-                            acp::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
+                            acp_old::PlanEntryStatus::Pending => Icon::new(IconName::TodoPending)
                                 .size(IconSize::Small)
                                 .color(Color::Muted)
                                 .into_any_element(),
-                            acp::PlanEntryStatus::InProgress => Icon::new(IconName::TodoProgress)
-                                .size(IconSize::Small)
-                                .color(Color::Accent)
-                                .with_animation(
-                                    "running",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
-                                )
-                                .into_any_element(),
+                            acp_old::PlanEntryStatus::InProgress => {
+                                Icon::new(IconName::TodoProgress)
+                                    .size(IconSize::Small)
+                                    .color(Color::Accent)
+                                    .with_animation(
+                                        "running",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    )
+                                    .into_any_element()
+                            }
                             acp::PlanEntryStatus::Completed => Icon::new(IconName::TodoComplete)
                                 .size(IconSize::Small)
                                 .color(Color::Success)
@@ -2547,7 +2562,7 @@ fn default_markdown_style(buffer_font: bool, window: &Window, cx: &App) -> Markd
 }
 
 fn plan_label_markdown_style(
-    status: &acp::PlanEntryStatus,
+    status: &acp_old::PlanEntryStatus,
     window: &Window,
     cx: &App,
 ) -> MarkdownStyle {
@@ -2556,7 +2571,7 @@ fn plan_label_markdown_style(
     MarkdownStyle {
         base_text_style: TextStyle {
             color: cx.theme().colors().text_muted,
-            strikethrough: if matches!(status, acp::PlanEntryStatus::Completed) {
+            strikethrough: if matches!(status, acp_old::PlanEntryStatus::Completed) {
                 Some(gpui::StrikethroughStyle {
                     thickness: px(1.),
                     color: Some(cx.theme().colors().text_muted.opacity(0.8)),

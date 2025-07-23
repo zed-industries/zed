@@ -375,7 +375,7 @@ impl ToolCallContent {
             .collect()
     }
 
-    fn to_markdown(&self, cx: &App) -> String {
+    pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
             Self::Diff { diff } => diff.to_markdown(cx),

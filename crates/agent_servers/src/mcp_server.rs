@@ -1,7 +1,7 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use acp_thread::OldAcpClientDelegate;
-use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
+use agentic_coding_protocol::{self as acp_old, Client as _};
 use anyhow::{Context, Result};
 use collections::HashMap;
 use context_server::types::{
@@ -207,7 +207,7 @@ impl ZedMcpServer {
     ) -> Task<Result<ReadToolResponse>> {
         cx.foreground_executor().spawn(async move {
             let response = delegate
-                .read_text_file(ReadTextFileParams {
+                .read_text_file(acp_old::ReadTextFileParams {
                     path: params.abs_path,
                     line: params.offset,
                     limit: params.limit,
@@ -227,7 +227,7 @@ impl ZedMcpServer {
     ) -> Task<Result<EditToolResponse>> {
         cx.foreground_executor().spawn(async move {
             let response = delegate
-                .read_text_file_reusing_snapshot(ReadTextFileParams {
+                .read_text_file_reusing_snapshot(acp_old::ReadTextFileParams {
                     path: params.abs_path.clone(),
                     line: None,
                     limit: None,
@@ -240,7 +240,7 @@ impl ZedMcpServer {
             }
 
             delegate
-                .write_text_file(WriteTextFileParams {
+                .write_text_file(acp_old::WriteTextFileParams {
                     path: params.abs_path,
                     content: new_content,
                 })

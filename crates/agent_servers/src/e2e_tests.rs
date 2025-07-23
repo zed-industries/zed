@@ -4,7 +4,7 @@ use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
 use acp_thread::{
     AcpThread, AgentThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallStatus,
 };
-use agentic_coding_protocol as acp;
+use agentic_coding_protocol as acp_old;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
@@ -54,15 +54,15 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
     thread
         .update(cx, |thread, cx| {
             thread.send(
-                acp::SendUserMessageParams {
+                acp_old::SendUserMessageParams {
                     chunks: vec![
-                        acp::UserMessageChunk::Text {
+                        acp_old::UserMessageChunk::Text {
                             text: "Read the file ".into(),
                         },
-                        acp::UserMessageChunk::Path {
+                        acp_old::UserMessageChunk::Path {
                             path: Path::new("foo.rs").into(),
                         },
-                        acp::UserMessageChunk::Text {
+                        acp_old::UserMessageChunk::Text {
                             text: " and tell me what the content of the println! is".into(),
                         },
                     ],
@@ -161,11 +161,8 @@ pub async fn test_tool_call_with_confirmation(
     let tool_call_id = thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            status:
-                ToolCallStatus::WaitingForConfirmation {
-                    confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                    ..
-                },
+            content: Some(content),
+            status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread
             .entries()
@@ -176,13 +173,17 @@ pub async fn test_tool_call_with_confirmation(
             panic!();
         };
 
-        assert!(root_command.contains("touch"));
+        assert!(content.to_markdown(cx).contains("touch"));
 
         *id
     });
 
     thread.update(cx, |thread, cx| {
-        thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
+        thread.authorize_tool_call(
+            tool_call_id,
+            acp_old::ToolCallConfirmationOutcome::Allow,
+            cx,
+        );
 
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
@@ -249,18 +250,15 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            status:
-                ToolCallStatus::WaitingForConfirmation {
-                    confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                    ..
-                },
+            content: Some(content),
+            status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread.entries()[first_tool_call_ix]
         else {
             panic!("{:?}", thread.entries()[1]);
         };
 
-        assert!(root_command.contains("touch"));
+        assert!(content.to_markdown(cx).contains("touch"));
 
         *id
     });

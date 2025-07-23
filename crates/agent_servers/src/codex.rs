@@ -13,9 +13,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agentic_coding_protocol::{
-    self as acp, AnyAgentRequest, AnyAgentResult, Client as _, ProtocolVersion,
-};
+use agentic_coding_protocol::{self as acp_old, Client as _};
 use anyhow::{Context, Result, anyhow};
 use futures::future::LocalBoxFuture;
 use futures::{AsyncWriteExt, FutureExt, SinkExt as _};
@@ -341,8 +339,8 @@ impl AgentConnection for CodexAgentConnection {
     /// Send a request to the agent and wait for a response.
     fn request_any(
         &self,
-        params: AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
+        params: acp_old::AnyAgentRequest,
+    ) -> LocalBoxFuture<'static, Result<acp::acp_old::AnyAgentResult>> {
         let client = self.codex_mcp.client();
         let root_dir = self.root_dir.clone();
         let cancel_request_tx = self.cancel_request_tx.clone();
@@ -351,16 +349,16 @@ impl AgentConnection for CodexAgentConnection {
 
             match params {
                 // todo: consider sending an empty request so we get the init response?
-                AnyAgentRequest::InitializeParams(_) => Ok(AnyAgentResult::InitializeResponse(
-                    acp::InitializeResponse {
+                acp_old::AnyAgentRequest::InitializeParams(_) => Ok(
+                    acp_old::AnyAgentResult::InitializeResponse(acp::InitializeResponse {
                         is_authenticated: true,
-                        protocol_version: ProtocolVersion::latest(),
-                    },
-                )),
-                AnyAgentRequest::AuthenticateParams(_) => {
+                        protocol_version: acp_old::ProtocolVersion::latest(),
+                    }),
+                ),
+                acp_old::AnyAgentRequest::AuthenticateParams(_) => {
                     Err(anyhow!("Authentication not supported"))
                 }
-                AnyAgentRequest::SendUserMessageParams(message) => {
+                acp_old::AnyAgentRequest::SendUserMessageParams(message) => {
                     let (new_cancel_tx, cancel_rx) = oneshot::channel();
                     cancel_request_tx.borrow_mut().replace(new_cancel_tx);
 
@@ -388,18 +386,18 @@ impl AgentConnection for CodexAgentConnection {
                         )
                         .await?;
 
-                    Ok(AnyAgentResult::SendUserMessageResponse(
+                    Ok(acp_old::AnyAgentResult::SendUserMessageResponse(
                         acp::SendUserMessageResponse,
                     ))
                 }
-                AnyAgentRequest::CancelSendMessageParams(_) => {
+                acp_old::AnyAgentRequest::CancelSendMessageParams(_) => {
                     if let Ok(mut borrow) = cancel_request_tx.try_borrow_mut() {
                         if let Some(cancel_tx) = borrow.take() {
                             cancel_tx.send(()).ok();
                         }
                     }
 
-                    Ok(AnyAgentResult::CancelSendMessageResponse(
+                    Ok(acp_old::AnyAgentResult::CancelSendMessageResponse(
                         acp::CancelSendMessageResponse,
                     ))
                 }
