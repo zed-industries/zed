@@ -71,10 +71,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     }
 
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {
-        let mut edits = Vec::new();
-        for (key, value) in iter {
-            edits.push(Edit::Insert(MapEntry { key, value }));
-        }
+        let edits: Vec<_> = iter
+            .into_iter()
+            .map(|(key, value)| Edit::Insert(MapEntry { key, value }))
+            .collect();
         self.0.edit(edits, &());
     }
 
