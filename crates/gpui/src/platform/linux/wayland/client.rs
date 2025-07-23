@@ -1399,6 +1399,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     prefer_character_input: false,
                                 });
                                 move |_event, _metadata, this| {
+                                    let processing_begin = std::time::Instant::now();
                                     let mut client = this.get_client();
                                     let mut state = client.borrow_mut();
                                     let is_repeating = id == state.repeat.current_id
@@ -1414,8 +1415,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                                     drop(state);
                                     focused_window.handle_input(input.clone());
-
-                                    TimeoutAction::ToDuration(Duration::from_secs(1) / rate)
+                                    let processing_duration = processing_begin.elapsed();
+                                    log::debug!("Key repeat input handling: {:?}", processing_duration);
+                                    let delay = Duration::from_secs(1) / rate;
+                                    TimeoutAction::ToDuration((delay - processing_duration).max(Duration::ZERO))
                                 }
                             })
                             .unwrap();
