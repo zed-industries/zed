@@ -8085,6 +8085,61 @@ pub fn with_active_or_new_workspace(
     }
 }
 
+pub async fn restorable_workspace_locations(
+    cx: &mut AsyncApp,
+    app_state: &Arc<AppState>,
+) -> Option<Vec<SerializedWorkspaceLocation>> {
+    let mut restore_behavior = cx
+        .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
+        .ok()?;
+
+    let session_handle = app_state.session.clone();
+    let (last_session_id, last_session_window_stack) = cx
+        .update(|cx| {
+            let session = session_handle.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_window_stack(),
+            )
+        })
+        .ok()?;
+
+    if last_session_id.is_none()
+        && matches!(restore_behavior, RestoreOnStartupBehavior::LastSession)
+    {
+        restore_behavior = RestoreOnStartupBehavior::LastWorkspace;
+    }
+
+    match restore_behavior {
+        RestoreOnStartupBehavior::LastWorkspace => last_opened_workspace_location()
+            .await
+            .map(|location| vec![location]),
+        RestoreOnStartupBehavior::LastSession => {
+            if let Some(last_session_id) = last_session_id {
+                let ordered = last_session_window_stack.is_some();
+
+                let mut locations =
+                    last_session_workspace_locations(&last_session_id, last_session_window_stack)
+                        .filter(|locations| !locations.is_empty());
+
+                // Since last_session_window_order returns the windows ordered front-to-back
+                // we need to open the window that was frontmost last.
+                if ordered {
+                    if let Some(locations) = locations.as_mut() {
+                        locations.reverse();
+                    }
+                }
+
+                locations
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};

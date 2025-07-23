@@ -1,5 +1,4 @@
 use crate::handle_open_request;
-use crate::restorable_workspace_locations;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
@@ -366,7 +365,7 @@ async fn open_workspaces(
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(cx, &app_state).await;
+            let locations = workspace::restorable_workspace_locations(cx, &app_state).await;
             locations.unwrap_or_default()
         }
     } else {
