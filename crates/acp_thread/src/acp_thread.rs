@@ -1,7 +1,6 @@
 mod connection;
 pub use connection::*;
 
-pub use acp_old::ToolCallId;
 use agent_client_protocol::{self as acp};
 use agentic_coding_protocol as acp_old;
 use anyhow::{Context as _, Result};
@@ -1072,13 +1071,17 @@ impl AcpThread {
                                     mem::replace(&mut call.status, ToolCallStatus::Canceled);
 
                                 if let ToolCallStatus::WaitingForConfirmation {
-                                    respond_tx, ..
+                                    respond_tx,
+                                    possible_grants,
                                 } = curr_status
                                 {
-                                    // todo! do we need a way to cancel rather than reject?
-                                    respond_tx
-                                        .send(acp_old::ToolCallConfirmationOutcome::Cancel)
-                                        .ok();
+                                    if let Some(grant_id) = possible_grants
+                                        .iter()
+                                        .find_map(|g| (!g.is_allowed).then(|| g.id.clone()))
+                                    {
+                                        // todo! do we need a way to cancel rather than reject?
+                                        respond_tx.send(grant_id).ok();
+                                    }
                                 }
                             }
                         }
@@ -1267,7 +1270,7 @@ impl OldAcpClientDelegate {
 
     pub async fn request_existing_tool_call_confirmation(
         &self,
-        tool_call_id: ToolCallId,
+        tool_call_id: acp_old::ToolCallId,
         confirmation: acp_old::ToolCallConfirmation,
     ) -> Result<acp_old::ToolCallConfirmationOutcome> {
         let cx = &mut self.cx.clone();
