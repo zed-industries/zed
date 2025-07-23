@@ -1577,18 +1577,25 @@ mod tests {
                 cx,
             )
         });
-        let cx = cx.add_empty_window();
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
+        let mut editor = None;
+        let window = cx.add_window(|window, cx| {
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            editor = Some(cx.new(|cx| Editor::for_buffer(buffer.clone(), None, window, cx)));
             let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.set_active_pane_item(Some(&editor.clone().unwrap()), window, cx);
             search_bar.show(window, cx);
             search_bar
         });
+        let search_bar = window.root(cx).unwrap();
 
-        (editor, search_bar, cx)
+        let cx = VisualTestContext::from_window(*window, cx).as_mut();
+
+        (editor.unwrap(), search_bar, cx)
     }
 
     #[gpui::test]
@@ -2899,40 +2906,31 @@ mod tests {
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.show(window, cx);
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::NONE,
                 "Should have no search options enabled by default"
             );
 
-            // Update the search query's text to `test\C` to check if the
-            // search option is correctly applied.
-            let query = "test\\C";
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |query_buffer, cx| {
-                    let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
-                });
-            });
+            cx.focus_view(&search_bar.query_editor, window);
+        });
 
-            search_bar.apply_pattern_items(cx);
+        cx.simulate_input("test\\C");
+
+        search_bar.update_in(cx, |search_bar, _, _| {
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
                 "Should have case sensitivity enabled when \\C pattern item is present"
             );
+        });
 
-            // Remove `\\C` from the query to check if the search option is
-            // correctly reverted to its default state.
-            let query = "test";
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |query_buffer, cx| {
-                    let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
-                });
-            });
-
-            search_bar.apply_pattern_items(cx);
+        // Remove `\\C` from the query to check if the search option is
+        // correctly reverted to its default state.
+        cx.simulate_keystrokes("backspace backspace");
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test");
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::NONE,
@@ -2945,35 +2943,24 @@ mod tests {
                 SearchOptions::CASE_SENSITIVE,
                 "Should have case sensitivity enabled by default"
             );
+        });
+        cx.run_until_parked();
 
-            // Update the search query's text to `test\c` to check if the
-            // case sensitivity search option is correctly disabled.
-            let query = "test\\c";
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |query_buffer, cx| {
-                    let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
-                });
-            });
-
-            search_bar.apply_pattern_items(cx);
+        cx.simulate_input("\\c");
+        cx.run_until_parked();
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test\\c");
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::NONE,
                 "Should have no case sensitivity enabled when \\c pattern item is present"
             );
+        });
 
-            // Remove `\\c` from the query to check if the search option is
-            // correctly reverted to its default state.
-            let query = "test";
-            search_bar.query_editor.update(cx, |query_editor, cx| {
-                query_editor.buffer().update(cx, |query_buffer, cx| {
-                    let len = query_buffer.len(cx);
-                    query_buffer.edit([(0..len, query)], None, cx);
-                });
-            });
+        cx.simulate_keystrokes("backspace backspace");
 
-            search_bar.apply_pattern_items(cx);
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.raw_query(cx), "test");
             assert_eq!(
                 search_bar.search_options,
                 SearchOptions::CASE_SENSITIVE,
