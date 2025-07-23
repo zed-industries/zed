@@ -605,10 +605,13 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             );
         } else {
             curr_column = col_idx;
-            while diff_left < 0.0 && curr_column > 0 {
-                // todo! When resize is none and dragging to the left this doesn't work correctly
-                // This could be done by making min_size equal to current size if resizable is None
-                let Some(min_size) = resize_behavior[curr_column].min_size() else {
+            // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
+            while diff_left < 0.0 {
+                let Some(min_size) = resize_behavior[curr_column.saturating_sub(1)].min_size()
+                else {
+                    if curr_column == 0 {
+                        break;
+                    }
                     curr_column -= 1;
                     continue;
                 };
@@ -624,6 +627,9 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 }
 
                 self.widths[curr_column] = DefiniteLength::Fraction(curr_width);
+                if curr_column == 0 {
+                    break;
+                }
                 curr_column -= 1;
             }
 

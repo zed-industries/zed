@@ -1436,7 +1436,6 @@ impl Render for KeymapEditor {
                         DefiniteLength::Fraction(0.08),
                     ])
                     .resizable_columns(
-                        // todo! Resize doesn't fully work
                         [
                             ResizeBehavior::None,
                             ResizeBehavior::Resizable,
