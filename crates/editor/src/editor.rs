@@ -11373,7 +11373,6 @@ impl Editor {
         let mut refold_creases = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
-
         let mut selections = selections.iter().peekable();
         let mut contiguous_row_selections = Vec::new();
         let mut new_selections = Vec::new();

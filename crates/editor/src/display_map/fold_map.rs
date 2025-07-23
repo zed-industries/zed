@@ -145,7 +145,6 @@ impl FoldMapWriter<'_> {
         let snapshot = self.0.snapshot.inlay_snapshot.clone();
         for (range, fold_text) in ranges.into_iter() {
             let buffer = &snapshot.buffer;
-
             let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
 
             // Ignore any empty ranges.
