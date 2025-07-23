@@ -547,7 +547,7 @@ mod tests {
             );
             assert_eq!(
                 diff_view.tab_tooltip_text(cx).unwrap(),
-                "Clipboard ↔ test/a/b/text.txt @ L1:1-L5:1"
+                format!("Clipboard ↔ {}", path!("test/a/b/text.txt @ L1:1-L5:1"))
             );
         });
     }

@@ -396,7 +396,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
         let (workspace, mut cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -404,8 +404,8 @@ mod tests {
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
                 FileDiffView::open(
-                    PathBuf::from(path!("/test/old_file.txt")),
-                    PathBuf::from(path!("/test/new_file.txt")),
+                    path!("/test/old_file.txt").into(),
+                    path!("/test/new_file.txt").into(),
                     workspace,
                     window,
                     cx,
