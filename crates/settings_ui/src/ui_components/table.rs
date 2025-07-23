@@ -210,6 +210,7 @@ impl TableInteractionState {
             .map(|width| base_cell_style(Some(*width)).into_any_element());
 
         let mut column_ix = 0;
+        let resizable_columns_slice = *resizable_columns;
         let mut resizable_columns = resizable_columns.into_iter();
         let dividers = intersperse_with(spacers, || {
             window.with_id(column_ix, |window| {
@@ -243,12 +244,12 @@ impl TableInteractionState {
                         .when_some(columns.clone(), |this, columns| {
                             this.on_click(move |event, window, cx| {
                                 if event.down.click_count >= 2 {
-                                    columns.update(cx, |columns, cx| {
+                                    columns.update(cx, |columns, _| {
                                         columns.on_double_click(
                                             column_ix,
                                             &initial_sizes,
+                                            &resizable_columns_slice,
                                             window,
-                                            cx,
                                         );
                                     })
                                 }
@@ -477,6 +478,7 @@ impl ResizeBehavior {
 
 pub struct ColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
+    cached_bounds_width: Pixels,
     initialized: bool,
 }
 
@@ -484,6 +486,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
+            cached_bounds_width: Default::default(),
             initialized: false,
         }
     }
@@ -500,12 +503,46 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
     fn on_double_click(
         &mut self,
-        _double_click_position: usize,
+        double_click_position: usize,
         initial_sizes: &[DefiniteLength; COLS],
-        _: &mut Window,
-        _: &mut Context<Self>,
+        resize_behavior: &[ResizeBehavior; COLS],
+        window: &mut Window,
     ) {
-        self.widths = *initial_sizes;
+        let bounds_width = self.cached_bounds_width;
+        let rem_size = window.rem_size();
+
+        let diff =
+            Self::get_fraction(
+                &initial_sizes[double_click_position],
+                bounds_width,
+                rem_size,
+            ) - Self::get_fraction(&self.widths[double_click_position], bounds_width, rem_size);
+
+        let mut curr_column = double_click_position + 1;
+        let mut diff_left = diff;
+
+        while diff != 0.0 && curr_column < COLS {
+            let Some(min_size) = resize_behavior[curr_column].min_size() else {
+                curr_column += 1;
+                continue;
+            };
+
+            let mut curr_width =
+                Self::get_fraction(&self.widths[curr_column], bounds_width, rem_size) - diff_left;
+
+            diff_left = 0.0;
+            if min_size > curr_width {
+                diff_left += min_size - curr_width;
+                curr_width = min_size;
+            }
+            self.widths[curr_column] = DefiniteLength::Fraction(curr_width);
+            curr_column += 1;
+        }
+
+        self.widths[double_click_position] = DefiniteLength::Fraction(
+            Self::get_fraction(&self.widths[double_click_position], bounds_width, rem_size)
+                + (diff - diff_left),
+        );
     }
 
     fn on_drag_move(
@@ -516,9 +553,6 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         cx: &mut Context<Self>,
     ) {
         // - [ ] Fix bugs in resize
-        // - [ ] Create and respect a minimum size
-        // - [ ] Cascade resize columns to next column if at minimum width
-        // - [ ] Double click to reset column widths
         let drag_position = drag_event.event.position;
         let bounds = drag_event.bounds;
 
@@ -895,14 +929,27 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, table_context.clone(), cx))
             })
-            .when_some(current_widths, |this, (widths, resize_behavior)| {
-                this.on_drag_move::<DraggedColumn>(move |e, window, cx| {
-                    widths
-                        .update(cx, |widths, cx| {
-                            widths.on_drag_move(e, &resize_behavior, window, cx);
-                        })
-                        .ok();
-                })
+            .when_some(current_widths, {
+                |this, (widths, resize_behavior)| {
+                    this.on_drag_move::<DraggedColumn>({
+                        let widths = widths.clone();
+                        move |e, window, cx| {
+                            widths
+                                .update(cx, |widths, cx| {
+                                    widths.on_drag_move(e, &resize_behavior, window, cx);
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_children_prepainted(move |bounds, _, cx| {
+                        widths
+                            .update(cx, |widths, _| {
+                                // This works because all children x axis bounds are the same
+                                widths.cached_bounds_width = bounds[0].right() - bounds[0].left();
+                            })
+                            .ok();
+                    })
+                }
             })
             .on_drop::<DraggedColumn>(|_, _, _| {
                 // Finish the resize operation
