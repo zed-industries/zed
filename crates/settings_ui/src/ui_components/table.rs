@@ -521,7 +521,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let mut curr_column = double_click_position + 1;
         let mut diff_left = diff;
 
-        while diff != 0.0 && curr_column < COLS {
+        while diff_left != 0.0 && curr_column < COLS {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 curr_column += 1;
                 continue;
