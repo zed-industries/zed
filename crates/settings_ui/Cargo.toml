@@ -45,3 +45,6 @@ ui_input.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+db = {"workspace"= true, "features" = ["test-support"]}
