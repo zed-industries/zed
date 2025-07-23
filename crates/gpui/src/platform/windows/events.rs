@@ -237,12 +237,23 @@ fn handle_timer_msg(
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
+    let is_idle = if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
-        request_frame(Default::default());
+        // request_frame(RequestFrameOptions {
+        //     require_presentation: true,
+        // });
+        let is_idle = request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
-    }
+        is_idle
+    } else {
+        false
+    };
     unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+    if is_idle {
+        unsafe {
+            MsgWaitForMultipleObjects(None, false, 100, QS_ALLINPUT);
+        }
+    }
     Some(0)
 }
 

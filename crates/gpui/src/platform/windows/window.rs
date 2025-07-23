@@ -38,7 +38,7 @@ pub struct WindowsWindowState {
     pub border_offset: WindowBorderOffset,
     pub appearance: WindowAppearance,
     pub scale_factor: f32,
-    pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions) -> bool>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
@@ -312,7 +312,7 @@ impl WindowsWindowStatePtr {
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions) -> bool>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
@@ -734,7 +734,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().is_fullscreen()
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions) -> bool>) {
         self.0.state.borrow_mut().callbacks.request_frame = Some(callback);
     }
 
