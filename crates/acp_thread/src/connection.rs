@@ -1,55 +1,91 @@
+use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest};
 use anyhow::Result;
-use futures::future::{FutureExt as _, LocalBoxFuture};
+use gpui::{AppContext, Entity, Task, WeakEntity};
+use project::Project;
+use ui::App;
+
+use crate::AcpThread;
 
 pub trait AgentConnection {
-    fn new_session(
+    fn new_thread(
         &self,
-        params: acp::NewSessionToolArguments,
-    ) -> LocalBoxFuture<'static, Result<acp::SessionId>>;
+        project: Entity<Project>,
+        cwd: &Path,
+        connection: Arc<dyn AgentConnection>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>>;
 
-    fn authenticate(&self) -> LocalBoxFuture<'static, Result<()>>;
+    fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(&self, params: acp::PromptToolArguments) -> LocalBoxFuture<'static, Result<()>>;
+    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>>;
 
-    fn cancel(&self) -> LocalBoxFuture<'static, Result<()>>;
+    fn cancel(&self, cx: &mut App);
 }
 
-impl AgentConnection for acp_old::AgentConnection {
-    fn new_session(
+#[derive(Debug)]
+pub struct Unauthenticated;
+
+impl Error for Unauthenticated {}
+impl fmt::Display for Unauthenticated {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Unauthenticated")
+    }
+}
+
+pub struct OldAcpAgentConnection {
+    pub connection: acp_old::AgentConnection,
+    pub child_status: Task<Result<()>>,
+    pub thread: Rc<RefCell<WeakEntity<AcpThread>>>,
+}
+
+impl AgentConnection for OldAcpAgentConnection {
+    fn new_thread(
         &self,
-        _params: acp::NewSessionToolArguments,
-    ) -> LocalBoxFuture<'static, Result<acp::SessionId>> {
-        let task = self.request_any(
+        project: Entity<Project>,
+        _cwd: &Path,
+        connection: Arc<dyn AgentConnection>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        let task = self.connection.request_any(
             acp_old::InitializeParams {
                 protocol_version: acp_old::ProtocolVersion::latest(),
             }
             .into_any(),
         );
-        async move {
+        let current_thread = self.thread.clone();
+        cx.spawn(async move |cx| {
             let result = task.await?;
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!("Not authenticated");
+                anyhow::bail!(Unauthenticated)
             }
 
-            Ok(acp::SessionId("acp-old-no-id".into()))
-        }
-        .boxed_local()
+            cx.update(|cx| {
+                let thread = cx.new(|cx| {
+                    let session_id = acp::SessionId("acp-old-no-id".into());
+                    AcpThread::new(connection, "Gemini".into(), None, project, session_id, cx)
+                });
+                current_thread.replace(thread.downgrade());
+                thread
+            })
+        })
     }
 
-    fn authenticate(&self) -> LocalBoxFuture<'static, Result<()>> {
-        let task = self.request_any(acp_old::AuthenticateParams.into_any());
-        async move {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+        let task = self
+            .connection
+            .request_any(acp_old::AuthenticateParams.into_any());
+        cx.foreground_executor().spawn(async move {
             task.await?;
-            anyhow::Ok(())
-        }
-        .boxed_local()
+            Ok(())
+        })
     }
 
-    fn prompt(&self, params: acp::PromptToolArguments) -> LocalBoxFuture<'static, Result<()>> {
+    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
         let chunks = params
             .prompt
             .into_iter()
@@ -64,20 +100,24 @@ impl AgentConnection for acp_old::AgentConnection {
             })
             .collect();
 
-        let task = self.request_any(acp_old::SendUserMessageParams { chunks }.into_any());
-        async move {
+        let task = self
+            .connection
+            .request_any(acp_old::SendUserMessageParams { chunks }.into_any());
+        cx.foreground_executor().spawn(async move {
             task.await?;
             anyhow::Ok(())
-        }
-        .boxed_local()
+        })
     }
 
-    fn cancel(&self) -> LocalBoxFuture<'static, Result<()>> {
-        let task = self.request_any(acp_old::CancelSendMessageParams.into_any());
-        async move {
-            task.await?;
-            anyhow::Ok(())
-        }
-        .boxed_local()
+    fn cancel(&self, cx: &mut App) {
+        let task = self
+            .connection
+            .request_any(acp_old::CancelSendMessageParams.into_any());
+        cx.foreground_executor()
+            .spawn(async move {
+                task.await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
     }
 }

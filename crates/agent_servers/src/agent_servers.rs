@@ -14,7 +14,7 @@ pub use gemini::*;
 pub use settings::*;
 pub use stdio_agent_server::*;
 
-use acp_thread::AcpThread;
+use acp_thread::AgentConnection;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -38,12 +38,12 @@ pub trait AgentServer: Send {
     fn empty_state_message(&self) -> &'static str;
     fn supports_always_allow(&self) -> bool;
 
-    fn new_thread(
+    fn connect(
         &self,
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>>;
+    ) -> Task<Result<Arc<dyn AgentConnection>>>;
 }
 
 impl std::fmt::Debug for AgentServerCommand {

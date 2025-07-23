@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use agent_client_protocol as acp;
 use agentic_coding_protocol as acp_old;
 use itertools::Itertools;
 use schemars::JsonSchema;
@@ -115,51 +116,36 @@ impl ClaudeTool {
             Self::Other { name, .. } => name.clone(),
         }
     }
-
-    pub fn content(&self) -> Option<acp_old::ToolCallContent> {
+    pub fn content(&self) -> Vec<acp::ToolCallContent> {
         match &self {
-            Self::Other { input, .. } => Some(acp_old::ToolCallContent::Markdown {
-                markdown: format!(
+            Self::Other { input, .. } => vec![
+                format!(
                     "```json\n{}```",
                     serde_json::to_string_pretty(&input).unwrap_or("{}".to_string())
-                ),
-            }),
-            Self::Task(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.prompt.clone(),
-            }),
-            Self::NotebookRead(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.notebook_path.display().to_string(),
-            }),
-            Self::NotebookEdit(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.new_source.clone(),
-            }),
-            Self::Terminal(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: format!(
+                )
+                .into(),
+            ],
+            Self::Task(Some(params)) => vec![params.prompt.clone().into()],
+            Self::NotebookRead(Some(params)) => {
+                vec![params.notebook_path.display().to_string().into()]
+            }
+            Self::NotebookEdit(Some(params)) => vec![params.new_source.clone().into()],
+            Self::Terminal(Some(params)) => vec![
+                format!(
                     "`{}`\n\n{}",
                     params.command,
                     params.description.as_deref().unwrap_or_default()
-                ),
-            }),
-            Self::ReadFile(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.abs_path.display().to_string(),
-            }),
-            Self::Ls(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.path.display().to_string(),
-            }),
-            Self::Glob(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.to_string(),
-            }),
-            Self::Grep(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: format!("`{params}`"),
-            }),
-            Self::WebFetch(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.prompt.clone(),
-            }),
-            Self::WebSearch(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.to_string(),
-            }),
-            Self::TodoWrite(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params
+                )
+                .into(),
+            ],
+            Self::ReadFile(Some(params)) => vec![params.abs_path.display().to_string().into()],
+            Self::Ls(Some(params)) => vec![params.path.display().to_string().into()],
+            Self::Glob(Some(params)) => vec![params.to_string().into()],
+            Self::Grep(Some(params)) => vec![format!("`{params}`").into()],
+            Self::WebFetch(Some(params)) => vec![params.prompt.clone().into()],
+            Self::WebSearch(Some(params)) => vec![params.to_string().into()],
+            Self::TodoWrite(Some(params)) => vec![
+                params
                     .todos
                     .iter()
                     .map(|todo| {
@@ -174,37 +160,39 @@ impl ClaudeTool {
                             todo.content
                         )
                     })
-                    .join("\n"),
-            }),
-            Self::ExitPlanMode(Some(params)) => Some(acp_old::ToolCallContent::Markdown {
-                markdown: params.plan.clone(),
-            }),
-            Self::Edit(Some(params)) => Some(acp_old::ToolCallContent::Diff {
-                diff: acp_old::Diff {
+                    .join("\n")
+                    .into(),
+            ],
+            Self::ExitPlanMode(Some(params)) => vec![params.plan.clone().into()],
+            Self::Edit(Some(params)) => vec![acp::ToolCallContent::Diff {
+                diff: acp::Diff {
                     path: params.abs_path.clone(),
                     old_text: Some(params.old_text.clone()),
                     new_text: params.new_text.clone(),
                 },
-            }),
-            Self::Write(Some(params)) => Some(acp_old::ToolCallContent::Diff {
-                diff: acp_old::Diff {
+            }],
+            Self::Write(Some(params)) => vec![acp::ToolCallContent::Diff {
+                diff: acp::Diff {
                     path: params.file_path.clone(),
                     old_text: None,
                     new_text: params.content.clone(),
                 },
-            }),
+            }],
             Self::MultiEdit(Some(params)) => {
                 // todo: show multiple edits in a multibuffer?
                 params
                     .edits
                     .first()
-                    .map(|edit| acp_old::ToolCallContent::Diff {
-                        diff: acp_old::Diff {
-                            path: params.file_path.clone(),
-                            old_text: Some(edit.old_string.clone()),
-                            new_text: edit.new_string.clone(),
-                        },
+                    .map(|edit| {
+                        vec![acp::ToolCallContent::Diff {
+                            diff: acp::Diff {
+                                path: params.file_path.clone(),
+                                old_text: Some(edit.old_string.clone()),
+                                new_text: edit.new_string.clone(),
+                            },
+                        }]
                     })
+                    .unwrap_or_default()
             }
             Self::Task(None)
             | Self::NotebookRead(None)
@@ -220,28 +208,28 @@ impl ClaudeTool {
             | Self::ExitPlanMode(None)
             | Self::Edit(None)
             | Self::Write(None)
-            | Self::MultiEdit(None) => None,
+            | Self::MultiEdit(None) => vec![],
         }
     }
 
-    pub fn icon(&self) -> acp_old::Icon {
+    pub fn kind(&self) -> acp::ToolKind {
         match self {
-            Self::Task(_) => acp_old::Icon::Hammer,
-            Self::NotebookRead(_) => acp_old::Icon::FileSearch,
-            Self::NotebookEdit(_) => acp_old::Icon::Pencil,
-            Self::Edit(_) => acp_old::Icon::Pencil,
-            Self::MultiEdit(_) => acp_old::Icon::Pencil,
-            Self::Write(_) => acp_old::Icon::Pencil,
-            Self::ReadFile(_) => acp_old::Icon::FileSearch,
-            Self::Ls(_) => acp_old::Icon::Folder,
-            Self::Glob(_) => acp_old::Icon::FileSearch,
-            Self::Grep(_) => acp_old::Icon::Regex,
-            Self::Terminal(_) => acp_old::Icon::Terminal,
-            Self::WebSearch(_) => acp_old::Icon::Globe,
-            Self::WebFetch(_) => acp_old::Icon::Globe,
-            Self::TodoWrite(_) => acp_old::Icon::LightBulb,
-            Self::ExitPlanMode(_) => acp_old::Icon::Hammer,
-            Self::Other { .. } => acp_old::Icon::Hammer,
+            Self::Task(_) => acp::ToolKind::Think,
+            Self::NotebookRead(_) => acp::ToolKind::Read,
+            Self::NotebookEdit(_) => acp::ToolKind::Edit,
+            Self::Edit(_) => acp::ToolKind::Edit,
+            Self::MultiEdit(_) => acp::ToolKind::Edit,
+            Self::Write(_) => acp::ToolKind::Edit,
+            Self::ReadFile(_) => acp::ToolKind::Read,
+            Self::Ls(_) => acp::ToolKind::Search,
+            Self::Glob(_) => acp::ToolKind::Search,
+            Self::Grep(_) => acp::ToolKind::Search,
+            Self::Terminal(_) => acp::ToolKind::Execute,
+            Self::WebSearch(_) => acp::ToolKind::Search,
+            Self::WebFetch(_) => acp::ToolKind::Fetch,
+            Self::TodoWrite(_) => acp::ToolKind::Think,
+            Self::ExitPlanMode(_) => acp::ToolKind::Think,
+            Self::Other { .. } => acp::ToolKind::Other,
         }
     }
 
@@ -348,55 +336,55 @@ impl ClaudeTool {
         }
     }
 
-    pub fn locations(&self) -> Vec<acp_old::ToolCallLocation> {
+    pub fn locations(&self) -> Vec<acp::ToolCallLocation> {
         match &self {
-            Self::Edit(Some(EditToolParams { abs_path, .. })) => vec![acp_old::ToolCallLocation {
+            Self::Edit(Some(EditToolParams { abs_path, .. })) => vec![acp::ToolCallLocation {
                 path: abs_path.clone(),
                 line: None,
             }],
             Self::MultiEdit(Some(MultiEditToolParams { file_path, .. })) => {
-                vec![acp_old::ToolCallLocation {
+                vec![acp::ToolCallLocation {
                     path: file_path.clone(),
                     line: None,
                 }]
             }
             Self::Write(Some(WriteToolParams { file_path, .. })) => {
-                vec![acp_old::ToolCallLocation {
+                vec![acp::ToolCallLocation {
                     path: file_path.clone(),
                     line: None,
                 }]
             }
             Self::ReadFile(Some(ReadToolParams {
                 abs_path, offset, ..
-            })) => vec![acp_old::ToolCallLocation {
+            })) => vec![acp::ToolCallLocation {
                 path: abs_path.clone(),
                 line: *offset,
             }],
             Self::NotebookRead(Some(NotebookReadToolParams { notebook_path, .. })) => {
-                vec![acp_old::ToolCallLocation {
+                vec![acp::ToolCallLocation {
                     path: notebook_path.clone(),
                     line: None,
                 }]
             }
             Self::NotebookEdit(Some(NotebookEditToolParams { notebook_path, .. })) => {
-                vec![acp_old::ToolCallLocation {
+                vec![acp::ToolCallLocation {
                     path: notebook_path.clone(),
                     line: None,
                 }]
             }
             Self::Glob(Some(GlobToolParams {
                 path: Some(path), ..
-            })) => vec![acp_old::ToolCallLocation {
+            })) => vec![acp::ToolCallLocation {
                 path: path.clone(),
                 line: None,
             }],
-            Self::Ls(Some(LsToolParams { path, .. })) => vec![acp_old::ToolCallLocation {
+            Self::Ls(Some(LsToolParams { path, .. })) => vec![acp::ToolCallLocation {
                 path: path.clone(),
                 line: None,
             }],
             Self::Grep(Some(GrepToolParams {
                 path: Some(path), ..
-            })) => vec![ToolCallLocation {
+            })) => vec![acp::ToolCallLocation {
                 path: PathBuf::from(path),
                 line: None,
             }],
@@ -419,11 +407,13 @@ impl ClaudeTool {
         }
     }
 
-    pub fn as_acp(&self) -> acp_old::PushToolCallParams {
-        acp_old::PushToolCallParams {
+    pub fn as_acp(&self, id: acp::ToolCallId) -> acp::ToolCall {
+        acp::ToolCall {
+            id,
+            kind: self.kind(),
+            status: acp::ToolCallStatus::InProgress,
             label: self.label(),
             content: self.content(),
-            icon: self.icon(),
             locations: self.locations(),
         }
     }
@@ -609,12 +599,12 @@ pub enum TodoPriority {
     Low,
 }
 
-impl Into<acp_old::PlanEntryPriority> for TodoPriority {
-    fn into(self) -> acp_old::PlanEntryPriority {
+impl Into<acp::PlanEntryPriority> for TodoPriority {
+    fn into(self) -> acp::PlanEntryPriority {
         match self {
-            TodoPriority::High => acp_old::PlanEntryPriority::High,
-            TodoPriority::Medium => acp_old::PlanEntryPriority::Medium,
-            TodoPriority::Low => acp_old::PlanEntryPriority::Low,
+            TodoPriority::High => acp::PlanEntryPriority::High,
+            TodoPriority::Medium => acp::PlanEntryPriority::Medium,
+            TodoPriority::Low => acp::PlanEntryPriority::Low,
         }
     }
 }
@@ -627,12 +617,12 @@ pub enum TodoStatus {
     Completed,
 }
 
-impl Into<acp_old::PlanEntryStatus> for TodoStatus {
-    fn into(self) -> acp_old::PlanEntryStatus {
+impl Into<acp::PlanEntryStatus> for TodoStatus {
+    fn into(self) -> acp::PlanEntryStatus {
         match self {
-            TodoStatus::Pending => acp_old::PlanEntryStatus::Pending,
-            TodoStatus::InProgress => acp_old::PlanEntryStatus::InProgress,
-            TodoStatus::Completed => acp_old::PlanEntryStatus::Completed,
+            TodoStatus::Pending => acp::PlanEntryStatus::Pending,
+            TodoStatus::InProgress => acp::PlanEntryStatus::InProgress,
+            TodoStatus::Completed => acp::PlanEntryStatus::Completed,
         }
     }
 }
@@ -649,9 +639,9 @@ pub struct Todo {
     pub status: TodoStatus,
 }
 
-impl Into<acp_old::PlanEntry> for Todo {
-    fn into(self) -> acp_old::PlanEntry {
-        acp_old::PlanEntry {
+impl Into<acp::PlanEntry> for Todo {
+    fn into(self) -> acp::PlanEntry {
+        acp::PlanEntry {
             content: self.content,
             priority: self.priority.into(),
             status: self.status.into(),

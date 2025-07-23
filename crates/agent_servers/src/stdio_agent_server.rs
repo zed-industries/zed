@@ -1,10 +1,10 @@
 use crate::{AgentServer, AgentServerCommand, AgentServerVersion};
-use acp_thread::{AcpThread, LoadError, OldAcpClientDelegate};
+use acp_thread::{AgentConnection, LoadError, OldAcpAgentConnection, OldAcpClientDelegate};
 use agentic_coding_protocol as acp_old;
 use anyhow::{Result, anyhow};
-use gpui::{App, AsyncApp, Entity, Task, prelude::*};
+use gpui::{App, AsyncApp, Entity, Task, WeakEntity, prelude::*};
 use project::Project;
-use std::path::Path;
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
 use util::ResultExt;
 
 pub trait StdioAgentServer: Send + Clone {
@@ -47,16 +47,15 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
         self.supports_always_allow()
     }
 
-    fn new_thread(
+    fn connect(
         &self,
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>> {
+    ) -> Task<Result<Arc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
         let project = project.clone();
         let this = self.clone();
-        let title = self.name().into();
 
         cx.spawn(async move |cx| {
             let command = this.command(&project, cx).await?;
@@ -73,47 +72,53 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
             let stdin = child.stdin.take().unwrap();
             let stdout = child.stdout.take().unwrap();
 
-            cx.new(|cx| {
-                let foreground_executor = cx.foreground_executor().clone();
+            let foreground_executor = cx.foreground_executor().clone();
 
-                let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
-                    OldAcpClientDelegate::new(cx.entity().downgrade(), cx.to_async()),
-                    stdin,
-                    stdout,
-                    move |fut| foreground_executor.spawn(fut).detach(),
-                );
+            let thread_rc = Rc::new(RefCell::new(WeakEntity::new_invalid()));
 
-                let io_task = cx.background_spawn(async move {
-                    io_fut.await.log_err();
-                });
+            let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
+                OldAcpClientDelegate::new(thread_rc.clone(), cx.clone()),
+                stdin,
+                stdout,
+                move |fut| foreground_executor.spawn(fut).detach(),
+            );
 
-                let child_status = cx.background_spawn(async move {
-                    let result = match child.status().await {
-                        Err(e) => Err(anyhow!(e)),
-                        Ok(result) if result.success() => Ok(()),
-                        Ok(result) => {
-                            if let Some(AgentServerVersion::Unsupported {
+            let io_task = cx.background_spawn(async move {
+                io_fut.await.log_err();
+            });
+
+            let child_status = cx.background_spawn(async move {
+                let result = match child.status().await {
+                    Err(e) => Err(anyhow!(e)),
+                    Ok(result) if result.success() => Ok(()),
+                    Ok(result) => {
+                        if let Some(AgentServerVersion::Unsupported {
+                            error_message,
+                            upgrade_message,
+                            upgrade_command,
+                        }) = this.version(&command).await.log_err()
+                        {
+                            Err(anyhow!(LoadError::Unsupported {
                                 error_message,
                                 upgrade_message,
-                                upgrade_command,
-                            }) = this.version(&command).await.log_err()
-                            {
-                                Err(anyhow!(LoadError::Unsupported {
-                                    error_message,
-                                    upgrade_message,
-                                    upgrade_command
-                                }))
-                            } else {
-                                Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-                            }
+                                upgrade_command
+                            }))
+                        } else {
+                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
                         }
-                    };
-                    drop(io_task);
-                    result
-                });
+                    }
+                };
+                drop(io_task);
+                result
+            });
 
-                AcpThread::new(connection, title, Some(child_status), project.clone(), cx)
-            })
+            let connection: Arc<dyn AgentConnection> = Arc::new(OldAcpAgentConnection {
+                connection,
+                child_status,
+                thread: thread_rc,
+            });
+
+            Ok(connection)
         })
     }
 }

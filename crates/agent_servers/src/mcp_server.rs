@@ -1,6 +1,7 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
-use acp_thread::OldAcpClientDelegate;
+use acp_thread::{AcpThread, OldAcpClientDelegate};
+use agent_client_protocol::{self as acp};
 use agentic_coding_protocol::{self as acp_old, Client as _};
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -52,7 +53,7 @@ enum PermissionToolBehavior {
 
 impl ZedMcpServer {
     pub async fn new(
-        delegate: watch::Receiver<Option<OldAcpClientDelegate>>,
+        thread_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
         tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
@@ -60,7 +61,7 @@ impl ZedMcpServer {
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
-            Self::handle_call_tool(request, delegate.clone(), tool_id_map.clone(), cx)
+            Self::handle_call_tool(request, thread_map.clone(), tool_id_map.clone(), cx)
         });
 
         Ok(Self { server: mcp_server })

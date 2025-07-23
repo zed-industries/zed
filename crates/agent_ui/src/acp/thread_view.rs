@@ -209,9 +209,9 @@ impl AcpThreadView {
             .map(|worktree| worktree.read(cx).abs_path())
             .unwrap_or_else(|| paths::home_dir().as_path().into());
 
-        let task = agent.new_thread(&root_dir, &project, cx);
+        let connect_task = agent.connect(&root_dir, &project, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let thread = match task.await {
+            let connection = match task.await {
                 Ok(thread) => thread,
                 Err(err) => {
                     this.update(cx, |this, cx| {
@@ -223,14 +223,10 @@ impl AcpThreadView {
                 }
             };
 
-            let init_response = async {
-                let resp = thread
-                    .read_with(cx, |thread, _cx| thread.initialize())?
-                    .await?;
-                anyhow::Ok(resp)
-            };
-
-            let result = match init_response.await {
+            let result = match connection
+                .new_thread(&project, root_dir, connection.clone(), cx)
+                .await
+            {
                 Err(e) => {
                     let mut cx = cx.clone();
                     if e.downcast_ref::<oneshot::Canceled>().is_some() {
@@ -246,25 +242,31 @@ impl AcpThreadView {
                         } else {
                             Err(e)
                         }
-                    } else {
-                        Err(e)
-                    }
-                }
-                Ok(response) => {
-                    if !response.is_authenticated {
+                    } else if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
                         this.update(cx, |this, _| {
                             this.thread_state = ThreadState::Unauthenticated { thread };
                         })
                         .ok();
                         return;
-                    };
-                    Ok(())
+                    } else {
+                        Err(e)
+                    }
                 }
+                Ok(session_id) => Ok(session_id),
             };
 
             this.update_in(cx, |this, window, cx| {
                 match result {
-                    Ok(()) => {
+                    Ok(session_id) => {
+                        let thread = AcpThread::new(
+                            connection,
+                            agent.title(),
+                            None,
+                            project.clone(),
+                            cx,
+                            session_id,
+                        );
+
                         let thread_subscription =
                             cx.subscribe_in(&thread, window, Self::handle_thread_event);
 
