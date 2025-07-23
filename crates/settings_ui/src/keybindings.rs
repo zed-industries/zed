@@ -201,28 +201,45 @@ impl KeybindConflict {
 
 #[derive(Clone, Copy, PartialEq)]
 struct ConflictOrigin {
-    overriding_source: KeybindSource,
+    override_source: KeybindSource,
+    overridden_source: Option<KeybindSource>,
     index: usize,
 }
 
 impl ConflictOrigin {
     fn new(source: KeybindSource, index: usize) -> Self {
         Self {
-            overriding_source: source,
+            override_source: source,
             index,
+            overridden_source: None,
         }
     }
 
-    fn check_for_conflict_with(&self, other: &Self) -> Option<Self> {
-        if self.overriding_source == KeybindSource::User
-            && other.overriding_source == KeybindSource::User
+    fn with_overridden_source(self, source: KeybindSource) -> Self {
+        Self {
+            overridden_source: Some(source),
+            ..self
+        }
+    }
+
+    fn get_conflict_with(&self, other: &Self) -> Option<Self> {
+        if self.override_source == KeybindSource::User
+            && other.override_source == KeybindSource::User
         {
-            Some(Self::new(KeybindSource::User, other.index))
-        } else if self.overriding_source > other.overriding_source {
-            Some(*other)
+            Some(
+                Self::new(KeybindSource::User, other.index)
+                    .with_overridden_source(self.override_source),
+            )
+        } else if self.override_source > other.override_source {
+            Some(other.with_overridden_source(self.override_source))
         } else {
             None
         }
+    }
+
+    fn is_user_keybind_conflict(&self) -> bool {
+        self.override_source == KeybindSource::User
+            && self.overridden_source == Some(KeybindSource::User)
     }
 }
 
@@ -254,18 +271,18 @@ impl ConflictState {
         let mut has_user_conflicts = false;
 
         for indices in action_keybind_mapping.values_mut() {
-            indices.sort_unstable_by_key(|origin| origin.overriding_source);
+            indices.sort_unstable_by_key(|origin| origin.override_source);
             let Some((fst, snd)) = indices.get(0).zip(indices.get(1)) else {
                 continue;
             };
 
             for origin in indices.iter() {
                 conflicts[origin.index] =
-                    origin.check_for_conflict_with(if origin == fst { &snd } else { &fst })
+                    origin.get_conflict_with(if origin == fst { &snd } else { &fst })
             }
 
-            has_user_conflicts |= fst.overriding_source == KeybindSource::User
-                && snd.overriding_source == KeybindSource::User;
+            has_user_conflicts |= fst.override_source == KeybindSource::User
+                && snd.override_source == KeybindSource::User;
         }
 
         Self {
@@ -278,7 +295,7 @@ impl ConflictState {
     fn conflicting_indices_for_mapping(
         &self,
         action_mapping: &ActionMapping,
-        keybind_idx: usize,
+        keybind_idx: Option<usize>,
     ) -> Option<KeybindConflict> {
         self.keybind_mapping
             .get(action_mapping)
@@ -286,31 +303,18 @@ impl ConflictState {
                 KeybindConflict::from_iter(
                     indices
                         .iter()
-                        .filter(|&conflict| conflict.index != keybind_idx),
+                        .filter(|&conflict| Some(conflict.index) != keybind_idx),
                 )
             })
     }
 
-    fn will_conflict(&self, action_mapping: &ActionMapping) -> Option<KeybindConflict> {
-        self.keybind_mapping
-            .get(action_mapping)
-            .and_then(|indices| {
-                KeybindConflict::from_iter(
-                    indices
-                        .iter()
-                        .filter(|conflict| conflict.overriding_source <= KeybindSource::User),
-                )
-            })
+    fn conflict_for_idx(&self, idx: usize) -> Option<ConflictOrigin> {
+        self.conflicts.get(idx).copied().flatten()
     }
 
-    fn conflict_for_idx(&self, idx: usize) -> Option<KeybindSource> {
-        self.conflicts
-            .get(idx)
-            .and_then(|conflict| conflict.as_ref().map(|conflict| conflict.overriding_source))
-    }
-
-    fn has_conflict(&self, candidate_idx: usize) -> bool {
-        self.conflict_for_idx(candidate_idx) == Some(KeybindSource::User)
+    fn has_user_conflict(&self, candidate_idx: usize) -> bool {
+        self.conflict_for_idx(candidate_idx)
+            .is_some_and(|conflict| conflict.is_user_keybind_conflict())
     }
 
     fn any_user_binding_conflicts(&self) -> bool {
@@ -556,7 +560,7 @@ impl KeymapEditor {
                 FilterState::Conflicts => {
                     matches.retain(|candidate| {
                         this.keybinding_conflict_state
-                            .has_conflict(candidate.candidate_id)
+                            .has_user_conflict(candidate.candidate_id)
                     });
                 }
                 FilterState::All => {}
@@ -616,18 +620,11 @@ impl KeymapEditor {
         })
     }
 
-    fn conflicts_with(&self, row_index: usize) -> Option<KeybindSource> {
+    fn get_conflict(&self, row_index: usize) -> Option<ConflictOrigin> {
         self.matches.get(row_index).and_then(|candidate| {
             self.keybinding_conflict_state
                 .conflict_for_idx(candidate.candidate_id)
         })
-    }
-
-    fn has_conflict(&self, row_index: usize) -> bool {
-        self.matches
-            .get(row_index)
-            .map(|candidate| candidate.candidate_id)
-            .is_some_and(|id| self.keybinding_conflict_state.has_conflict(id))
     }
 
     fn process_bindings(
@@ -1594,16 +1591,18 @@ impl Render for KeymapEditor {
                                     let candidate_id = this.matches.get(index)?.candidate_id;
                                     let binding = &this.keybindings[candidate_id];
                                     let action_name = binding.action().name;
-                                    let conflicts_with = this.conflicts_with(index);
+                                    let conflict = this.get_conflict(index);
+                                    let is_overridden = conflict.is_some_and(|conflict| {
+                                        !conflict.is_user_keybind_conflict()
+                                    });
 
                                     let icon = if this.filter_state != FilterState::Conflicts
-                                        && let Some(source) = conflicts_with
+                                        && let Some(conflict) = conflict
                                     {
-                                        let (icon, color) = match source {
-                                            KeybindSource::User => {
-                                                (IconName::Warning, Color::Warning)
-                                            }
-                                            _ => (IconName::Info, Color::Info),
+                                        let (icon, color) = if conflict.is_user_keybind_conflict() {
+                                            (IconName::Warning, Color::Warning)
+                                        } else {
+                                            (IconName::Info, Color::Default)
                                         };
 
                                         base_button_style(index, icon)
@@ -1679,7 +1678,9 @@ impl Render for KeymapEditor {
                                             }
                                         })
                                         .when(
-                                            !context_menu_deployed && this.show_hover_menus,
+                                            !context_menu_deployed
+                                                && this.show_hover_menus
+                                                && !is_overridden,
                                             |this| {
                                                 this.tooltip({
                                                     let action_name = binding.action().name;
@@ -1729,6 +1730,7 @@ impl Render for KeymapEditor {
                                                 .when(
                                                     is_local
                                                         && !context_menu_deployed
+                                                        && !is_overridden
                                                         && this.show_hover_menus,
                                                     |this| {
                                                         this.tooltip(Tooltip::element({
@@ -1760,49 +1762,78 @@ impl Render for KeymapEditor {
                     )
                     .map_row(
                         cx.processor(|this, (row_index, row): (usize, Div), _window, cx| {
-                            let is_conflict = this.has_conflict(row_index);
+                            let conflict = this.get_conflict(row_index);
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row_id = row_group_id(row_index);
 
-                            let row = row
-                                .id(row_id.clone())
-                                .on_any_mouse_down(cx.listener(
-                                    move |this,
-                                          mouse_down_event: &gpui::MouseDownEvent,
-                                          window,
-                                          cx| {
-                                        match mouse_down_event.button {
-                                            MouseButton::Right => {
+                            div()
+                                .child(
+                                    row.id(row_id.clone())
+                                        .on_any_mouse_down(cx.listener(
+                                            move |this,
+                                                  mouse_down_event: &gpui::MouseDownEvent,
+                                                  window,
+                                                  cx| {
+                                                match mouse_down_event.button {
+                                                    MouseButton::Right => {
+                                                        this.select_index(
+                                                            row_index, None, window, cx,
+                                                        );
+                                                        this.create_context_menu(
+                                                            mouse_down_event.position,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                    _ => {}
+                                                }
+                                            },
+                                        ))
+                                        .on_click(cx.listener(
+                                            move |this, event: &ClickEvent, window, cx| {
                                                 this.select_index(row_index, None, window, cx);
-                                                this.create_context_menu(
-                                                    mouse_down_event.position,
-                                                    window,
-                                                    cx,
-                                                );
-                                            }
-                                            _ => {}
-                                        }
-                                    },
-                                ))
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        this.select_index(row_index, None, window, cx);
-                                        if event.up.click_count == 2 {
-                                            this.open_edit_keybinding_modal(false, window, cx);
-                                        }
-                                    },
-                                ))
-                                .group(row_id)
+                                                if event.up.click_count == 2 {
+                                                    this.open_edit_keybinding_modal(
+                                                        false, window, cx,
+                                                    );
+                                                }
+                                            },
+                                        ))
+                                        .group(row_id)
+                                        .when(
+                                            conflict.is_some_and(|conflict| {
+                                                !conflict.is_user_keybind_conflict()
+                                            }),
+                                            |row| {
+                                                const OVERRIDDEN_OPACITY: f32 = 0.5;
+                                                row.opacity(OVERRIDDEN_OPACITY)
+                                            },
+                                        )
+                                        .when_some(
+                                            conflict.filter(|conflict| {
+                                                !conflict.is_user_keybind_conflict()
+                                            }),
+                                            |row, conflict| {
+                                                let overriding_binding = this.keybindings.get(conflict.index);
+                                                let context = match overriding_binding {
+                                                    Some(binding) => format!("This keybinding is overridden by the '{}' action", binding.action().humanized_name),
+                                                    None => "This binding is overridden.".to_string()
+                                                };
+                                                row.tooltip(Tooltip::text(context))},
+                                        ),
+                                )
                                 .border_2()
-                                .when(is_conflict, |row| {
-                                    row.bg(cx.theme().status().error_background)
-                                })
+                                .when(
+                                    conflict.is_some_and(|conflict| {
+                                        conflict.is_user_keybind_conflict()
+                                    }),
+                                    |row| row.bg(cx.theme().status().error_background),
+                                )
                                 .when(is_selected, |row| {
                                     row.border_color(cx.theme().colors().panel_focused_border)
-                                });
-
-                            row.into_any_element()
+                                })
+                                .into_any_element()
                         }),
                     ),
             )
@@ -2106,17 +2137,14 @@ impl KeybindingEditorModal {
             context: new_context.map(SharedString::from),
         };
 
-        let conflicting_indices = if self.creating {
-            self.keymap_editor
-                .read(cx)
-                .keybinding_conflict_state
-                .will_conflict(&action_mapping)
-        } else {
-            self.keymap_editor
-                .read(cx)
-                .keybinding_conflict_state
-                .conflicting_indices_for_mapping(&action_mapping, self.editing_keybind_idx)
-        };
+        let conflicting_indices = self
+            .keymap_editor
+            .read(cx)
+            .keybinding_conflict_state
+            .conflicting_indices_for_mapping(
+                &action_mapping,
+                self.creating.not().then_some(self.editing_keybind_idx),
+            );
 
         conflicting_indices.map(|KeybindConflict {
             first_conflict_index,
