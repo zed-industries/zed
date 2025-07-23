@@ -521,7 +521,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let mut curr_column = double_click_position + 1;
         let mut diff_left = diff;
 
-        while diff != 0.0 && curr_column < COLS {
+        while diff_left != 0.0 && curr_column < COLS {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 curr_column += 1;
                 continue;
@@ -607,8 +607,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             curr_column = col_idx;
             // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
             while diff_left < 0.0 {
-                let Some(min_size) = resize_behavior[curr_column.saturating_sub(1)].min_size()
-                else {
+                let Some(min_size) = resize_behavior[curr_column].min_size() else {
                     if curr_column == 0 {
                         break;
                     }
