@@ -10,7 +10,7 @@ use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
-use itertools::Itertools;
+use itertools::{Itertools, PeekingNext};
 use language::{
     Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
     text_diff,
@@ -19,7 +19,7 @@ use markdown::Markdown;
 use project::{AgentLocation, Project};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::{Formatter, Write};
+use std::fmt::Formatter;
 use std::{
     fmt::Display,
     mem,
@@ -36,7 +36,7 @@ pub struct UserMessage {
 
 impl UserMessage {
     pub fn from_acp(
-        message: &[acp::ContentBlock],
+        message: impl IntoIterator<Item = acp::ContentBlock>,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
@@ -111,7 +111,7 @@ impl AssistantMessageChunk {
     pub fn from_str(chunk: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) -> Self {
         Self::Message {
             block: ContentBlock::new(
-                &acp::ContentBlock::Text(acp::TextContent {
+                acp::ContentBlock::Text(acp::TextContent {
                     text: chunk.to_owned().into(),
                     annotations: None,
                 }),
@@ -173,6 +173,7 @@ pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
     pub kind: acp::ToolKind,
+    // todo! Should this be a vec?
     pub content: Option<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
@@ -310,7 +311,7 @@ enum ContentBlock {
 
 impl ContentBlock {
     pub fn new(
-        block: &acp::ContentBlock,
+        block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
@@ -320,7 +321,7 @@ impl ContentBlock {
     }
 
     pub fn new_combined(
-        blocks: &[acp::ContentBlock],
+        blocks: impl IntoIterator<Item = acp::ContentBlock>,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
@@ -333,7 +334,7 @@ impl ContentBlock {
 
     pub fn append(
         &mut self,
-        block: &acp::ContentBlock,
+        block: acp::ContentBlock,
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
@@ -391,18 +392,45 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp_old::ToolCallContent::Markdown { markdown } => Self::Markdown {
-                markdown: cx.new(|cx| Markdown::new_text(markdown.into(), cx)),
+            acp::ToolCallContent::ContentBlock { content } => Self::ContentBlock {
+                content: ContentBlock::new(content, &language_registry, cx),
             },
-            acp_old::ToolCallContent::Diff { diff } => Self::Diff {
+            acp::ToolCallContent::Diff { diff } => Self::Diff {
                 diff: Diff::from_acp(diff, language_registry, cx),
             },
         }
     }
 
+    pub fn from_acp_contents(
+        content: Vec<acp::ToolCallContent>,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Vec<Self> {
+        content
+            .into_iter()
+            .peekable()
+            .batching(|it| match it.next()? {
+                acp::ToolCallContent::ContentBlock { content } => {
+                    let mut block = ContentBlock::new(content, &language_registry, cx);
+                    while let Some(acp::ToolCallContent::ContentBlock { content }) =
+                        it.peeking_next(|c| matches!(c, acp::ToolCallContent::ContentBlock { .. }))
+                    {
+                        block.append(content, &language_registry, cx);
+                    }
+                    Some(ToolCallContent::ContentBlock { content: block })
+                }
+                content @ acp::ToolCallContent::Diff { .. } => Some(ToolCallContent::from_acp(
+                    content,
+                    language_registry.clone(),
+                    cx,
+                )),
+            })
+            .collect()
+    }
+
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Markdown { markdown } => markdown.read(cx).source().to_string(),
+            Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
             Self::Diff { diff } => diff.to_markdown(cx),
         }
     }
@@ -419,11 +447,11 @@ pub struct Diff {
 
 impl Diff {
     pub fn from_acp(
-        diff: acp_old::Diff,
+        diff: acp::Diff,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Self {
-        let acp_old::Diff {
+        let acp::Diff {
             path,
             old_text,
             new_text,
@@ -718,10 +746,10 @@ impl AcpThread {
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
-                    block.append(&chunk, &language_registry, cx)
+                    block.append(chunk, &language_registry, cx)
                 }
                 _ => {
-                    let block = ContentBlock::new(&chunk, &language_registry, cx);
+                    let block = ContentBlock::new(chunk, &language_registry, cx);
                     if is_thought {
                         chunks.push(AssistantMessageChunk::Thought { block })
                     } else {
@@ -730,7 +758,7 @@ impl AcpThread {
                 }
             }
         } else {
-            let block = ContentBlock::new(&chunk, &language_registry, cx);
+            let block = ContentBlock::new(chunk, &language_registry, cx);
             let chunk = if is_thought {
                 AssistantMessageChunk::Thought { block }
             } else {
@@ -764,11 +792,10 @@ impl AcpThread {
                 )
             }),
             kind: tool_call.kind,
-            content: tool_call
-                .content
+            // todo! Do we assume there is either a coalesced content OR diff?
+            content: ToolCallContent::from_acp_contents(tool_call.content, language_registry, cx)
                 .into_iter()
-                .map(|content| ToolCallContent::from_acp(content, language_registry, cx))
-                .collect(),
+                .next(),
             locations: tool_call.locations,
             status: ToolCallStatus::Allowed {
                 status: tool_call.status,
@@ -812,11 +839,14 @@ impl AcpThread {
                     )
                 }),
                 kind: tool_call.kind,
-                content: tool_call
-                    .content
-                    .into_iter()
-                    .map(|content| ToolCallContent::from_acp(content, language_registry, cx))
-                    .collect(),
+                // todo! Do we assume there is either a coalesced content OR diff?
+                content: ToolCallContent::from_acp_contents(
+                    tool_call.content,
+                    language_registry,
+                    cx,
+                )
+                .into_iter()
+                .next(),
                 locations: tool_call.locations,
                 status: ToolCallStatus::Allowed {
                     status: tool_call.status,
@@ -1061,7 +1091,8 @@ impl AcpThread {
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
-        let block = ContentBlock::new_combined(&message, self.project.read(cx).languages(), cx);
+        let block =
+            ContentBlock::new_combined(message.clone(), self.project.read(cx).languages(), cx);
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage { content: block }),
             cx,

@@ -8,8 +8,6 @@
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{AsyncApp, Task};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::client::Client;
