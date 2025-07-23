@@ -727,9 +727,12 @@ pub struct LanguageConfig {
     /// used for comment continuations on the next line, but only the first one is used for Editor::ToggleComments.
     #[serde(default)]
     pub line_comments: Vec<Arc<str>>,
-    /// Starting and closing characters of a block comment.
+    /// Delimiters and configuration for recognizing and formatting block comments.
     #[serde(default)]
-    pub block_comment: Option<(Arc<str>, Arc<str>)>,
+    pub block_comment: Option<BlockCommentConfig>,
+    /// Delimiters and configuration for recognizing and formatting documentation comments.
+    #[serde(default, alias = "documentation")]
+    pub documentation_comment: Option<BlockCommentConfig>,
     /// A list of additional regex patterns that should be treated as prefixes
     /// for creating boundaries during rewrapping, ensuring content from one
     /// prefixed section doesn't merge with another (e.g., markdown list items).
@@ -774,10 +777,6 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
-    /// Whether to treat documentation comment of this language differently by
-    /// auto adding prefix on new line, adjusting the indenting , etc.
-    #[serde(default)]
-    pub documentation: Option<DocumentationConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -837,17 +836,56 @@ pub struct JsxTagAutoCloseConfig {
     pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
-/// The configuration for documentation block for this language.
-#[derive(Clone, Deserialize, JsonSchema)]
-pub struct DocumentationConfig {
-    /// A start tag of documentation block.
+/// The configuration for block comments for this language.
+#[derive(Clone, Debug, JsonSchema, PartialEq)]
+pub struct BlockCommentConfig {
+    /// A start tag of block comment.
     pub start: Arc<str>,
-    /// A end tag of documentation block.
+    /// A end tag of block comment.
     pub end: Arc<str>,
-    /// A character to add as a prefix when a new line is added to a documentation block.
+    /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
-    pub tab_size: NonZeroU32,
+    pub tab_size: u32,
+}
+
+impl<'de> Deserialize<'de> for BlockCommentConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum BlockCommentConfigHelper {
+            New {
+                start: Arc<str>,
+                end: Arc<str>,
+                prefix: Arc<str>,
+                tab_size: u32,
+            },
+            Old([Arc<str>; 2]),
+        }
+
+        match BlockCommentConfigHelper::deserialize(deserializer)? {
+            BlockCommentConfigHelper::New {
+                start,
+                end,
+                prefix,
+                tab_size,
+            } => Ok(BlockCommentConfig {
+                start,
+                end,
+                prefix,
+                tab_size,
+            }),
+            BlockCommentConfigHelper::Old([start, end]) => Ok(BlockCommentConfig {
+                start,
+                end,
+                prefix: "".into(),
+                tab_size: 0,
+            }),
+        }
+    }
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -864,7 +902,7 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
-    pub block_comment: Override<(Arc<str>, Arc<str>)>,
+    pub block_comment: Override<BlockCommentConfig>,
     #[serde(skip)]
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
@@ -916,6 +954,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comments: Default::default(),
             block_comment: Default::default(),
+            documentation_comment: Default::default(),
             rewrap_prefixes: Default::default(),
             scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
@@ -929,7 +968,6 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
-            documentation: None,
         }
     }
 }
@@ -1847,12 +1885,17 @@ impl LanguageScope {
         .map_or([].as_slice(), |e| e.as_slice())
     }
 
-    pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
+    /// Config for block comments for this language.
+    pub fn block_comment(&self) -> Option<&BlockCommentConfig> {
         Override::as_option(
             self.config_override().map(|o| &o.block_comment),
             self.language.config.block_comment.as_ref(),
         )
-        .map(|e| (&e.0, &e.1))
+    }
+
+    /// Config for documentation-style block comments for this language.
+    pub fn documentation_comment(&self) -> Option<&BlockCommentConfig> {
+        self.language.config.documentation_comment.as_ref()
     }
 
     /// Returns additional regex patterns that act as prefix markers for creating
@@ -1895,14 +1938,6 @@ impl LanguageScope {
         self.config_override()
             .and_then(|o| o.prefer_label_for_snippet)
             .unwrap_or(false)
-    }
-
-    /// Returns config to documentation block for this language.
-    ///
-    /// Used for documentation styles that require a leading character on each line,
-    /// such as the asterisk in JSDoc, Javadoc, etc.
-    pub fn documentation(&self) -> Option<&DocumentationConfig> {
-        self.language.config.documentation.as_ref()
     }
 
     /// Returns a list of bracket pairs for a given language with an additional
@@ -2299,6 +2334,7 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_matches;
 
     #[gpui::test(iterations = 10)]
     async fn test_language_loading(cx: &mut TestAppContext) {
@@ -2459,5 +2495,76 @@ mod tests {
             regular_completion_item_2.label,
             "LSP completion items with duplicate label and detail, should omit the detail"
         );
+    }
+
+    #[test]
+    fn test_deserializing_comments_backwards_compat() {
+        // current version of `block_comment` and `documentation_comment` work
+        {
+            let config: LanguageConfig = ::toml::from_str(
+                r#"
+                name = "Foo"
+                block_comment = { start = "a", end = "b", prefix = "c", tab_size = 1 }
+                documentation_comment = { start = "d", end = "e", prefix = "f", tab_size = 2 }
+                "#,
+            )
+            .unwrap();
+            assert_matches!(config.block_comment, Some(BlockCommentConfig { .. }));
+            assert_matches!(
+                config.documentation_comment,
+                Some(BlockCommentConfig { .. })
+            );
+
+            let block_config = config.block_comment.unwrap();
+            assert_eq!(block_config.start.as_ref(), "a");
+            assert_eq!(block_config.end.as_ref(), "b");
+            assert_eq!(block_config.prefix.as_ref(), "c");
+            assert_eq!(block_config.tab_size, 1);
+
+            let doc_config = config.documentation_comment.unwrap();
+            assert_eq!(doc_config.start.as_ref(), "d");
+            assert_eq!(doc_config.end.as_ref(), "e");
+            assert_eq!(doc_config.prefix.as_ref(), "f");
+            assert_eq!(doc_config.tab_size, 2);
+        }
+
+        // former `documentation` setting is read into `documentation_comment`
+        {
+            let config: LanguageConfig = ::toml::from_str(
+                r#"
+                name = "Foo"
+                documentation = { start = "a", end = "b", prefix = "c", tab_size = 1}
+                "#,
+            )
+            .unwrap();
+            assert_matches!(
+                config.documentation_comment,
+                Some(BlockCommentConfig { .. })
+            );
+
+            let config = config.documentation_comment.unwrap();
+            assert_eq!(config.start.as_ref(), "a");
+            assert_eq!(config.end.as_ref(), "b");
+            assert_eq!(config.prefix.as_ref(), "c");
+            assert_eq!(config.tab_size, 1);
+        }
+
+        // old block_comment format is read into BlockCommentConfig
+        {
+            let config: LanguageConfig = ::toml::from_str(
+                r#"
+                name = "Foo"
+                block_comment = ["a", "b"]
+                "#,
+            )
+            .unwrap();
+            assert_matches!(config.block_comment, Some(BlockCommentConfig { .. }));
+
+            let config = config.block_comment.unwrap();
+            assert_eq!(config.start.as_ref(), "a");
+            assert_eq!(config.end.as_ref(), "b");
+            assert_eq!(config.prefix.as_ref(), "");
+            assert_eq!(config.tab_size, 0);
+        }
     }
 }
