@@ -316,7 +316,7 @@ impl Item for TextDiffView {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Diff View Opened")
+        Some("Selection Diff View Opened")
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
