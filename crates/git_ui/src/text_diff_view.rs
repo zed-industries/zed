@@ -438,7 +438,6 @@ mod tests {
     use super::*;
     use editor::test::editor_test_context::assert_state_with_diff;
     use gpui::{TestAppContext, VisualContext};
-
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::{Settings, SettingsStore};
