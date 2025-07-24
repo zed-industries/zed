@@ -61,6 +61,11 @@ impl Render for AgentPanelOnboarding {
             Some(proto::Plan::ZedProTrial)
         );
 
+        let is_pro_user = matches!(
+            self.user_store.read(cx).current_plan(),
+            Some(proto::Plan::ZedPro)
+        );
+
         AgentPanelOnboardingCard::new()
             .child(
                 ZedAiOnboarding::new(
@@ -75,7 +80,7 @@ impl Render for AgentPanelOnboarding {
                 }),
             )
             .map(|this| {
-                if enrolled_in_trial || self.configured_providers.len() >= 1 {
+                if enrolled_in_trial || is_pro_user || self.configured_providers.len() >= 1 {
                     this
                 } else {
                     this.child(ApiKeysWithoutProviders::new())
