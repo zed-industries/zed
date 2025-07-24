@@ -440,7 +440,7 @@ pub struct AgentPanel {
     local_timezone: UtcOffset,
     active_view: ActiveView,
     acp_message_history:
-        Rc<RefCell<crate::acp::MessageHistory<agentic_coding_protocol::SendUserMessageParams>>>,
+        Rc<RefCell<crate::acp::MessageHistory<Vec<agent_client_protocol::ContentBlock>>>>,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,

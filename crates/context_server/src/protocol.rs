@@ -6,6 +6,9 @@
 //! of messages.
 
 use anyhow::Result;
+use futures::channel::oneshot;
+use gpui::AsyncApp;
+use serde_json::Value;
 
 use crate::client::Client;
 use crate::types::{self, Notification, Request};
@@ -95,7 +98,24 @@ impl InitializedContextServerProtocol {
         self.inner.request(T::METHOD, params).await
     }
 
+    pub async fn cancellable_request<T: Request>(
+        &self,
+        params: T::Params,
+        cancel_rx: oneshot::Receiver<()>,
+    ) -> Result<T::Response> {
+        self.inner
+            .cancellable_request(T::METHOD, params, cancel_rx)
+            .await
+    }
+
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
         self.inner.notify(T::METHOD, params)
+    }
+
+    pub fn on_notification<F>(&self, method: &'static str, f: F)
+    where
+        F: 'static + Send + FnMut(Value, AsyncApp),
+    {
+        self.inner.on_notification(method, f);
     }
 }

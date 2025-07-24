@@ -1,29 +1,22 @@
-use std::{cell::RefCell, rc::Rc};
+use std::path::PathBuf;
 
-use acp_thread::AcpClientDelegate;
-use agentic_coding_protocol::{self as acp, Client, ReadTextFileParams, WriteTextFileParams};
+use acp_thread::AcpThread;
+use agent_client_protocol as acp;
 use anyhow::{Context, Result};
 use collections::HashMap;
-use context_server::{
-    listener::McpServer,
-    types::{
-        CallToolParams, CallToolResponse, Implementation, InitializeParams, InitializeResponse,
-        ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolAnnotations,
-        ToolResponseContent, ToolsCapabilities, requests,
-    },
+use context_server::types::{
+    CallToolParams, CallToolResponse, Implementation, InitializeParams, InitializeResponse,
+    ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolAnnotations,
+    ToolResponseContent, ToolsCapabilities, requests,
 };
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use util::debug_panic;
 
-use crate::claude::{
-    McpServerConfig,
-    tools::{ClaudeTool, EditToolParams, ReadToolParams},
-};
+use crate::claude::tools::{ClaudeTool, EditToolParams, ReadToolParams};
 
-pub struct ClaudeMcpServer {
-    server: McpServer,
+pub struct ClaudeZedMcpServer {
+    server: context_server::listener::McpServer,
 }
 
 pub const SERVER_NAME: &str = "zed";
@@ -52,17 +45,16 @@ enum PermissionToolBehavior {
     Deny,
 }
 
-impl ClaudeMcpServer {
+impl ClaudeZedMcpServer {
     pub async fn new(
-        delegate: watch::Receiver<Option<AcpClientDelegate>>,
-        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let mut mcp_server = McpServer::new(cx).await?;
+        let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
-            Self::handle_call_tool(request, delegate.clone(), tool_id_map.clone(), cx)
+            Self::handle_call_tool(request, thread_rx.clone(), cx)
         });
 
         Ok(Self { server: mcp_server })
@@ -70,9 +62,7 @@ impl ClaudeMcpServer {
 
     pub fn server_config(&self) -> Result<McpServerConfig> {
         let zed_path = std::env::current_exe()
-            .context("finding current executable path for use in mcp_server")?
-            .to_string_lossy()
-            .to_string();
+            .context("finding current executable path for use in mcp_server")?;
 
         Ok(McpServerConfig {
             command: zed_path,
@@ -152,22 +142,19 @@ impl ClaudeMcpServer {
 
     fn handle_call_tool(
         request: CallToolParams,
-        mut delegate_watch: watch::Receiver<Option<AcpClientDelegate>>,
-        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
-            let Some(delegate) = delegate_watch.recv().await? else {
-                debug_panic!("Sent None delegate");
-                anyhow::bail!("Server not available");
+            let Some(thread) = thread_rx.recv().await?.upgrade() else {
+                anyhow::bail!("Thread closed");
             };
 
             if request.name.as_str() == PERMISSION_TOOL {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let result =
-                    Self::handle_permissions_tool_call(input, delegate, tool_id_map, cx).await?;
+                let result = Self::handle_permissions_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text {
                         text: serde_json::to_string(&result)?,
@@ -179,7 +166,7 @@ impl ClaudeMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let content = Self::handle_read_tool_call(input, delegate, cx).await?;
+                let content = Self::handle_read_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content,
                     is_error: None,
@@ -189,7 +176,7 @@ impl ClaudeMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                Self::handle_edit_tool_call(input, delegate, cx).await?;
+                Self::handle_edit_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content: vec![],
                     is_error: None,
@@ -202,49 +189,46 @@ impl ClaudeMcpServer {
     }
 
     fn handle_read_tool_call(
-        params: ReadToolParams,
-        delegate: AcpClientDelegate,
+        ReadToolParams {
+            abs_path,
+            offset,
+            limit,
+        }: ReadToolParams,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<Vec<ToolResponseContent>>> {
-        cx.foreground_executor().spawn(async move {
-            let response = delegate
-                .read_text_file(ReadTextFileParams {
-                    path: params.abs_path,
-                    line: params.offset,
-                    limit: params.limit,
-                })
+        cx.spawn(async move |cx| {
+            let content = thread
+                .update(cx, |thread, cx| {
+                    thread.read_text_file(abs_path, offset, limit, false, cx)
+                })?
                 .await?;
 
-            Ok(vec![ToolResponseContent::Text {
-                text: response.content,
-            }])
+            Ok(vec![ToolResponseContent::Text { text: content }])
         })
     }
 
     fn handle_edit_tool_call(
         params: EditToolParams,
-        delegate: AcpClientDelegate,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
-        cx.foreground_executor().spawn(async move {
-            let response = delegate
-                .read_text_file_reusing_snapshot(ReadTextFileParams {
-                    path: params.abs_path.clone(),
-                    line: None,
-                    limit: None,
-                })
+        cx.spawn(async move |cx| {
+            let content = thread
+                .update(cx, |threads, cx| {
+                    threads.read_text_file(params.abs_path.clone(), None, None, true, cx)
+                })?
                 .await?;
 
-            let new_content = response.content.replace(&params.old_text, &params.new_text);
-            if new_content == response.content {
+            let new_content = content.replace(&params.old_text, &params.new_text);
+            if new_content == content {
                 return Err(anyhow::anyhow!("The old_text was not found in the content"));
             }
 
-            delegate
-                .write_text_file(WriteTextFileParams {
-                    path: params.abs_path,
-                    content: new_content,
-                })
+            thread
+                .update(cx, |threads, cx| {
+                    threads.write_text_file(params.abs_path, new_content, cx)
+                })?
                 .await?;
 
             Ok(())
@@ -253,44 +237,65 @@ impl ClaudeMcpServer {
 
     fn handle_permissions_tool_call(
         params: PermissionToolParams,
-        delegate: AcpClientDelegate,
-        tool_id_map: Rc<RefCell<HashMap<String, acp::ToolCallId>>>,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
-        cx.foreground_executor().spawn(async move {
+        cx.spawn(async move |cx| {
             let claude_tool = ClaudeTool::infer(&params.tool_name, params.input.clone());
 
-            let tool_call_id = match params.tool_use_id {
-                Some(tool_use_id) => tool_id_map
-                    .borrow()
-                    .get(&tool_use_id)
-                    .cloned()
-                    .context("Tool call ID not found")?,
+            let tool_call_id =
+                acp::ToolCallId(params.tool_use_id.context("Tool ID required")?.into());
 
-                None => delegate.push_tool_call(claude_tool.as_acp()).await?.id,
-            };
+            let allow_option_id = acp::PermissionOptionId("allow".into());
+            let reject_option_id = acp::PermissionOptionId("reject".into());
 
-            let outcome = delegate
-                .request_existing_tool_call_confirmation(
-                    tool_call_id,
-                    claude_tool.confirmation(None),
-                )
+            let chosen_option = thread
+                .update(cx, |thread, cx| {
+                    thread.request_tool_call_permission(
+                        claude_tool.as_acp(tool_call_id),
+                        vec![
+                            acp::PermissionOption {
+                                id: allow_option_id.clone(),
+                                label: "Allow".into(),
+                                kind: acp::PermissionOptionKind::AllowOnce,
+                            },
+                            acp::PermissionOption {
+                                id: reject_option_id,
+                                label: "Reject".into(),
+                                kind: acp::PermissionOptionKind::RejectOnce,
+                            },
+                        ],
+                        cx,
+                    )
+                })?
                 .await?;
 
-            match outcome {
-                acp::ToolCallConfirmationOutcome::Allow
-                | acp::ToolCallConfirmationOutcome::AlwaysAllow
-                | acp::ToolCallConfirmationOutcome::AlwaysAllowMcpServer
-                | acp::ToolCallConfirmationOutcome::AlwaysAllowTool => Ok(PermissionToolResponse {
+            if chosen_option == allow_option_id {
+                Ok(PermissionToolResponse {
                     behavior: PermissionToolBehavior::Allow,
                     updated_input: params.input,
-                }),
-                acp::ToolCallConfirmationOutcome::Reject
-                | acp::ToolCallConfirmationOutcome::Cancel => Ok(PermissionToolResponse {
+                })
+            } else {
+                Ok(PermissionToolResponse {
                     behavior: PermissionToolBehavior::Deny,
                     updated_input: params.input,
-                }),
+                })
             }
         })
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpConfig {
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerConfig {
+    pub command: PathBuf,
+    pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
 }
