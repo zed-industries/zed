@@ -2281,13 +2281,27 @@ impl AgentPanel {
         matches!(plan, Some(Plan::Free)) && has_previous_trial
     }
 
-    fn should_render_onboarding(&self) -> bool {
+    fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
         if OnboardingUpsell::dismissed() {
             return false;
         }
 
         match &self.active_view {
-            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => true,
+            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => {
+                let history_is_empty = self
+                    .history_store
+                    .update(cx, |store, cx| store.recent_entries(1, cx).is_empty());
+
+                let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
+                    .providers()
+                    .iter()
+                    .any(|provider| {
+                        provider.is_authenticated(cx)
+                            && provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                    });
+
+                history_is_empty || !has_configured_non_zed_providers
+            }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => false,
@@ -2299,7 +2313,7 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if !self.should_render_onboarding() {
+        if !self.should_render_onboarding(cx) {
             return None;
         }
 
@@ -3220,7 +3234,7 @@ impl Render for AgentPanel {
                 } => parent
                     .relative()
                     .child(
-                        if thread.read(cx).is_empty() && !self.should_render_onboarding() {
+                        if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
                             self.render_thread_empty_state(window, cx)
                                 .into_any_element()
                         } else {
@@ -3283,7 +3297,7 @@ impl Render for AgentPanel {
                         model_registry.configuration_error(model_registry.default_model(), cx);
                     parent
                         .map(|this| {
-                            if !self.should_render_onboarding()
+                            if !self.should_render_onboarding(cx)
                                 && let Some(err) = configuration_error.as_ref()
                             {
                                 this.child(
