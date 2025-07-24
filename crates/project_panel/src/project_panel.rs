@@ -2723,26 +2723,7 @@ impl ProjectPanel {
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
-        let mut entry_index = 0;
-        let mut visible_entries_index = 0;
-        for (worktree_index, (worktree_id, worktree_entries, _)) in
-            self.visible_entries.iter().enumerate()
-        {
-            if *worktree_id == selection.worktree_id {
-                for entry in worktree_entries {
-                    if entry.id == selection.entry_id {
-                        return Some((worktree_index, entry_index, visible_entries_index));
-                    } else {
-                        visible_entries_index += 1;
-                        entry_index += 1;
-                    }
-                }
-                break;
-            } else {
-                visible_entries_index += worktree_entries.len();
-            }
-        }
-        None
+        self.index_for_entry(selection.entry_id, selection.worktree_id)
     }
 
     fn disjoint_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
@@ -3353,12 +3334,12 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         worktree_id: WorktreeId,
     ) -> Option<(usize, usize, usize)> {
-        let mut worktree_ix = 0;
         let mut total_ix = 0;
-        for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
+        for (worktree_ix, (current_worktree_id, visible_worktree_entries, _)) in
+            self.visible_entries.iter().enumerate()
+        {
             if worktree_id != *current_worktree_id {
                 total_ix += visible_worktree_entries.len();
-                worktree_ix += 1;
                 continue;
             }
 
