@@ -411,15 +411,15 @@ impl DebugAdapter for GoDebugAdapter {
         user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        let dlv_binary_name = if cfg!(windows) { "dlv.exe" } else { "dlv" };
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-        let dlv_path = adapter_path.join("dlv");
-
+        let dlv_path_in_adapter_dir = adapter_path.join(dlv_binary_name);
         let delve_path = if let Some(path) = user_installed_path {
             path.to_string_lossy().to_string()
-        } else if let Some(path) = delegate.which(OsStr::new("dlv")).await {
+        } else if let Some(path) = delegate.which(OsStr::new(dlv_binary_name)).await {
             path.to_string_lossy().to_string()
-        } else if delegate.fs().is_file(&dlv_path).await {
-            dlv_path.to_string_lossy().to_string()
+        } else if delegate.fs().is_file(&dlv_path_in_adapter_dir).await {
+            dlv_path_in_adapter_dir.to_string_lossy().to_string()
         } else {
             let go = delegate
                 .which(OsStr::new("go"))
@@ -443,7 +443,7 @@ impl DebugAdapter for GoDebugAdapter {
                 );
             }
 
-            adapter_path.join("dlv").to_string_lossy().to_string()
+            dlv_path_in_adapter_dir.to_string_lossy().to_string()
         };
 
         let cwd = Some(

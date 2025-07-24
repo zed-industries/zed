@@ -673,13 +673,17 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
-            format!(
-                "failed to spawn command `{} {}`.",
-                binary_command,
-                binary.arguments.join(" ")
-            )
-        })?;
+        let mut process = match Child::spawn(command, Stdio::piped()) {
+            Ok(process) => process,
+            Err(e) => {
+                bail!(
+                    "failed to spawn command `{} {}`: {}",
+                    binary_command,
+                    binary.arguments.join(" "),
+                    e
+                );
+            }
+        };
 
         let err_task = process.stderr.take().map(|stderr| {
             cx.background_spawn(TransportDelegate::handle_adapter_log(
