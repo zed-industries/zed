@@ -441,7 +441,6 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::path::PathBuf;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
 
@@ -463,7 +462,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "def process_incoming_inventory(items, warehouse_id):\n    pass\n",
             "def process_outgoing_inventory(items, warehouse_id):\n    passˇ\n",
             &unindent(
@@ -474,7 +473,7 @@ mod tests {
                 ",
             ),
             "Clipboard ↔ text.txt @ L1:1-L3:1",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-L3:1",
+            &format!("Clipboard ↔ {} @ L1:1-L3:1", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -484,7 +483,7 @@ mod tests {
     async fn test_diffing_clipboard_against_full_multiline_selection(cx: &mut TestAppContext) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "def process_incoming_inventory(items, warehouse_id):\n    pass\n",
             "«def process_outgoing_inventory(items, warehouse_id):\n    passˇ»\n",
             &unindent(
@@ -494,7 +493,7 @@ mod tests {
                       pass",
             ),
             "Clipboard ↔ text.txt @ L1:1-L2:9",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-L2:9",
+            &format!("Clipboard ↔ {} @ L1:1-L2:9", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -504,7 +503,7 @@ mod tests {
     async fn test_diffing_clipboard_against_full_line_no_whitespace(cx: &mut TestAppContext) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "a",
             "«bbˇ»",
             &unindent(
@@ -513,7 +512,7 @@ mod tests {
                 + ˇbb",
             ),
             "Clipboard ↔ text.txt @ L1:1-3",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-3",
+            &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -525,7 +524,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "    a",
             "«bbˇ»",
             &unindent(
@@ -534,7 +533,7 @@ mod tests {
                 + ˇbb",
             ),
             "Clipboard ↔ text.txt @ L1:1-3",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-3",
+            &format!("Clipboard ↔ {} @ L1:1-3", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -546,7 +545,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "a",
             "    «bbˇ»",
             &unindent(
@@ -560,7 +559,7 @@ mod tests {
                 // / added portions entirely from the view)
             ),
             "Clipboard ↔ text.txt @ L1:5-7",
-            "Clipboard ↔ test/a/b/text.txt @ L1:5-7",
+            &format!("Clipboard ↔ {} @ L1:5-7", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -572,7 +571,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "a",
             "«    bbˇ»",
             &unindent(
@@ -581,7 +580,7 @@ mod tests {
                 + ˇ    bb",
             ),
             "Clipboard ↔ text.txt @ L1:1-7",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -593,7 +592,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "    a",
             "    «bbˇ»",
             &unindent(
@@ -602,7 +601,7 @@ mod tests {
                 + ˇ    bb",
             ),
             "Clipboard ↔ text.txt @ L1:5-7",
-            "Clipboard ↔ test/a/b/text.txt @ L1:5-7",
+            &format!("Clipboard ↔ {} @ L1:5-7", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -614,7 +613,7 @@ mod tests {
     ) {
         base_test(
             path!("/test"),
-            "text.txt",
+            path!("/test/text.txt"),
             "    a",
             "«    bbˇ»",
             &unindent(
@@ -623,7 +622,7 @@ mod tests {
                 + ˇ    bb",
             ),
             "Clipboard ↔ text.txt @ L1:1-7",
-            "Clipboard ↔ test/a/b/text.txt @ L1:1-7",
+            &format!("Clipboard ↔ {} @ L1:1-7", path!("test/text.txt")),
             cx,
         )
         .await;
@@ -631,7 +630,7 @@ mod tests {
 
     async fn base_test(
         project_root: &str,
-        file_name: &str,
+        file_path: &str,
         clipboard_text: &str,
         editor_text: &str,
         expected_diff: &str,
@@ -641,15 +640,17 @@ mod tests {
     ) {
         init_test(cx);
 
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             project_root,
             json!({
-                "a": {
-                    "b": {
-                        file_name: editor_text
-                    }
-                }
+                file_name: editor_text
             }),
         )
         .await;
@@ -660,12 +661,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer(
-                    PathBuf::from(format!("{}/a/b/{}", project_root, file_name)),
-                    cx,
-                )
-            })
+            .update(cx, |project, cx| project.open_local_buffer(file_path, cx))
             .await
             .unwrap();
 
