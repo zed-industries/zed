@@ -1130,7 +1130,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
-            .pt_1p5()
+            .py_1p5()
             .px_1p5()
             .gap_1()
             .justify_end()
