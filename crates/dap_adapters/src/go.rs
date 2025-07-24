@@ -411,12 +411,12 @@ impl DebugAdapter for GoDebugAdapter {
         user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let dlv_binary_name = if cfg!(windows) { "dlv.exe" } else { "dlv" };
+        let dlv_binary_name = format!("dlv{}", std::env::consts::EXE_SUFFIX);
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-        let dlv_path_in_adapter_dir = adapter_path.join(dlv_binary_name);
+        let dlv_path_in_adapter_dir = adapter_path.join(&dlv_binary_name);
         let delve_path = if let Some(path) = user_installed_path {
             path.to_string_lossy().to_string()
-        } else if let Some(path) = delegate.which(OsStr::new(dlv_binary_name)).await {
+        } else if let Some(path) = delegate.which(OsStr::new(&dlv_binary_name)).await {
             path.to_string_lossy().to_string()
         } else if delegate.fs().is_file(&dlv_path_in_adapter_dir).await {
             dlv_path_in_adapter_dir.to_string_lossy().to_string()
