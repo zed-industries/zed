@@ -552,7 +552,7 @@ mod tests {
                 "
                 - a
                 + ˇ    bb",
-                // TODO: `+ ˇbb",` is correct, by this is a byproduct have
+                // TODO: should be `+ ˇbb",`, but this is a byproduct of
                 // having to expand the selection to the beginning of the line
                 // in order to avoid the diff view from misbehaving and
                 // incorrectly displaying diffs in worse ways (dropping deleted
