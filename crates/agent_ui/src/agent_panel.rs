@@ -564,6 +564,17 @@ impl AgentPanel {
         let inline_assist_context_store =
             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
+        let thread_id = thread.read(cx).id().clone();
+
+        let history_store = cx.new(|cx| {
+            HistoryStore::new(
+                thread_store.clone(),
+                context_store.clone(),
+                [HistoryEntryId::Thread(thread_id)],
+                cx,
+            )
+        });
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
@@ -573,18 +584,9 @@ impl AgentPanel {
                 prompt_store.clone(),
                 thread_store.downgrade(),
                 context_store.downgrade(),
+                Some(history_store.downgrade()),
                 thread.clone(),
                 window,
-                cx,
-            )
-        });
-
-        let thread_id = thread.read(cx).id().clone();
-        let history_store = cx.new(|cx| {
-            HistoryStore::new(
-                thread_store.clone(),
-                context_store.clone(),
-                [HistoryEntryId::Thread(thread_id)],
                 cx,
             )
         });
@@ -851,6 +853,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
+                Some(self.history_store.downgrade()),
                 thread.clone(),
                 window,
                 cx,
@@ -1124,6 +1127,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
+                Some(self.history_store.downgrade()),
                 thread.clone(),
                 window,
                 cx,
@@ -2277,26 +2281,13 @@ impl AgentPanel {
         matches!(plan, Some(Plan::Free)) && has_previous_trial
     }
 
-    fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
+    fn should_render_onboarding(&self) -> bool {
         if OnboardingUpsell::dismissed() {
             return false;
         }
 
         match &self.active_view {
-            ActiveView::Thread { thread, .. } => thread
-                .read(cx)
-                .thread()
-                .read(cx)
-                .configured_model()
-                .map_or(true, |model| {
-                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
-                }),
-            ActiveView::TextThread { .. } => LanguageModelRegistry::global(cx)
-                .read(cx)
-                .default_model()
-                .map_or(true, |model| {
-                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
-                }),
+            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => true,
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => false,
@@ -2308,7 +2299,7 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if !self.should_render_onboarding(cx) {
+        if !self.should_render_onboarding() {
             return None;
         }
 
@@ -3229,7 +3220,7 @@ impl Render for AgentPanel {
                 } => parent
                     .relative()
                     .child(
-                        if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
+                        if thread.read(cx).is_empty() && !self.should_render_onboarding() {
                             self.render_thread_empty_state(window, cx)
                                 .into_any_element()
                         } else {
@@ -3292,7 +3283,7 @@ impl Render for AgentPanel {
                         model_registry.configuration_error(model_registry.default_model(), cx);
                     parent
                         .map(|this| {
-                            if !self.should_render_onboarding(cx)
+                            if !self.should_render_onboarding()
                                 && let Some(err) = configuration_error.as_ref()
                             {
                                 this.child(
