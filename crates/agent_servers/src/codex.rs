@@ -226,8 +226,12 @@ impl CodexConnection {
 
         match notification.update {
             acp::SessionUpdate::Started => {}
-            acp::SessionUpdate::UserMessage(_) => {
-                todo!()
+            acp::SessionUpdate::UserMessage(content_block) => {
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.push_user_content_block(content_block, cx);
+                    })
+                    .log_err();
             }
             acp::SessionUpdate::AgentMessageChunk(content_block) => {
                 thread

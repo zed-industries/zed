@@ -680,6 +680,21 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
+    pub fn push_user_content_block(&mut self, chunk: acp::ContentBlock, cx: &mut Context<Self>) {
+        let language_registry = self.project.read(cx).languages().clone();
+        let entries_len = self.entries.len();
+
+        if let Some(last_entry) = self.entries.last_mut()
+            && let AgentThreadEntry::UserMessage(UserMessage { content }) = last_entry
+        {
+            content.append(chunk, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+        } else {
+            let content = ContentBlock::new(chunk, &language_registry, cx);
+            self.push_entry(AgentThreadEntry::UserMessage(UserMessage { content }), cx);
+        }
+    }
+
     pub fn push_assistant_content_block(
         &mut self,
         chunk: acp::ContentBlock,
@@ -1187,7 +1202,87 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_thinking_concatenation(cx: &mut TestAppContext) {
+    async fn test_push_user_content_block(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (thread, _fake_server) = fake_acp_thread(project, cx);
+
+        // Test creating a new user message
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "Hello, ".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
+            } else {
+                panic!("Expected UserMessage");
+            }
+        });
+
+        // Test appending to existing user message
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "world!".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
+            } else {
+                panic!("Expected UserMessage");
+            }
+        });
+
+        // Test creating new user message after assistant message
+        thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "Assistant response".to_string(),
+                }),
+                false,
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "New user message".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 3);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
+                assert_eq!(user_msg.content.to_markdown(cx), "New user message");
+            } else {
+                panic!("Expected UserMessage at index 2");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thinking_concatenation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());

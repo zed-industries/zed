@@ -8,7 +8,7 @@ use project::Project;
 use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
 use ui::App;
 
-use crate::{AcpThread, AcpThreadEvent, AgentConnection, ToolCallContent, ToolCallStatus};
+use crate::{AcpThread, AgentConnection};
 
 #[derive(Clone)]
 pub struct OldAcpClientDelegate {
