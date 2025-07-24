@@ -331,6 +331,13 @@ impl ContentBlock {
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
         }
     }
+
+    pub fn markdown(&self) -> Option<&Entity<Markdown>> {
+        match self {
+            ContentBlock::Empty => None,
+            ContentBlock::Markdown { markdown } => Some(markdown),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -804,14 +811,15 @@ impl AcpThread {
     pub fn authorize_tool_call(
         &mut self,
         id: acp::ToolCallId,
-        option: acp::PermissionOption,
+        option_id: acp::PermissionOptionId,
+        option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
         let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
         };
 
-        let new_status = match option.kind {
+        let new_status = match option_kind {
             acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
                 ToolCallStatus::Rejected
             }
@@ -825,7 +833,7 @@ impl AcpThread {
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(option.id).log_err();
+            respond_tx.send(option_id).log_err();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
         }
@@ -849,7 +857,7 @@ impl AcpThread {
         cx.notify();
     }
 
-    pub fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
+    fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         self.plan
             .entries
             .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
@@ -939,16 +947,15 @@ impl AcpThread {
             AgentThreadEntry::UserMessage(UserMessage { content: block }),
             cx,
         );
+        self.clear_completed_plan_entries(cx);
 
         let (tx, rx) = oneshot::channel();
-        self.cancel(cx);
+        let cancel_task = self.cancel(cx);
 
-        let old_send = self.send_task.take();
         self.send_task = Some(cx.spawn(async move |this, cx| {
             async {
-                if let Some(old_send) = old_send {
-                    old_send.await;
-                }
+                cancel_task.await;
+
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
@@ -977,11 +984,11 @@ impl AcpThread {
         .boxed()
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        if self.send_task.take().is_none() {
-            return;
-        }
-        self.connection.cancel(cx);
+    pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(send_task) = self.send_task.take() else {
+            return Task::ready(());
+        };
+
         for entry in self.entries.iter_mut() {
             if let AgentThreadEntry::ToolCall(call) = entry {
                 let cancel = matches!(
@@ -997,6 +1004,11 @@ impl AcpThread {
                 }
             }
         }
+
+        self.connection.cancel(cx);
+
+        // Wait for the send task to complete
+        cx.foreground_executor().spawn(send_task)
     }
 
     pub fn read_text_file(
@@ -1480,16 +1492,6 @@ fn into_new_tool_call_location(location: acp_old::ToolCallLocation) -> acp::Tool
     }
 }
 
-fn into_new_plan(request: acp_old::UpdatePlanParams) -> acp::Plan {
-    acp::Plan {
-        entries: request
-            .entries
-            .into_iter()
-            .map(into_new_plan_entry)
-            .collect(),
-    }
-}
-
 fn into_new_plan_entry(entry: acp_old::PlanEntry) -> acp::PlanEntry {
     acp::PlanEntry {
         content: entry.content,
@@ -1729,7 +1731,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        thread.update(cx, |thread, cx| thread.cancel(cx));
+        thread.update(cx, |thread, cx| thread.cancel(cx)).await;
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(

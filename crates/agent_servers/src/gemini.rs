@@ -25,10 +25,6 @@ impl StdioAgentServer for Gemini {
         "Ask questions, edit files, run commands.\nBe specific for the best results."
     }
 
-    fn supports_always_allow(&self) -> bool {
-        true
-    }
-
     fn logo(&self) -> ui::IconName {
         ui::IconName::AiGemini
     }

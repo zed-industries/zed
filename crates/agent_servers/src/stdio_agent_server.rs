@@ -12,7 +12,6 @@ pub trait StdioAgentServer: Send + Clone {
     fn name(&self) -> &'static str;
     fn empty_state_headline(&self) -> &'static str;
     fn empty_state_message(&self) -> &'static str;
-    fn supports_always_allow(&self) -> bool;
 
     fn command(
         &self,
@@ -41,10 +40,6 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
 
     fn logo(&self) -> ui::IconName {
         self.logo()
-    }
-
-    fn supports_always_allow(&self) -> bool {
-        self.supports_always_allow()
     }
 
     fn connect(

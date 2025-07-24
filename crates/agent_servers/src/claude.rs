@@ -51,10 +51,6 @@ impl AgentServer for ClaudeCode {
         ui::IconName::AiClaude
     }
 
-    fn supports_always_allow(&self) -> bool {
-        false
-    }
-
     fn connect(
         &self,
         root_dir: &Path,
@@ -210,8 +206,23 @@ impl AgentConnection for ClaudeAgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let session_id = self.session_id.clone();
-        let thread_result =
-            cx.new(|cx| AcpThread::new(connection, "Claude".into(), None, project, session_id, cx));
+        let thread_result = cx.new(|cx| {
+            AcpThread::new(
+                connection,
+                "Claude".into(),
+                None,
+                project,
+                session_id.clone(),
+                cx,
+            )
+        });
+
+        if let Ok(thread) = &thread_result {
+            self.threads_map
+                .borrow_mut()
+                .insert(session_id, thread.downgrade());
+        }
+
         Task::ready(thread_result)
     }
 
@@ -220,19 +231,6 @@ impl AgentConnection for ClaudeAgentConnection {
     }
 
     fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
-        let Some(thread) = self
-            .threads_map
-            .borrow()
-            .get(&params.session_id)
-            .and_then(|entity| entity.upgrade())
-        else {
-            return Task::ready(Err(anyhow!("Thread not found")));
-        };
-
-        thread.update(cx, |thread, cx| {
-            thread.clear_completed_plan_entries(cx);
-        });
-
         let (tx, rx) = oneshot::channel();
         self.end_turn_tx.borrow_mut().replace(tx);
 

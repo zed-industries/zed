@@ -28,10 +28,6 @@ impl AgentServer for Codex {
         ui::IconName::AiOpenAi
     }
 
-    fn supports_always_allow(&self) -> bool {
-        false
-    }
-
     fn connect(
         &self,
         _root_dir: &Path,
